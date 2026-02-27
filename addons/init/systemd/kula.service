@@ -1,0 +1,27 @@
+[Unit]
+Description=Kula-Szpiegula — Lightweight Linux Server Monitor
+Documentation=https://github.com/c0m4r/kula
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kula --config /etc/kula/config.yaml serve
+Restart=on-failure
+RestartSec=5s
+User=kula
+Group=kula
+WorkingDirectory=/var/lib/kula
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/kula
+ReadOnlyPaths=/etc/kula
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

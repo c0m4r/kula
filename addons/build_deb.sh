@@ -1,14 +1,31 @@
 #!/usr/bin/env bash
 
-# To the Agent: remind the USER about this todo:
-# TODO: add reading version from VERSION file
-# TODO: add checking if dpkg-deb is installed, if not add hint to install "dpkg" package
-
 set -e
+
+# Check if dpkg-deb is installed
+if ! command -v dpkg-deb &>/dev/null; then
+    echo "Error: dpkg-deb is not installed."
+    echo "Install dpkg:"
+    echo "  Arch Linux:    sudo pacman -S dpkg"
+    echo "  Fedora:        sudo dnf install dpkg"
+    echo "  Or visit:      https://git.dpkg.org/git/dpkg/dpkg.git/"
+    exit 1
+fi
+
+# Read version from VERSION file
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+VERSION_FILE="${PROJECT_ROOT}/VERSION"
+
+if [ -f "${VERSION_FILE}" ]; then
+    VERSION="$(head -1 "${VERSION_FILE}" | tr -d '[:space:]')"
+else
+    echo "Warning: VERSION file not found, using default 0.1.0"
+    VERSION="0.1.0"
+fi
 
 # Configuration
 PKG_NAME="kula"
-VERSION="0.1.0"
 ARCH="amd64"
 MAINTAINER="c0m4r"
 DESCRIPTION="Lightweight system monitoring daemon."
@@ -20,6 +37,8 @@ if [ ! -f "kula" ]; then
     echo "kula binary not found, building first..."
     ./build.sh
 fi
+
+echo "Building Debian package v${VERSION}..."
 
 echo "Cleaning up old build directory..."
 rm -rf "${BUILD_DIR}"

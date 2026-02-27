@@ -1,0 +1,4 @@
+#!/bin/sh
+# Kula-Szpiegula — runit service
+
+exec chpst -u kula:kula /usr/bin/kula --config /etc/kula/config.yaml serve 2>&1

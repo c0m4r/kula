@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+# Kula-Szpiegula — Lightweight Linux Server Monitor
+
+name="kula"
+description="Kula-Szpiegula server monitoring daemon"
+
+command="/usr/bin/kula"
+command_args="--config /etc/kula/config.yaml serve"
+command_user="kula:kula"
+command_background=true
+
+pidfile="/run/${RC_SVCNAME}.pid"
+directory="/var/lib/kula"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    checkpath --directory --owner kula:kula --mode 0755 /var/lib/kula
+}
