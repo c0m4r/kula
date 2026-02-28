@@ -35,11 +35,11 @@ Kula-Szpiegula collects system metrics every second by reading directly from `/p
                     └──────────────────┬───────────────────────────┘
                                        │ read every 1s
                                        ▼
-                              ┌─────────────────┐
+                              ┌──────────────────┐
                               │    Collectors    │
                               │  (cpu, mem, net, │
                               │   disk, system)  │
-                              └────────┬────────┘
+                              └────────┬─────────┘
                                        │ Sample struct
                           ┌────────────┼────────────┐
                           ▼            ▼            ▼
