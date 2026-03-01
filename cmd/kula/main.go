@@ -40,7 +40,7 @@ Usage:
 Commands:
   serve          Start the monitoring daemon with web UI (default)
   tui            Launch the terminal UI dashboard
-  hash-password  Generate a Whirlpool password hash for config
+  hash-password  Generate an Argon2 password hash for config
 
 Flags:
   -config string  Path to configuration file (default "config.yaml")

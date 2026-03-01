@@ -12,7 +12,7 @@
 ## Phase 3: Web UI Backend
 - [x] Implement HTTP server with REST API
 - [x] Implement WebSocket for live streaming
-- [x] Implement Whirlpool authentication system
+- [x] Implement Argon2id authentication system
 
 ## Phase 4: Web UI Frontend
 - [x] Build responsive dashboard with gauge charts

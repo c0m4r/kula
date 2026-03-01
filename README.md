@@ -79,7 +79,7 @@ Data is persisted in **pre-allocated ring-buffer files** per tier. Each tier fil
 
 ### Web Backend
 
-The HTTP server exposes a REST API (`/api/current`, `/api/history`, `/api/config`) and a WebSocket endpoint (`/ws`) for live streaming. Authentication is optional — when enabled, it uses **Whirlpool hashing with salt** and session cookies or Bearer tokens.
+The HTTP server exposes a REST API (`/api/current`, `/api/history`, `/api/config`) and a WebSocket endpoint (`/ws`) for live streaming. Authentication is optional — when enabled, it uses **Argon2id hashing with salt** and session cookies or Bearer tokens.
 
 ### Dashboard SPA
 
@@ -206,7 +206,7 @@ web:
     enabled: true
     level: "perf"                # options: "access" or "perf"
   auth:
-    enabled: false               # Enable login with Whirlpool-hashed password
+    enabled: false               # Enable login with Argon2id-hashed password
 
 storage:
   directory: ./data
@@ -245,8 +245,7 @@ kula/
 │   └── web/                    # HTTP/WebSocket server
 │       ├── server.go           #   Routes, API handlers, startup
 │       ├── websocket.go        #   Live streaming hub + client mgmt
-│       ├── auth.go             #   Whirlpool auth, sessions, middleware
-│       ├── whirlpool.go        #   Whirlpool hash implementation
+│       ├── auth.go             #   Argon2id auth, sessions, middleware
 │       └── static/             #   Embedded SPA (served from binary)
 │           ├── index.html      #     Dashboard markup
 │           ├── app.js          #     Charts, WebSocket, UI logic

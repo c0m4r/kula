@@ -19,7 +19,7 @@ Collectors → Ring-Buffer Storage → Web API / WebSocket → Dashboard
 | **Collectors** | types.go, collector.go, cpu.go, network.go, disk.go, system.go, process.go, self.go | Read `/proc` and `/sys` every 1s |
 | **Storage** | store.go, tier.go, codec.go | 3-tier ring-buffer (1s/1m/5m) |
 | **TUI** | tui.go | bubbletea dashboard |
-| **Web** | server.go, websocket.go, auth.go, whirlpool.go | HTTP + WS + Whirlpool auth |
+| **Web** | server.go, websocket.go, auth.go | HTTP + WS + Argon2id auth |
 | **Frontend** | index.html, style.css, app.js | Chart.js dashboard SPA |
 | **Entry** | main.go | CLI with serve/tui/hash-password |
 
