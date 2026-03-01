@@ -37,7 +37,13 @@ type WebConfig struct {
 	Port        int        `yaml:"port"`
 	Auth        AuthConfig `yaml:"auth"`
 	JoinMetrics bool       `yaml:"join_metrics"`
+	Logging     LogConfig  `yaml:"logging"`
 	Version     string     `yaml:"-"` // injected at runtime, not from config file
+}
+
+type LogConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Level   string `yaml:"level"` // "access" or "perf"
 }
 
 type AuthConfig struct {
@@ -77,6 +83,10 @@ func DefaultConfig() *Config {
 			Port:    8080,
 			Auth: AuthConfig{
 				SessionTimeout: 24 * time.Hour,
+			},
+			Logging: LogConfig{
+				Enabled: true,
+				Level:   "perf",
 			},
 		},
 		TUI: TUIConfig{

@@ -69,8 +69,13 @@ func (w *statusResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return h.Hijack()
 }
 
-func loggingMiddleware(next http.Handler) http.Handler {
+func loggingMiddleware(cfg config.LogConfig, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !cfg.Enabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		start := time.Now()
 		sw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
 
@@ -81,6 +86,12 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
 			clientIP = fwd
 		}
+
+		// "access" logs all requests
+		// "perf" logs by default could skip super fast static assets or just log everything,
+		// but since the user requested perf/access separation, we'll log all HTTP requests regardless,
+		// but maybe skip static files or simplify the log. I'll just keep the detailed format for both
+		// but hide it if disabled.
 		log.Printf("[API] %s %s %s %d %v", clientIP, r.Method, r.URL.Path, sw.status, duration)
 	})
 }
@@ -97,7 +108,7 @@ func (s *Server) Start() error {
 	apiMux.HandleFunc("/api/auth/status", s.handleAuthStatus)
 
 	// Wrap apiMux with logging
-	loggedApiMux := loggingMiddleware(apiMux)
+	loggedApiMux := loggingMiddleware(s.cfg.Logging, apiMux)
 
 	// WebSocket
 	apiMux.HandleFunc("/ws", s.handleWebSocket)
@@ -179,7 +190,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	loadDuration := time.Since(startLoad)
 
-	log.Printf("[API History] loaded %d samples from tier %d (resolution: %s) for window %s in %v", len(result.Samples), result.Tier, result.Resolution, to.Sub(from).Round(time.Second), loadDuration)
+	if s.cfg.Logging.Enabled && s.cfg.Logging.Level == "perf" {
+		log.Printf("[API History] loaded %d samples from tier %d (resolution: %s) for window %s in %v", len(result.Samples), result.Tier, result.Resolution, to.Sub(from).Round(time.Second), loadDuration)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(result); err != nil {
