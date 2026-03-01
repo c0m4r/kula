@@ -667,6 +667,7 @@
         $finalHigh.textContent = highScore;
         $gameoverScreen.classList.remove('hidden');
         SFX.explode();
+        canvas.style.cursor = 'default';
     }
 
     function nextLevel() {
@@ -675,6 +676,7 @@
         $levelupNum.textContent = level;
         $levelupScreen.classList.remove('hidden');
         SFX.levelUp();
+        canvas.style.cursor = 'default';
         setTimeout(() => {
             $levelupScreen.classList.add('hidden');
             initEnemies();
@@ -682,6 +684,7 @@
             enemyBullets = [];
             powerups = [];
             state = 'playing';
+            canvas.style.cursor = 'none';
         }, 2000);
     }
 
@@ -704,6 +707,7 @@
         $gameoverScreen.classList.add('hidden');
         $pauseScreen.classList.add('hidden');
         state = 'playing';
+        canvas.style.cursor = 'none';
     }
 
     // -------------------------------------------------------
@@ -788,9 +792,11 @@
             if (state === 'playing') {
                 state = 'paused';
                 $pauseScreen.classList.remove('hidden');
+                canvas.style.cursor = 'default';
             } else if (state === 'paused') {
                 state = 'playing';
                 $pauseScreen.classList.add('hidden');
+                canvas.style.cursor = 'none';
             }
         }
 

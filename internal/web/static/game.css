@@ -104,7 +104,7 @@ body {
     position: fixed;
     top: 16px;
     left: 20px;
-    z-index: 500;
+    z-index: 1500;
     color: var(--text-muted);
     text-decoration: none;
     font-family: var(--font-mono);
