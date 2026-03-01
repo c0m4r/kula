@@ -1,0 +1,3 @@
+Please add client ip to logs and also it would be good to see what is being dona, not only where, i.e. what tier is processed, how much data, what is the time window etc.
+
+Also move the spinner next to custom range button 'cause it's hard to notice now

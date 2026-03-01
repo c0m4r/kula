@@ -1,0 +1,42 @@
+<user>
+Kula works fast on more powerful hardware, but on small virtual serves 
+with only 1 or 2 vCPU available it struggles to switch between time windows 
+even if I'm only trying to switch to 5 minutes frame. It exhausting all CPU 
+available and when it finally loads the graphs are torn apart, 
+there are gaps which means we were unable to save metrics out of overload. 
+I'd like to fix that. What can we do about it?
+</user>
+
+<model>
+The problem is that changing time windows (e.g. hitting the "history" API) on low-power virtual servers 
+exhausts the CPU and causes Kula to drop metrics. This is because Kula's time-series storage uses 
+a JSON file ring buffer, and ReadRange decodes every single historical record from the underlying tier 
+(which could be gigabytes of JSON, tens of thousands of records) fully into memory using json.Unmarshal 
+before checking if the timestamp even falls within the requested query range.
+
+By extracting the timestamp using a fast string match bytes.Index before fully unmarshaling the JSON, 
+we bypass 99% of the computational overhead, solving CPU exhaustion on 1-2 vCPU instances.
+</model>
+
+<user>
+let's stop for a second and think of do we really want to optimize what we have, 
+or wouldn't it better to switch to some other methods of writing metrics like 
+a database engine - but one that is still self-contained and doesn't require external software
+</user>
+
+<model>
+How would you like to proceed?
+1. Adopt an Embedded DB (e.g., pure-Go SQLite or bbolt): Offload storage logic to a tested engine, accepting that background compaction/vacuuming will occasionally cause CPU or I/O spikes.
+2. Upgrade the current Ring Buffer to a Binary TSDB: Maintain the zero-maintenance, zero-compaction architecture, but rewrite it to use fixed-size binary format and binary search for database-level query speeds.
+3. Stick to the JSON hotfix: Easiest to implement immediately, heavily optimizes the current approach by bypassing json.Unmarshal, but still linearly scans data.
+</model>
+
+<user>
+ok let's try implement fixes you've proposed initially, I will test it and in case we're stil having problems we'll think about switching to another engine
+
+please also add two things that will help me:
+1. add a spinner to the web ui while loading metrics
+2. add debug logs to the main program that will print access logs and performance logs with how much time each operation took
+</user>
+
+bugfixing...
