@@ -137,10 +137,7 @@ func (s *Server) Start() error {
 	}
 	mux.Handle("/", http.FileServer(http.FS(staticContent)))
 
-	// Start WebSocket hub
 	go s.hub.run()
-
-	// Session cleanup goroutine
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -149,18 +146,77 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	addr := fmt.Sprintf("%s:%d", s.cfg.Listen, s.cfg.Port)
-	log.Printf("Web UI starting on http://%s", addr)
+	s.httpSrv = &http.Server{Handler: securityMiddleware(mux)}
 
-	s.httpSrv = &http.Server{
-		Addr:    addr,
-		Handler: securityMiddleware(mux),
+	listeners, err := s.createListeners()
+	if err != nil {
+		return err
 	}
 
-	if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	errCh := make(chan error, len(listeners))
+	for _, ln := range listeners {
+		log.Printf("Web UI listening on http://%s", ln.Addr())
+		go func(ln net.Listener) {
+			errCh <- s.httpSrv.Serve(ln)
+		}(ln)
+	}
+
+	if err := <-errCh; err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
+}
+
+// createListeners resolves the configured Listen address into one or two
+// net.Listeners according to the following rules:
+//
+//   - ""        → dual-stack: one tcp4 on 0.0.0.0 + one tcp6 on [::]
+//   - "[::]"    → single tcp6 listener (kernel decides v4/v6 based on net.ipv6.bindv6only)
+//   - "0.0.0.0" → single tcp4 listener (v4 only)
+//   - "1.2.3.4" → single tcp4 listener bound to that address
+//   - "[::1]"   → single tcp6 listener bound to that address
+func (s *Server) createListeners() ([]net.Listener, error) {
+	port := s.cfg.Port
+	listen := s.cfg.Listen
+
+	// Empty string: explicit dual-stack, one listener per family
+	if listen == "" {
+		ln4, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", port))
+		if err != nil {
+			return nil, fmt.Errorf("ipv4 listen: %w", err)
+		}
+		ln6, err := net.Listen("tcp6", fmt.Sprintf("[::]:%d", port))
+		if err != nil {
+			ln4.Close()
+			return nil, fmt.Errorf("ipv6 listen: %w", err)
+		}
+		return []net.Listener{ln4, ln6}, nil
+	}
+
+	// Strip brackets from IPv6 addresses like "[::1]" or "[::]"
+	// so we can pass them to net.Listen as "[::1]:port"
+	addr := fmt.Sprintf("%s:%d", listen, port)
+
+	// Determine network type: if the host (after bracket-stripping) contains a
+	// colon it is an IPv6 address and we use "tcp6", otherwise "tcp4".
+	host := listen
+	if len(host) > 1 && host[0] == '[' && host[len(host)-1] == ']' {
+		host = host[1 : len(host)-1]
+	}
+
+	network := "tcp4"
+	if net.ParseIP(host) != nil && net.ParseIP(host).To4() == nil {
+		// Pure IPv6 address (no IPv4 representation)
+		network = "tcp6"
+	} else if host == "::" {
+		network = "tcp6"
+	}
+
+	ln, err := net.Listen(network, addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %s: %w", addr, err)
+	}
+	return []net.Listener{ln}, nil
 }
 
 // Shutdown gracefully stops the web server.

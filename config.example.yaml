@@ -6,7 +6,8 @@ collection:
 
 # Storage settings (tiered ring-buffer)
 storage:
-  directory: ./data
+  # Insufficient permissions fallbacks to ~/.kula
+  directory: /var/lib/kula
   tiers:
     # Tier 1: 1-second resolution
     - resolution: 1s
@@ -21,7 +22,7 @@ storage:
 # Web UI settings
 web:
   enabled: true
-  listen: "0.0.0.0" # for IPv6 use "[IPv6_ADDRESS]"
+  listen: "0.0.0.0" # use [] brackets for IPv6 addresses, e.g. "[::1]"
   port: 8080
 
   # Join data points across gaps in the graphs (default: false)
