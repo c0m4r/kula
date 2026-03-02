@@ -22,7 +22,7 @@ Zero dependencies. No external databases. Single binary. Just deploy and go.
 
 ## What It Does
 
-Kula-Szpiegula collects system metrics every second by reading directly from `/proc` and `/sys`, stores them in a built-in tiered ring-buffer storage engine, and serves them through a real-time Web UI dashboard and a terminal TUI.
+Kula collects system metrics every second by reading directly from `/proc` and `/sys`, stores them in a built-in tiered ring-buffer storage engine, and serves them through a real-time Web UI dashboard and a terminal TUI.
 
 | Metric | What's Collected |
 |--------|-----------------|
