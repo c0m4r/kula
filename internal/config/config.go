@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -61,11 +62,33 @@ type TUIConfig struct {
 	RefreshRate time.Duration `yaml:"refresh_rate"`
 }
 
+func isWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".kula-write-test-*")
+	if err != nil {
+		return false
+	}
+	f.Close()
+	os.Remove(f.Name())
+	return true
+}
+
 func DefaultConfig() *Config {
-	// Default data dir: ./data next to the executable
-	dataDir := "./data"
-	if exe, err := os.Executable(); err == nil {
-		dataDir = filepath.Join(filepath.Dir(exe), "data")
+	// Try /var/lib/kula first (typically requires root to create, but let's try)
+	dataDir := "/var/lib/kula"
+	if err := os.MkdirAll(dataDir, 0755); err != nil || !isWritable(dataDir) {
+		// Fallback to ~/.kula
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			dataDir = filepath.Join(homeDir, ".kula")
+			log.Printf("Notice: Insufficient permissions for /var/lib/kula, falling back to %s", dataDir)
+			if err := os.MkdirAll(dataDir, 0755); err != nil || !isWritable(dataDir) {
+				fmt.Fprintf(os.Stderr, "Error: Insufficient permissions to create data storage in /var/lib/kula or %s\n", dataDir)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: Insufficient permissions to create data storage in /var/lib/kula\n")
+			os.Exit(1)
+		}
 	}
 
 	return &Config{
@@ -114,6 +137,13 @@ func Load(path string) (*Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+
+	// Expand ~/ shorthand to the user's home directory
+	if len(cfg.Storage.Directory) > 1 && cfg.Storage.Directory[:2] == "~/" {
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			cfg.Storage.Directory = filepath.Join(homeDir, cfg.Storage.Directory[2:])
+		}
 	}
 
 	if err := cfg.parseMaxBytes(); err != nil {
