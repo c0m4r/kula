@@ -115,17 +115,17 @@ func main() {
 			CPU: collector.CPUStats{
 				Total: collector.CPUCoreStats{
 					ID:     "all",
-					User:   cpuBase * 0.6,
-					System: cpuBase * 0.25,
-					IOWait: cpuBase * 0.1,
-					Idle:   math.Max(0, 100-cpuBase),
-					Usage:  cpuBase,
+					User:   round2(cpuBase * 0.6),
+					System: round2(cpuBase * 0.25),
+					IOWait: round2(cpuBase * 0.1),
+					Idle:   round2(math.Max(0, 100-cpuBase)),
+					Usage:  round2(cpuBase),
 				},
 				Cores: []collector.CPUCoreStats{
-					{ID: "cpu0", Usage: clamp(cpuBase+rng.Float64()*10-5, 0, 100)},
-					{ID: "cpu1", Usage: clamp(cpuBase+rng.Float64()*10-5, 0, 100)},
-					{ID: "cpu2", Usage: clamp(cpuBase+rng.Float64()*10-5, 0, 100)},
-					{ID: "cpu3", Usage: clamp(cpuBase+rng.Float64()*10-5, 0, 100)},
+					{ID: "cpu0", Usage: round2(clamp(cpuBase+rng.Float64()*10-5, 0, 100))},
+					{ID: "cpu1", Usage: round2(clamp(cpuBase+rng.Float64()*10-5, 0, 100))},
+					{ID: "cpu2", Usage: round2(clamp(cpuBase+rng.Float64()*10-5, 0, 100))},
+					{ID: "cpu3", Usage: round2(clamp(cpuBase+rng.Float64()*10-5, 0, 100))},
 				},
 			},
 			LoadAvg: collector.LoadAvg{
@@ -154,10 +154,10 @@ func main() {
 				Interfaces: []collector.NetInterface{
 					{
 						Name:   "eth0",
-						RxMbps: rxMbps,
-						TxMbps: txMbps,
-						RxPPS:  rxMbps * 100,
-						TxPPS:  txMbps * 100,
+						RxMbps: round2(rxMbps),
+						TxMbps: round2(txMbps),
+						RxPPS:  round2(rxMbps * 100),
+						TxPPS:  round2(txMbps * 100),
 					},
 				},
 				Sockets: collector.SocketStats{
@@ -230,4 +230,9 @@ func clamp(v, min, max float64) float64 {
 		return max
 	}
 	return v
+}
+
+// round2 rounds a float to 2 decimal places
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
 }

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -36,18 +37,11 @@ Commands:
   serve          Start the monitoring daemon with web UI (default)
   tui            Launch the terminal UI dashboard
   hash-password  Generate an Argon2 password hash for config
-  inspect-tier   Display information about a storage tier file
+  inspect        Display information about storage tier files
 
 Flags:
   -config string  Path to configuration file (default "config.yaml")
   -h, --help      Show this help message
-
-Examples:
-  kula                              Start with default config
-  kula -config /etc/kula/config.yaml serve
-  kula tui
-  kula hash-password
-  kula inspect-tier data/tier1.dat
 
 `, version)
 }
@@ -82,14 +76,6 @@ func main() {
 		web.PrintHashedPassword(password)
 		return
 	}
-	if cmd == "inspect-tier" {
-		if flag.NArg() < 2 {
-			fmt.Fprintf(os.Stderr, "Usage: kula inspect-tier <path-to-tier-file>\n")
-			os.Exit(1)
-		}
-		runInspectTier(flag.Arg(1))
-		return
-	}
 
 	// Load config
 	cfg, err := config.Load(*configPath)
@@ -102,8 +88,10 @@ func main() {
 		runServe(cfg, *configPath, osName, kernelVersion, cpuArch)
 	case "tui":
 		runTUI(cfg, osName, kernelVersion, cpuArch)
+	case "inspect":
+		runInspectTier(cfg)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: kula [serve|tui|hash-password|inspect-tier]\n", cmd)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: kula [serve|tui|hash-password|inspect]\n", cmd)
 		os.Exit(1)
 	}
 }
@@ -230,34 +218,42 @@ func readPasswordWithAsterisks() string {
 	return string(password)
 }
 
-func runInspectTier(path string) {
-	info, err := storage.InspectTierFile(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error inspecting tier file: %v\n", err)
-		os.Exit(1)
-	}
+func runInspectTier(cfg *config.Config) {
+	for i := range cfg.Storage.Tiers {
+		path := filepath.Join(cfg.Storage.Directory, fmt.Sprintf("tier_%d.dat", i))
+		info, err := storage.InspectTierFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				fmt.Printf("File: %s (not found)\n\n", path)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "Error inspecting tier file %s: %v\n\n", path, err)
+			continue
+		}
 
-	fmt.Printf("File: %s\n", path)
-	fmt.Printf("Version: %d\n", info.Version)
-	fmt.Printf("Max Data Size: %d bytes\n", info.MaxData)
-	fmt.Printf("Write Offset: %d\n", info.WriteOff)
-	fmt.Printf("Total Records: %d\n", info.Count)
+		fmt.Printf("File: %s\n", path)
+		fmt.Printf("Version: %d\n", info.Version)
+		fmt.Printf("Max Data Size: %d bytes\n", info.MaxData)
+		fmt.Printf("Write Offset: %d\n", info.WriteOff)
+		fmt.Printf("Total Records: %d\n", info.Count)
 
-	if !info.OldestTS.IsZero() {
-		fmt.Printf("Oldest Timestamp: %s\n", info.OldestTS.Format(time.RFC3339))
-	} else {
-		fmt.Printf("Oldest Timestamp: (none)\n")
-	}
+		if !info.OldestTS.IsZero() {
+			fmt.Printf("Oldest Timestamp: %s\n", info.OldestTS.Format(time.RFC3339))
+		} else {
+			fmt.Printf("Oldest Timestamp: (none)\n")
+		}
 
-	if !info.NewestTS.IsZero() {
-		fmt.Printf("Newest Timestamp: %s\n", info.NewestTS.Format(time.RFC3339))
-	} else {
-		fmt.Printf("Newest Timestamp: (none)\n")
-	}
+		if !info.NewestTS.IsZero() {
+			fmt.Printf("Newest Timestamp: %s\n", info.NewestTS.Format(time.RFC3339))
+		} else {
+			fmt.Printf("Newest Timestamp: (none)\n")
+		}
 
-	fmt.Printf("Wrapped: %v\n", info.Wrapped)
+		fmt.Printf("Wrapped: %v\n", info.Wrapped)
 
-	if !info.OldestTS.IsZero() && !info.NewestTS.IsZero() {
-		fmt.Printf("Time Range Covered: %s\n", info.NewestTS.Sub(info.OldestTS))
+		if !info.OldestTS.IsZero() && !info.NewestTS.IsZero() {
+			fmt.Printf("Time Range Covered: %s\n", info.NewestTS.Sub(info.OldestTS))
+		}
+		fmt.Println()
 	}
 }

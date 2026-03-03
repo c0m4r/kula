@@ -11,13 +11,18 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Added
 
-- Built-in `kula inspect-tier` CLI command to read and display tier file metadata
+- Built-in `kula inspect` CLI command to read and display tier files metadata
 - Standalone python script `addons/inspect_tier.py` for parsing binary storage and extracting latest JSON samples
 
 ### Changed
 
 - Storage size optimization: Round CPU and network values to 2 decimal places before saving
 - Storage size optimization: Ignore `loop` and `tmpfs` devices
+- Updated mock data generator
+
+### Fixed
+
+- Fixed hardcoded tier resolutions in web UI
 
 ## [0.6.0] - 2026-03-03
 

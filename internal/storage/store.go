@@ -10,6 +10,19 @@ import (
 	"time"
 )
 
+func fmtRes(d time.Duration) string {
+	if d%time.Hour == 0 {
+		return fmt.Sprintf("%dh", d/time.Hour)
+	}
+	if d%time.Minute == 0 {
+		return fmt.Sprintf("%dm", d/time.Minute)
+	}
+	if d%time.Second == 0 {
+		return fmt.Sprintf("%ds", d/time.Second)
+	}
+	return d.String()
+}
+
 // Store manages the tiered storage system.
 type Store struct {
 	mu      sync.RWMutex
@@ -77,8 +90,25 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 	s.tier1Buf = append(s.tier1Buf, sample)
 	s.tier1Count++
 
-	if s.tier1Count >= 60 && len(s.tiers) > 1 {
-		agg := s.aggregateSamples(s.tier1Buf, time.Minute)
+	// Configure aggregation ratios based on resolutions
+	ratio1 := 60
+	if len(s.configs) > 1 && s.configs[0].Resolution > 0 {
+		ratio1 = int(s.configs[1].Resolution / s.configs[0].Resolution)
+	}
+	if ratio1 <= 0 {
+		ratio1 = 1
+	}
+
+	ratio2 := 5
+	if len(s.configs) > 2 && s.configs[1].Resolution > 0 {
+		ratio2 = int(s.configs[2].Resolution / s.configs[1].Resolution)
+	}
+	if ratio2 <= 0 {
+		ratio2 = 1
+	}
+
+	if s.tier1Count >= ratio1 && len(s.tiers) > 1 {
+		agg := s.aggregateSamples(s.tier1Buf, s.configs[1].Resolution)
 		if err := s.tiers[1].Write(agg); err != nil {
 			return fmt.Errorf("writing tier 1: %w", err)
 		}
@@ -87,9 +117,8 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 		s.tier1Buf = nil
 		s.tier1Count = 0
 
-		// Aggregate for tier 3 (every 5 tier-2 samples = 5 minutes)
-		if s.tier2Count >= 5 && len(s.tiers) > 2 {
-			agg3 := s.aggregateAggregated(s.tier2Buf, 5*time.Minute)
+		if s.tier2Count >= ratio2 && len(s.tiers) > 2 {
+			agg3 := s.aggregateAggregated(s.tier2Buf, s.configs[2].Resolution)
 			if err := s.tiers[2].Write(agg3); err != nil {
 				return fmt.Errorf("writing tier 2: %w", err)
 			}
@@ -131,8 +160,13 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time) (*HistoryResult, error) {
 
 	const maxSamples = 3600
 
-	resolutions := []string{"1s", "1m", "5m"}
-	resDurations := []time.Duration{time.Second, time.Minute, 5 * time.Minute}
+	var resolutions []string
+	var resDurations []time.Duration
+	for _, tc := range s.configs {
+		resolutions = append(resolutions, fmtRes(tc.Resolution))
+		resDurations = append(resDurations, tc.Resolution)
+	}
+
 	duration := to.Sub(from)
 
 	// Try each tier from highest to lowest resolution
@@ -188,14 +222,11 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time) (*HistoryResult, error) {
 							}
 						}
 						samples = downsampled
-						switch res {
-						case "1s":
-							res = fmt.Sprintf("%ds", groupSize)
-						case "1m":
-							res = fmt.Sprintf("%dm", groupSize)
-						case "5m":
-							res = fmt.Sprintf("%dm", groupSize*5)
+						resDur := time.Second
+						if tierIdx < len(resDurations) {
+							resDur = resDurations[tierIdx]
 						}
+						res = fmtRes(resDur * time.Duration(groupSize))
 					}
 				}
 

@@ -1021,7 +1021,7 @@
     function updateSamplingInfo(tier, resolution) {
         const el = document.getElementById('sampling-info');
         if (!el) return;
-        const tierNames = ['Tier 1 (raw)', 'Tier 2 (1min avg)', 'Tier 3 (5min avg)'];
+        const tierNames = ['Tier 1 (raw)', 'Tier 2 (aggregated)', 'Tier 3 (long-term)'];
         const name = tierNames[tier] || `Tier ${tier + 1}`;
         el.textContent = `${resolution} samples · ${name}`;
         state.currentResolution = resolution || '1s';

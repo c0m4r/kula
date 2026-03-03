@@ -250,8 +250,11 @@ docker compose -f addons/docker/docker-compose.yml up -d
 
 ```
 kula/
-├── cmd/kula/
-│   └── main.go                 # CLI entry point, flag parsing, commands
+├── cmd/
+│   ├── kula/
+│   │   └── main.go             # CLI entry point, flag parsing, commands
+│   └── gen-mock-data/
+│       └── main.go             # Mock data generator utility
 ├── internal/
 │   ├── collector/              # Metric collectors (/proc, /sys readers)
 │   │   ├── collector.go        #   Orchestrator — gathers all metrics
@@ -262,6 +265,7 @@ kula/
 │   │   ├── disk.go             #   /proc/diskstats + /proc/mounts
 │   │   └── system.go           #   Uptime, entropy, hostname
 │   ├── config/                 # YAML config loader with defaults
+│   ├── sandbox/                # Linux Landlock sandboxing
 │   ├── storage/                # Tiered ring-buffer engine
 │   │   ├── store.go            #   Multi-tier coordinator + aggregation
 │   │   ├── tier.go             #   Single ring-buffer file
@@ -276,10 +280,12 @@ kula/
 │           ├── app.js          #     Charts, WebSocket, UI logic
 │           └── style.css       #     Dark theme, glassmorphism
 ├── addons/
+│   ├── inspect_tier.py         # Standalone Python script for reading tiers
 │   ├── build.sh                # Cross-compile (amd64/arm64/riscv64)
 │   ├── build_deb.sh            # Debian package builder
 │   ├── build_aur.sh            # Arch AUR PKGBUILD generator
 │   ├── check.sh                # Linting + testing
+│   ├── release.sh              # CI packaging wrapper
 │   ├── docker/                 # Dockerfile + compose
 │   └── init/                   # Service files (systemd/openrc/runit)
 ├── docs/
