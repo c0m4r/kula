@@ -48,10 +48,39 @@
                 <span id="hostname" class="hostname"></span>
             </div>
             <div class="header-right">
-                <span id="sys-os" class="sys-os" title="OS"></span>
-                <span id="sys-kernel" class="sys-kernel" title="Kernel"></span>
-                <span id="sys-arch" class="sys-arch" title="Arch"></span>
-                <span id="uptime" class="uptime"></span>
+                <!-- Info dropdown -->
+                <div class="alert-container" id="info-container">
+                    <button id="btn-info" class="btn-icon btn-info" title="System Info">📡</button>
+                    <div id="info-dropdown" class="alert-dropdown hidden">
+                        <div class="alert-dropdown-header">System Info</div>
+                        <div class="alert-list">
+                            <div class="alert-item">
+                                <div class="alert-item-body">
+                                    <div class="alert-item-title">OS</div>
+                                    <div class="alert-item-detail" id="sys-os"></div>
+                                </div>
+                            </div>
+                            <div class="alert-item">
+                                <div class="alert-item-body">
+                                    <div class="alert-item-title">Kernel</div>
+                                    <div class="alert-item-detail" id="sys-kernel"></div>
+                                </div>
+                            </div>
+                            <div class="alert-item">
+                                <div class="alert-item-body">
+                                    <div class="alert-item-title">Architecture</div>
+                                    <div class="alert-item-detail" id="sys-arch"></div>
+                                </div>
+                            </div>
+                            <div class="alert-item">
+                                <div class="alert-item-body">
+                                    <div class="alert-item-title">Uptime</div>
+                                    <div class="alert-item-detail" id="uptime"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <!-- Alert bell -->
                 <div class="alert-container" id="alert-container">
                     <button id="btn-alerts" class="btn-icon btn-alert" title="Alerts">

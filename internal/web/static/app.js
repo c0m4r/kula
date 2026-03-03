@@ -26,6 +26,7 @@
         loadingHistory: false,
         alerts: [],
         alertDropdownOpen: false,
+        infoDropdownOpen: false,
         timeDropdownOpen: false,
         layoutMode: localStorage.getItem('kula_layout') || 'grid',
         lastSample: null,
@@ -779,10 +780,19 @@
         }
     }
 
+    function toggleInfoDropdown() {
+        state.infoDropdownOpen = !state.infoDropdownOpen;
+        const dropdown = document.getElementById('info-dropdown');
+        if (state.infoDropdownOpen) {
+            dropdown.classList.remove('hidden');
+        } else {
+            dropdown.classList.add('hidden');
+        }
+    }
+
     // ---- Header / Subtitles ----
     function updateHeader(s) {
         const el = (id) => document.getElementById(id);
-        if (s.sys?.hostname) el('hostname').textContent = s.sys.hostname;
         if (s.sys?.uptime_human) el('uptime').textContent = '⏱ ' + s.sys.uptime_human;
         el('clock').textContent = new Date(s.ts).toLocaleTimeString();
 
@@ -1463,6 +1473,11 @@
                     const archEl = document.getElementById('sys-arch');
                     if (archEl) archEl.textContent = cfg.arch;
                 }
+                if (cfg.hostname) {
+                    const hostnameEl = document.getElementById('hostname');
+                    if (hostnameEl) hostnameEl.textContent = cfg.hostname;
+                    document.title = `KULA - ${cfg.hostname}`;
+                }
             })
             .catch(() => { });
 
@@ -1476,6 +1491,7 @@
         document.getElementById('btn-pause').addEventListener('click', togglePause);
         document.getElementById('btn-layout').addEventListener('click', toggleLayout);
         document.getElementById('btn-alerts').addEventListener('click', toggleAlertDropdown);
+        document.getElementById('btn-info').addEventListener('click', toggleInfoDropdown);
         document.getElementById('btn-time-menu').addEventListener('click', (e) => {
             e.stopPropagation();
             const list = document.getElementById('time-presets-list');
@@ -1507,9 +1523,13 @@
 
         // Close dropdowns when clicking outside
         document.addEventListener('click', (e) => {
-            if (state.alertDropdownOpen && !e.target.closest('.alert-container')) {
+            if (state.alertDropdownOpen && !e.target.closest('#alert-container')) {
                 state.alertDropdownOpen = false;
                 document.getElementById('alert-dropdown').classList.add('hidden');
+            }
+            if (state.infoDropdownOpen && !e.target.closest('#info-container')) {
+                state.infoDropdownOpen = false;
+                document.getElementById('info-dropdown').classList.add('hidden');
             }
             if (state.timeDropdownOpen && !e.target.closest('.time-presets')) {
                 state.timeDropdownOpen = false;
