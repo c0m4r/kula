@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -187,7 +188,7 @@ func (s *Server) createListeners() ([]net.Listener, error) {
 		}
 		ln6, err := net.Listen("tcp6", fmt.Sprintf("[::]:%d", port))
 		if err != nil {
-			ln4.Close()
+			_ = ln4.Close()
 			return nil, fmt.Errorf("ipv6 listen: %w", err)
 		}
 		return []net.Listener{ln4, ln6}, nil
@@ -294,6 +295,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	hostname, _ := os.Hostname()
 	info := map[string]interface{}{
 		"auth_enabled": s.cfg.Auth.Enabled,
 		"version":      s.cfg.Version,
@@ -301,6 +303,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"os":           s.cfg.OS,
 		"kernel":       s.cfg.Kernel,
 		"arch":         s.cfg.Arch,
+		"hostname":     hostname,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(info); err != nil {
