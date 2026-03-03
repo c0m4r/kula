@@ -4,15 +4,15 @@ _kula_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    commands="serve tui hash-password"
-    opts="--config --help"
+    commands="serve tui hash-password inspect"
+    opts="--config -config --help -h --version -version -v"
 
     if [[ ${cur} == -* ]] ; then
         COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
         return 0
     fi
 
-    if [[ ${prev} == "--config" ]] ; then
+    if [[ ${prev} == "--config" || ${prev} == "-config" ]] ; then
         COMPREPLY=( $(compgen -f -- ${cur}) )
         return 0
     fi
