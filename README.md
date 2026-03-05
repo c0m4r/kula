@@ -215,6 +215,15 @@ CGO_ENABLED=0 go build -o kula ./cmd/kula/
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -buildvcs=false -o kula ./cmd/kula/
 ```
 
+### Updating Dependencies
+
+To safely update only the Go modules used by Kula to their latest minor/patch versions, and prune any unused dependencies:
+
+```bash
+go get -u ./...
+go mod tidy
+```
+
 ### Testing & Benchmarks
 
 ```bash
@@ -226,6 +235,11 @@ bash addons/benchmark.sh
 
 # Shorter run for quick iteration
 bash addons/benchmark.sh 500ms
+
+# Python scripts formatter and linters
+black addons/*.py
+pylint addons/*.py
+mypy --strict addons/*.py
 ```
 
 Benchmarks cover the full storage engine: codec encode/decode, ring-buffer write throughput, concurrent writes, QueryRange at various sizes (small/large/wrapped), the `QueryLatest` cache vs cold-disk paths, multi-tier aggregation, and the inline downsampler.
