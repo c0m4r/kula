@@ -1290,10 +1290,54 @@
                     if (data.auth_required) {
                         document.getElementById('btn-logout')?.classList.remove('hidden');
                     }
+                    fetchConfig();
                     connectWS();
                 }
             })
-            .catch(() => connectWS()); // If auth check fails, try connecting anyway
+            .catch(() => {
+                fetchConfig();
+                connectWS();
+            }); // If auth check fails, try connecting anyway
+    }
+
+    function fetchConfig() {
+        fetch('/api/config')
+            .then(r => {
+                if (!r.ok) throw new Error('Unauthorized');
+                return r.json();
+            })
+            .then(cfg => {
+                if (cfg.join_metrics !== undefined) state.joinMetrics = cfg.join_metrics;
+                if (cfg.version) {
+                    const versionEl = document.getElementById('kula-version');
+                    if (versionEl) versionEl.textContent = 'v' + cfg.version;
+                }
+                if (cfg.os) {
+                    const osEl = document.getElementById('sys-os');
+                    if (osEl) osEl.textContent = cfg.os;
+                }
+                if (cfg.kernel) {
+                    const kernelEl = document.getElementById('sys-kernel');
+                    if (kernelEl) kernelEl.textContent = cfg.kernel;
+                }
+                if (cfg.arch) {
+                    const archEl = document.getElementById('sys-arch');
+                    if (archEl) archEl.textContent = cfg.arch;
+                }
+                if (cfg.hostname) {
+                    const hostnameEl = document.getElementById('hostname');
+                    if (hostnameEl) hostnameEl.textContent = cfg.hostname;
+                    document.title = `KULA - ${cfg.hostname}`;
+                }
+
+                console.log(
+                    '%c KULA-SZPIEGULA %c v' + (cfg.version || '0.0.0') + ' %c Welcome to your monitoring dashboard! ',
+                    'background: #0e1f2fff; color: #fff; border-radius: 3px 0 0 3px; padding: 3px 6px; font-weight: bold; font-family: sans-serif;',
+                    'background: #0b406eff; color: #fff; border-radius: 0 3px 3px 0; padding: 3px 6px; font-weight: bold; font-family: sans-serif;',
+                    'color: #000000ff; font-weight: 500; font-family: sans-serif; margin-left: 10px;'
+                );
+            })
+            .catch(() => { });
     }
 
     function handleLogin(e) {
@@ -1316,6 +1360,7 @@
                 document.getElementById('dashboard').style.filter = '';
                 document.getElementById('btn-logout')?.classList.remove('hidden');
                 errorEl.classList.add('hidden');
+                fetchConfig();
                 connectWS();
             })
             .catch(err => {
@@ -1598,41 +1643,6 @@
 
     // ---- Init ----
     function init() {
-        // Fetch server config for join_metrics
-        fetch('/api/config')
-            .then(r => r.json())
-            .then(cfg => {
-                if (cfg.join_metrics !== undefined) state.joinMetrics = cfg.join_metrics;
-                if (cfg.version) {
-                    const versionEl = document.getElementById('kula-version');
-                    if (versionEl) versionEl.textContent = 'v' + cfg.version;
-                }
-                if (cfg.os) {
-                    const osEl = document.getElementById('sys-os');
-                    if (osEl) osEl.textContent = cfg.os;
-                }
-                if (cfg.kernel) {
-                    const kernelEl = document.getElementById('sys-kernel');
-                    if (kernelEl) kernelEl.textContent = cfg.kernel;
-                }
-                if (cfg.arch) {
-                    const archEl = document.getElementById('sys-arch');
-                    if (archEl) archEl.textContent = cfg.arch;
-                }
-                if (cfg.hostname) {
-                    const hostnameEl = document.getElementById('hostname');
-                    if (hostnameEl) hostnameEl.textContent = cfg.hostname;
-                    document.title = `KULA - ${cfg.hostname}`;
-                }
-
-                console.log(
-                    '%c KULA-SZPIEGULA %c v' + (cfg.version || '0.0.0') + ' %c Welcome to your monitoring dashboard! ',
-                    'background: #0e1f2fff; color: #fff; border-radius: 3px 0 0 3px; padding: 3px 6px; font-weight: bold; font-family: sans-serif;',
-                    'background: #0b406eff; color: #fff; border-radius: 0 3px 3px 0; padding: 3px 6px; font-weight: bold; font-family: sans-serif;',
-                    'color: #000000ff; font-weight: 500; font-family: sans-serif; margin-left: 10px;'
-                );
-            })
-            .catch(() => { });
 
         // Apply stored layout
         applyLayout();
