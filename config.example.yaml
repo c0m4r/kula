@@ -22,7 +22,7 @@ storage:
 # Web UI settings
 web:
   enabled: true
-  listen: "0.0.0.0" # use [] brackets for IPv6 addresses, e.g. "[::1]"
+  listen: "127.0.0.1" # use [] brackets for IPv6 addresses, e.g. "[::1]"
   port: 8080
 
   # Trust X-Forwarded-Proto headers from reverse proxies for the Secure cookie flag
