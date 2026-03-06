@@ -165,6 +165,13 @@ func (a *AuthManager) ValidateSession(token, ip, userAgent string) bool {
 	return true
 }
 
+// RevokeSession manually destroys a session by its token.
+func (a *AuthManager) RevokeSession(token string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.sessions, token)
+}
+
 // AuthMiddleware protects routes when auth is enabled.
 func (a *AuthManager) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -173,10 +180,7 @@ func (a *AuthManager) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ip := r.Header.Get("X-Forwarded-For")
-		if ip == "" {
-			ip = r.RemoteAddr
-		}
+		ip := getClientIP(r)
 		userAgent := r.UserAgent()
 
 		// Check cookie

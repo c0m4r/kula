@@ -78,13 +78,28 @@ body {
     padding: 3rem;
     text-align: center;
     width: 360px;
+    max-width: 90vw;
     box-shadow: var(--shadow-lg), var(--shadow-glow);
     animation: fadeInUp 0.4s ease;
 }
 
+@media (max-width: 480px) {
+    .login-card {
+        padding: 2rem 1.5rem;
+    }
+}
+
 .login-logo {
-    font-size: 3rem;
+    display: flex;
+    justify-content: center;
     margin-bottom: 0.5rem;
+}
+
+.login-logo img {
+    max-width: 100px;
+    height: auto;
+    object-fit: contain;
+    filter: drop-shadow(0 0 0.05rem rgba(0, 237, 250, 0.5));
 }
 
 .login-card h1 {

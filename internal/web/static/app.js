@@ -1283,9 +1283,13 @@
                 if (data.auth_required && !data.authenticated) {
                     document.getElementById('login-overlay').classList.remove('hidden');
                     document.getElementById('dashboard').style.filter = 'blur(8px)';
+                    document.getElementById('btn-logout')?.classList.add('hidden');
                 } else {
                     document.getElementById('login-overlay').classList.add('hidden');
                     document.getElementById('dashboard').style.filter = '';
+                    if (data.auth_required) {
+                        document.getElementById('btn-logout')?.classList.remove('hidden');
+                    }
                     connectWS();
                 }
             })
@@ -1310,6 +1314,7 @@
             .then(() => {
                 document.getElementById('login-overlay').classList.add('hidden');
                 document.getElementById('dashboard').style.filter = '';
+                document.getElementById('btn-logout')?.classList.remove('hidden');
                 errorEl.classList.add('hidden');
                 connectWS();
             })
@@ -1317,6 +1322,29 @@
                 errorEl.textContent = err.message;
                 errorEl.classList.remove('hidden');
             });
+    }
+
+    function handleLogout() {
+        fetch('/api/logout', { method: 'POST' })
+            .then(() => {
+                if (state.ws) {
+                    state.ws.close();
+                }
+                document.getElementById('btn-logout')?.classList.add('hidden');
+                document.getElementById('login-overlay').classList.remove('hidden');
+                document.getElementById('dashboard').style.filter = 'blur(8px)';
+                document.getElementById('login-user').value = '';
+                document.getElementById('login-pass').value = '';
+                document.getElementById('login-error').classList.add('hidden');
+
+                // Clear state
+                state.dataBuffer = [];
+                state.liveQueue = [];
+                clearAllChartData();
+                updateAllCharts();
+                updateConnectionStatus(false);
+            })
+            .catch(err => console.error('Logout error:', err));
     }
 
     // ---- Utility ----
@@ -1625,6 +1653,7 @@
         });
         document.getElementById('btn-focus').addEventListener('click', toggleFocusMode);
         document.getElementById('login-form').addEventListener('submit', handleLogin);
+        document.getElementById('btn-logout')?.addEventListener('click', handleLogout);
         document.getElementById('btn-custom-range').addEventListener('click', toggleCustomTimePicker);
         document.getElementById('btn-apply-custom').addEventListener('click', applyCustomRange);
 

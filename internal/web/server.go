@@ -121,6 +121,7 @@ func (s *Server) Start() error {
 	apiMux.HandleFunc("/api/history", s.handleHistory)
 	apiMux.HandleFunc("/api/config", s.handleConfig)
 	apiMux.HandleFunc("/api/login", s.handleLogin)
+	apiMux.HandleFunc("/api/logout", s.handleLogout)
 	apiMux.HandleFunc("/api/auth/status", s.handleAuthStatus)
 
 	// Wrap apiMux with logging
@@ -131,6 +132,7 @@ func (s *Server) Start() error {
 
 	// Apply auth to API routes (except login and auth status)
 	mux.Handle("/api/login", loggedApiMux)
+	mux.Handle("/api/logout", loggedApiMux)
 	mux.Handle("/api/auth/status", loggedApiMux)
 	mux.Handle("/api/", s.auth.AuthMiddleware(loggedApiMux))
 	mux.Handle("/ws", s.auth.AuthMiddleware(loggedApiMux))
@@ -325,10 +327,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := r.Header.Get("X-Forwarded-For")
-	if ip == "" {
-		ip = r.RemoteAddr
-	}
+	ip := getClientIP(r)
 
 	if !s.auth.Limiter.Allow(ip) {
 		http.Error(w, `{"error":"too many requests"}`, http.StatusTooManyRequests)
@@ -371,6 +370,32 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("kula_session")
+	if err == nil && cookie.Value != "" {
+		s.auth.RevokeSession(cookie.Value)
+	}
+
+	// Delete the cookie on the client side
+	http.SetCookie(w, &http.Cookie{
+		Name:     "kula_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil || (s.cfg.TrustProxy && r.Header.Get("X-Forwarded-Proto") == "https"),
+		MaxAge:   -1,
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"logged out"}`))
+}
+
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	status := map[string]interface{}{
 		"auth_required": s.cfg.Auth.Enabled,
@@ -380,10 +405,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.Auth.Enabled {
 		status["authenticated"] = true
 	} else {
-		ip := r.Header.Get("X-Forwarded-For")
-		if ip == "" {
-			ip = r.RemoteAddr
-		}
+		ip := getClientIP(r)
 		userAgent := r.UserAgent()
 
 		cookie, err := r.Cookie("kula_session")
@@ -442,4 +464,18 @@ func (h *wsHub) broadcast(data []byte) {
 			}
 		}
 	}
+}
+
+// getClientIP extracts the real client IP, considering proxies and stripping ephemeral ports.
+func getClientIP(r *http.Request) string {
+	ip := r.Header.Get("X-Forwarded-For")
+	if ip != "" {
+		return ip
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr // fallback if it doesn't have a port for some reason
+	}
+	return host
 }
