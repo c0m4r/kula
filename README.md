@@ -313,12 +313,11 @@ kula/
 │   ├── build_deb.sh            # Debian package builder
 │   ├── build_aur.sh            # Arch AUR PKGBUILD generator
 │   ├── check.sh                # Linting + testing
+│   ├── kula.1                  # Man page
 │   ├── release.sh              # CI packaging wrapper
+│   ├── bash-completion/        # Bash completion script
 │   ├── docker/                 # Dockerfile + compose
 │   └── init/                   # Service files (systemd/openrc/runit)
-├── docs/
-│   ├── kula.1                  # Man page
-│   └── kula-completion.bash    # Bash completion
 ├── config.example.yaml
 ├── VERSION                     # Single source of truth for version
 ├── CHANGELOG

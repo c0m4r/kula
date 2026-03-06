@@ -1,2 +1,0 @@
-add config option for logging, with enable true/false (default true)
-and loglevel access/perf (default: perf), also update the changelog and readme to reflect all recent changes, including this

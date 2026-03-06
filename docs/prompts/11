@@ -1,2 +1,0 @@
-<websocket.go> IDE indicates a problem in Ln 69, Col 3 suggesting that should use for range instead of for { select {} }
-do you agree with that? if so can you make a change? and make sure that it won't break anything

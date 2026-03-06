@@ -1,5 +1,0 @@
-I think I saw version hardcoded in few places. Can we make sure it's read from one place - VERSION file?
-
-please re-write the README from scratch (leave only the image - the screenshot)
-make it nice looking, concise, but informative, describe the project, its features, all methods of installation,
-use and build, project structure and also elaborate on how it works under the hood - try to also visualize it with ascii

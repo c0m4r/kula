@@ -86,7 +86,7 @@ for f in CHANGELOG VERSION README.md SECURITY.md LICENSE config.example.yaml; do
 done
 
 # Compress and copy man page
-gzip -c docs/kula.1 > "${PKG_DIR}/usr/share/man/man1/kula.1.gz"
+gzip -c addons/kula.1 > "${PKG_DIR}/usr/share/man/man1/kula.1.gz"
 
 echo "Creating DEBIAN control file..."
 cat <<EOF > "${PKG_DIR}/DEBIAN/control"

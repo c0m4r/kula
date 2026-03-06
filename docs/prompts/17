@@ -1,1 +1,0 @@
-when I am on a preset window and zoom in I should see the range I selected in time-range-display, just like in case of custom range, otherwise when zooming from days to hours you don't know at what day you're at

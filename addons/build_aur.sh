@@ -71,7 +71,7 @@ package() {
   install -Dm644 addons/bash-completion/kula "\$pkgdir/usr/share/bash-completion/completions/kula"
 
   # Install man page
-  install -Dm644 docs/kula.1 "\$pkgdir/usr/share/man/man1/kula.1"
+  install -Dm644 addons/kula.1 "\$pkgdir/usr/share/man/man1/kula.1"
 
   # Install documentation
   for f in CHANGELOG VERSION README.md SECURITY.md LICENSE config.example.yaml; do
@@ -123,7 +123,7 @@ package() {
   install -Dm644 addons/bash-completion/kula "$pkgdir/usr/share/bash-completion/completions/kula"
 
   # Install man page
-  install -Dm644 docs/kula.1 "$pkgdir/usr/share/man/man1/kula.1"
+  install -Dm644 addons/kula.1 "$pkgdir/usr/share/man/man1/kula.1"
 
   # Install documentation
   for f in CHANGELOG VERSION README.md SECURITY.md LICENSE config.example.yaml; do
