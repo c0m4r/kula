@@ -2,8 +2,8 @@ package collector
 
 import (
 	"bufio"
-	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -15,7 +15,7 @@ func collectSystem() SystemStats {
 	s.Hostname, _ = os.Hostname()
 
 	// Uptime
-	if data, err := os.ReadFile("/proc/uptime"); err == nil {
+	if data, err := os.ReadFile(filepath.Join(procPath, "uptime")); err == nil {
 		fields := strings.Fields(string(data))
 		if len(fields) >= 1 {
 			s.Uptime = parseFloat(fields[0], 64, "system.uptime")
@@ -24,12 +24,12 @@ func collectSystem() SystemStats {
 	}
 
 	// Entropy
-	if data, err := os.ReadFile("/proc/sys/kernel/random/entropy_avail"); err == nil {
+	if data, err := os.ReadFile(filepath.Join(procPath, "sys/kernel/random/entropy_avail")); err == nil {
 		s.Entropy, _ = strconv.Atoi(strings.TrimSpace(string(data)))
 	}
 
 	// Clock source
-	if data, err := os.ReadFile("/sys/devices/system/clocksource/clocksource0/current_clocksource"); err == nil {
+	if data, err := os.ReadFile(filepath.Join(sysPath, "devices/system/clocksource/clocksource0/current_clocksource")); err == nil {
 		s.ClockSource = strings.TrimSpace(string(data))
 	}
 
@@ -44,7 +44,7 @@ func collectSystem() SystemStats {
 
 func checkClockSync() bool {
 	// Try timedatectl equivalent: check /run/systemd/timesync/synchronized
-	if _, err := os.Stat("/run/systemd/timesync/synchronized"); err == nil {
+	if _, err := os.Stat(filepath.Join(runPath, "systemd/timesync/synchronized")); err == nil {
 		return true
 	}
 	// As a fallback, check if chrony or ntp socket exists
@@ -100,7 +100,7 @@ func countLoggedInUsers() int {
 func countUsersFromProc() int {
 	seen := make(map[string]bool)
 
-	entries, err := os.ReadDir("/proc")
+	entries, err := os.ReadDir(procPath)
 	if err != nil {
 		return 0
 	}
@@ -114,7 +114,7 @@ func countUsersFromProc() int {
 			continue
 		}
 
-		statusPath := fmt.Sprintf("/proc/%s/status", pid)
+		statusPath := filepath.Join(procPath, pid, "status")
 		f, err := os.Open(statusPath)
 		if err != nil {
 			continue

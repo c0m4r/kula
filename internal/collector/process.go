@@ -10,7 +10,7 @@ import (
 func collectProcesses() ProcessStats {
 	ps := ProcessStats{}
 
-	entries, err := os.ReadDir("/proc")
+	entries, err := os.ReadDir(procPath)
 	if err != nil {
 		return ps
 	}
@@ -27,7 +27,7 @@ func collectProcesses() ProcessStats {
 		ps.Total++
 
 		// Read /proc/[pid]/stat for state
-		statPath := filepath.Join("/proc", entry.Name(), "stat")
+		statPath := filepath.Join(procPath, entry.Name(), "stat")
 		data, err := os.ReadFile(statPath)
 		if err != nil {
 			continue
@@ -53,7 +53,7 @@ func collectProcesses() ProcessStats {
 		}
 
 		// Count threads from /proc/[pid]/task
-		taskDir := filepath.Join("/proc", entry.Name(), "task")
+		taskDir := filepath.Join(procPath, entry.Name(), "task")
 		if tasks, err := os.ReadDir(taskDir); err == nil {
 			ps.Threads += len(tasks)
 		}

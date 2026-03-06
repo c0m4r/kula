@@ -3,6 +3,7 @@ package collector
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,7 +17,7 @@ type diskRaw struct {
 }
 
 func parseDiskStats() map[string]diskRaw {
-	f, err := os.Open("/proc/diskstats")
+	f, err := os.Open(filepath.Join(procPath, "diskstats"))
 	if err != nil {
 		return nil
 	}
@@ -116,7 +117,7 @@ func (c *Collector) collectDisks(elapsed float64) DiskStats {
 }
 
 func collectFileSystems() []FileSystemInfo {
-	f, err := os.Open("/proc/mounts")
+	f, err := os.Open(filepath.Join(procPath, "mounts"))
 	if err != nil {
 		return nil
 	}

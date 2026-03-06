@@ -2,6 +2,7 @@ package collector
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -14,7 +15,7 @@ func (c *Collector) collectSelf(elapsed float64) SelfStats {
 	s := SelfStats{}
 
 	// Read /proc/self/stat for CPU
-	data, err := os.ReadFile("/proc/self/stat")
+	data, err := os.ReadFile(filepath.Join(procPath, "self/stat"))
 	if err == nil {
 		content := string(data)
 		// Find fields after the command name (enclosed in parens)
@@ -41,7 +42,7 @@ func (c *Collector) collectSelf(elapsed float64) SelfStats {
 	}
 
 	// Read /proc/self/status for RSS memory
-	statusData, err := os.ReadFile("/proc/self/status")
+	statusData, err := os.ReadFile(filepath.Join(procPath, "self/status"))
 	if err == nil {
 		for _, line := range strings.Split(string(statusData), "\n") {
 			if strings.HasPrefix(line, "VmRSS:") {
@@ -52,7 +53,7 @@ func (c *Collector) collectSelf(elapsed float64) SelfStats {
 	}
 
 	// Count FDs
-	if fds, err := os.ReadDir("/proc/self/fd"); err == nil {
+	if fds, err := os.ReadDir(filepath.Join(procPath, "self/fd")); err == nil {
 		s.FDs = len(fds)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -15,7 +16,7 @@ type cpuRaw struct {
 }
 
 func parseProcStat() []cpuRaw {
-	f, err := os.Open("/proc/stat")
+	f, err := os.Open(filepath.Join(procPath, "stat"))
 	if err != nil {
 		return nil
 	}
@@ -121,7 +122,7 @@ func (c *Collector) collectCPU(_ float64) CPUStats {
 }
 
 func collectLoadAvg() LoadAvg {
-	data, err := os.ReadFile("/proc/loadavg")
+	data, err := os.ReadFile(filepath.Join(procPath, "loadavg"))
 	if err != nil {
 		return LoadAvg{}
 	}
@@ -173,7 +174,7 @@ func collectSwap() SwapStats {
 }
 
 func parseMemInfo() map[string]uint64 {
-	f, err := os.Open("/proc/meminfo")
+	f, err := os.Open(filepath.Join(procPath, "meminfo"))
 	if err != nil {
 		return nil
 	}

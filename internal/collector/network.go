@@ -3,6 +3,7 @@ package collector
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -15,7 +16,7 @@ type netRaw struct {
 }
 
 func parseNetDev() map[string]netRaw {
-	f, err := os.Open("/proc/net/dev")
+	f, err := os.Open(filepath.Join(procPath, "net/dev"))
 	if err != nil {
 		return nil
 	}
@@ -98,7 +99,7 @@ func (c *Collector) collectNetwork(elapsed float64) NetworkStats {
 // counters we actually display: tcp_inuse, tcp_tw, udp_inuse.
 func parseSocketStats() SocketStats {
 	ss := SocketStats{}
-	f, err := os.Open("/proc/net/sockstat")
+	f, err := os.Open(filepath.Join(procPath, "net/sockstat"))
 	if err != nil {
 		return ss
 	}
@@ -157,7 +158,7 @@ func (c *Collector) collectTCPStats(elapsed float64) TCPStats {
 
 // readTCPRaw reads the raw cumulative TCP counters from /proc/net/snmp.
 func readTCPRaw() tcpRaw {
-	f, err := os.Open("/proc/net/snmp")
+	f, err := os.Open(filepath.Join(procPath, "net/snmp"))
 	if err != nil {
 		return tcpRaw{}
 	}

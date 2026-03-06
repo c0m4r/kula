@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+var (
+	procPath = "/proc"
+	sysPath  = "/sys"
+	runPath  = "/run"
+)
+
 // Collector orchestrates all metric sub-collectors.
 type Collector struct {
 	mu       sync.RWMutex
