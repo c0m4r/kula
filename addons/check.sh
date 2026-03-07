@@ -10,8 +10,11 @@ cd "$(dirname "$0")/.."
 
 echo -e 
 if [ -x ~/go/bin/govulncheck ]; then
-    echo -e "${CYAN}Running govulncheck...${RESET}"
+    echo -e "${CYAN}Running local govulncheck...${RESET}"
     ~/go/bin/govulncheck ./...
+elif command -v govulncheck &>/dev/null; then
+    echo -e "${CYAN}Running system govulncheck...${RESET}"
+    govulncheck ./...
 else
     echo "Skipping govulncheck: not found" ; sleep 3
 fi
@@ -22,8 +25,11 @@ go vet ./...
 echo -e "${CYAN}Running go test...${RESET}"
 go test -v -race ./...
 
-if command -v golangci-lint &>/dev/null; then
-    echo -e "${CYAN}Running golangci-lint...${RESET}"
+if [ -x ~/go/bin/golangci-lint ]; then
+    echo -e "${CYAN}Running local golangci-lint...${RESET}"
+    ~/go/bin/golangci-lint run ./...
+elif command -v golangci-lint &>/dev/null; then
+    echo -e "${CYAN}Running system golangci-lint...${RESET}"
     golangci-lint run ./...
 else
     echo -e "${CYAN}Skipping golangci-lint (not installed)${RESET}"
