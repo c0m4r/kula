@@ -15,7 +15,7 @@ else
 fi
 
 PKG_NAME="kula"
-AUR_DIR="dist/aur"
+AUR_DIR="dist/kula-$VERSION-aur"
 
 # Choose between local and remote installation
 echo "Select installation source:"
@@ -30,6 +30,7 @@ mkdir -p "${AUR_DIR}"
 ### TODO: add checksum verification
 
 if [ "${SOURCE_CHOICE}" = "2" ]; then
+    echo "Using remote source (GitHub release tarball)"
     GITHUB_URL="https://github.com/c0m4r/kula"
     cat << EOF > "${AUR_DIR}/PKGBUILD"
 # Maintainer: c0m4r <https://github.com/c0m4r
@@ -93,6 +94,7 @@ package() {
 }
 EOF
 else
+    echo "Using local source (current source checkout)"
     cat << 'EOF' > "${AUR_DIR}/PKGBUILD"
 # Maintainer: c0m4r <https://github.com/c0m4r>
 pkgname=kula
