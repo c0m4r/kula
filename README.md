@@ -100,9 +100,9 @@ Check [Releases](https://github.com/c0m4r/kula/releases) for **ARM** and **RISC-
 ### Standalone
 
 ```bash
-wget https://github.com/c0m4r/kula/releases/download/0.7.1/kula-0.7.1-amd64.tar.gz
-echo "6baff6bee9f9bbf56adc6e264e7ff9e1dfa763e7bab76a21dbc1e7d4be0397f4 kula-0.7.1-amd64.tar.gz" | sha256sum -c || rm kula-0.7.1-amd64.tar.gz
-tar -xvf kula-0.7.1-amd64.tar.gz
+wget https://github.com/c0m4r/kula/releases/download/0.7.2/kula-0.7.2-amd64.tar.gz
+echo "dd35eac9681e6fb0f0a70607263347b6b77b1c4d04f36deb5361f7c8e50d01c6 kula-0.7.2-amd64.tar.gz" | sha256sum -c || rm kula-0.7.2-amd64.tar.gz
+tar -xvf kula-0.7.2-amd64.tar.gz
 cd kula
 ./kula
 ```
@@ -120,9 +120,9 @@ docker run --rm -it --name kula --pid host --network host -v /proc:/proc:ro c0m4
 ### Debian/Ubuntu
 
 ```bash
-wget https://github.com/c0m4r/kula/releases/download/0.7.1/kula_0.7.1_amd64.deb
-echo "bbcd6ee65441c85f5bc835c40a1afaabc78b78d976c25e535c051b29ad514185 kula_0.7.1_amd64.deb" | sha256sum -c || rm kula_0.7.1_amd64.deb
-sudo dpkg -i kula_0.7.1_amd64.deb
+wget https://github.com/c0m4r/kula/releases/download/0.7.2/kula_0.7.2_amd64.deb
+echo "51be1330fff5262a6541f1c60b749593abfc4dc82cb322a41d1ae2b15c81f758 kula_0.7.2_amd64.deb" | sha256sum -c || rm kula_0.7.2_amd64.deb
+sudo dpkg -i kula_0.7.2_amd64.deb
 systemctl status kula
 ```
 
