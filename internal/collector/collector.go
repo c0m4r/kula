@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"kula-szpiegula/internal/config"
 	"sync"
 	"time"
 )
@@ -15,6 +16,7 @@ var (
 // Collector orchestrates all metric sub-collectors.
 type Collector struct {
 	mu       sync.RWMutex
+	cfg      config.GlobalConfig
 	latest   *Sample
 	prevCPU  []cpuRaw
 	prevNet  map[string]netRaw
@@ -24,8 +26,9 @@ type Collector struct {
 	prevTime time.Time
 }
 
-func New() *Collector {
+func New(cfg config.GlobalConfig) *Collector {
 	return &Collector{
+		cfg:      cfg,
 		prevNet:  make(map[string]netRaw),
 		prevDisk: make(map[string]diskRaw),
 	}
@@ -56,7 +59,7 @@ func (c *Collector) Collect() *Sample {
 	s.Swap = collectSwap()
 	s.Network = c.collectNetwork(elapsed)
 	s.Disks = c.collectDisks(elapsed)
-	s.System = collectSystem()
+	s.System = c.collectSystem()
 	s.Process = collectProcesses()
 	s.Self = c.collectSelf(elapsed)
 

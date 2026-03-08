@@ -1383,6 +1383,12 @@
                     const versionEl = document.getElementById('kula-version');
                     if (versionEl) versionEl.textContent = 'v' + cfg.version;
                 }
+                if (cfg.show_system_info === false) {
+                    ['row-os', 'row-kernel', 'row-arch'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.classList.add('hidden');
+                    });
+                }
                 if (cfg.os) {
                     const osEl = document.getElementById('sys-os');
                     if (osEl) osEl.textContent = cfg.os;

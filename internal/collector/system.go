@@ -10,11 +10,15 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func collectSystem() SystemStats {
+func (c *Collector) collectSystem() SystemStats {
 	s := SystemStats{}
 
 	// Hostname
-	s.Hostname, _ = os.Hostname()
+	if c.cfg.Hostname != "" {
+		s.Hostname = c.cfg.Hostname
+	} else {
+		s.Hostname, _ = os.Hostname()
+	}
 
 	// Uptime
 	if data, err := os.ReadFile(filepath.Join(procPath, "uptime")); err == nil {

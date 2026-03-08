@@ -1,13 +1,17 @@
 package collector
 
-import "testing"
+import (
+	"kula-szpiegula/internal/config"
+	"testing"
+)
 
 func TestCollectSystem(t *testing.T) {
 	procPath = "testdata/proc"
 	sysPath = "testdata/sys"
 	runPath = "testdata/run"
 
-	sys := collectSystem()
+	c := New(config.GlobalConfig{})
+	sys := c.collectSystem()
 	if sys.Uptime != 123456.78 {
 		t.Errorf("unexpected uptime: %v", sys.Uptime)
 	}
@@ -37,7 +41,7 @@ func TestCollectProcesses(t *testing.T) {
 func TestCollectSelf(t *testing.T) {
 	procPath = "testdata/proc"
 
-	c := New()
+	c := New(config.GlobalConfig{})
 	self := c.collectSelf(1.0)
 	if self.FDs != 1 {
 		t.Errorf("expected 1 FD, got %d", self.FDs)

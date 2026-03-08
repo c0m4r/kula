@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"kula-szpiegula/internal/config"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func TestCollectLoadAvg(t *testing.T) {
 func TestCollectCPU(t *testing.T) {
 	procPath = "testdata/proc"
 
-	c := New()
+	c := New(config.GlobalConfig{})
 	// First collect sets baseline
 	stats := c.collectCPU(1.0)
 	if stats.NumCores != 2 {

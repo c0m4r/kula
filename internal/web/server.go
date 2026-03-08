@@ -23,9 +23,9 @@ import (
 //go:embed static
 var staticFS embed.FS
 
-// Server is the HTTP/WebSocket server for the web UI.
 type Server struct {
 	cfg       config.WebConfig
+	global    config.GlobalConfig
 	collector *collector.Collector
 	store     *storage.Store
 	auth      *AuthManager
@@ -33,9 +33,10 @@ type Server struct {
 	httpSrv   *http.Server
 }
 
-func NewServer(cfg config.WebConfig, c *collector.Collector, s *storage.Store, storageDir string) *Server {
+func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Collector, s *storage.Store, storageDir string) *Server {
 	srv := &Server{
 		cfg:       cfg,
+		global:    global,
 		collector: c,
 		store:     s,
 		auth:      NewAuthManager(cfg.Auth, storageDir, cfg.TrustProxy),
@@ -298,15 +299,20 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	hostname, _ := os.Hostname()
+	hostname := s.global.Hostname
+	if hostname == "" {
+		hostname, _ = os.Hostname()
+	}
+
 	info := map[string]interface{}{
-		"auth_enabled": s.cfg.Auth.Enabled,
-		"version":      s.cfg.Version,
-		"join_metrics": s.cfg.JoinMetrics,
-		"os":           s.cfg.OS,
-		"kernel":       s.cfg.Kernel,
-		"arch":         s.cfg.Arch,
-		"hostname":     hostname,
+		"auth_enabled":     s.cfg.Auth.Enabled,
+		"version":          s.cfg.Version,
+		"join_metrics":     s.cfg.JoinMetrics,
+		"os":               s.cfg.OS,
+		"kernel":           s.cfg.Kernel,
+		"arch":             s.cfg.Arch,
+		"hostname":         hostname,
+		"show_system_info": s.global.ShowSystemInfo,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(info); err != nil {

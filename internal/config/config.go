@@ -11,10 +11,16 @@ import (
 )
 
 type Config struct {
+	Global     GlobalConfig     `yaml:"global"`
 	Collection CollectionConfig `yaml:"collection"`
 	Storage    StorageConfig    `yaml:"storage"`
 	Web        WebConfig        `yaml:"web"`
 	TUI        TUIConfig        `yaml:"tui"`
+}
+
+type GlobalConfig struct {
+	Hostname       string `yaml:"hostname"`
+	ShowSystemInfo bool   `yaml:"show_system_info"`
 }
 
 type CollectionConfig struct {
@@ -82,6 +88,9 @@ func isWritable(dir string) bool {
 
 func DefaultConfig() *Config {
 	return &Config{
+		Global: GlobalConfig{
+			ShowSystemInfo: true,
+		},
 		Collection: CollectionConfig{
 			Interval: time.Second,
 		},

@@ -65,25 +65,27 @@ var (
 type tickMsg time.Time
 
 type Model struct {
-	collector *collector.Collector
-	sample    *collector.Sample
-	width     int
-	height    int
-	interval  time.Duration
-	os        string
-	kernel    string
-	arch      string
+	collector      *collector.Collector
+	sample         *collector.Sample
+	width          int
+	height         int
+	interval       time.Duration
+	os             string
+	kernel         string
+	arch           string
+	showSystemInfo bool
 }
 
-func NewModel(c *collector.Collector, interval time.Duration, osName, kernel, arch string) Model {
+func NewModel(c *collector.Collector, interval time.Duration, osName, kernel, arch string, showSystemInfo bool) Model {
 	return Model{
-		collector: c,
-		interval:  interval,
-		width:     120,
-		height:    40,
-		os:        osName,
-		kernel:    kernel,
-		arch:      arch,
+		collector:      c,
+		interval:       interval,
+		width:          120,
+		height:         40,
+		os:             osName,
+		kernel:         kernel,
+		arch:           arch,
+		showSystemInfo: showSystemInfo,
 	}
 }
 
@@ -129,8 +131,12 @@ func (m Model) View() string {
 	var lines []string
 
 	// ── Title bar ────────────────────────────────────────────
-	header := fmt.Sprintf(" 🔮 KULA-SZPIEGULA │ %s │ %s │ %s │ %s │ ⏱ %s │ %s ",
-		s.System.Hostname, m.os, m.kernel, m.arch, s.System.UptimeHuman, s.Timestamp.Format("15:04:05"))
+	sysInfo := ""
+	if m.showSystemInfo {
+		sysInfo = fmt.Sprintf(" │ %s │ %s │ %s", m.os, m.kernel, m.arch)
+	}
+	header := fmt.Sprintf(" 🔮 KULA-SZPIEGULA │ %s%s │ %s │ %s ",
+		s.System.Hostname, sysInfo, s.System.UptimeHuman, s.Timestamp.Format("15:04:05"))
 	lines = append(lines, titleStyle.Width(m.width).Render(header))
 	lines = append(lines, "")
 
@@ -374,13 +380,13 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func Run(c *collector.Collector, interval time.Duration, osName, kernel, arch string) error {
-	m := NewModel(c, interval, osName, kernel, arch)
+func Run(c *collector.Collector, interval time.Duration, osName, kernel, arch string, showSystemInfo bool) error {
+	m := NewModel(c, interval, osName, kernel, arch, showSystemInfo)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
 
-func RunHeadless(c *collector.Collector, interval time.Duration, osName, kernel, arch string) error {
-	return Run(c, interval, osName, kernel, arch)
+func RunHeadless(c *collector.Collector, interval time.Duration, osName, kernel, arch string, showSystemInfo bool) error {
+	return Run(c, interval, osName, kernel, arch, showSystemInfo)
 }

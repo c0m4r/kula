@@ -1,5 +1,12 @@
 # Kula-Szpiegula Configuration
 
+# Global settings
+global:
+  # Overwrite reports hostname (default: system hostname)
+  hostname: ""
+  # Toggle display of OS, Kernel, and Architecture (default: true)
+  show_system_info: true
+
 # Data collection settings
 collection:
   interval: 1s

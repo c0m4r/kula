@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"kula-szpiegula/internal/config"
 	"testing"
 )
 
@@ -42,7 +43,7 @@ func TestReadTCPRaw(t *testing.T) {
 func TestCollectNetwork(t *testing.T) {
 	procPath = "testdata/proc"
 
-	c := New()
+	c := New(config.GlobalConfig{})
 	// First collect sets baseline
 	stats := c.collectNetwork(1.0)
 	if len(stats.Interfaces) != 1 {

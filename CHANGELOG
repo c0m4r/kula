@@ -13,6 +13,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 - More installation methods
 - Initial implementation of CPU thermal monitoring
+- New config options to override hostname and enable/disable system info
 
 ### Changed
 

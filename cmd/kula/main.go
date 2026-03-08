@@ -90,6 +90,12 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	if !cfg.Global.ShowSystemInfo {
+		osName = "Hidden"
+		kernelVersion = "Hidden"
+		cpuArch = "Hidden"
+	}
+
 	switch cmd {
 	case "serve":
 		runServe(cfg, *configPath, osName, kernelVersion, cpuArch)
@@ -108,7 +114,7 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 	cfg.Web.OS = osName
 	cfg.Web.Kernel = kernelVersion
 	cfg.Web.Arch = cpuArch
-	coll := collector.New()
+	coll := collector.New(cfg.Global)
 
 	store, err := storage.NewStore(cfg.Storage)
 	if err != nil {
@@ -122,7 +128,7 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 		log.Printf("Warning: Landlock sandbox not enforced: %v", err)
 	}
 
-	server := web.NewServer(cfg.Web, coll, store, cfg.Storage.Directory)
+	server := web.NewServer(cfg.Web, cfg.Global, coll, store, cfg.Storage.Directory)
 
 	// Signal handling with Context
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -175,8 +181,8 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 }
 
 func runTUI(cfg *config.Config, osName, kernelVersion, cpuArch string) {
-	coll := collector.New()
-	if err := tui.RunHeadless(coll, cfg.TUI.RefreshRate, osName, kernelVersion, cpuArch); err != nil {
+	coll := collector.New(cfg.Global)
+	if err := tui.RunHeadless(coll, cfg.TUI.RefreshRate, osName, kernelVersion, cpuArch, cfg.Global.ShowSystemInfo); err != nil {
 		log.Fatalf("TUI error: %v", err)
 	}
 }
