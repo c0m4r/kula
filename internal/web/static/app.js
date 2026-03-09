@@ -155,8 +155,6 @@
                 if (cpuTemp >= 85) tempEl.style.color = colors.red;
                 else if (cpuTemp >= 70) tempEl.style.color = colors.orange;
                 else tempEl.style.color = 'var(--text-muted)';
-            } else {
-                tempEl.classList.add('hidden');
             }
         }
 
@@ -466,8 +464,6 @@
                 }
                 state.charts.cputemp.data.datasets[0].data.push(point(s.cpu.temp));
             }
-        } else if (tempCard && !tempCard.classList.contains('hidden')) {
-            tempCard.classList.add('hidden');
         }
 
         // Load Average
@@ -1154,6 +1150,18 @@
         const name = tierNames[tier] || `Tier ${tier + 1}`;
         el.textContent = `${resolution} samples · ${name}`;
         state.currentResolution = resolution || '1s';
+
+        const aggList = document.getElementById('agg-presets-list');
+        const aggDiv = document.getElementById('agg-divider');
+        if (aggList && aggDiv) {
+            if (tier === 0 && resolution === '1s') {
+                aggList.classList.add('hidden');
+                aggDiv.classList.add('hidden');
+            } else {
+                aggList.classList.remove('hidden');
+                aggDiv.classList.remove('hidden');
+            }
+        }
     }
 
     function fetchHistory(rangeSeconds) {
