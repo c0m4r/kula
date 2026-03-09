@@ -2,17 +2,6 @@
 
 set -e
 
-# BETA WARNING
-echo -e "${YELLOW}Warning: This script is in beta and might not work as expected.${NC}"
-echo ""
-
-read -p "Do you want to continue? [y/N] " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo -e "${RED}Installation aborted.${NC}"
-    exit 1
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd ${SCRIPT_DIR}/..
 

@@ -35,7 +35,7 @@ cd ..
 # building deb and rpm packages for all archs
 for arch in amd64 arm64 riscv64; do
     ./addons/build_deb.sh "$arch"
-    #./addons/build_rpm.sh "$arch"
+    ./addons/build_rpm.sh "$arch"
 done
 
 # generate AUR files
