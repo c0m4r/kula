@@ -16,6 +16,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Changed
 
 - Storage optimization: Round values to 2 decimal points
+- Expanded graph is lava (move other graphs out of the way)
+- Minor UX enhancements
 
 ## [0.7.4] - 2026-03-09
 

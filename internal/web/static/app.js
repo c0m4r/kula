@@ -1584,10 +1584,56 @@
     function toggleExpandChart(cardId) {
         const card = document.getElementById(cardId);
         if (!card) return;
+
+        const grid = document.getElementById('charts-grid');
+        // Capture all currently visible cards
+        const visibleCards = Array.from(grid.querySelectorAll('.chart-card:not(.hidden)'));
+        const isExpanding = !card.classList.contains('chart-expanded');
+
+        if (isExpanding) {
+            // Baseline orders to DOM index if no cards are currently expanded
+            const hasAnyExpanded = visibleCards.some(c => c.classList.contains('chart-expanded'));
+            if (!hasAnyExpanded) {
+                visibleCards.forEach((c, idx) => {
+                    c.style.order = (idx + 1) * 10;
+                });
+            }
+
+            // Find all cards physically aligned on the same row vertically
+            const myTop = card.offsetTop;
+            const sameRowCards = visibleCards.filter(c => Math.abs(c.offsetTop - myTop) < 10);
+
+            if (sameRowCards.length > 0) {
+                // Sort by physical horizontal offset to reliably find the first one on this row
+                sameRowCards.sort((a, b) => a.offsetLeft - b.offsetLeft);
+                const firstInRow = sameRowCards[0];
+
+                // Extract its current order or construct it
+                const firstOrder = parseInt(firstInRow.style.order) || ((visibleCards.indexOf(firstInRow) + 1) * 10);
+
+                // Jump the expanding card to the front of this logical row, pushing others down
+                card.style.order = firstOrder - 5;
+            }
+        }
+
         const isExpanded = card.classList.toggle('chart-expanded');
+
+        if (!isExpanded) {
+            // Restore natural DOM sequence order manually
+            const domIndex = visibleCards.indexOf(card);
+            card.style.order = (domIndex + 1) * 10;
+
+            // Optional cleanup - if no expanders remain, clear inline orders entirely
+            const hasAnyExpanded = visibleCards.some(c => c.classList.contains('chart-expanded'));
+            if (!hasAnyExpanded) {
+                visibleCards.forEach(c => c.style.order = '');
+            }
+        }
+
         const btn = card.querySelector('.btn-expand-chart');
         if (btn) btn.title = isExpanded ? 'Collapse chart' : 'Expand chart';
-        if (btn) btn.textContent = isExpanded ? '✖️' : '🔍';
+        if (btn) btn.textContent = isExpanded ? '🔍' : '🔍';
+
         // Resize the Chart.js instance so it fills the new dimensions
         const canvas = card.querySelector('canvas');
         if (canvas) {
