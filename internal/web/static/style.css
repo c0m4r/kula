@@ -49,6 +49,12 @@ body.light-mode {
     --chart-text: #64748b;
 }
 
+body.light-mode .hostname,
+body.light-mode .sampling-info {
+    background: none;
+    color: inherit;
+}
+
 *,
 *::before,
 *::after {
