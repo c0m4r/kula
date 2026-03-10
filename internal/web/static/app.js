@@ -1405,18 +1405,20 @@
                     if (data.auth_required) {
                         document.getElementById('btn-logout')?.classList.remove('hidden');
                     }
-                    fetchConfig();
-                    connectWS();
+                    fetchConfig().finally(() => {
+                        connectWS();
+                    });
                 }
             })
             .catch(() => {
-                fetchConfig();
-                connectWS();
+                fetchConfig().finally(() => {
+                    connectWS();
+                });
             }); // If auth check fails, try connecting anyway
     }
 
     function fetchConfig() {
-        fetch('/api/config')
+        return fetch('/api/config')
             .then(r => {
                 if (!r.ok) throw new Error('Unauthorized');
                 return r.json();
