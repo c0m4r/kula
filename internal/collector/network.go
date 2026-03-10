@@ -15,7 +15,7 @@ type netRaw struct {
 	rxDrop, txDrop   uint64
 }
 
-func parseNetDev() map[string]netRaw {
+func (c *Collector) parseNetDev() map[string]netRaw {
 	f, err := os.Open(filepath.Join(procPath, "net/dev"))
 	if err != nil {
 		return nil
@@ -39,6 +39,20 @@ func parseNetDev() map[string]netRaw {
 		if strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "br-") {
 			continue
 		}
+
+		if len(c.collCfg.Interfaces) > 0 {
+			allowed := false
+			for _, allowedIface := range c.collCfg.Interfaces {
+				if allowedIface == name {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
+		}
+
 		fields := strings.Fields(parts[1])
 		if len(fields) < 16 {
 			continue
@@ -58,7 +72,7 @@ func parseNetDev() map[string]netRaw {
 }
 
 func (c *Collector) collectNetwork(elapsed float64) NetworkStats {
-	current := parseNetDev()
+	current := c.parseNetDev()
 	stats := NetworkStats{}
 
 	for name, cur := range current {

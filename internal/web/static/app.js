@@ -38,9 +38,15 @@
         currentResolution: '1s', // resolution of data currently loaded in charts
         liveQueue: [],        // samples buffered while history is loading
         theme: localStorage.getItem('kula_theme') || 'dark',
-        diskSpaceMountNames: [], // mount names matching diskspace chart datasets
-        cpuTempSensorNames: [], // sensor names matching cpu temp chart datasets
+        diskSpaceMountNames: [], // Not used as datasets anymore, but kept for compatibility
+        cpuTempSensorNames: [],
         currentAggregation: localStorage.getItem('kula_aggregation') || 'avg',
+        selectedNet: localStorage.getItem('kula_sel_net') || null,
+        selectedDiskIo: localStorage.getItem('kula_sel_diskio') || null,
+        selectedDiskSpace: localStorage.getItem('kula_sel_diskspace') || null,
+        netOptions: [],
+        diskIoOptions: [],
+        diskSpaceOptions: [],
         configMax: {}, // loaded from server /api/config
         lastHistoricalTs: null,
     };
@@ -532,19 +538,31 @@
             }
         }
 
-        // Network (sum non-lo)
+        // Network (selected non-lo interface)
         if (state.charts.network && s.net?.ifaces) {
             let rx = 0, tx = 0;
-            s.net.ifaces.forEach(i => { if (i.name !== 'lo') { rx += i.rx_mbps || 0; tx += i.tx_mbps || 0; } });
-
+            const iface = s.net.ifaces.find(i => i.name === state.selectedNet);
+            if (iface) {
+                rx = iface.rx_mbps || 0;
+                tx = iface.tx_mbps || 0;
+            } else if (!state.selectedNet && s.net.ifaces.length > 0) {
+                // Sum all if nothing selected
+                s.net.ifaces.forEach(i => { if (i.name !== 'lo') { rx += i.rx_mbps || 0; tx += i.tx_mbps || 0; } });
+            }
             state.charts.network.data.datasets[0].data.push(point(rx));
             state.charts.network.data.datasets[1].data.push(point(tx));
         }
 
-        // Packets per second (sum non-lo)
+        // Packets per second (selected non-lo interface)
         if (state.charts.pps && s.net?.ifaces) {
             let rxPps = 0, txPps = 0;
-            s.net.ifaces.forEach(i => { if (i.name !== 'lo') { rxPps += i.rx_pps || 0; txPps += i.tx_pps || 0; } });
+            const iface = s.net.ifaces.find(i => i.name === state.selectedNet);
+            if (iface) {
+                rxPps = iface.rx_pps || 0;
+                txPps = iface.tx_pps || 0;
+            } else if (!state.selectedNet && s.net.ifaces.length > 0) {
+                s.net.ifaces.forEach(i => { if (i.name !== 'lo') { rxPps += i.rx_pps || 0; txPps += i.tx_pps || 0; } });
+            }
             state.charts.pps.data.datasets[0].data.push(point(rxPps));
             state.charts.pps.data.datasets[1].data.push(point(txPps));
         }
@@ -559,54 +577,52 @@
             state.charts.connections.data.datasets[5].data.push(point(s.net?.tcp?.out_rsts_ps || 0));
         }
 
-        // Disk I/O (sum all devices) — bandwidth + IOPS
+        // Disk I/O (selected device)
         if (state.charts.diskio && s.disk?.devices) {
             let rBps = 0, wBps = 0, rIops = 0, wIops = 0;
-            s.disk.devices.forEach(d => {
-                rBps += d.read_bps || 0;
-                wBps += d.write_bps || 0;
-                rIops += d.reads_ps || 0;
-                wIops += d.writes_ps || 0;
-            });
+            const d = s.disk.devices.find(d => d.name === state.selectedDiskIo);
+            if (d) {
+                rBps = d.read_bps || 0;
+                wBps = d.write_bps || 0;
+                rIops = d.reads_ps || 0;
+                wIops = d.writes_ps || 0;
+            } else if (!state.selectedDiskIo && s.disk.devices.length > 0) {
+                s.disk.devices.forEach(d => {
+                    rBps += d.read_bps || 0;
+                    wBps += d.write_bps || 0;
+                    rIops += d.reads_ps || 0;
+                    wIops += d.writes_ps || 0;
+                });
+            }
             state.charts.diskio.data.datasets[0].data.push(point(rBps));
             state.charts.diskio.data.datasets[1].data.push(point(wBps));
             state.charts.diskio.data.datasets[2].data.push(point(rIops));
             state.charts.diskio.data.datasets[3].data.push(point(wIops));
         }
 
-
-
-        // Disk Space — one dataset per mount, created dynamically
+        // Disk Space — single dataset for selected mount
         if (state.charts.diskspace && s.disk?.filesystems && s.disk.filesystems.length > 0) {
-            const diskColorPairs = [
-                [colors.purple, colors.purpleAlpha],
-                [colors.cyan, colors.cyanAlpha],
-                [colors.orange, colors.orangeAlpha],
-                [colors.green, colors.greenAlpha],
-                [colors.pink, colors.pinkAlpha],
-                [colors.yellow, colors.yellowAlpha],
-                [colors.blue, colors.blueAlpha],
-                [colors.teal, colors.tealAlpha],
-                [colors.lime, colors.limeAlpha],
-                [colors.red, colors.redAlpha],
-            ];
-            const incomingMounts = s.disk.filesystems.map(f => f.mount);
-            if (incomingMounts.join(',') !== state.diskSpaceMountNames.join(',')) {
-                state.diskSpaceMountNames = incomingMounts;
-                state.charts.diskspace.data.datasets = incomingMounts.map((mount, i) => ({
-                    label: mount,
-                    borderColor: diskColorPairs[i % diskColorPairs.length][0],
-                    backgroundColor: diskColorPairs[i % diskColorPairs.length][1],
-                    fill: false,
+            if (state.charts.diskspace.data.datasets.length !== 1 || state.charts.diskspace.data.datasets[0].label !== 'Space Used %') {
+                state.charts.diskspace.data.datasets = [{
+                    label: 'Space Used %',
+                    borderColor: colors.purple,
+                    backgroundColor: colors.purpleAlpha,
+                    fill: true,
                     data: [],
                     pointHitRadius: 5,
-                }));
+                }];
             }
-            s.disk.filesystems.forEach((f, i) => {
-                if (i < state.charts.diskspace.data.datasets.length) {
-                    state.charts.diskspace.data.datasets[i].data.push({ x: ts, y: f.used_pct, used: f.used, total: f.total });
-                }
-            });
+            let usedPct = 0, used = 0, total = 0;
+            const fs = s.disk.filesystems.find(f => f.mount === state.selectedDiskSpace);
+            if (fs) {
+                usedPct = fs.used_pct || 0;
+                used = fs.used || 0;
+                total = fs.total || 0;
+            } else if (!state.selectedDiskSpace) {
+                s.disk.filesystems.forEach(f => { used += f.used || 0; total += f.total || 0; });
+                if (total > 0) usedPct = (used / total) * 100;
+            }
+            state.charts.diskspace.data.datasets[0].data.push({ x: ts, y: usedPct, used, total });
         }
 
         // Processes
@@ -638,6 +654,118 @@
         });
     }
 
+    // Redraw charts from the active buffer (used when selected devices change)
+    function redrawChartsFromBuffer() {
+        clearAllChartData();
+        state.dataBuffer.forEach(item => {
+            if (item._gap) {
+                addGapToCharts(new Date(item.ts));
+                return;
+            }
+            const timestampSrc = item.data || item;
+            const ts = new Date(timestampSrc.ts || item.ts);
+            addSampleToCharts(item.data || item, ts);
+        });
+        updateAllCharts();
+
+        // Also update subtitles and gauges with the latest buffer item
+        if (state.lastSample) {
+            updateSubtitles(state.lastSample);
+            updateSelectors(state.lastSample);
+        }
+    }
+
+    function updateSelectors(s) {
+        if (s.net && s.net.ifaces) {
+            const ifaces = s.net.ifaces.map(i => i.name).sort();
+            if (ifaces.join(',') !== state.netOptions.join(',')) {
+                state.netOptions = ifaces;
+                const selNet = el('net-selector');
+                const selPps = el('pps-selector');
+
+                if (!state.selectedNet || !ifaces.includes(state.selectedNet)) {
+                    state.selectedNet = ifaces.find(i => i !== 'lo') || ifaces[0] || '';
+                    localStorage.setItem('kula_sel_net', state.selectedNet);
+                }
+
+                let html = '';
+                ifaces.forEach(i => html += `<option value="${i}">${i}</option>`);
+
+                if (selNet) {
+                    selNet.innerHTML = html;
+                    selNet.value = state.selectedNet;
+                    selNet.classList.remove('hidden');
+                    selNet.onchange = (e) => {
+                        state.selectedNet = e.target.value;
+                        if (selPps) selPps.value = state.selectedNet;
+                        localStorage.setItem('kula_sel_net', state.selectedNet);
+                        redrawChartsFromBuffer();
+                    };
+                }
+
+                if (selPps) {
+                    selPps.innerHTML = html;
+                    selPps.value = state.selectedNet;
+                    selPps.classList.remove('hidden');
+                    selPps.onchange = (e) => {
+                        state.selectedNet = e.target.value;
+                        if (selNet) selNet.value = state.selectedNet;
+                        localStorage.setItem('kula_sel_net', state.selectedNet);
+                        redrawChartsFromBuffer();
+                    };
+                }
+            }
+        }
+
+        if (s.disk && s.disk.devices) {
+            const devs = s.disk.devices.map(d => d.name).sort();
+            if (devs.join(',') !== state.diskIoOptions.join(',')) {
+                state.diskIoOptions = devs;
+                const sel = el('diskio-selector');
+                if (sel) {
+                    if (!state.selectedDiskIo || !devs.includes(state.selectedDiskIo)) {
+                        state.selectedDiskIo = devs[0] || '';
+                        localStorage.setItem('kula_sel_diskio', state.selectedDiskIo);
+                    }
+                    let html = '';
+                    devs.forEach(d => html += `<option value="${d}">${d}</option>`);
+                    sel.innerHTML = html;
+                    sel.value = state.selectedDiskIo;
+                    sel.classList.remove('hidden');
+                    sel.onchange = (e) => {
+                        state.selectedDiskIo = e.target.value;
+                        localStorage.setItem('kula_sel_diskio', state.selectedDiskIo);
+                        redrawChartsFromBuffer();
+                    };
+                }
+            }
+        }
+
+        if (s.disk && s.disk.filesystems) {
+            const mounts = s.disk.filesystems.map(f => f.mount).sort();
+            if (mounts.join(',') !== state.diskSpaceOptions.join(',')) {
+                state.diskSpaceOptions = mounts;
+                const sel = el('diskspace-selector');
+                if (sel) {
+                    if (!state.selectedDiskSpace || !mounts.includes(state.selectedDiskSpace)) {
+                        state.selectedDiskSpace = mounts.includes('/') ? '/' : (mounts[0] || '');
+                        localStorage.setItem('kula_sel_diskspace', state.selectedDiskSpace);
+                    }
+                    let html = '';
+                    mounts.forEach(m => html += `<option value="${m}">${m}</option>`);
+                    sel.innerHTML = html;
+                    sel.value = state.selectedDiskSpace;
+                    sel.classList.remove('hidden');
+                    sel.onchange = (e) => {
+                        state.selectedDiskSpace = e.target.value;
+                        localStorage.setItem('kula_sel_diskspace', state.selectedDiskSpace);
+                        redrawChartsFromBuffer();
+                    };
+                }
+            }
+        }
+    }
+
     // Push a single live sample — adds data + updates charts immediately
     function pushLiveSample(sample) {
         const ts = new Date(sample.ts);
@@ -647,6 +775,7 @@
             state.dataBuffer.shift();
         }
 
+        updateSelectors(sample);
         updateGauges(sample);
         updateHeader(sample);
         addSampleToCharts(sample, ts); // For live sample, item is the sample itself
@@ -985,12 +1114,18 @@
         }
         if (s.net?.ifaces) {
             let rx = 0, tx = 0, rxPps = 0, txPps = 0;
-            s.net.ifaces.forEach(i => {
-                if (i.name !== 'lo') {
-                    rx += i.rx_mbps || 0; tx += i.tx_mbps || 0;
-                    rxPps += i.rx_pps || 0; txPps += i.tx_pps || 0;
-                }
-            });
+            const iface = s.net.ifaces.find(i => i.name === state.selectedNet);
+            if (iface) {
+                rx = iface.rx_mbps || 0; tx = iface.tx_mbps || 0;
+                rxPps = iface.rx_pps || 0; txPps = iface.tx_pps || 0;
+            } else if (!state.selectedNet) {
+                s.net.ifaces.forEach(i => {
+                    if (i.name !== 'lo') {
+                        rx += i.rx_mbps || 0; tx += i.tx_mbps || 0;
+                        rxPps += i.rx_pps || 0; txPps += i.tx_pps || 0;
+                    }
+                });
+            }
             el('net-subtitle', `↓${formatMbps(rx)} ↑${formatMbps(tx)}`);
             el('pps-subtitle', `↓${formatPPS(rxPps)} ↑${formatPPS(txPps)}`);
         }
@@ -1001,20 +1136,29 @@
         }
         if (s.disk?.devices) {
             let r = 0, w = 0, rIops = 0, wIops = 0;
-            s.disk.devices.forEach(d => {
-                r += d.read_bps || 0;
-                w += d.write_bps || 0;
-                rIops += d.reads_ps || 0;
-                wIops += d.writes_ps || 0;
-            });
+            const d = s.disk.devices.find(d => d.name === state.selectedDiskIo);
+            if (d) {
+                r = d.read_bps || 0; w = d.write_bps || 0;
+                rIops = d.reads_ps || 0; wIops = d.writes_ps || 0;
+            } else if (!state.selectedDiskIo) {
+                s.disk.devices.forEach(d => {
+                    r += d.read_bps || 0; w += d.write_bps || 0;
+                    rIops += d.reads_ps || 0; wIops += d.writes_ps || 0;
+                });
+            }
             el('diskio-subtitle', `R:${formatBytesShort(r)}/s W:${formatBytesShort(w)}/s  rIOPS:${rIops.toFixed(0)} wIOPS:${wIops.toFixed(0)}`);
         }
         if (s.disk?.filesystems) {
             let used = 0, total = 0;
-            s.disk.filesystems.forEach(f => {
-                used += f.used || 0;
-                total += f.total || 0;
-            });
+            const fs = s.disk.filesystems.find(f => f.mount === state.selectedDiskSpace);
+            if (fs) {
+                used = fs.used || 0; total = fs.total || 0;
+            } else if (!state.selectedDiskSpace) {
+                s.disk.filesystems.forEach(f => {
+                    used += f.used || 0;
+                    total += f.total || 0;
+                });
+            }
             if (total > 0) {
                 const pct = (used / total) * 100;
                 el('diskspace-subtitle', `${formatBytesShort(used)} / ${formatBytesShort(total)} (${pct.toFixed(1)}%)`);
@@ -1235,6 +1379,10 @@
                     return;
                 }
 
+                // Pre-calculate selectors from newest sample so charting has correct selection
+                const lastItemH = data[data.length - 1];
+                updateSelectors(lastItemH.data || lastItemH);
+
                 // Clear all chart data before loading history
                 clearAllChartData();
                 state.dataBuffer = [];
@@ -1298,6 +1446,11 @@
 
                 if (isEnvelope) {
                     updateSamplingInfo(response.tier, response.resolution);
+                }
+
+                if (Array.isArray(data) && data.length > 0) {
+                    const lastItemC = data[data.length - 1];
+                    updateSelectors(lastItemC.data || lastItemC);
                 }
 
                 clearAllChartData();

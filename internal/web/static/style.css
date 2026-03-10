@@ -704,6 +704,25 @@ body.light-mode .time-input {
     color: var(--text-muted);
 }
 
+.chart-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+.chart-selector {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 0.1rem 0.3rem;
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    outline: none;
+    cursor: pointer;
+}
+
 .chart-body {
     padding: 0.75rem;
     height: 220px;

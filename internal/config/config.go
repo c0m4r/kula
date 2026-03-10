@@ -25,7 +25,10 @@ type GlobalConfig struct {
 }
 
 type CollectionConfig struct {
-	Interval time.Duration `yaml:"interval"`
+	Interval    time.Duration `yaml:"interval"`
+	Devices     []string      `yaml:"devices"`
+	MountPoints []string      `yaml:"mountpoints"`
+	Interfaces  []string      `yaml:"interfaces"`
 }
 
 type StorageConfig struct {

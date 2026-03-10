@@ -10,7 +10,7 @@ func TestCollectSystem(t *testing.T) {
 	sysPath = "testdata/sys"
 	runPath = "testdata/run"
 
-	c := New(config.GlobalConfig{})
+	c := New(config.GlobalConfig{}, config.CollectionConfig{})
 	sys := c.collectSystem()
 	if sys.Uptime != 123456.78 {
 		t.Errorf("unexpected uptime: %v", sys.Uptime)
@@ -41,7 +41,7 @@ func TestCollectProcesses(t *testing.T) {
 func TestCollectSelf(t *testing.T) {
 	procPath = "testdata/proc"
 
-	c := New(config.GlobalConfig{})
+	c := New(config.GlobalConfig{}, config.CollectionConfig{})
 	self := c.collectSelf(1.0)
 	if self.FDs != 1 {
 		t.Errorf("expected 1 FD, got %d", self.FDs)

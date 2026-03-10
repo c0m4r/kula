@@ -1,11 +1,15 @@
 package collector
 
-import "testing"
+import (
+	"kula-szpiegula/internal/config"
+	"testing"
+)
 
 func TestParseDiskStats(t *testing.T) {
 	procPath = "testdata/proc"
 
-	raw := parseDiskStats()
+	c := New(config.GlobalConfig{}, config.CollectionConfig{})
+	raw := c.parseDiskStats()
 	if len(raw) != 1 {
 		t.Fatalf("expected 1 disk, got %d", len(raw))
 	}
@@ -24,7 +28,8 @@ func TestParseDiskStats(t *testing.T) {
 func TestCollectFileSystems(t *testing.T) {
 	procPath = "testdata/proc"
 
-	fs := collectFileSystems()
+	c := New(config.GlobalConfig{}, config.CollectionConfig{})
+	fs := c.collectFileSystems()
 	// Note: syscall.Statfs is executed on the mount point. Since the mock file says "/",
 	// and "/" exists on the real system, it will return real disk space stats for "/".
 	if len(fs) != 1 {
@@ -38,7 +43,8 @@ func TestCollectFileSystems(t *testing.T) {
 func TestCollectFileSystemsDocker(t *testing.T) {
 	procPath = "testdata/docker_proc"
 
-	fs := collectFileSystems()
+	c := New(config.GlobalConfig{}, config.CollectionConfig{})
+	fs := c.collectFileSystems()
 	// Should only have 'overlay' at '/'
 	// /etc/resolv.conf etc should be ignored
 	// tmpfs and shm should be filtered by fstype switch

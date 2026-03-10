@@ -16,7 +16,7 @@ type diskRaw struct {
 	writeSect uint64
 }
 
-func parseDiskStats() map[string]diskRaw {
+func (c *Collector) parseDiskStats() map[string]diskRaw {
 	f, err := os.Open(filepath.Join(procPath, "diskstats"))
 	if err != nil {
 		return nil
@@ -44,6 +44,20 @@ func parseDiskStats() map[string]diskRaw {
 		// Heuristic: skip if name ends with a digit and is a partition (sda1, nvme0n1p1)
 		if isPartition(name) {
 			continue
+		}
+
+		// Apply configuration filter if set
+		if len(c.collCfg.Devices) > 0 {
+			allowed := false
+			for _, allowedDev := range c.collCfg.Devices {
+				if allowedDev == name {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
 		}
 
 		d := diskRaw{}
@@ -96,7 +110,7 @@ func isPartition(name string) bool {
 }
 
 func (c *Collector) collectDisks(elapsed float64) DiskStats {
-	current := parseDiskStats()
+	current := c.parseDiskStats()
 	stats := DiskStats{}
 
 	for name, cur := range current {
@@ -115,11 +129,11 @@ func (c *Collector) collectDisks(elapsed float64) DiskStats {
 	}
 
 	c.prevDisk = current
-	stats.FileSystems = collectFileSystems()
+	stats.FileSystems = c.collectFileSystems()
 	return stats
 }
 
-func collectFileSystems() []FileSystemInfo {
+func (c *Collector) collectFileSystems() []FileSystemInfo {
 	f, err := os.Open(filepath.Join(procPath, "mounts"))
 	if err != nil {
 		return nil
@@ -156,6 +170,21 @@ func collectFileSystems() []FileSystemInfo {
 		if seen[device] {
 			continue
 		}
+
+		// Apply configuration filter if set
+		if len(c.collCfg.MountPoints) > 0 {
+			allowed := false
+			for _, allowedMount := range c.collCfg.MountPoints {
+				if allowedMount == mount {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
+		}
+
 		seen[device] = true
 
 		var stat syscall.Statfs_t

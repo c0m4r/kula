@@ -36,7 +36,7 @@ func TestCollectLoadAvg(t *testing.T) {
 func TestCollectCPU(t *testing.T) {
 	procPath = "testdata/proc"
 
-	c := New(config.GlobalConfig{})
+	c := New(config.GlobalConfig{}, config.CollectionConfig{})
 	// First collect sets baseline
 	stats := c.collectCPU(1.0)
 	if stats.NumCores != 2 {

@@ -12,6 +12,10 @@ global:
 # Data collection settings
 collection:
   interval: 1s
+  # You can override the auto-detected list of disks and network interfaces by uncommenting and populating these lists:
+  # devices: ["sda", "nvme0n1"]
+  # mountpoints: ["/", "/mnt/data"]
+  # interfaces: ["eth0", "wlan0"]
 
 # Storage settings (tiered ring-buffer)
 storage:

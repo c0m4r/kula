@@ -8,7 +8,8 @@ import (
 func TestParseNetDev(t *testing.T) {
 	procPath = "testdata/proc"
 
-	raw := parseNetDev()
+	c := New(config.GlobalConfig{}, config.CollectionConfig{})
+	raw := c.parseNetDev()
 	if len(raw) != 1 {
 		t.Fatalf("expected 1 interface, got %d", len(raw))
 	}
@@ -43,7 +44,7 @@ func TestReadTCPRaw(t *testing.T) {
 func TestCollectNetwork(t *testing.T) {
 	procPath = "testdata/proc"
 
-	c := New(config.GlobalConfig{})
+	c := New(config.GlobalConfig{}, config.CollectionConfig{})
 	// First collect sets baseline
 	stats := c.collectNetwork(1.0)
 	if len(stats.Interfaces) != 1 {

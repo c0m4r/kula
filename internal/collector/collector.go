@@ -17,6 +17,7 @@ var (
 type Collector struct {
 	mu       sync.RWMutex
 	cfg      config.GlobalConfig
+	collCfg  config.CollectionConfig
 	latest   *Sample
 	prevCPU  []cpuRaw
 	prevNet  map[string]netRaw
@@ -26,9 +27,10 @@ type Collector struct {
 	prevTime time.Time
 }
 
-func New(cfg config.GlobalConfig) *Collector {
+func New(cfg config.GlobalConfig, collCfg config.CollectionConfig) *Collector {
 	return &Collector{
 		cfg:      cfg,
+		collCfg:  collCfg,
 		prevNet:  make(map[string]netRaw),
 		prevDisk: make(map[string]diskRaw),
 	}
