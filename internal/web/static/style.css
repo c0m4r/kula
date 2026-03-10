@@ -658,6 +658,17 @@ body.light-mode .time-input {
     font-family: var(--font-mono);
 }
 
+/* ---- Sections ---- */
+.section-title {
+    padding: 1.5rem 1.5rem 0.5rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    opacity: 0.9;
+    letter-spacing: 0.5px;
+    animation: fadeInUp 0.5s ease;
+}
+
 /* ---- Charts Grid ---- */
 .charts-grid {
     display: grid;

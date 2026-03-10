@@ -474,7 +474,11 @@
         // CPU Temperature
         const tempCard = document.getElementById('card-cpu-temp');
         if (state.charts.cputemp && ((s.cpu?.sensors && s.cpu.sensors.length > 0) || s.cpu?.temp > 0)) {
-            if (tempCard) tempCard.classList.remove('hidden');
+            if (tempCard) {
+                tempCard.classList.remove('hidden');
+                document.getElementById('thermals-title')?.classList.remove('hidden');
+                document.getElementById('thermals-grid')?.classList.remove('hidden');
+            }
 
             const hasSensors = s.cpu?.sensors && s.cpu.sensors.length > 0;
 
@@ -618,7 +622,11 @@
             const hasTemp = d && d.temp > 0;
 
             if (hasSensors || hasTemp) {
-                if (diskTempCard) diskTempCard.classList.remove('hidden');
+                if (diskTempCard) {
+                    diskTempCard.classList.remove('hidden');
+                    document.getElementById('thermals-title')?.classList.remove('hidden');
+                    document.getElementById('thermals-grid')?.classList.remove('hidden');
+                }
 
                 if (hasSensors) {
                     const incomingNames = d.sensors.map(sens => sens.name);
@@ -1891,8 +1899,9 @@
         const card = document.getElementById(cardId);
         if (!card) return;
 
-        const grid = document.getElementById('charts-grid');
-        // Capture all currently visible cards
+        const grid = card.closest('.charts-grid');
+        if (!grid) return;
+        // Capture all currently visible cards from this grid
         const visibleCards = Array.from(grid.querySelectorAll('.chart-card:not(.hidden)'));
         const isExpanding = !card.classList.contains('chart-expanded');
 
@@ -2132,17 +2141,18 @@
         'card-cpu', 'card-loadavg', 'card-memory', 'card-swap',
         'card-network', 'card-pps', 'card-connections',
         'card-disk-io', 'card-disk-space',
-        'card-processes', 'card-entropy', 'card-self'
+        'card-processes', 'card-entropy', 'card-self',
+        'card-cpu-temp', 'card-disk-temp'
     ];
 
     function toggleFocusMode() {
-        const grid = document.getElementById('charts-grid');
+        const grids = document.querySelectorAll('.charts-grid');
         const btn = document.getElementById('btn-focus');
 
         if (state.focusMode && !state.focusSelecting) {
             // Exit focus mode
             state.focusMode = false;
-            grid.classList.remove('focus-active', 'focus-selecting');
+            grids.forEach(g => g.classList.remove('focus-active', 'focus-selecting'));
             btn.classList.remove('focus-active');
             chartCardIds.forEach(id => {
                 const el = document.getElementById(id);
@@ -2166,7 +2176,7 @@
                 // No selection = exit
                 state.focusMode = false;
                 state.focusSelecting = false;
-                grid.classList.remove('focus-active', 'focus-selecting');
+                grids.forEach(g => g.classList.remove('focus-active', 'focus-selecting'));
                 btn.classList.remove('focus-active');
                 removeFocusBar();
                 return;
@@ -2175,8 +2185,10 @@
             state.focusVisible = selected;
             localStorage.setItem('kula_focus_visible', JSON.stringify(selected));
             state.focusSelecting = false;
-            grid.classList.remove('focus-selecting');
-            grid.classList.add('focus-active');
+            grids.forEach(g => {
+                g.classList.remove('focus-selecting');
+                g.classList.add('focus-active');
+            });
             chartCardIds.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) {
@@ -2191,8 +2203,10 @@
         // Enter selection mode
         state.focusMode = true;
         state.focusSelecting = true;
-        grid.classList.add('focus-selecting');
-        grid.classList.remove('focus-active');
+        grids.forEach(g => {
+            g.classList.add('focus-selecting');
+            g.classList.remove('focus-active');
+        });
         btn.classList.add('focus-active');
 
         // Pre-select previously visible cards
@@ -2225,15 +2239,14 @@
         bar.className = 'focus-bar';
         bar.id = 'focus-bar';
         bar.innerHTML = '<span>Select graphs to display, then click Done</span><button id="btn-focus-done">Done</button><button id="btn-focus-cancel">Cancel</button>';
-        const grid = document.getElementById('charts-grid');
-        grid.parentNode.insertBefore(bar, grid);
+        const firstGrid = document.querySelector('.charts-grid');
+        if (firstGrid) firstGrid.parentNode.insertBefore(bar, firstGrid);
         document.getElementById('btn-focus-done').addEventListener('click', toggleFocusMode);
         document.getElementById('btn-focus-cancel').addEventListener('click', () => {
             state.focusSelecting = false;
             state.focusMode = false;
-            const g = document.getElementById('charts-grid');
+            document.querySelectorAll('.charts-grid').forEach(g => g.classList.remove('focus-selecting'));
             document.getElementById('btn-focus').classList.remove('focus-active');
-            g.classList.remove('focus-selecting');
             removeFocusBar();
         });
     }
@@ -2251,8 +2264,7 @@
     function applyStoredFocusMode() {
         if (state.focusVisible && state.focusVisible.length > 0) {
             state.focusMode = true;
-            const grid = document.getElementById('charts-grid');
-            grid.classList.add('focus-active');
+            document.querySelectorAll('.charts-grid').forEach(g => g.classList.add('focus-active'));
             document.getElementById('btn-focus').classList.add('focus-active');
             chartCardIds.forEach(id => {
                 const el = document.getElementById(id);

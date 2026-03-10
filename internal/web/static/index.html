@@ -188,6 +188,7 @@
         </section>
 
         <!-- Charts grid -->
+        <h2 class="section-title">System Metrics</h2>
         <section class="charts-grid" id="charts-grid">
             <div class="chart-card" id="card-cpu">
                 <div class="chart-header">
@@ -195,14 +196,6 @@
                     <span class="chart-subtitle" id="cpu-subtitle"></span>
                 </div>
                 <div class="chart-body"><canvas id="chart-cpu"></canvas></div>
-            </div>
-
-            <div class="chart-card hidden" id="card-cpu-temp">
-                <div class="chart-header">
-                    <h3>CPU Temperature</h3>
-                    <span class="chart-subtitle" id="cputemp-subtitle"></span>
-                </div>
-                <div class="chart-body"><canvas id="chart-cpu-temp"></canvas></div>
             </div>
 
             <div class="chart-card" id="card-loadavg">
@@ -270,17 +263,6 @@
                 <div class="chart-body"><canvas id="chart-disk-io"></canvas></div>
             </div>
 
-            <div class="chart-card hidden" id="card-disk-temp">
-                <div class="chart-header">
-                    <h3>Disk Temperature</h3>
-                    <div class="chart-header-right">
-                        <span class="chart-subtitle" id="disktemp-subtitle"></span>
-                    </div>
-                </div>
-                <div class="chart-body"><canvas id="chart-disk-temp"></canvas></div>
-            </div>
-
-
             <div class="chart-card" id="card-disk-space">
                 <div class="chart-header">
                     <h3>Disk Space</h3>
@@ -313,6 +295,28 @@
                     <span class="chart-subtitle" id="self-subtitle"></span>
                 </div>
                 <div class="chart-body"><canvas id="chart-self"></canvas></div>
+            </div>
+        </section>
+
+        <!-- Thermals -->
+        <h2 class="section-title hidden" id="thermals-title">Thermals</h2>
+        <section class="charts-grid hidden" id="thermals-grid">
+            <div class="chart-card hidden" id="card-cpu-temp">
+                <div class="chart-header">
+                    <h3>CPU Temperature</h3>
+                    <span class="chart-subtitle" id="cputemp-subtitle"></span>
+                </div>
+                <div class="chart-body"><canvas id="chart-cpu-temp"></canvas></div>
+            </div>
+
+            <div class="chart-card hidden" id="card-disk-temp">
+                <div class="chart-header">
+                    <h3>Disk Temperature</h3>
+                    <div class="chart-header-right">
+                        <span class="chart-subtitle" id="disktemp-subtitle"></span>
+                    </div>
+                </div>
+                <div class="chart-body"><canvas id="chart-disk-temp"></canvas></div>
             </div>
         </section>
 
