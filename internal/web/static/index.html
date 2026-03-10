@@ -188,6 +188,7 @@
         </section>
 
         <!-- Charts grid -->
+        <h2 class="section-title">System Metrics</h2>
         <section class="charts-grid" id="charts-grid">
             <div class="chart-card" id="card-cpu">
                 <div class="chart-header">
@@ -195,14 +196,6 @@
                     <span class="chart-subtitle" id="cpu-subtitle"></span>
                 </div>
                 <div class="chart-body"><canvas id="chart-cpu"></canvas></div>
-            </div>
-
-            <div class="chart-card hidden" id="card-cpu-temp">
-                <div class="chart-header">
-                    <h3>CPU Temperature</h3>
-                    <span class="chart-subtitle" id="cputemp-subtitle"></span>
-                </div>
-                <div class="chart-body"><canvas id="chart-cpu-temp"></canvas></div>
             </div>
 
             <div class="chart-card" id="card-loadavg">
@@ -232,8 +225,8 @@
             <div class="chart-card" id="card-network">
                 <div class="chart-header">
                     <h3>Network Throughput</h3>
+                    <span class="chart-subtitle" id="net-subtitle"></span>
                     <div class="chart-header-right">
-                        <span class="chart-subtitle" id="net-subtitle"></span>
                         <select id="net-selector" class="chart-selector hidden"></select>
                     </div>
                 </div>
@@ -243,8 +236,8 @@
             <div class="chart-card" id="card-pps">
                 <div class="chart-header">
                     <h3>Packets / sec</h3>
+                    <span class="chart-subtitle" id="pps-subtitle"></span>
                     <div class="chart-header-right">
-                        <span class="chart-subtitle" id="pps-subtitle"></span>
                         <select id="pps-selector" class="chart-selector hidden"></select>
                     </div>
                 </div>
@@ -262,20 +255,19 @@
             <div class="chart-card" id="card-disk-io">
                 <div class="chart-header">
                     <h3>Disk I/O</h3>
+                    <span class="chart-subtitle" id="diskio-subtitle"></span>
                     <div class="chart-header-right">
-                        <span class="chart-subtitle" id="diskio-subtitle"></span>
                         <select id="diskio-selector" class="chart-selector hidden"></select>
                     </div>
                 </div>
                 <div class="chart-body"><canvas id="chart-disk-io"></canvas></div>
             </div>
 
-
             <div class="chart-card" id="card-disk-space">
                 <div class="chart-header">
                     <h3>Disk Space</h3>
+                    <span class="chart-subtitle" id="diskspace-subtitle"></span>
                     <div class="chart-header-right">
-                        <span class="chart-subtitle" id="diskspace-subtitle"></span>
                         <select id="diskspace-selector" class="chart-selector hidden"></select>
                     </div>
                 </div>
@@ -303,6 +295,29 @@
                     <span class="chart-subtitle" id="self-subtitle"></span>
                 </div>
                 <div class="chart-body"><canvas id="chart-self"></canvas></div>
+            </div>
+        </section>
+
+        <!-- Thermals -->
+        <h2 class="section-title hidden" id="thermals-title">Thermals</h2>
+        <section class="charts-grid hidden" id="thermals-grid">
+            <div class="chart-card hidden" id="card-cpu-temp">
+                <div class="chart-header">
+                    <h3>CPU Temperature</h3>
+                    <span class="chart-subtitle" id="cputemp-subtitle"></span>
+                </div>
+                <div class="chart-body"><canvas id="chart-cpu-temp"></canvas></div>
+            </div>
+
+            <div class="chart-card hidden" id="card-disk-temp">
+                <div class="chart-header">
+                    <h3>Disk Temperature</h3>
+                    <span class="chart-subtitle" id="disktemp-subtitle"></span>
+                    <div class="chart-header-right">
+                        <select id="disktemp-selector" class="chart-selector hidden"></select>
+                    </div>
+                </div>
+                <div class="chart-body"><canvas id="chart-disk-temp"></canvas></div>
             </div>
         </section>
 

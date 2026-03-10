@@ -59,8 +59,9 @@ type WebConfig struct {
 }
 
 type GraphConfig struct {
-	CPUTemp GraphMaxConfig `yaml:"cpu_temp"`
-	Network GraphMaxConfig `yaml:"network"`
+	CPUTemp  GraphMaxConfig `yaml:"cpu_temp"`
+	DiskTemp GraphMaxConfig `yaml:"disk_temp"`
+	Network  GraphMaxConfig `yaml:"network"`
 }
 
 type GraphMaxConfig struct {

@@ -327,6 +327,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				"value": s.cfg.Graphs.CPUTemp.MaxValue,
 				"auto":  collector.DetectTjMax(),
 			},
+			"disk_temp": map[string]interface{}{
+				"mode":  s.cfg.Graphs.DiskTemp.MaxMode,
+				"value": s.cfg.Graphs.DiskTemp.MaxValue,
+				"auto":  collector.DetectDiskTjMax(),
+			},
 			"network": map[string]interface{}{
 				"mode":  s.cfg.Graphs.Network.MaxMode,
 				"value": s.cfg.Graphs.Network.MaxValue,

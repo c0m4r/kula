@@ -108,12 +108,19 @@ type DiskStats struct {
 }
 
 type DiskDevice struct {
-	Name         string  `json:"name"`
-	ReadsPerSec  float64 `json:"reads_ps"`
-	WritesPerSec float64 `json:"writes_ps"`
-	ReadBytesPS  float64 `json:"read_bps"`
-	WriteBytesPS float64 `json:"write_bps"`
-	Utilization  float64 `json:"util_pct"`
+	Name         string           `json:"name"`
+	ReadsPerSec  float64          `json:"reads_ps"`
+	WritesPerSec float64          `json:"writes_ps"`
+	ReadBytesPS  float64          `json:"read_bps"`
+	WriteBytesPS float64          `json:"write_bps"`
+	Utilization  float64          `json:"util_pct"`
+	Temperature  float64          `json:"temp,omitempty"`
+	Sensors      []DiskTempSensor `json:"sensors,omitempty"`
+}
+
+type DiskTempSensor struct {
+	Name  string  `json:"name"`
+	Value float64 `json:"value"`
 }
 
 type FileSystemInfo struct {
