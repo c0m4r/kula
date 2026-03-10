@@ -144,8 +144,6 @@ docker run --rm -it --name kula --pid host --network host -v /proc:/proc:ro c0m4
 
 ### Debian / Ubuntu (.deb)
 
-Also for: Pop_OS!, Zorin OS, Kali and other debian based OS
-
 ```bash
 wget https://github.com/c0m4r/kula/releases/download/0.7.5/kula-0.7.5-amd64.deb
 echo "7c6d9acc77e46d2356280d966006f13aed1cfa6b1072daa6a02ed186852356d1 kula-0.7.5-amd64.deb" | sha256sum -c || rm -f kula-0.7.5-amd64.deb
