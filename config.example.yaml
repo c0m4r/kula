@@ -69,7 +69,9 @@ web:
   # API Access and Performance Logging
   logging:
     enabled: true
-    # "access" (basic request details) or "perf" (adds DB fetch metrics)
+    # "access" (request details)
+    # "perf" (adds DB fetch metrics)
+    # "debug" (i.e. collector auto-discovery)
     level: "perf"
 
   # Authentication (optional)

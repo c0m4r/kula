@@ -30,7 +30,7 @@ type CollectionConfig struct {
 	MountPoints []string      `yaml:"mountpoints"`
 	Interfaces  []string      `yaml:"interfaces"`
 	// DebugLog enables verbose debug logging for device/interface/filesystem
-	// discovery. Controlled by web.logging.level = "perf". Not exposed in YAML.
+	// discovery. Activated when web.logging.level = "debug". Not exposed in YAML.
 	DebugLog bool `yaml:"-"`
 }
 
@@ -75,7 +75,7 @@ type GraphMaxConfig struct {
 
 type LogConfig struct {
 	Enabled bool   `yaml:"enabled"`
-	Level   string `yaml:"level"` // "access" or "perf"
+	Level   string `yaml:"level"` // "access", "perf", or "debug"
 }
 
 type AuthConfig struct {

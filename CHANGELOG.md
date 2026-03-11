@@ -12,6 +12,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Added
 
 - Debug logging for disk and network collector auto-discovery
+- New logging level: `debug`
 
 ### Changed
 

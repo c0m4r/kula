@@ -348,6 +348,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	loadDuration := time.Since(startLoad)
 
+	// level "perf": log DB fetch performance for /api/history
+	// level "debug": also enables collector auto-discovery logging (see collector.debugf)
 	if s.cfg.Logging.Enabled && s.cfg.Logging.Level == "perf" {
 		log.Printf("[API History] loaded %d samples from tier %d (resolution: %s) for window %s in %v", len(result.Samples), result.Tier, result.Resolution, to.Sub(from).Round(time.Second), loadDuration)
 	}

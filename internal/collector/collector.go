@@ -37,7 +37,7 @@ func New(cfg config.GlobalConfig, collCfg config.CollectionConfig) *Collector {
 	}
 }
 
-// debugf logs a formatted message only when web.logging.level = "perf" is set.
+// debugf logs a formatted message only when web.logging.level = "debug" is set.
 func (c *Collector) debugf(format string, args ...any) {
 	if c.collCfg.DebugLog {
 		log.Printf(format, args...)
