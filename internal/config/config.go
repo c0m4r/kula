@@ -195,12 +195,12 @@ func Load(path string) (*Config, error) {
 
 func checkStorageDirectory(cfg *Config) error {
 	if cfg.Storage.Directory == "/var/lib/kula" {
-		if err := os.MkdirAll(cfg.Storage.Directory, 0755); err != nil || !isWritable(cfg.Storage.Directory) {
+		if err := os.MkdirAll(cfg.Storage.Directory, 0750); err != nil || !isWritable(cfg.Storage.Directory) {
 			homeDir, err := os.UserHomeDir()
 			if err == nil {
 				fallbackDir := filepath.Join(homeDir, ".kula")
 				log.Printf("Notice: Insufficient permissions for /var/lib/kula, falling back to %s", fallbackDir)
-				if err := os.MkdirAll(fallbackDir, 0755); err != nil || !isWritable(fallbackDir) {
+				if err := os.MkdirAll(fallbackDir, 0750); err != nil || !isWritable(fallbackDir) {
 					return fmt.Errorf("insufficient permissions to create data storage in /var/lib/kula or %s", fallbackDir)
 				}
 				cfg.Storage.Directory = fallbackDir

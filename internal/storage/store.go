@@ -50,7 +50,7 @@ func NewStore(cfg config.StorageConfig) (*Store, error) {
 		return nil, fmt.Errorf("resolving storage directory: %w", err)
 	}
 
-	if err := os.MkdirAll(absDir, 0755); err != nil {
+	if err := os.MkdirAll(absDir, 0750); err != nil {
 		return nil, fmt.Errorf("creating storage directory: %w", err)
 	}
 
