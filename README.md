@@ -325,5 +325,7 @@ docker compose -f addons/docker/docker-compose.yml up -d
 
 ## 🫶 Attributions
 
-- Linux® is the registered trademark of Linus Torvalds in the U.S. and other countries.
+- [Linux®](https://github.com/torvalds/linux) is the registered trademark of Linus Torvalds in the U.S. and other countries.
 - [Chart.js](https://www.chartjs.org/) library licensed under MIT
+- [Inter](https://github.com/rsms/inter) font by Rasmus Andersson licensed under [OFL-1.1](https://openfontlicense.org/)
+- [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P?query=CodeMan38) font by CodeMan38 licensed under [OFL-1.1](https://openfontlicense.org/)

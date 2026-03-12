@@ -3,6 +3,14 @@
    Dark theme with glassmorphism, gradients, and smooth animations
    ============================================================ */
 
+@font-face {
+    font-family: 'Inter';
+    src: url('fonts/Inter/Inter-VariableFont_opsz,wght.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
 :root {
     --bg-primary: #0a0e17;
     --bg-secondary: #111827;

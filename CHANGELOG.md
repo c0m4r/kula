@@ -9,6 +9,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ## [0.8.3] - TBA
 
+### Added
+
+- Static Inter and Press Start 2P fonts
+
 ### Changed
 
 - Change data dir default chmod to 750

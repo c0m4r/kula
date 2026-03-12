@@ -3,6 +3,22 @@
    Neon cyberpunk theme matching the dashboard aesthetics
    ============================================================ */
 
+@font-face {
+    font-family: 'Press Start 2P';
+    src: url('fonts/Press_Start_2P/PressStart2P-Regular.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Inter';
+    src: url('fonts/Inter/Inter-VariableFont_opsz,wght.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
 :root {
     --bg-primary: #0a0e17;
     --bg-secondary: #111827;
