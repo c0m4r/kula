@@ -114,7 +114,15 @@ Example installation methods for **amd64 (x86_64)** GNU/Linux.
 
 Check [Releases](https://github.com/c0m4r/kula/releases) for **ARM** and **RISC-V** packages.
 
-### Guided installation
+Note: Never thoughtlessly paste commands into the terminal. Even checking the checksum is no substitute for reviewing the code.
+
+### Guided
+
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install.sh)"
+```
+
+### Guided (verify installer)
 
 ```bash
 KULA_INSTALL=$(mktemp)
@@ -124,7 +132,7 @@ bash ${KULA_INSTALL}
 rm -f ${KULA_INSTALL}
 ```
 
-### Quick
+### Standalone
 
 ```bash
 wget https://github.com/c0m4r/kula/releases/download/0.9.0/kula-0.9.0-amd64.tar.gz
