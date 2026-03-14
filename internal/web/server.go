@@ -177,8 +177,8 @@ func (s *Server) Start() error {
 	apiMux.HandleFunc("/api/logout", s.handleLogout)
 	apiMux.HandleFunc("/api/auth/status", s.handleAuthStatus)
 
-	// Wrap apiMux with logging
-	loggedApiMux := loggingMiddleware(s.cfg, apiMux)
+	// Wrap apiMux with logging and CSRF protection
+	loggedApiMux := s.auth.CSRFMiddleware(loggingMiddleware(s.cfg, apiMux))
 
 	// WebSocket
 	apiMux.HandleFunc("/ws", s.handleWebSocket)

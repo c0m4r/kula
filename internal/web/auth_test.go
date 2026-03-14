@@ -346,3 +346,105 @@ func TestGetClientIP(t *testing.T) {
 		})
 	}
 }
+func TestValidateOrigin(t *testing.T) {
+	am := NewAuthManager(config.AuthConfig{}, "", false)
+
+	tests := []struct {
+		name    string
+		origin  string
+		referer string
+		host    string
+		want    bool
+	}{
+		{
+			name:   "Matching Origin",
+			origin: "http://localhost:8080",
+			host:   "localhost:8080",
+			want:   true,
+		},
+		{
+			name:   "Mismatched Origin",
+			origin: "http://evil.com",
+			host:   "localhost:8080",
+			want:   false,
+		},
+		{
+			name:    "Matching Referer fallback",
+			referer: "http://localhost:8080/dashboard",
+			host:    "localhost:8080",
+			want:    true,
+		},
+		{
+			name:   "Empty headers now reject",
+			origin: "",
+			host:   "localhost:8080",
+			want:   false,
+		},
+		{
+			name:   "Prefix bypass attempt",
+			origin: "http://localhost:8080.evil.com",
+			host:   "localhost:8080",
+			want:   false,
+		},
+		{
+			name:   "Scheme mismatch robustness",
+			origin: "https://localhost:8080", // Browser sends https, internal might be http
+			host:   "localhost:8080",
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/", nil)
+			req.Host = tt.host
+			if tt.origin != "" {
+				req.Header.Set("Origin", tt.origin)
+			}
+			if tt.referer != "" {
+				req.Header.Set("Referer", tt.referer)
+			}
+
+			if got := am.ValidateOrigin(req); got != tt.want {
+				t.Errorf("ValidateOrigin() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCSRFMiddleware(t *testing.T) {
+	am := NewAuthManager(config.AuthConfig{}, "", false)
+	handler := am.CSRFMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	t.Run("Blocked invalid origin", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/test", nil)
+		req.Host = "localhost:8080"
+		req.Header.Set("Origin", "http://evil.com")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Invalid origin POST: status = %d, want 403", rec.Code)
+		}
+	})
+
+	t.Run("Blocked empty origin", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/test", nil)
+		req.Host = "localhost:8080"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Empty origin POST: status = %d, want 403", rec.Code)
+		}
+	})
+
+	t.Run("Allowed GET with empty origin", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/test", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET should be allowed: status = %d, want 200", rec.Code)
+		}
+	})
+}

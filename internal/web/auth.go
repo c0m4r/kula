@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -314,6 +316,39 @@ func generateToken() (string, error) {
 		return "", fmt.Errorf("crypto/rand.Read failed: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// ValidateOrigin checks if the request's Origin or Referer header matches the host.
+// This is a defense-in-depth measure against CSRF for state-modifying requests.
+func (a *AuthManager) ValidateOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		origin = r.Header.Get("Referer")
+	}
+
+	if origin == "" {
+		return false
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+
+	return strings.EqualFold(u.Host, r.Host)
+}
+
+// CSRFMiddleware enforces origin validation for state-modifying requests.
+func (a *AuthManager) CSRFMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if !a.ValidateOrigin(r) {
+				http.Error(w, `{"error":"invalid origin"}`, http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // PrintHashedPassword generates and prints a hash for a password using the given Argon2 parameters.
