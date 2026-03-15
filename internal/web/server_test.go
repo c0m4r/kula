@@ -1,14 +1,14 @@
 package web
 
-	import (
-		"html"
-		"net/http"
-		"net/http/httptest"
-		"strings"
-		"testing"
+import (
+	"html"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
 
-		"kula-szpiegula/internal/config"
-	)
+	"kula-szpiegula/internal/config"
+)
 
 func TestTemplateInjection(t *testing.T) {
 	s := NewServer(config.WebConfig{}, config.GlobalConfig{}, nil, nil, t.TempDir())
@@ -46,9 +46,9 @@ func TestTemplateInjection(t *testing.T) {
 	}
 
 	// Verify SRI is injected into HTML
-	sri := s.sriHashes["app.js"]
+	sri := s.sriHashes["js/app/main.js"]
 	if sri == "" {
-		t.Error("SRI hash for app.js is empty in server")
+		t.Error("SRI hash for js/app/main.js is empty in server")
 	}
 	if !strings.Contains(body, `integrity="`+sri+`"`) {
 		t.Errorf("HTML body missing injected SRI %s", sri)
@@ -72,6 +72,9 @@ func TestGameTemplateInjection(t *testing.T) {
 	
 	// Verify SRI for game.js
 	sri := s.sriHashes["game.js"]
+	if sri == "" {
+		t.Error("SRI hash for game.js is empty in server")
+	}
 	if !strings.Contains(body, `integrity="`+sri+`"`) {
 		t.Errorf("Game HTML body missing injected SRI %s", sri)
 	}

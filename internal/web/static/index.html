@@ -7,9 +7,13 @@
     <title>K U L A</title>
     <link rel="icon" href="kula.svg">
     <meta name="description" content="Lightweight, self-contained Linux® server monitoring tool">
-    <script src="chart.umd.min.js" nonce="{{.Nonce}}"></script>
-    <script src="chartjs-adapter-date-fns.bundle.min.js" nonce="{{.Nonce}}"></script>
-    <script src="chartjs-plugin-zoom.min.js" nonce="{{.Nonce}}"></script>
+    <script src="js/chartjs/chart.umd.min.js" integrity="{{sri `chart.umd.min.js`}}" nonce="{{.Nonce}}"
+        crossorigin="anonymous"></script>
+    <script src="js/chartjs/chartjs-adapter-date-fns.bundle.min.js"
+        integrity="{{sri `chartjs-adapter-date-fns.bundle.min.js`}}" nonce="{{.Nonce}}"
+        crossorigin="anonymous"></script>
+    <script src="js/chartjs/chartjs-plugin-zoom.min.js" integrity="{{sri `chartjs-plugin-zoom.min.js`}}"
+        nonce="{{.Nonce}}" crossorigin="anonymous"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 
@@ -357,7 +361,62 @@
         </footer>
     </div>
 
-    <script src="app.js" nonce="{{.Nonce}}" integrity="{{.SRI}}" crossorigin="anonymous"></script>
+    <!-- 1. MUST BE FIRST | Foundations: state, colors, Chart.js globals, shared helpers -->
+    <script nonce="{{.Nonce}}" src="js/app/state.js" integrity="{{sri `js/app/state.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 2. Pure utilities (no dependencies on other modules) -->
+    <script nonce="{{.Nonce}}" src="js/app/utils.js" integrity="{{sri `js/app/utils.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 3. Chart creation and initialization -->
+    <script nonce="{{.Nonce}}" src="js/app/charts-init.js" integrity="{{sri `js/app/charts-init.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 4. Chart data ingestion, zoom, gaps, selectors, live pipeline -->
+    <script nonce="{{.Nonce}}" src="js/app/charts-data.js" integrity="{{sri `js/app/charts-data.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 5. Header bar and chart subtitle updates -->
+    <script nonce="{{.Nonce}}" src="js/app/header.js" integrity="{{sri `js/app/header.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 6. Bar gauges -->
+    <script nonce="{{.Nonce}}" src="js/app/gauges.js" integrity="{{sri `js/app/gauges.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 7. Alert evaluation and dropdown UI -->
+    <script nonce="{{.Nonce}}" src="js/app/alerts.js" integrity="{{sri `js/app/alerts.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 8. WebSocket connection and reconnect logic -->
+    <script nonce="{{.Nonce}}" src="js/app/websocket.js" integrity="{{sri `js/app/websocket.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 9. Pause/resume, layout, time range, history fetching -->
+    <script nonce="{{.Nonce}}" src="js/app/controls.js" integrity="{{sri `js/app/controls.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 10. Auth check, config fetch, login/logout -->
+    <script nonce="{{.Nonce}}" src="js/app/auth.js" integrity="{{sri `js/app/auth.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 11. Theme (dark/light) -->
+    <script nonce="{{.Nonce}}" src="js/app/theme.js" integrity="{{sri `js/app/theme.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 12. Hover-pause, chart expand/collapse, settings dropdown -->
+    <script nonce="{{.Nonce}}" src="js/app/ui-actions.js" integrity="{{sri `js/app/ui-actions.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 13. Focus mode -->
+    <script nonce="{{.Nonce}}" src="js/app/focus-mode.js" integrity="{{sri `js/app/focus-mode.js`}}"
+        crossorigin="anonymous"></script>
+
+    <!-- 14. MUST BE LAST | Entry point -->
+    <script nonce="{{.Nonce}}" src="js/app/main.js" integrity="{{sri `js/app/main.js`}}"
+        crossorigin="anonymous"></script>
+
 </body>
 
 </html>

@@ -17,6 +17,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Changed
 
 - Tune and optimize argon2: 64 => 32MB, time 1 => 3
+- Main app js split into 14 focused files
 
 ## [0.9.2] - 2026-03-15
 

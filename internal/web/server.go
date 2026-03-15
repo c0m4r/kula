@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -40,8 +41,8 @@ type Server struct {
 	templates *template.Template
 	sriHashes map[string]string
 
-	wsMu      sync.Mutex
-	wsCount   int
+	wsMu       sync.Mutex
+	wsCount    int
 	wsIPCounts map[string]int
 }
 
@@ -220,23 +221,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/index.html", s.handleIndex)
 	mux.HandleFunc("/game.html", s.handleGame)
 
-	// Static files fallback
-	staticContent, err := fs.Sub(staticFS, "static")
-	if err != nil {
-		return fmt.Errorf("static fs: %w", err)
-	}
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
-
-	// For other static assets in root
-	fileServer := http.FileServer(http.FS(staticContent))
-	mux.HandleFunc("/chart.umd.min.js", fileServer.ServeHTTP)
-	mux.HandleFunc("/chartjs-adapter-date-fns.bundle.min.js", fileServer.ServeHTTP)
-	mux.HandleFunc("/chartjs-plugin-zoom.min.js", fileServer.ServeHTTP)
-	mux.HandleFunc("/style.css", fileServer.ServeHTTP)
-	mux.HandleFunc("/game.css", fileServer.ServeHTTP)
-	mux.HandleFunc("/game.js", fileServer.ServeHTTP)
-	mux.HandleFunc("/app.js", fileServer.ServeHTTP)
-	mux.HandleFunc("/kula.svg", fileServer.ServeHTTP)
+	// Static assets handler
+	mux.HandleFunc("/js/", s.handleStatic)
+	mux.HandleFunc("/fonts/", s.handleStatic)
+	mux.HandleFunc("/style.css", s.handleStatic)
+	mux.HandleFunc("/game.css", s.handleStatic)
+	mux.HandleFunc("/game.js", s.handleStatic)
+	mux.HandleFunc("/kula.svg", s.handleStatic)
+	mux.HandleFunc("/favicon.ico", s.handleStatic)
 
 	go s.hub.run()
 	go func() {
@@ -613,25 +605,41 @@ func (h *wsHub) broadcast(data []byte) {
 
 func (s *Server) initializeTemplates() {
 	var err error
-	s.templates, err = template.ParseFS(staticFS, "static/*.html")
+	s.templates = template.New("base").Funcs(template.FuncMap{
+		"sri": func(path string) string {
+			return s.sriHashes[path]
+		},
+	})
+	s.templates, err = s.templates.ParseFS(staticFS, "static/*.html")
 	if err != nil {
 		log.Fatalf("failed to parse templates: %v", err)
 	}
 }
 
 func (s *Server) calculateSRIs() {
-	s.sriHashes["app.js"] = s.calculateSRI("static/app.js")
-	s.sriHashes["game.js"] = s.calculateSRI("static/game.js")
-}
+	_ = fs.WalkDir(staticFS, "static", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".js") {
+			return nil
+		}
 
-func (s *Server) calculateSRI(path string) string {
-	data, err := staticFS.ReadFile(path)
-	if err != nil {
-		log.Printf("Warning: failed to read %s for SRI: %v", path, err)
-		return ""
-	}
-	sum := sha512.Sum384(data)
-	return "sha384-" + base64.StdEncoding.EncodeToString(sum[:])
+		data, err := staticFS.ReadFile(path)
+		if err != nil {
+			log.Printf("Warning: failed to read %s for SRI: %v", path, err)
+			return nil
+		}
+
+		sum := sha512.Sum384(data)
+		hash := "sha384-" + base64.StdEncoding.EncodeToString(sum[:])
+
+		// Key 1: path relative to static/ (e.g. "js/app/main.js")
+		key := strings.TrimPrefix(path, "static/")
+		s.sriHashes[key] = hash
+
+		// Key 2: filename only (e.g. "main.js") for backward compatibility
+		s.sriHashes[filepath.Base(path)] = hash
+
+		return nil
+	})
 }
 
 // getClientIP extracts the real client IP, considering proxies and stripping ephemeral ports.
@@ -653,19 +661,75 @@ func getClientIP(r *http.Request, trustProxy bool) string {
 }
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" && r.URL.Path != "/index.html" {
-		// Fallback to static files for other paths
-		staticContent, _ := fs.Sub(staticFS, "static")
-		http.FileServer(http.FS(staticContent)).ServeHTTP(w, r)
+		s.handleStatic(w, r)
 		return
 	}
-	s.renderTemplate(w, r, "index.html", "app.js")
+	s.renderTemplate(w, r, "index.html")
 }
 
 func (s *Server) handleGame(w http.ResponseWriter, r *http.Request) {
-	s.renderTemplate(w, r, "game.html", "game.js")
+	s.renderTemplate(w, r, "game.html")
 }
 
-func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, templateName, sriKey string) {
+func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	if path == "" {
+		s.handleIndex(w, r)
+		return
+	}
+
+	fullPath := "static/" + path
+
+	// Security: prevent directory listing
+	stat, err := staticFS.Open(fullPath)
+	if err == nil {
+		info, _ := stat.Stat()
+		_ = stat.Close()
+		if info.IsDir() {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
+	data, err := staticFS.ReadFile(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Not Found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Set content type
+	contentType := "application/octet-stream"
+	if strings.HasSuffix(path, ".js") {
+		contentType = "application/javascript"
+	} else if strings.HasSuffix(path, ".css") {
+		contentType = "text/css"
+	} else if strings.HasSuffix(path, ".svg") {
+		contentType = "image/svg+xml"
+	} else if strings.HasSuffix(path, ".ico") {
+		contentType = "image/x-icon"
+	} else if strings.HasSuffix(path, ".html") {
+		contentType = "text/html; charset=utf-8"
+	} else if strings.Contains(path, "/fonts/") {
+		if strings.HasSuffix(path, ".woff2") {
+			contentType = "font/woff2"
+		} else if strings.HasSuffix(path, ".woff") {
+			contentType = "font/woff"
+		} else if strings.HasSuffix(path, ".ttf") {
+			contentType = "font/ttf"
+		}
+	}
+	w.Header().Set("Content-Type", contentType)
+
+	// Check if it's a JS file and we have an SRI for it (optional: could also add SRI header but browser does it via script tag)
+	// We just serve the content here.
+	_, _ = w.Write(data)
+}
+
+func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, templateName string) {
 	nonce, ok := r.Context().Value(nonceKey).(string)
 	if !ok {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -674,10 +738,10 @@ func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, template
 
 	data := struct {
 		Nonce string
-		SRI   string
+		SRI   map[string]string
 	}{
 		Nonce: nonce,
-		SRI:   s.sriHashes[sriKey],
+		SRI:   s.sriHashes,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
