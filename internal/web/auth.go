@@ -39,8 +39,6 @@ type RateLimiter struct {
 
 type session struct {
 	username  string
-	ip        string
-	userAgent string
 	createdAt time.Time
 	expiresAt time.Time
 }
@@ -49,8 +47,8 @@ type session struct {
 type sessionData struct {
 	Token     string    `json:"token"`
 	Username  string    `json:"username"`
-	IP        string    `json:"ip"`
-	UserAgent string    `json:"user_agent"`
+	IP        string    `json:"ip,omitempty"`
+	UserAgent string    `json:"user_agent,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -128,7 +126,7 @@ func (a *AuthManager) ValidateCredentials(username, password string) bool {
 }
 
 // CreateSession creates a new authenticated session.
-func (a *AuthManager) CreateSession(username, ip, userAgent string) (string, error) {
+func (a *AuthManager) CreateSession(username string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -139,8 +137,6 @@ func (a *AuthManager) CreateSession(username, ip, userAgent string) (string, err
 	hashedToken := hashToken(token)
 	a.sessions[hashedToken] = &session{
 		username:  username,
-		ip:        ip,
-		userAgent: userAgent,
 		createdAt: time.Now(),
 		expiresAt: time.Now().Add(a.cfg.SessionTimeout),
 	}
@@ -148,8 +144,8 @@ func (a *AuthManager) CreateSession(username, ip, userAgent string) (string, err
 	return token, nil
 }
 
-// ValidateSession checks if a session token is valid and matches client fingerprint.
-func (a *AuthManager) ValidateSession(token, ip, userAgent string) bool {
+// ValidateSession checks if a session token is valid and unexpired.
+func (a *AuthManager) ValidateSession(token string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -161,10 +157,6 @@ func (a *AuthManager) ValidateSession(token, ip, userAgent string) bool {
 
 	if time.Now().After(sess.expiresAt) {
 		delete(a.sessions, hashedToken)
-		return false
-	}
-
-	if sess.ip != ip || sess.userAgent != userAgent {
 		return false
 	}
 
@@ -190,12 +182,9 @@ func (a *AuthManager) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ip := getClientIP(r, a.trustProxy)
-		userAgent := r.UserAgent()
-
 		// Check cookie
 		cookie, err := r.Cookie("kula_session")
-		if err == nil && a.ValidateSession(cookie.Value, ip, userAgent) {
+		if err == nil && a.ValidateSession(cookie.Value) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -204,7 +193,7 @@ func (a *AuthManager) AuthMiddleware(next http.Handler) http.Handler {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader != "" && len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 			token := authHeader[7:]
-			if a.ValidateSession(token, ip, userAgent) {
+			if a.ValidateSession(token) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -270,8 +259,6 @@ func (a *AuthManager) LoadSessions() error {
 			// In hashed version, sd.Token is actually the hash
 			a.sessions[sd.Token] = &session{
 				username:  sd.Username,
-				ip:        sd.IP,
-				userAgent: sd.UserAgent,
 				createdAt: sd.CreatedAt,
 				expiresAt: sd.ExpiresAt,
 			}
@@ -293,8 +280,6 @@ func (a *AuthManager) SaveSessions() error {
 			toSave = append(toSave, sessionData{
 				Token:     hashedToken,
 				Username:  sess.username,
-				IP:        sess.ip,
-				UserAgent: sess.userAgent,
 				CreatedAt: sess.createdAt,
 				ExpiresAt: sess.expiresAt,
 			})

@@ -80,8 +80,15 @@ Note: Monitoring NVIDIA GPUs might require additional setup. Check [GPU monitori
 
 ### Storage Engine
 
-Data is persisted in **pre-allocated ring-buffer files** per tier. Each tier file has a fixed maximum size — when it fills up, 
-new data overwrites the oldest entries. This gives predictable, bounded disk usage with no cleanup needed.
+Data is persisted in **bounded binary ring-buffer files** per tier. Each tier file uses a small header plus length-prefixed records, and once a tier reaches its configured maximum size, new writes wrap around and overwrite the oldest retained entries. This keeps disk usage predictable without a separate cleanup process.
+
+Kula writes raw samples to the finest tier and incrementally rolls them up into coarser tiers. Aggregated tiers preserve:
+
+- average values for time-series views
+- per-window minimums
+- per-window maximums
+
+On startup, Kula restores the latest-sample cache and reconstructs any pending aggregation buffers so it can resume serving recent data and continue tier rollups after a restart.
 
 - **Tier 1** — Raw 1-second samples (default 250 MB)
 - **Tier 2** — 1-minute metrics aggregation (Avg/Min/Max) (default 150 MB)
@@ -90,8 +97,7 @@ new data overwrites the oldest entries. This gives predictable, bounded disk usa
 ### HTTP server
 
 The HTTP server on backend exposes a REST API and a WebSocket endpoint for live streaming. 
-Authentication is optional - when enabled, it uses Argon2id hashing with salt and session cookies. 
-It is worth adding that Kula truly respects your privacy. It works on closed networks and does not make any calls to external services.
+Authentication is optional. When enabled, Kula uses Argon2id password hashing, secure session cookies, token-only session validation with sliding expiration, and hashed-at-rest session persistence. Authenticated API access can also use a bearer session token via the `Authorization` header.
 
 ### Dashboard
 
@@ -208,7 +214,7 @@ Starting Kula is as simple as running:
 ./kula
 ```
 
-Dashbord will be available at: http://localhost:27960 (or :8080 if you're using earlier versions)
+Dashboard will be available at: http://localhost:27960 (or :8080 if you're using earlier versions)
 
 You can change default port and listen address in [`config.yaml`](config.example.yaml) or using environment variables:
 
@@ -294,6 +300,22 @@ Exposed metric families:
 
 All metrics include a `host` label set to the monitored machine's hostname.
 
+### Health endpoints
+
+Kula exposes lightweight liveness endpoints at:
+
+```
+http://localhost:27960/health
+http://localhost:27960/status
+```
+
+Both return:
+
+```
+200 OK
+kula is healthy
+```
+
 ### Authentication (Optional)
 
 ```bash
@@ -302,6 +324,8 @@ All metrics include a `host` label set to the monitored machine's hostname.
 
 # Add the output to config.yaml under web.auth
 ```
+
+When authentication is enabled, Kula issues a random session token after login, stores only its hash on disk, and validates requests by token expiry/validity rather than binding sessions to client IP or User-Agent.
 
 ### Service Management
 

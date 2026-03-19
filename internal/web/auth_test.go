@@ -112,17 +112,17 @@ func TestSessionLifecycle(t *testing.T) {
 		SessionTimeout: time.Hour,
 	}, "", false)
 
-	token, err := am.CreateSession("admin", "127.0.0.1", "test-agent")
+	token, err := am.CreateSession("admin")
 	if err != nil {
 		t.Fatalf("CreateSession error: %v", err)
 	}
 	if token == "" {
 		t.Fatal("CreateSession returned empty token")
 	}
-	if !am.ValidateSession(token, "127.0.0.1", "test-agent") {
+	if !am.ValidateSession(token) {
 		t.Error("Newly created session should be valid")
 	}
-	if am.ValidateSession("invalid_token", "127.0.0.1", "test-agent") {
+	if am.ValidateSession("invalid_token") {
 		t.Error("Invalid token should not validate")
 	}
 }
@@ -133,9 +133,9 @@ func TestSessionExpiry(t *testing.T) {
 		SessionTimeout: time.Millisecond, // very short timeout
 	}, "", false)
 
-	token, _ := am.CreateSession("admin", "127.0.0.1", "test-agent")
+	token, _ := am.CreateSession("admin")
 	time.Sleep(5 * time.Millisecond)
-	if am.ValidateSession(token, "127.0.0.1", "test-agent") {
+	if am.ValidateSession(token) {
 		t.Error("Expired session should not validate")
 	}
 }
@@ -146,8 +146,8 @@ func TestCleanupSessions(t *testing.T) {
 		SessionTimeout: time.Millisecond,
 	}, "", false)
 
-	_, _ = am.CreateSession("user1", "127.0.0.1", "test-agent")
-	_, _ = am.CreateSession("user2", "127.0.0.1", "test-agent")
+	_, _ = am.CreateSession("user1")
+	_, _ = am.CreateSession("user2")
 	time.Sleep(5 * time.Millisecond)
 	am.CleanupSessions()
 
@@ -198,15 +198,13 @@ func TestAuthMiddlewareValidCookie(t *testing.T) {
 		Enabled:        true,
 		SessionTimeout: time.Hour,
 	}, "", false)
-	token, _ := am.CreateSession("admin", "127.0.0.1", "mock-agent")
+	token, _ := am.CreateSession("admin")
 
 	handler := am.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	req := httptest.NewRequest("GET", "/api/test", nil)
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set("User-Agent", "mock-agent")
 	req.AddCookie(&http.Cookie{Name: "kula_session", Value: token})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -216,20 +214,41 @@ func TestAuthMiddlewareValidCookie(t *testing.T) {
 	}
 }
 
-func TestAuthMiddlewareBearerToken(t *testing.T) {
+func TestAuthMiddlewareValidCookieIgnoresClientChanges(t *testing.T) {
 	am := NewAuthManager(config.AuthConfig{
 		Enabled:        true,
 		SessionTimeout: time.Hour,
 	}, "", false)
-	token, _ := am.CreateSession("admin", "127.0.0.1", "mock-agent")
+	token, _ := am.CreateSession("admin")
 
 	handler := am.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	req := httptest.NewRequest("GET", "/api/test", nil)
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set("User-Agent", "mock-agent")
+	req.RemoteAddr = "203.0.113.77:4321"
+	req.Header.Set("User-Agent", "changed-agent")
+	req.AddCookie(&http.Cookie{Name: "kula_session", Value: token})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Changed client fingerprint: status = %d, want 200", rec.Code)
+	}
+}
+
+func TestAuthMiddlewareBearerToken(t *testing.T) {
+	am := NewAuthManager(config.AuthConfig{
+		Enabled:        true,
+		SessionTimeout: time.Hour,
+	}, "", false)
+	token, _ := am.CreateSession("admin")
+
+	handler := am.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/test", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -247,7 +266,7 @@ func TestSessionHashingOnDisk(t *testing.T) {
 		SessionTimeout: time.Hour,
 	}, tmpDir, false)
 
-	token, err := am.CreateSession("admin", "127.0.0.1", "agent")
+	token, err := am.CreateSession("admin")
 	if err != nil {
 		t.Fatalf("CreateSession error: %v", err)
 	}
@@ -271,6 +290,32 @@ func TestSessionHashingOnDisk(t *testing.T) {
 	hashed := hashToken(token)
 	if !contains(string(data), hashed) {
 		t.Error("sessions.json does not contain the hashed token")
+	}
+}
+
+func TestLoadSessionsLegacyFingerprintFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacyJSON := `[{"token":"hashed-token","username":"admin","ip":"127.0.0.1","user_agent":"legacy-agent","created_at":"2026-01-01T00:00:00Z","expires_at":"2999-01-01T00:00:00Z"}]`
+	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), []byte(legacyJSON), 0600); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	am := NewAuthManager(config.AuthConfig{
+		Enabled:        true,
+		SessionTimeout: time.Hour,
+	}, tmpDir, false)
+	if err := am.LoadSessions(); err != nil {
+		t.Fatalf("LoadSessions error: %v", err)
+	}
+
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	sess, ok := am.sessions["hashed-token"]
+	if !ok {
+		t.Fatal("legacy session was not loaded")
+	}
+	if sess.username != "admin" {
+		t.Errorf("loaded session username = %q, want admin", sess.username)
 	}
 }
 

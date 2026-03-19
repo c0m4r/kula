@@ -217,12 +217,22 @@ func (s *Server) Start() error {
 	mux.Handle("/ws", wsHandler)
 
 	if s.cfg.Metrics.Enabled {
-		mux.HandleFunc("/metrics", s.handleMetrics)
+		mux.Handle("/metrics", loggingMiddleware(s.cfg, http.HandlerFunc(s.handleMetrics)))
 		if s.cfg.Metrics.Token != "" {
 			log.Printf("Prometheus metrics enabled at /metrics with bearer token authentication")
 		} else {
 			log.Printf("Prometheus metrics enabled at /metrics without authentication")
 		}
+	}
+
+	// Apply request logging to liveness endpoints when enabled
+	if s.cfg.Logging.Enabled {
+		mux.Handle("/health", loggingMiddleware(s.cfg, http.HandlerFunc(s.handleHealth)))
+		mux.Handle("/status", loggingMiddleware(s.cfg, http.HandlerFunc(s.handleHealth)))
+	} else {
+		// Fallback registrations when logging is disabled
+		mux.HandleFunc("/health", s.handleHealth)
+		mux.HandleFunc("/status", s.handleHealth)
 	}
 
 	// Templated HTML files
@@ -498,7 +508,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.auth.CreateSession(creds.Username, ip, r.UserAgent())
+	token, err := s.auth.CreateSession(creds.Username)
 	if err != nil {
 		jsonError(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -555,11 +565,8 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.Auth.Enabled {
 		status["authenticated"] = true
 	} else {
-		ip := getClientIP(r, s.cfg.TrustProxy)
-		userAgent := r.UserAgent()
-
 		cookie, err := r.Cookie("kula_session")
-		if err == nil && s.auth.ValidateSession(cookie.Value, ip, userAgent) {
+		if err == nil && s.auth.ValidateSession(cookie.Value) {
 			status["authenticated"] = true
 		}
 	}
@@ -672,6 +679,13 @@ func getClientIP(r *http.Request, trustProxy bool) string {
 	}
 	return host
 }
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("kula is healthy"))
+}
+
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" && r.URL.Path != "/index.html" {
 		s.handleStatic(w, r)

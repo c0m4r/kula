@@ -145,7 +145,6 @@ func TestLoadInvalidYAML(t *testing.T) {
 func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("KULA_LISTEN", "10.0.0.1")
 	t.Setenv("KULA_PORT", "1234")
-	t.Setenv("KULA_METRICS_TOKEN", "env-secret")
 
 	cfg, err := Load("/nonexistent/path/config.yaml")
 	if err != nil {
@@ -157,8 +156,5 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg.Web.Port != 1234 {
 		t.Errorf("Web.Port = %d, want 1234", cfg.Web.Port)
-	}
-	if cfg.Web.Metrics.Token != "env-secret" {
-		t.Errorf("Web.Metrics.Token = %q, want env-secret", cfg.Web.Metrics.Token)
 	}
 }

@@ -79,3 +79,23 @@ func TestGameTemplateInjection(t *testing.T) {
 		t.Errorf("Game HTML body missing injected SRI %s", sri)
 	}
 }
+
+func TestHandleHealth(t *testing.T) {
+	s := NewServer(config.WebConfig{}, config.GlobalConfig{}, nil, nil, t.TempDir())
+
+	for _, path := range []string{"/health", "/status"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+
+			http.HandlerFunc(s.handleHealth).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("Expected status 200 for %s, got %d", path, rec.Code)
+			}
+			if rec.Body.String() != "kula is healthy" {
+				t.Fatalf("Expected body %q for %s, got %q", "kula is healthy", path, rec.Body.String())
+			}
+		})
+	}
+}

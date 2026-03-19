@@ -208,9 +208,6 @@ func Load(path string) (*Config, error) {
 			cfg.Web.Logging.Enabled = false
 		}
 	}
-	if token, set := os.LookupEnv("KULA_METRICS_TOKEN"); set {
-		cfg.Web.Metrics.Token = token
-	}
 
 	// Expand ~/ shorthand to the user's home directory
 	if len(cfg.Storage.Directory) > 1 && cfg.Storage.Directory[:2] == "~/" {

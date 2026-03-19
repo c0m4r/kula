@@ -5,7 +5,6 @@
 # - KULA_LOGLEVEL overrides logging.level
 # - KULA_LISTEN overrides web.listen
 # - KULA_PORT overrides web.port
-# - KULA_METRICS_TOKEN overrides web.metrics.token
 
 # Global settings
 global:

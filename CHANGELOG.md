@@ -11,12 +11,14 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Added
 
-- Prometheus metrics endpoint: `/metrics`
-- In-process query cache
-
-### Changed
-
 - Storage v2: binary format replacing JSON in tier files, resulting in significant performance improvements
+- Prometheus metrics endpoint: `/metrics` with optional token-based auth
+- In-process query cache
+- Health check endpoints (/status & /health)
+
+### Deprecated
+
+- Storage v1 (legacy JSON)
 
 ## [0.10.0] - 2026-03-17
 
