@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -730,7 +731,18 @@ func extractTimestamp(data []byte) (time.Time, error) {
 		}
 		return time.Unix(0, int64(binary.LittleEndian.Uint64(data[1:9]))), nil
 	case '{':
-		return time.Time{}, fmt.Errorf("JSON record: use full decode")
+		// FAST-PATH: Extract JSON timestamp manually instead of triggering a full json.Unmarshal
+		idx := bytes.Index(data, []byte(`"ts":"`))
+		if idx == -1 {
+			return time.Time{}, fmt.Errorf("JSON record: missing ts field")
+		}
+		start := idx + 6
+		end := bytes.IndexByte(data[start:], '"')
+		if end == -1 {
+			return time.Time{}, fmt.Errorf("JSON record: malformed ts field")
+		}
+		// Parse the extracted string natively
+		return time.Parse(time.RFC3339Nano, string(data[start:start+end]))
 	default:
 		// Legacy binary record written before the kind-byte format.
 		if len(data) < 8 {
