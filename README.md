@@ -47,49 +47,34 @@ Note: Monitoring NVIDIA GPUs might require additional setup. Check [GPU monitori
 
 ## 🪩 How It Works
 
-```mermaid
-flowchart TD
-    subgraph Kernel["🐧 Linux Kernel"]
-        kernel_stats["/proc/stat, /proc/meminfo, /sys/..."]
-    end
-
-    subgraph Kula["⚙️ Kula Engine"]
-        collectors["📊 Collectors\n(CPU, Mem, Net, Disk, System)"]
-        
-        subgraph Core["Processing"]
-            storage["💽 Storage Engine\n(Ring-Buffer)"]
-            tui["💻 TUI Terminal"]
-        end
-    end
-
-    subgraph StorageTiers["📦 Tiered Binary Storage (Fixed Size)"]
-        tier1[("Tier 1
-        1s Samples
-        (250 MB)")]
-        tier2[("Tier 2
-        1m Aggregation
-        (150 MB)")]
-        tier3[("Tier 3
-        5m Aggregation
-        (50 MB)")]
-    end
-
-    subgraph web["🌐 Web Server"]
-        dashboard["📈 Web Dashboard\n(Browser)"]
-    end
-
-    %% Connections
-    kernel_stats -- "Read every 1s" --> collectors
-    
-    collectors -- "Live Data" --> storage
-    collectors -- "Live Data" --> web
-    collectors -- "Live Data" --> tui
-    
-    storage -- "Query Historical Data" --> web
-    
-    storage -- "Raw Writes" --> tier1
-    storage -- "Downsample" --> tier2
-    storage -- "Downsample" --> tier3
+```
+    ╭──────────────────────────────────────────────╮
+    │                  Linux Kernel                │
+    │      /proc/stat  /proc/meminfo  /sys/...     │
+    ╰───────────────────────┬──────────────────────╯
+                            │ Read every 1s
+                            ▼
+    ╭──────────────────────────────────────────────╮
+    │                   Collectors                 │
+    │        (CPU, Mem, Net, Disk, System)         │
+    ╰───────────────────────┬──────────────────────╯
+                            │ Live Data
+         ╭──────────────────┼─────────────────────╮
+         ▼                  ▼                     ▼
+╭─────────────────╮  ╭────────────────╮  ╭─────────────────╮
+│ Storage Engine  │  │   Web Server   │  │   TUI Terminal  │
+╰───┬─────────┬───╯  ╰──────┬─────────╯  ╰─────────────────╯
+    │         │             │
+    │         ╰──(History)──┤              ╭───────────────╮
+    │                       ╰──(HTTP/WS)─► |   Dashboard   |
+    ▼                                      ╰───────────────╯
+╭──────────┬──────────┬──────────╮
+│  Tier 1  │  Tier 2  │  Tier 3  │
+│    1s    │    1m    │    5m    │
+│  250 MB  │  150 MB  │  50 MB   │
+╰──────────┴──────────┴──────────╯
+ Ring-buffer binary files
+ with circular overwrites
 ```
 
 ### Storage Engine
