@@ -48,47 +48,40 @@ Note: Monitoring NVIDIA GPUs might require additional setup. Check [GPU monitori
 ## 🪩 How It Works
 
 ```
-                    ┌──────────────────────────────────────────────┐
-                    │              Linux Kernel                    │
-                    │     /proc/stat  /proc/meminfo  /sys/...      │
-                    └──────────────────┬───────────────────────────┘
-                                       │ read every 1s
-                                       ▼
-                              ┌──────────────────┐
-                              │    Collectors    │
-                              │  (cpu, mem, net, │
-                              │   disk, system)  │
-                              └────────┬─────────┘
-                                       │ Sample struct
-                          ┌────────────┼────────────┐
-                          ▼            ▼            ▼
-                   ┌────────────┐  ┌────────┐  ┌──────────┐
-                   │  Storage   │  │  Web   │  │   TUI    │
-                   │  Engine    │  │ Server │  │ Terminal │
-                   └─────┬──────┘  └───┬────┘  └──────────┘
-                         │             │ 
-              ┌──────────┼─────────┐   └───────────┐  HTTP + WebSocket
-              ▼          ▼         ▼               ▼
-          ┌─────────┬─────────┬─────────┐  ┌───────────────┐
-          │ Tier 1  │ Tier 2  │ Tier 3  │  │   Dashboard   │
-          │   1s    │   1m    │   5m    │  │   (Browser)   │
-          │ 250 MB  │ 150 MB  │  50 MB  │  └───────────────┘
-          └─────────┴─────────┴─────────┘
-             Ring-buffer binary files
-             with circular overwrites
+    ╭──────────────────────────────────────────────╮
+    │                  Linux Kernel                │
+    │      /proc/stat  /proc/meminfo  /sys/...     │
+    ╰───────────────────────┬──────────────────────╯
+                            │ Read every 1s
+                            ▼
+    ╭──────────────────────────────────────────────╮
+    │                   Collectors                 │
+    │        (CPU, Mem, Net, Disk, System)         │
+    ╰───────────────────────┬──────────────────────╯
+                            │ Live Data
+         ╭──────────────────┼─────────────────────╮
+         ▼                  ▼                     ▼
+╭─────────────────╮  ╭────────────────╮  ╭─────────────────╮
+│ Storage Engine  │  │   Web Server   │  │   TUI Terminal  │
+╰───┬─────────┬───╯  ╰──────┬─────────╯  ╰─────────────────╯
+    │         │             │
+    │         ╰──(History)──┤              ╭───────────────╮
+    │                       ╰──(HTTP/WS)─► |   Dashboard   |
+    ▼                                      ╰───────────────╯
+╭──────────┬──────────┬──────────╮
+│  Tier 1  │  Tier 2  │  Tier 3  │
+│    1s    │    1m    │    5m    │
+│  250 MB  │  150 MB  │  50 MB   │
+╰──────────┴──────────┴──────────╯
+ Ring-buffer binary files
+ with circular overwrites
 ```
 
 ### Storage Engine
 
-Data is persisted in **bounded binary ring-buffer files** per tier. Each tier file uses a small header plus length-prefixed records, and once a tier reaches its configured maximum size, new writes wrap around and overwrite the oldest retained entries. This keeps disk usage predictable without a separate cleanup process.
+Kula is powered by a custom-built, high-performance **ring-buffer** storage system that writes metrics directly into fixed-size binary files. Because the files have a strict maximum capacity, new data seamlessly wraps around to overwrite the oldest entries. On startup, Kula restores the latest-sample cache and reconstructs any pending aggregation buffers so it can resume serving recent data and continue tier rollups after a restart.
 
-Kula writes raw samples to the finest tier and incrementally rolls them up into coarser tiers. Aggregated tiers preserve:
-
-- average values for time-series views
-- per-window minimums
-- per-window maximums
-
-On startup, Kula restores the latest-sample cache and reconstructs any pending aggregation buffers so it can resume serving recent data and continue tier rollups after a restart.
+To maximize efficiency, Kula employs a multi-tiered architecture that intelligently downsamples older data:
 
 - **Tier 1** — Raw 1-second samples (default 250 MB)
 - **Tier 2** — 1-minute metrics aggregation (Avg/Min/Max) (default 150 MB)
