@@ -12,6 +12,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Added
 
 - Storage v2: binary format replacing JSON in tier files, resulting in significant performance improvements
+- Storage v1 to v2 migration feature
 - Prometheus metrics endpoint: `/metrics` with optional token-based auth
 - In-process query cache
 - Health check endpoints (/status & /health)
@@ -19,6 +20,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Deprecated
 
 - Storage v1 (legacy JSON)
+
+### Security
+
+- Landlock ABI version check at startup
 
 ## [0.10.0] - 2026-03-17
 

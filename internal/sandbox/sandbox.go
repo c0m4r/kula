@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 
 	"github.com/landlock-lsm/go-landlock/landlock"
+	llsyscall "github.com/landlock-lsm/go-landlock/landlock/syscall"
 )
 
 // Enforce applies Landlock restrictions to the current process.
@@ -76,13 +77,32 @@ func Enforce(configPath string, storageDir string, webPort int) error {
 
 	// Apply Landlock restrictions using V5 with BestEffort.
 	// V5 (kernel 6.7+) includes: filesystem + networking + ioctl on devices.
+	abi, err := llsyscall.LandlockGetABIVersion()
+	if err != nil {
+		log.Printf("Landlock not supported or disabled by kernel (skipping sandbox enforcement): %v", err)
+		return nil
+	}
+
+	if abi < 1 {
+		log.Println("Landlock ABI < 1, skipping sandbox enforcement")
+		return nil
+	}
+
 	err = landlock.V5.BestEffort().Restrict(allRules...)
 	if err != nil {
 		return fmt.Errorf("sandbox: enforcing landlock: %w", err)
 	}
 
-	log.Printf("Landlock sandbox enforced (paths: /proc[ro] /sys[ro] %s[ro] %s[rw], net: bind TCP/%d)",
-		absConfigPath, absStorageDir, webPort)
+	var netStatus string
+	// Network restrictions (BindTCP) require ABI v4+ (kernel 6.7+)
+	if abi < 4 {
+		netStatus = " (network protection NOT supported by kernel, ABI < 4)"
+	} else {
+		netStatus = fmt.Sprintf(", net: bind TCP/%d", webPort)
+	}
+
+	log.Printf("Landlock sandbox enforced (ABI v%d, paths: /proc[ro] /sys[ro] %s[ro] %s[rw]%s)",
+		abi, absConfigPath, absStorageDir, netStatus)
 
 	return nil
 }
