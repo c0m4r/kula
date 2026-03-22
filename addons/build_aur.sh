@@ -44,7 +44,7 @@ license=('AGPL-3.0')
 depends=('glibc')
 makedepends=('go')
 source=("\${pkgname}-\${pkgver}.tar.gz::${GITHUB_URL}/archive/\${pkgver}.tar.gz")
-sha256sums=('baff8ddde4452ea22643da6b91a153c42652d2108692121f355a99128ff22064')
+sha256sums=('255de5051a917bf270f6c405c99d735329c590bdaaa9cafb1e4e89cd70118cc9')
 install='kula.install'
 
 check() {
