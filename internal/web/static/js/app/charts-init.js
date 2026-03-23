@@ -303,7 +303,7 @@ export function setChartTimeRange() {
     const windowSec = (xMax - xMin) / 1000;
     const minUnit = windowSec >= 259200 ? 'day' : false;
 
-    Object.values(state.charts).forEach(chart => {
+    const applyToChart = (chart) => {
         if (!chart?.options?.scales?.x || chart.config?.type === 'bar') return;
         chart.options.scales.x.min = xMin;
         chart.options.scales.x.max = xMax;
@@ -312,6 +312,12 @@ export function setChartTimeRange() {
         } else {
             delete chart.options.scales.x.time.minUnit;
         }
+    };
+
+    Object.values(state.charts).forEach(applyToChart);
+    // Also apply to split charts
+    Object.values(state.splitCharts).forEach(typeCharts => {
+        Object.values(typeCharts).forEach(applyToChart);
     });
 }
 

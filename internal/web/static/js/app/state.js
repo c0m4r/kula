@@ -55,6 +55,12 @@ export const state = {
     selectedGpuTemp: localStorage.getItem('kula_sel_gputemp') || null,
     configMax: {}, // loaded from server /api/config
     lastHistoricalTs: null,
+    splitNet: JSON.parse(localStorage.getItem('kula_split_net') || 'false'),
+    splitDiskIo: JSON.parse(localStorage.getItem('kula_split_diskio') || 'false'),
+    splitDiskSpace: JSON.parse(localStorage.getItem('kula_split_diskspace') || 'false'),
+    splitDiskTemp: JSON.parse(localStorage.getItem('kula_split_disktemp') || 'false'),
+    splitGpu: JSON.parse(localStorage.getItem('kula_split_gpu') || 'false'),
+    splitCharts: {}, // { type: { chartKey: chartInstance } }
 };
 
 // ---- Color Palette ----

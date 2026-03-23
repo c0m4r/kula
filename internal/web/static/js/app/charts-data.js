@@ -9,6 +9,7 @@ import { updateHeader, updateSubtitles } from './header.js';
 import { updateGauges } from './gauges.js';
 import { evaluateAlerts } from './alerts.js';
 import { applyStoredFocusMode } from './focus-mode.js';
+import { addSampleToSplitCharts, updateSplitSelectors } from './split.js';
 
 // ---- Data Update ----
 export function addSampleToCharts(item, ts) {
@@ -108,8 +109,8 @@ export function addSampleToCharts(item, ts) {
         }
     }
 
-    // Network (selected non-lo interface)
-    if (state.charts.network && s.net?.ifaces) {
+    // Network (selected non-lo interface) — skip when split is active
+    if (!state.splitNet && state.charts.network && s.net?.ifaces) {
         let rx = 0, tx = 0;
         const iface = s.net.ifaces.find(i => i.name === state.selectedNet);
         if (iface) {
@@ -123,8 +124,8 @@ export function addSampleToCharts(item, ts) {
         state.charts.network.data.datasets[1].data.push(point(tx));
     }
 
-    // Packets per second (selected non-lo interface)
-    if (state.charts.pps && s.net?.ifaces) {
+    // Packets per second (selected non-lo interface) — skip when split is active
+    if (!state.splitNet && state.charts.pps && s.net?.ifaces) {
         let rxPps = 0, txPps = 0;
         const iface = s.net.ifaces.find(i => i.name === state.selectedNet);
         if (iface) {
@@ -147,8 +148,8 @@ export function addSampleToCharts(item, ts) {
         state.charts.connections.data.datasets[5].data.push(point(s.net?.tcp?.out_rsts_ps || 0));
     }
 
-    // Disk I/O (selected device)
-    if (state.charts.diskio && s.disk?.devices) {
+    // Disk I/O (selected device) — skip when split is active
+    if (!state.splitDiskIo && state.charts.diskio && s.disk?.devices) {
         let rBps = 0, wBps = 0, rIops = 0, wIops = 0;
         const d = s.disk.devices.find(d => d.name === state.selectedDiskIo);
         if (d) {
@@ -170,9 +171,9 @@ export function addSampleToCharts(item, ts) {
         state.charts.diskio.data.datasets[3].data.push(point(wIops));
     }
 
-    // Disk Temperature
+    // Disk Temperature — skip when split is active
     const diskTempCard = document.getElementById('card-disk-temp');
-    if (state.charts.disktemp && s.disk?.devices) {
+    if (!state.splitDiskTemp && state.charts.disktemp && s.disk?.devices) {
         const d = s.disk.devices.find(d => d.name === state.selectedDiskTemp);
         const hasSensors = d && d.sensors && d.sensors.length > 0;
         const hasTemp = d && d.temp > 0;
@@ -225,8 +226,8 @@ export function addSampleToCharts(item, ts) {
         }
     }
 
-    // Disk Space — single dataset for selected mount
-    if (state.charts.diskspace && s.disk?.filesystems && s.disk.filesystems.length > 0) {
+    // Disk Space — single dataset for selected mount — skip when split is active
+    if (!state.splitDiskSpace && state.charts.diskspace && s.disk?.filesystems && s.disk.filesystems.length > 0) {
         if (state.charts.diskspace.data.datasets.length !== 1 || state.charts.diskspace.data.datasets[0].label !== 'Space Used %') {
             state.charts.diskspace.data.datasets = [{
                 label: 'Space Used %',
@@ -270,8 +271,8 @@ export function addSampleToCharts(item, ts) {
         state.charts.self.data.datasets[1].data.push(point(s.self.mem_rss || 0));
     }
 
-    // GPU Metrics
-    if (s.gpu && s.gpu.length > 0) {
+    // GPU Metrics — skip regular cards when split is active
+    if (!state.splitGpu && s.gpu && s.gpu.length > 0) {
         const g = s.gpu.find(g => g.name === state.selectedGpuLoad) || s.gpu[0];
         const hasAnyGpuMetric = (g.load_pct > 0 || g.power_w > 0 || g.vram_total > 0 || g.temp > 0);
 
@@ -308,7 +309,7 @@ export function addSampleToCharts(item, ts) {
         if (state.focusMode && typeof applyStoredFocusMode === 'function') {
             applyStoredFocusMode();
         }
-    } else {
+    } else if (!state.splitGpu) {
         document.getElementById('card-gpu-load')?.classList.add('hidden');
         document.getElementById('card-vram')?.classList.add('hidden');
         document.getElementById('card-gpu-temp')?.classList.add('hidden');
@@ -316,6 +317,9 @@ export function addSampleToCharts(item, ts) {
             applyStoredFocusMode();
         }
     }
+
+    // Feed split charts
+    addSampleToSplitCharts(s, ts);
 }
 
 // Batch-update all charts at once
@@ -326,6 +330,12 @@ export function updateAllCharts() {
     }
     Object.values(state.charts).forEach(chart => {
         if (chart) chart.update('none');
+    });
+    // Also update split charts
+    Object.values(state.splitCharts).forEach(typeCharts => {
+        Object.values(typeCharts).forEach(chart => {
+            if (chart && typeof chart.update === 'function') chart.update('none');
+        });
     });
 }
 
@@ -354,15 +364,19 @@ export function trimChartsToTimeRange() {
     if (state.timeRange === null) return; // custom range — don't trim
     const cutoffMs = Date.now() - state.timeRange * 1000;
 
-    Object.values(state.charts).forEach(chart => {
+    const trimChart = (chart) => {
         if (!chart || !chart.data?.datasets) return;
         chart.data.datasets.forEach(ds => {
             if (!Array.isArray(ds.data) || ds.data.length === 0) return;
-            // Find the first index still within range, then splice once
             let i = 0;
             while (i < ds.data.length && ds.data[i].x && ds.data[i].x < cutoffMs) i++;
             if (i > 0) ds.data.splice(0, i);
         });
+    };
+
+    Object.values(state.charts).forEach(trimChart);
+    Object.values(state.splitCharts).forEach(typeCharts => {
+        Object.values(typeCharts).forEach(trimChart);
     });
 
     // Keep dataBuffer in sync with the displayed time window
@@ -377,6 +391,15 @@ export function clearAllChartData() {
         if (!chart?.data?.datasets) return;
         chart.data.datasets.forEach(ds => {
             if (Array.isArray(ds.data)) ds.data = [];
+        });
+    });
+    // Also clear split charts
+    Object.values(state.splitCharts).forEach(typeCharts => {
+        Object.values(typeCharts).forEach(chart => {
+            if (!chart?.data?.datasets) return;
+            chart.data.datasets.forEach(ds => {
+                if (Array.isArray(ds.data)) ds.data = [];
+            });
         });
     });
 }
@@ -448,6 +471,21 @@ export function syncZoom(sourceChart) {
         } else {
             chart.update('none');
         }
+    });
+
+    // Sync split charts too
+    Object.values(state.splitCharts).forEach(typeCharts => {
+        Object.values(typeCharts).forEach(chart => {
+            if (!chart?.options?.scales?.x) return;
+            if (minUnit) {
+                chart.options.scales.x.time.minUnit = minUnit;
+            } else {
+                delete chart.options.scales.x.time.minUnit;
+            }
+            chart.options.scales.x.min = min;
+            chart.options.scales.x.max = max;
+            chart.update('none');
+        });
     });
 
     // When zooming or panning, fetch the optimal data resolution for the new view.
@@ -556,12 +594,16 @@ export function fetchZoomedHistory(fromDate, toDate) {
 }
 
 export function resetZoomAll() {
-    Object.values(state.charts).forEach(chart => {
+    const resetChart = (chart) => {
         if (!chart?.options?.scales?.x) return;
         delete chart.options.scales.x.min;
         delete chart.options.scales.x.max;
         delete chart.options.scales.x.time.minUnit;
         chart.update('none');
+    };
+    Object.values(state.charts).forEach(resetChart);
+    Object.values(state.splitCharts).forEach(typeCharts => {
+        Object.values(typeCharts).forEach(resetChart);
     });
 
     // Restore time range display text
@@ -614,11 +656,15 @@ export function insertGapsInHistory(data, resolutionStr = '1s') {
 }
 
 export function addGapToCharts(ts) {
-    Object.values(state.charts).forEach(chart => {
+    const addGap = (chart) => {
         if (!chart?.data?.datasets) return;
         chart.data.datasets.forEach(ds => {
             if (Array.isArray(ds.data)) ds.data.push({ x: ts, y: null });
         });
+    };
+    Object.values(state.charts).forEach(addGap);
+    Object.values(state.splitCharts).forEach(typeCharts => {
+        Object.values(typeCharts).forEach(addGap);
     });
 }
 
@@ -809,6 +855,9 @@ export function updateSelectors(s) {
             el(id)?.classList.add('hidden');
         });
     }
+
+    // Update split charts if device options changed
+    updateSplitSelectors(s);
 }
 
 // ---- Live Sample Pipeline ----

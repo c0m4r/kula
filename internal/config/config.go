@@ -75,15 +75,24 @@ type MetricsConfig struct {
 }
 
 type GraphConfig struct {
-	CPUTemp  GraphMaxConfig `yaml:"cpu_temp"`
-	DiskTemp GraphMaxConfig `yaml:"disk_temp"`
-	GPUTemp  GraphMaxConfig `yaml:"gpu_temp"`
-	Network  GraphMaxConfig `yaml:"network"`
+	CPUTemp  GraphMaxConfig   `yaml:"cpu_temp"`
+	DiskTemp GraphMaxConfig   `yaml:"disk_temp"`
+	GPUTemp  GraphMaxConfig   `yaml:"gpu_temp"`
+	Network  GraphMaxConfig   `yaml:"network"`
+	Split    GraphSplitConfig `yaml:"split"`
 }
 
 type GraphMaxConfig struct {
 	MaxMode  string  `yaml:"max_mode"` // "off", "on", "auto"
 	MaxValue float64 `yaml:"max_value"`
+}
+
+type GraphSplitConfig struct {
+	Network   bool `yaml:"network"`
+	DiskIo    bool `yaml:"disk_io"`
+	DiskSpace bool `yaml:"disk_space"`
+	DiskTemp  bool `yaml:"disk_temp"`
+	Gpu       bool `yaml:"gpu"`
 }
 
 type LangConfig struct {

@@ -82,7 +82,7 @@ web:
  
   # Optional bounds limits for dynamic charts. "max_mode" can be:
   # "off": Unrestricted, Chart.js auto-scales Y-axis by stream data peaks.
-  # "on": Imposes a hard Y-axis maximum matching "max_value". 
+  # "on": Imposes a hard Y-axis maximum matching "max_value".
   # "auto": Tries to securely detect hardware constraints (e.g CPU TjMax or Net link speed). If failed, falls back to "max_value".
   graphs:
     cpu_temp:
@@ -94,6 +94,14 @@ web:
     network:
       max_mode: "off"
       max_value: 1000 # Mbps (1 Gb/s)
+    # Split graphs into individual charts per device/interface (default: false).
+    # Can also be toggled per-chart from the dashboard using the split button (⊟).
+    split:
+      network: false   # one chart per network interface
+      disk_io: false   # one chart per disk device
+      disk_space: false # one chart per mount point
+      disk_temp: false  # one chart per disk device (thermals section)
+      gpu: false        # one chart per GPU
 
   # API Access and Performance Logging
   logging:

@@ -9,6 +9,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ## [Unreleased]
 
+### Added
+
+- Per-device/interface graph splitting
+
 ### Changed
 
 - Focus mode enhancements, option to hide gauges

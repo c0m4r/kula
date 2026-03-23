@@ -7,6 +7,7 @@ import { initCharts } from './charts-init.js';
 import { updateAllCharts, clearAllChartData } from './charts-data.js';
 import { connectWS, updateConnectionStatus } from './websocket.js';
 import { applyTheme } from './theme.js';
+import { applySplitFromConfig } from './split.js';
 
 export function checkAuth() {
     fetch('/api/auth/status')
@@ -93,6 +94,9 @@ export function fetchConfig() {
             if (cfg.graphs) {
                 state.configMax = cfg.graphs;
                 initCharts(); // reload boundaries immediately on bootstrap/login
+                if (cfg.graphs.split) {
+                    applySplitFromConfig(cfg.graphs.split);
+                }
             }
 
             const versionStr = cfg.show_version === false ? '' : ' v' + (cfg.version || '0.0.0');

@@ -6,13 +6,14 @@
 'use strict';
 import { state } from './state.js';
 import { i18n } from './i18n.js';
-import { addSampleToCharts, updateAllCharts, clearAllChartData, syncZoom, resetZoomAll } from './charts-data.js';
+import { addSampleToCharts, updateAllCharts, clearAllChartData, syncZoom, resetZoomAll, redrawChartsFromBuffer } from './charts-data.js';
 import { toggleAlertDropdown, toggleInfoDropdown } from './alerts.js';
 import { syncPauseState, togglePause, toggleLayout, applyLayout, setTimeRange, toggleCustomTimePicker, applyCustomRange } from './controls.js';
 import { checkAuth, handleLogin, handleLogout } from './auth.js';
 import { applyTheme, toggleTheme } from './theme.js';
 import { setupHoverPause, setupChartActions } from './ui-actions.js';
 import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
+import { initSplitModule } from './split.js';
 
 async function init() {
     // Initialize i18n before everything else
@@ -101,6 +102,9 @@ async function init() {
 
     // Expand/Settings actions on chart cards
     setupChartActions();
+
+    // Split buttons (must be after setupChartActions to avoid being removed)
+    initSplitModule(redrawChartsFromBuffer);
 
     // Close dropdowns when clicking outside
     document.addEventListener('click', (e) => {

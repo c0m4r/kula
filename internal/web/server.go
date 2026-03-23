@@ -479,6 +479,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				"value": s.cfg.Graphs.Network.MaxValue,
 				"auto":  s.collector.DetectLinkSpeed(),
 			},
+			"split": map[string]interface{}{
+				"network":    s.cfg.Graphs.Split.Network,
+				"disk_io":    s.cfg.Graphs.Split.DiskIo,
+				"disk_space": s.cfg.Graphs.Split.DiskSpace,
+				"disk_temp":  s.cfg.Graphs.Split.DiskTemp,
+				"gpu":        s.cfg.Graphs.Split.Gpu,
+			},
 		},
 		"lang": map[string]interface{}{
 			"default": s.cfg.Lang.Default,

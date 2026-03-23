@@ -109,5 +109,6 @@
     "no_swap": "No swap configured",
     "no_gpus": "No GPUs detected",
     "collecting_data": "Collecting data…",
-    "clock": "Clock"
+    "clock": "Clock",
+    "split_by_device": "Split by device"
 }
