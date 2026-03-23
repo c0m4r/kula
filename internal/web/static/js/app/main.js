@@ -4,6 +4,15 @@
    Must be loaded LAST after all other modules.
    ============================================================ */
 'use strict';
+import { state } from './state.js';
+import { i18n } from './i18n.js';
+import { addSampleToCharts, updateAllCharts, clearAllChartData, syncZoom, resetZoomAll } from './charts-data.js';
+import { toggleAlertDropdown, toggleInfoDropdown } from './alerts.js';
+import { syncPauseState, togglePause, toggleLayout, applyLayout, setTimeRange, toggleCustomTimePicker, applyCustomRange } from './controls.js';
+import { checkAuth, handleLogin, handleLogout } from './auth.js';
+import { applyTheme, toggleTheme } from './theme.js';
+import { setupHoverPause, setupChartActions } from './ui-actions.js';
+import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
 
 async function init() {
     // Initialize i18n before everything else
@@ -111,17 +120,20 @@ async function init() {
             state.aggDropdownOpen = false;
             document.getElementById('agg-presets-list').classList.remove('open');
         }
-        // Close chart settings if clicking outside
         if (!e.target.closest('.btn-icon') && !e.target.closest('.chart-settings-dropdown')) {
             document.querySelectorAll('.chart-settings-dropdown').forEach(d => d.classList.add('hidden'));
         }
     });
 
+    document.addEventListener('kula-sync-pause', syncPauseState);
+    document.addEventListener('kula-i18n-changed', updateAllCharts);
+    document.addEventListener('kula-zoom-sync', (e) => syncZoom(e.detail));
+
     checkAuth();
 }
 
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => init());
+    document.addEventListener('DOMContentLoaded', init);
 } else {
     init();
 }

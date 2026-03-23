@@ -3,9 +3,15 @@
    gap insertion, device selectors, and the live sample pipeline.
    ============================================================ */
 'use strict';
+import { state, colors } from './state.js';
+import { setChartTimeRange, updateChartLabels } from './charts-init.js';
+import { updateHeader, updateSubtitles } from './header.js';
+import { updateGauges } from './gauges.js';
+import { evaluateAlerts } from './alerts.js';
+import { applyStoredFocusMode } from './focus-mode.js';
 
 // ---- Data Update ----
-function addSampleToCharts(item, ts) {
+export function addSampleToCharts(item, ts) {
     let s = item.data || item;
     if (state.currentAggregation === 'min' && item.min) s = item.min;
     if (state.currentAggregation === 'max' && item.max) s = item.max;
@@ -313,7 +319,7 @@ function addSampleToCharts(item, ts) {
 }
 
 // Batch-update all charts at once
-function updateAllCharts() {
+export function updateAllCharts() {
     setChartTimeRange();
     if (typeof updateChartLabels === 'function') {
         updateChartLabels();
@@ -324,7 +330,7 @@ function updateAllCharts() {
 }
 
 // Redraw charts from the active buffer (used when selected devices change)
-function redrawChartsFromBuffer() {
+export function redrawChartsFromBuffer() {
     clearAllChartData();
     state.dataBuffer.forEach(item => {
         if (item._gap) {
@@ -344,7 +350,7 @@ function redrawChartsFromBuffer() {
     }
 }
 
-function trimChartsToTimeRange() {
+export function trimChartsToTimeRange() {
     if (state.timeRange === null) return; // custom range — don't trim
     const cutoffMs = Date.now() - state.timeRange * 1000;
 
@@ -366,7 +372,7 @@ function trimChartsToTimeRange() {
     if (bi > 0) state.dataBuffer.splice(0, bi);
 }
 
-function clearAllChartData() {
+export function clearAllChartData() {
     Object.values(state.charts).forEach(chart => {
         if (!chart?.data?.datasets) return;
         chart.data.datasets.forEach(ds => {
@@ -376,12 +382,12 @@ function clearAllChartData() {
 }
 
 // Debounce timer for zoom-triggered history fetches.
-let _zoomFetchTimer = null;
+export let _zoomFetchTimer = null;
 
 // tryZoomFromBuffer attempts to satisfy a zoom request from the in-memory
 // data buffer, avoiding a network round-trip when the buffer already covers
 // the requested window. Returns true if the redraw succeeded.
-function tryZoomFromBuffer(fromDate, toDate) {
+export function tryZoomFromBuffer(fromDate, toDate) {
     if (!state.dataBuffer || state.dataBuffer.length === 0) return false;
 
     const fromMs = fromDate.getTime();
@@ -414,7 +420,7 @@ function tryZoomFromBuffer(fromDate, toDate) {
     return true;
 }
 
-function syncZoom(sourceChart) {
+export function syncZoom(sourceChart) {
     const { min, max } = sourceChart.scales.x;
 
     // Update the display to show the zoomed timeframe explicitly
@@ -464,7 +470,7 @@ function syncZoom(sourceChart) {
 
 // Fetch higher-resolution data for a zoomed window and replace chart data,
 // then re-apply the zoom so the viewport stays exactly where the user dragged.
-function fetchZoomedHistory(fromDate, toDate) {
+export function fetchZoomedHistory(fromDate, toDate) {
     if (state.loadingHistory) return;
     state.loadingHistory = true;
     document.getElementById('loading-spinner')?.classList.remove('hidden');
@@ -534,7 +540,7 @@ function fetchZoomedHistory(fromDate, toDate) {
             // and are ignored visually until the user resets zoom).
             if (state.pausedZoom) {
                 state.pausedZoom = false;
-                syncPauseState();
+                document.dispatchEvent(new Event('kula-sync-pause'));
             }
 
             state.loadingHistory = false;
@@ -549,7 +555,7 @@ function fetchZoomedHistory(fromDate, toDate) {
         });
 }
 
-function resetZoomAll() {
+export function resetZoomAll() {
     Object.values(state.charts).forEach(chart => {
         if (!chart?.options?.scales?.x) return;
         delete chart.options.scales.x.min;
@@ -574,12 +580,12 @@ function resetZoomAll() {
     // Resume from zoom-pause
     if (state.pausedZoom) {
         state.pausedZoom = false;
-        syncPauseState();
+        document.dispatchEvent(new Event('kula-sync-pause'));
     }
 }
 
 // ---- Gap Insertion ----
-function insertGapsInHistory(data, resolutionStr = '1s') {
+export function insertGapsInHistory(data, resolutionStr = '1s') {
     if (state.joinMetrics || data.length < 2) return data;
 
     let expectedInterval = 1000; // default 1s
@@ -607,7 +613,7 @@ function insertGapsInHistory(data, resolutionStr = '1s') {
     return result;
 }
 
-function addGapToCharts(ts) {
+export function addGapToCharts(ts) {
     Object.values(state.charts).forEach(chart => {
         if (!chart?.data?.datasets) return;
         chart.data.datasets.forEach(ds => {
@@ -617,7 +623,7 @@ function addGapToCharts(ts) {
 }
 
 // ---- Device Selectors ----
-function updateSelectors(s) {
+export function updateSelectors(s) {
     const el = (id) => document.getElementById(id);
 
     if (s.net && s.net.ifaces) {
@@ -807,7 +813,7 @@ function updateSelectors(s) {
 
 // ---- Live Sample Pipeline ----
 // Push a single live sample — adds data + updates charts immediately
-function pushLiveSample(sample) {
+export function pushLiveSample(sample) {
     const ts = new Date(sample.ts || sample.data?.ts);
 
     // Prevent duplicate or out-of-order samples
@@ -832,4 +838,250 @@ function pushLiveSample(sample) {
     updateAllCharts();
     updateSubtitles(sample);
     evaluateAlerts(sample);
+}
+
+export function updateSamplingInfo(tier, resolution) {
+    const el = document.getElementById('sampling-info');
+    if (!el) return;
+    const tierNames = ['Tier 1 (raw)', 'Tier 2 (aggregated)', 'Tier 3 (long-term)'];
+    const name = tierNames[tier] || `Tier ${tier + 1}`;
+    el.textContent = `${resolution} samples · ${name}`;
+    state.currentResolution = resolution || '1s';
+
+    const aggList = document.getElementById('agg-presets-list');
+    const aggDiv = document.getElementById('agg-divider');
+    const aggBtnMobile = document.getElementById('btn-agg-menu');
+
+    if (aggList && aggDiv) {
+        if (tier === 0 && resolution === '1s') {
+            aggList.classList.add('hidden');
+            aggDiv.classList.add('hidden');
+            if (aggBtnMobile) aggBtnMobile.classList.add('hidden');
+        } else {
+            aggList.classList.remove('hidden');
+            aggDiv.classList.remove('hidden');
+            if (aggBtnMobile) aggBtnMobile.classList.remove('hidden');
+        }
+    }
+}
+
+export function fetchHistory(rangeSeconds) {
+    if (state.loadingHistory) return;
+    state.loadingHistory = true;
+    document.getElementById('loading-spinner')?.classList.remove('hidden');
+
+    const to = new Date().toISOString();
+    const from = new Date(Date.now() - rangeSeconds * 1000).toISOString();
+    const points = Math.max(600, window.innerWidth || 1000);
+    fetch(`/api/history?from=${from}&to=${to}&points=${points}`)
+        .then(r => r.json())
+        .then(response => {
+            const data = response.samples || response;
+            const isEnvelope = response.samples !== undefined;
+
+            if (isEnvelope) {
+                updateSamplingInfo(response.tier, response.resolution);
+            }
+
+            if (!Array.isArray(data) || data.length === 0) {
+                clearAllChartData();
+                state.dataBuffer = [];
+                setChartTimeRange();
+                updateAllCharts();
+                state.loadingHistory = false;
+                document.getElementById('loading-spinner')?.classList.add('hidden');
+                return;
+            }
+
+            // Pre-calculate selectors from newest sample so charting has correct selection
+            const lastItemH = data[data.length - 1];
+            updateSelectors(lastItemH.data || lastItemH);
+
+            // Clear all chart data before loading history
+            clearAllChartData();
+            state.dataBuffer = [];
+
+            // Batch add all historical points WITHOUT chart.update() per sample
+            const processed = insertGapsInHistory(data, response?.resolution);
+            processed.forEach(item => {
+                if (item._gap) {
+                    addGapToCharts(new Date(item.ts));
+                    return;
+                }
+                const timestampSrc = item.data || item;
+                const ts = new Date(timestampSrc.ts || item.ts);
+                state.dataBuffer.push(item);
+                addSampleToCharts(item, ts);
+            });
+
+            // Trim buffer
+            if (state.dataBuffer.length > state.maxBufferSize) {
+                state.dataBuffer = state.dataBuffer.slice(-state.maxBufferSize);
+            }
+
+            // Single batch update of all charts
+            trimChartsToTimeRange();
+            updateAllCharts();
+
+            // Update gauges/header with latest sample
+            const lastItem = data[data.length - 1];
+            const s = lastItem.data || lastItem;
+            state.lastSample = s;
+            state.lastHistoricalTs = new Date(s.ts || lastItem.ts);
+            updateGauges(s);
+            updateHeader(s);
+            updateSubtitles(s);
+            evaluateAlerts(s);
+
+            state.loadingHistory = false;
+            document.getElementById('loading-spinner')?.classList.add('hidden');
+            drainLiveQueue();
+        })
+        .catch(e => {
+            console.error('History fetch error:', e);
+            state.loadingHistory = false;
+            document.getElementById('loading-spinner')?.classList.add('hidden');
+            drainLiveQueue();
+        });
+}
+
+export function fetchCustomHistory(fromDate, toDate) {
+    if (state.loadingHistory) return;
+    state.loadingHistory = true;
+    document.getElementById('loading-spinner')?.classList.remove('hidden');
+
+    const from = fromDate.toISOString();
+    const to = toDate.toISOString();
+    const points = Math.max(600, window.innerWidth || 1000);
+    fetch(`/api/history?from=${from}&to=${to}&points=${points}`)
+        .then(r => r.json())
+        .then(response => {
+            const data = response.samples || response;
+            const isEnvelope = response.samples !== undefined;
+
+            if (isEnvelope) {
+                updateSamplingInfo(response.tier, response.resolution);
+            }
+
+            if (Array.isArray(data) && data.length > 0) {
+                const lastItemC = data[data.length - 1];
+                updateSelectors(lastItemC.data || lastItemC);
+            }
+
+            clearAllChartData();
+            state.dataBuffer = [];
+
+            if (Array.isArray(data) && data.length > 0) {
+                const processed = insertGapsInHistory(data, response?.resolution);
+                processed.forEach(item => {
+                    if (item._gap) {
+                        addGapToCharts(new Date(item.ts));
+                        return;
+                    }
+                    const timestampSrc = item.data || item;
+                    const ts = new Date(timestampSrc.ts || item.ts);
+                    state.dataBuffer.push(item);
+                    addSampleToCharts(item, ts);
+                });
+
+                if (state.dataBuffer.length > state.maxBufferSize) {
+                    state.dataBuffer = state.dataBuffer.slice(-state.maxBufferSize);
+                }
+
+                const lastItem = data[data.length - 1];
+                const s = lastItem.data || lastItem;
+                state.lastSample = s;
+                state.lastHistoricalTs = new Date(s.ts || lastItem.ts);
+                updateGauges(s);
+                updateHeader(s);
+                updateSubtitles(s);
+                evaluateAlerts(s);
+            }
+
+            setChartTimeRange();
+            updateAllCharts();
+            state.loadingHistory = false;
+            document.getElementById('loading-spinner')?.classList.add('hidden');
+            drainLiveQueue();
+        })
+        .catch(e => {
+            console.error('Custom history fetch error:', e);
+            state.loadingHistory = false;
+            document.getElementById('loading-spinner')?.classList.add('hidden');
+            drainLiveQueue();
+        });
+}
+
+export function fetchGapHistory(fromDate, toDate) {
+    if (state.loadingHistory) return;
+    state.loadingHistory = true;
+
+    const from = fromDate.toISOString();
+    const to = toDate.toISOString();
+    fetch(`/api/history?from=${from}&to=${to}&points=300`)
+        .then(r => r.json())
+        .then(response => {
+            const data = response.samples || response;
+            if (Array.isArray(data) && data.length > 0) {
+                const lastItemC = data[data.length - 1];
+                updateSelectors(lastItemC.data || lastItemC);
+
+                const processed = insertGapsInHistory(data, response?.resolution);
+                const existingTs = new Set(state.dataBuffer.map(i => new Date(i.ts || i.data?.ts).getTime()));
+                let added = 0;
+
+                processed.forEach(item => {
+                    const tsMs = new Date(item.ts || item.data?.ts).getTime();
+                    if (tsMs <= fromDate.getTime() || existingTs.has(tsMs)) return;
+
+                    state.dataBuffer.push(item);
+                    added++;
+                });
+
+                if (added > 0) {
+                    state.dataBuffer.sort((a,b) => new Date(a.ts || a.data?.ts).getTime() - new Date(b.ts || b.data?.ts).getTime());
+                    if (state.dataBuffer.length > state.maxBufferSize) {
+                        state.dataBuffer = state.dataBuffer.slice(-state.maxBufferSize);
+                    }
+                    redrawChartsFromBuffer();
+                }
+
+                if (state.dataBuffer.length > state.maxBufferSize) {
+                    state.dataBuffer = state.dataBuffer.slice(-state.maxBufferSize);
+                }
+
+                const lastItem = data[data.length - 1];
+                const s = lastItem.data || lastItem;
+                state.lastSample = s;
+                state.lastHistoricalTs = new Date(s.ts || lastItem.ts);
+
+                trimChartsToTimeRange();
+                updateAllCharts();
+                updateGauges(s);
+                updateHeader(s);
+                updateSubtitles(s);
+                evaluateAlerts(s);
+            }
+            state.loadingHistory = false;
+            drainLiveQueue();
+        })
+        .catch(e => {
+            console.error('Gap history fetch error:', e);
+            state.loadingHistory = false;
+            drainLiveQueue();
+        });
+}
+
+
+
+// Replay any samples that arrived while history was loading.
+export function drainLiveQueue() {
+    if (state.liveQueue.length === 0) return;
+    const queue = state.liveQueue;
+    state.liveQueue = [];
+    queue.forEach(sample => {
+        // Skip samples whose timestamp was already covered by the history load
+        if (state.lastHistoricalTs && new Date(sample.ts) <= state.lastHistoricalTs) return;
+        pushLiveSample(sample);
+    });
 }

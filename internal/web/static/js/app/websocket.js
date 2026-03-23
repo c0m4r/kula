@@ -3,8 +3,10 @@
    and live queue drain.
    ============================================================ */
 'use strict';
+import { state } from './state.js';
+import { pushLiveSample, fetchHistory, fetchGapHistory } from './charts-data.js';
 
-function connectWS() {
+export function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${proto}//${location.host}/ws`;
 
@@ -23,6 +25,8 @@ function connectWS() {
         if (!state.historyLoaded) {
             state.historyLoaded = true;
             fetchHistory(state.timeRange);
+        } else if (state.lastHistoricalTs) {
+            fetchGapHistory(state.lastHistoricalTs, new Date());
         }
     };
 
@@ -60,19 +64,8 @@ function connectWS() {
     };
 }
 
-// Replay any samples that arrived while history was loading.
-function drainLiveQueue() {
-    if (state.liveQueue.length === 0) return;
-    const queue = state.liveQueue;
-    state.liveQueue = [];
-    queue.forEach(sample => {
-        // Skip samples whose timestamp was already covered by the history load
-        if (state.lastHistoricalTs && new Date(sample.ts) <= state.lastHistoricalTs) return;
-        pushLiveSample(sample);
-    });
-}
 
-function scheduleReconnect() {
+export function scheduleReconnect() {
     if (state.reconnectTimer) return;
     state.reconnectTimer = setTimeout(() => {
         state.reconnectTimer = null;
@@ -81,7 +74,7 @@ function scheduleReconnect() {
     state.reconnectDelay = Math.min(state.reconnectDelay * 1.5, 30000);
 }
 
-function updateConnectionStatus(connected) {
+export function updateConnectionStatus(connected) {
     const dot = document.getElementById('connection-status');
     if (dot) {
         dot.className = 'status-dot ' + (connected ? 'connected' : 'disconnected');

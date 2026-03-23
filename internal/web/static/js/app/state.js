@@ -6,7 +6,7 @@
 'use strict';
 
 // ---- State ----
-const state = {
+export const state = {
     ws: null,
     paused: false,
     pausedManual: false,
@@ -58,7 +58,7 @@ const state = {
 };
 
 // ---- Color Palette ----
-const colors = {
+export const colors = {
     blue: '#3b82f6',
     cyan: '#06b6d4',
     green: '#10b981',
@@ -123,9 +123,9 @@ Chart.Tooltip.positioners.awayFromCursor = function (elements, eventPosition) {
 };
 
 // ---- Shared Helpers ----
-const escapeHTML = (str) => String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+export const escapeHTML = (str) => String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 
-function getChartMaxBound(id) {
+export function getChartMaxBound(id) {
     let pref = {};
     try { pref = JSON.parse(localStorage.getItem('kula_graphs_max') || '{}')[id]; } catch (e) { }
     if (!pref && state.configMax) pref = state.configMax[id];

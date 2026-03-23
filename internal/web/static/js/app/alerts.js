@@ -2,8 +2,9 @@
    alerts.js — Alert evaluation and alert dropdown UI.
    ============================================================ */
 'use strict';
+import { state, escapeHTML } from './state.js';
 
-function evaluateAlerts(sample) {
+export function evaluateAlerts(sample) {
     const alerts = [];
     const numCores = sample.cpu?.num_cores || 1;
 
@@ -97,7 +98,7 @@ function updateAlertUI() {
     }
 }
 
-function toggleAlertDropdown() {
+export function toggleAlertDropdown() {
     state.alertDropdownOpen = !state.alertDropdownOpen;
     const dropdown = document.getElementById('alert-dropdown');
     if (state.alertDropdownOpen) {
@@ -107,7 +108,7 @@ function toggleAlertDropdown() {
     }
 }
 
-function toggleInfoDropdown() {
+export function toggleInfoDropdown() {
     state.infoDropdownOpen = !state.infoDropdownOpen;
     const dropdown = document.getElementById('info-dropdown');
     if (state.infoDropdownOpen) {

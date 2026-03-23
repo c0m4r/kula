@@ -2,8 +2,9 @@
    theme.js — Theme application (dark/light) and toggling.
    ============================================================ */
 'use strict';
+import { state, colors } from './state.js';
 
-function applyTheme() {
+export function applyTheme() {
     const isLight = state.theme === 'light';
     document.body.classList.toggle('light-mode', isLight);
 
@@ -50,7 +51,7 @@ function applyTheme() {
     });
 }
 
-function toggleTheme() {
+export function toggleTheme() {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
     localStorage.setItem('kula_theme', state.theme);
     applyTheme();

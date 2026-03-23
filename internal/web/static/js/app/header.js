@@ -2,8 +2,10 @@
    header.js — Header bar and chart subtitle updates.
    ============================================================ */
 'use strict';
+import { state, escapeHTML } from './state.js';
+import { formatBytesShort, formatMbps, formatPPS } from './utils.js';
 
-function updateHeader(s) {
+export function updateHeader(s) {
     const el = (id) => document.getElementById(id);
     if (s.sys?.uptime_human) el('uptime').textContent = '⏱ ' + s.sys.uptime_human;
     el('clock').textContent = new Date(s.ts).toLocaleTimeString();
@@ -23,7 +25,7 @@ function updateHeader(s) {
     el('sys-info').innerHTML = sysInfo.map(text => `<span class="sys-info-item">${text}</span>`).join('<span class="sys-sep mobile-hidden">│</span>');
 }
 
-function updateSubtitles(s) {
+export function updateSubtitles(s) {
     const el = (id, text) => { const e = document.getElementById(id); if (e) e.textContent = text; };
 
     if (s.cpu?.total) {

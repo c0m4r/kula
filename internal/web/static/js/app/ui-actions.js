@@ -3,9 +3,13 @@
    expand/collapse, and per-chart settings (Y-axis bounds).
    ============================================================ */
 'use strict';
+import { state } from './state.js';
+import { initCharts } from './charts-init.js';
+import { fetchHistory } from './charts-data.js';
+import { syncPauseState } from './controls.js';
 
 // ---- Hover Pause ----
-function setupHoverPause() {
+export function setupHoverPause() {
     document.querySelectorAll('.chart-card').forEach(card => {
         card.addEventListener('mouseenter', () => {
             if (!state.pausedHover) {
@@ -49,7 +53,7 @@ function setupHoverPause() {
 }
 
 // ---- Chart Expand / Collapse ----
-function toggleExpandChart(cardId) {
+export function toggleExpandChart(cardId) {
     const card = document.getElementById(cardId);
     if (!card) return;
 
@@ -114,7 +118,7 @@ function toggleExpandChart(cardId) {
 }
 
 // ---- Chart Header Actions (expand button + settings dropdown) ----
-function setupChartActions() {
+export function setupChartActions() {
     document.querySelectorAll('.chart-card').forEach(card => {
         const header = card.querySelector('.chart-header');
         if (!header) return;

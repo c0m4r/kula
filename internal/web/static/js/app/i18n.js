@@ -3,8 +3,7 @@
    Fetches translations from API and applies them to the DOM.
    ============================================================ */
 'use strict';
-
-const i18n = {
+export const i18n = {
     currentLang: 'en',
     translations: {},
     supportedLangs: ['ar', 'bn', 'cs', 'de', 'en', 'es', 'fr', 'he', 'hi', 'id', 'it', 'ja', 'ko', 'ms', 'nl', 'pl', 'pt', 'ro', 'ru', 'sv', 'th', 'tr', 'uk', 'ur', 'vi', 'zh'],
@@ -151,9 +150,7 @@ const i18n = {
                 await this.loadTranslations(lang);
                 this.applyTranslations();
 
-                if (typeof updateAllCharts === 'function') {
-                    updateAllCharts();
-                }
+                document.dispatchEvent(new Event('kula-i18n-changed'));
             });
         });
     }

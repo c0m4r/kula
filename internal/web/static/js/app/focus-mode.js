@@ -3,8 +3,10 @@
    chart cards to display.
    ============================================================ */
 'use strict';
+import { state } from './state.js';
+import { i18n } from './i18n.js';
 
-const chartCardIds = [
+export const chartCardIds = [
     'card-cpu', 'card-loadavg', 'card-memory', 'card-swap',
     'card-network', 'card-pps', 'card-connections',
     'card-disk-io', 'card-disk-space',
@@ -13,7 +15,7 @@ const chartCardIds = [
     'card-cpu-temp', 'card-disk-temp', 'card-gpu-temp'
 ];
 
-function toggleFocusMode() {
+export function toggleFocusMode() {
     const grids = document.querySelectorAll('.charts-grid');
     const btn = document.getElementById('btn-focus');
 
@@ -135,7 +137,7 @@ function toggleFocusMode() {
     });
 }
 
-function showFocusBar() {
+export function showFocusBar() {
     removeFocusBar();
     const bar = document.createElement('div');
     bar.className = 'focus-bar';
@@ -207,7 +209,7 @@ function showFocusBar() {
     }
 }
 
-function removeFocusBar() {
+export function removeFocusBar() {
     const bar = document.getElementById('focus-bar');
     if (bar) bar.remove();
     chartCardIds.forEach(id => {
@@ -221,7 +223,7 @@ function removeFocusBar() {
     });
 }
 
-function applyStoredFocusMode() {
+export function applyStoredFocusMode() {
     if (state.focusVisible && state.focusVisible.length > 0) {
         state.focusMode = true;
         document.getElementById('btn-focus')?.classList.add('focus-active');
@@ -263,7 +265,7 @@ function applyStoredFocusMode() {
     }
 }
 
-function combineGrids() {
+export function combineGrids() {
     const mainGrid = document.getElementById('charts-grid');
     if (!mainGrid) return;
     chartCardIds.forEach(id => {
@@ -272,7 +274,7 @@ function combineGrids() {
     });
 }
 
-function restoreGrids() {
+export function restoreGrids() {
     const mainGrid = document.getElementById('charts-grid');
     const thermalsGrid = document.getElementById('thermals-grid');
     if (!mainGrid || !thermalsGrid) return;

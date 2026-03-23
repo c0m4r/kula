@@ -3,9 +3,12 @@
    dashboard chart initialization.
    ============================================================ */
 'use strict';
+import { state, colors, getChartMaxBound } from './state.js';
+import { formatBytesShort, formatPPS } from './utils.js';
+import { i18n } from './i18n.js';
 
 // ---- Chart Initialization ----
-function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlugins = {}) {
+export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlugins = {}) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return null;
 
@@ -25,23 +28,21 @@ function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlugins = 
                     pan: {
                         enabled: true,
                         mode: 'x',
-                        onPan: ({ chart }) => {
-                            syncZoom(chart);
-                            if (!state.pausedZoom) {
-                                state.pausedZoom = true;
-                                syncPauseState();
-                            }
+                        onPanStart: function({ chart }) { if (state.timeRange !== null) return false; },
+                        onPan: function({ chart }) { document.dispatchEvent(new CustomEvent('kula-zoom-sync', { detail: chart })); },
+                        onPanComplete: function({ chart }) {
+                            document.dispatchEvent(new CustomEvent('kula-zoom-sync', { detail: chart }));
+                            document.dispatchEvent(new Event('kula-sync-pause'));
                         },
                     },
                     zoom: {
                         drag: { enabled: true, backgroundColor: 'rgba(59,130,246,0.1)', borderColor: colors.blue, borderWidth: 1 },
                         mode: 'x',
-                        onZoom: ({ chart }) => {
-                            syncZoom(chart);
-                            if (!state.pausedZoom) {
-                                state.pausedZoom = true;
-                                syncPauseState();
-                            }
+                        onZoomStart: function({ chart }) { if (state.timeRange !== null) return false; },
+                        onZoom: function({ chart }) { document.dispatchEvent(new CustomEvent('kula-zoom-sync', { detail: chart })); },
+                        onZoomComplete: function({ chart }) {
+                            document.dispatchEvent(new CustomEvent('kula-zoom-sync', { detail: chart }));
+                            document.dispatchEvent(new Event('kula-sync-pause'));
                         },
                     },
                 },
@@ -81,7 +82,7 @@ function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlugins = 
     return chart;
 }
 
-function destroyAllCharts() {
+export function destroyAllCharts() {
     Object.keys(state.charts).forEach(key => {
         if (state.charts[key]) {
             state.charts[key].destroy();
@@ -90,7 +91,7 @@ function destroyAllCharts() {
     });
 }
 
-function initCharts() {
+export function initCharts() {
     destroyAllCharts();
 
     // CPU
@@ -285,7 +286,7 @@ function initCharts() {
 }
 
 // ---- Set x-axis bounds for full time window ----
-function setChartTimeRange() {
+export function setChartTimeRange() {
     const now = Date.now();
     let xMin, xMax;
 
@@ -314,7 +315,7 @@ function setChartTimeRange() {
     });
 }
 
-function updateChartLabels() {
+export function updateChartLabels() {
     if (!state.charts) return;
 
     if (state.charts.cpu) {

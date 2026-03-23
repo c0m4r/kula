@@ -2,8 +2,13 @@
    auth.js — Authentication check, config fetch, login/logout.
    ============================================================ */
 'use strict';
+import { state } from './state.js';
+import { initCharts } from './charts-init.js';
+import { updateAllCharts, clearAllChartData } from './charts-data.js';
+import { connectWS, updateConnectionStatus } from './websocket.js';
+import { applyTheme } from './theme.js';
 
-function checkAuth() {
+export function checkAuth() {
     fetch('/api/auth/status')
         .then(r => r.json())
         .then(data => {
@@ -32,7 +37,7 @@ function checkAuth() {
         }); // If auth check fails, try connecting anyway
 }
 
-function fetchConfig() {
+export function fetchConfig() {
     return fetch('/api/config')
         .then(r => {
             if (!r.ok) throw new Error('Unauthorized');
@@ -101,7 +106,7 @@ function fetchConfig() {
         .catch(() => { });
 }
 
-function handleLogin(e) {
+export function handleLogin(e) {
     e.preventDefault();
     const user = document.getElementById('login-user')?.value;
     const pass = document.getElementById('login-pass')?.value;
@@ -133,7 +138,7 @@ function handleLogin(e) {
         });
 }
 
-function handleLogout() {
+export function handleLogout() {
     const headers = {};
     if (state.csrfToken) {
         headers['X-CSRF-Token'] = state.csrfToken;

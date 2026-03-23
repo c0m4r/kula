@@ -2,9 +2,11 @@
    gauges.js — Bar gauge rendering and live gauge value updates.
    ============================================================ */
 'use strict';
+import { colors } from './state.js';
+import { formatMbps } from './utils.js';
 
 // ---- Bar Gauge Drawing (alternative layout) ----
-function drawBarGauge(containerId, value, max, color) {
+export function drawBarGauge(containerId, value, max, color) {
     const container = document.getElementById(containerId);
     if (!container) return;
     const pct = Math.min((value / max) * 100, 100);
@@ -22,7 +24,7 @@ function drawBarGauge(containerId, value, max, color) {
     }
 }
 
-function updateGauges(sample) {
+export function updateGauges(sample) {
     const cpuPct = sample.cpu?.total?.usage || 0;
     const cpuTemp = sample.cpu?.temp || 0;
     const ramPct = sample.mem?.used_pct || 0;
