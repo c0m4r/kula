@@ -19,7 +19,7 @@ import sys
 def send_kula_metrics() -> None:
     """send kula metrics"""
     # The target Unix socket path
-    socket_path = "/home/c0m4r/.kula/kula.sock"
+    socket_path = "/var/lib/kula/kula.sock"
 
     # Your data payload
     data = {"custom": {"mains": [{"voltage": 236}]}}
