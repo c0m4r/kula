@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
-## [Unreleased]
+## [0.14.1] - TBA
 
 ### Changed
 
+- Add collection.interval allowed values list
+- Checking collection.interval and storage.tiers consistency
 - Check prefers-color-scheme to honor user's requested theme
 - Default global.default_theme changed to auto
 
