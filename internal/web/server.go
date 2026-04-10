@@ -432,7 +432,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	startLoad := time.Now()
 	result, err := s.store.QueryRangeWithMeta(from, to, points)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("[API History] query error: %v", err)
+		jsonError(w, "internal storage error", http.StatusInternalServerError)
 		return
 	}
 	loadDuration := time.Since(startLoad)
