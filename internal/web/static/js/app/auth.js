@@ -140,8 +140,10 @@ export function handleLogin(e) {
             connectWS();
         })
         .catch(err => {
-            errorEl.textContent = err.message;
-            errorEl.classList.remove('hidden');
+            if (errorEl) {
+                errorEl.textContent = err.message;
+                errorEl.classList.remove('hidden');
+            }
         });
 }
 

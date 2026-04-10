@@ -82,7 +82,8 @@ export function toggleExpandChart(cardId) {
             const firstInRow = sameRowCards[0];
 
             // Extract its current order or construct it
-            const firstOrder = parseInt(firstInRow.style.order) || ((visibleCards.indexOf(firstInRow) + 1) * 10);
+            const parsed = parseInt(firstInRow.style.order, 10);
+            const firstOrder = Number.isNaN(parsed) ? ((visibleCards.indexOf(firstInRow) + 1) * 10) : parsed;
 
             // Jump the expanding card to the front of this logical row, pushing others down
             card.style.order = firstOrder - 5;
@@ -118,7 +119,13 @@ export function toggleExpandChart(cardId) {
 }
 
 // ---- Chart Header Actions (expand button + settings dropdown) ----
+const _docClickListeners = [];
+
 export function setupChartActions() {
+    // Remove any previously registered document-level dropdown dismiss listeners.
+    for (const fn of _docClickListeners) document.removeEventListener('click', fn);
+    _docClickListeners.length = 0;
+
     document.querySelectorAll('.chart-card').forEach(card => {
         const header = card.querySelector('.chart-header');
         if (!header) return;
@@ -273,11 +280,13 @@ export function setupChartActions() {
                 fetchHistory(state.timeRange);
             });
 
-            document.addEventListener('click', (e) => {
+            const dismissDropdown = (e) => {
                 if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== sBtn) {
                     dropdown.classList.add('hidden');
                 }
-            });
+            };
+            document.addEventListener('click', dismissDropdown);
+            _docClickListeners.push(dismissDropdown);
         }
 
         const btn = document.createElement('button');

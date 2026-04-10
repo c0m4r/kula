@@ -103,7 +103,7 @@ function drawSparkline(card, key, value, max) {
 export function drawBarGauge(containerId, value, max, color) {
     const container = document.getElementById(containerId);
     if (!container) return;
-    const pct = Math.min((value / max) * 100, 100);
+    const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
     let fill = container.querySelector('.bar-gauge-fill');
     if (!fill) {
         container.innerHTML = `<div class="bar-gauge-container"><div class="bar-gauge-track"><div class="bar-gauge-fill"></div></div></div>`;
