@@ -174,9 +174,12 @@ func (s *Server) securityMiddleware(next http.Handler) http.Handler {
 
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; frame-ancestors 'none';", nonce))
+		w.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none';", nonce))
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		if r.TLS != nil || (s.cfg.TrustProxy && r.Header.Get("X-Forwarded-Proto") == "https") {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -628,8 +631,15 @@ func (s *Server) handleI18n(w http.ResponseWriter, r *http.Request) {
 		lang = "en"
 	}
 
-	// Basic security check for lang parameter
-	if strings.Contains(lang, "..") || strings.Contains(lang, "/") || strings.Contains(lang, "\\") {
+	// Validate against the known set of supported languages.
+	valid := false
+	for _, l := range i18n.SupportedLangs {
+		if lang == l {
+			valid = true
+			break
+		}
+	}
+	if !valid {
 		jsonError(w, "invalid language", http.StatusBadRequest)
 		return
 	}

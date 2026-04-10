@@ -88,7 +88,7 @@ function updateAlertUI() {
     } else {
         list.innerHTML = state.alerts.map(a => `
             <div class="alert-item">
-                <span class="alert-icon">${a.icon}</span>
+                <span class="alert-icon">${escapeHTML(a.icon)}</span>
                 <div class="alert-item-body">
                     <div class="alert-item-title">${escapeHTML(a.title)}</div>
                     <div class="alert-item-detail">${escapeHTML(a.detail)}</div>
