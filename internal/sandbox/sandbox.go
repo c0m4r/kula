@@ -128,7 +128,7 @@ func Enforce(configPath string, storageDir string, webPort int, appCfg config.Ap
 		}
 		if socketPath != "" {
 			fsRules = append(fsRules, landlock.RWFiles(socketPath).IgnoreIfMissing())
-			appInfo = append(appInfo, fmt.Sprintf("containers:ro(%s)", socketPath))
+			appInfo = append(appInfo, fmt.Sprintf("containers:rw(%s)", socketPath))
 		}
 	}
 
@@ -140,7 +140,7 @@ func Enforce(configPath string, storageDir string, webPort int, appCfg config.Ap
 		} else if appCfg.Postgres.Host != "" {
 			// Unix socket mode: host is the socket directory
 			fsRules = append(fsRules, landlock.RWDirs(appCfg.Postgres.Host).IgnoreIfMissing())
-			appInfo = append(appInfo, fmt.Sprintf("postgres:ro(%s)", appCfg.Postgres.Host))
+			appInfo = append(appInfo, fmt.Sprintf("postgres:rw(%s)", appCfg.Postgres.Host))
 		}
 	}
 
