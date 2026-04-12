@@ -26,6 +26,10 @@ The storage path is optimized rather than naive. The store warms the latest-samp
 
 ### 1) High: Prometheus metrics auth appears to be advertised but not enforced in the route wiring
 
+**Edit: The finding is invalid — it's a false positive.**
+
+> The reviewer only looked at the route registration in server.go:247-248 and concluded that auth was missing because no middleware wraps /metrics. But the token check lives inside handleMetrics() itself, at prometheus.go:24-32:
+
 The config and startup log explicitly describe an optional bearer token for `/metrics`, but the route registration shown in `Start()` mounts `/metrics` only with logging middleware. I did not see token enforcement in the router path I reviewed, so unless `handleMetrics()` itself re-checks the token internally, this endpoint is effectively public even when the config suggests it is protected. That is a sharp edge, because metrics often contain hostnames, service names, cardinality-heavy telemetry, and environment hints that you may not want to expose broadly. ([GitHub][6])
 
 Recommended fix:
@@ -43,6 +47,8 @@ mux.Handle("/metrics", loggingMiddleware(s.cfg, metricsHandler))
 A small middleware like this makes the protection explicit, testable, and hard to accidentally bypass later. ([GitHub][2])
 
 ### 2) Medium: Login throttling is only IP-based
+
+**Edit: Fixed by adding serLimiter *RateLimiter**
 
 The login limiter allows five attempts per five minutes per IP. That is good as a first fence, but it is easy to sidestep with distributed sources, shared NATs, or a botnet that rotates addresses. For a monitoring UI that can expose operational data, credential-stuffing resistance should not depend on a single IP bucket. ([GitHub][7])
 

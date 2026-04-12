@@ -23,12 +23,13 @@ import (
 // AuthManager handles authentication validation and sessions.
 
 type AuthManager struct {
-	mu         sync.RWMutex
-	cfg        config.AuthConfig
-	storageDir string
-	sessions   map[string]*session
-	Limiter    *RateLimiter
-	trustProxy bool
+	mu          sync.RWMutex
+	cfg         config.AuthConfig
+	storageDir  string
+	sessions    map[string]*session
+	Limiter     *RateLimiter
+	UserLimiter *RateLimiter
+	trustProxy  bool
 }
 
 // RateLimiter tracks recent rapid login attempts by IP.
@@ -63,11 +64,31 @@ func NewAuthManager(cfg config.AuthConfig, storageDir string, trustProxy bool) *
 		Limiter: &RateLimiter{
 			attempts: make(map[string][]time.Time),
 		},
+		UserLimiter: &RateLimiter{
+			attempts: make(map[string][]time.Time),
+		},
 		trustProxy: trustProxy,
 	}
 }
 
-// Allow checks if the given IP has exceeded 5 login attempts in the last 5 minutes.
+// purge removes entries older than cutoff. Must be called with rl.mu held.
+func (rl *RateLimiter) purge(cutoff time.Time) {
+	for key, attempts := range rl.attempts {
+		var recent []time.Time
+		for _, t := range attempts {
+			if t.After(cutoff) {
+				recent = append(recent, t)
+			}
+		}
+		if len(recent) == 0 {
+			delete(rl.attempts, key)
+		} else {
+			rl.attempts[key] = recent
+		}
+	}
+}
+
+// Allow checks if the given key has exceeded 5 login attempts in the last 5 minutes.
 func (rl *RateLimiter) Allow(ip string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -236,22 +257,13 @@ func (a *AuthManager) CleanupSessions() {
 	}
 
 	// Purge stale rate limiter entries
-	a.Limiter.mu.Lock()
-	defer a.Limiter.mu.Unlock()
 	cutoff := now.Add(-5 * time.Minute)
-	for ip, attempts := range a.Limiter.attempts {
-		var recent []time.Time
-		for _, t := range attempts {
-			if t.After(cutoff) {
-				recent = append(recent, t)
-			}
-		}
-		if len(recent) == 0 {
-			delete(a.Limiter.attempts, ip)
-		} else {
-			a.Limiter.attempts[ip] = recent
-		}
-	}
+	a.Limiter.mu.Lock()
+	a.Limiter.purge(cutoff)
+	a.Limiter.mu.Unlock()
+	a.UserLimiter.mu.Lock()
+	a.UserLimiter.purge(cutoff)
+	a.UserLimiter.mu.Unlock()
 }
 
 // LoadSessions loads sessions from disk.

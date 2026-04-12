@@ -546,6 +546,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.auth.UserLimiter.Allow(strings.ToLower(creds.Username)) {
+		jsonError(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
 	if !s.auth.ValidateCredentials(creds.Username, creds.Password) {
 		jsonError(w, "invalid credentials", http.StatusUnauthorized)
 		return
