@@ -48,7 +48,7 @@ A small middleware like this makes the protection explicit, testable, and hard t
 
 ### 2) Medium: Login throttling is only IP-based
 
-**Edit: Fixed by adding serLimiter *RateLimiter**
+**Edit: Fixed by adding serLimiter RateLimiter**
 
 The login limiter allows five attempts per five minutes per IP. That is good as a first fence, but it is easy to sidestep with distributed sources, shared NATs, or a botnet that rotates addresses. For a monitoring UI that can expose operational data, credential-stuffing resistance should not depend on a single IP bucket. ([GitHub][7])
 
