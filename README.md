@@ -108,6 +108,23 @@ it connects via WebSocket for live updates and falls back to history API for lon
 - Grid / stacked list layout toggle
 - Alert system for clock sync, low entropy, and system overload
 - Modern aesthetics with light/dark theme support
+- Optional AI assistant powered by a local Ollama model (see below)
+
+### AI Assistant
+
+Kula features an AI assistant via [Ollama](https://github.com/ollama/ollama).
+
+When Ollama is enabled in `config.yaml`, a 🤖 button appears in the dashboard header. The panel supports:
+
+- **Multi-session conversations** — open independent threads and switch between them
+- **Per-chart analysis** — click the 🤖 icon on any chart card to open a session pre-loaded with that chart's recent data as CSV
+- **Agentic tool calling** — the model can call `get_metrics` to pull metrics on demand (up to 5 rounds per turn)
+- **Model selector** — switch between any locally available Ollama model mid-session
+- **Draggable & resizable panel** — drag by the header, resize from the bottom-right grip
+- **Streaming responses** with markdown rendering
+
+All AI inference runs locally through Ollama API.
+
 ---
 
 ## 💾 Installation
