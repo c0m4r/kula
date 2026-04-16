@@ -14,6 +14,7 @@ import { applyTheme, toggleTheme } from './theme.js';
 import { setupHoverPause, setupChartActions } from './ui-actions.js';
 import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
 import { initSplitModule } from './split.js';
+import { initOllama } from './ollama.js';
 
 function filterCharts(query) {
     // Collect all section-title + charts-grid pairs
@@ -146,6 +147,13 @@ async function init() {
 
     // Split buttons (must be after setupChartActions to avoid being removed)
     initSplitModule(redrawChartsFromBuffer, resetZoomAll);
+
+    // Initialize Ollama AI panel (no-op when disabled)
+    // The panel is activated after /api/config is fetched (see auth.js fetchConfig).
+    // We hook into the kula-config-ready event dispatched by auth.js.
+    document.addEventListener('kula-config-ready', (e) => {
+        initOllama(e.detail || {});
+    });
 
     // Close dropdowns when clicking outside
     document.addEventListener('click', (e) => {

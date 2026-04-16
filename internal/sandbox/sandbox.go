@@ -44,7 +44,7 @@ import (
 // but before starting goroutines that serve requests.
 //
 // On kernels without Landlock support, this logs a warning and returns nil.
-func Enforce(configPath string, storageDir string, webPort int, appCfg config.ApplicationsConfig) error {
+func Enforce(configPath string, storageDir string, webPort int, appCfg config.ApplicationsConfig, ollamaCfg config.OllamaConfig) error {
 	// Resolve paths to absolute to satisfy Landlock requirements
 	absConfigPath, err := filepath.Abs(configPath)
 	if err != nil {
@@ -141,6 +141,20 @@ func Enforce(configPath string, storageDir string, webPort int, appCfg config.Ap
 			// Unix socket mode: host is the socket directory
 			fsRules = append(fsRules, landlock.RWDirs(appCfg.Postgres.Host).IgnoreIfMissing())
 			appInfo = append(appInfo, fmt.Sprintf("postgres:rw(%s)", appCfg.Postgres.Host))
+		}
+	}
+
+	// Ollama: allow outbound TCP connection to the Ollama API port
+	if ollamaCfg.Enabled && ollamaCfg.URL != "" {
+		if u, err := url.Parse(ollamaCfg.URL); err == nil {
+			ollamaPort := 11434
+			if u.Port() != "" {
+				if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 && p <= 65535 {
+					ollamaPort = p
+				}
+			}
+			netRules = append(netRules, landlock.ConnectTCP(uint16(ollamaPort)))
+			appInfo = append(appInfo, fmt.Sprintf("ollama:connect-tcp/%d", ollamaPort))
 		}
 	}
 

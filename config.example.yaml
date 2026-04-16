@@ -216,3 +216,13 @@ applications:
 # TUI settings
 tui:
   refresh_rate: 1s
+
+# Ollama AI analysis (optional)
+# Requires Ollama running locally
+# The AI button (🤖) appears in the web UI header when enabled.
+ollama:
+  enabled: false
+  url: "http://localhost:11434"
+  model: "gemma4:e4b"
+  # Maximum time to wait for the model to finish streaming (default: 300s)
+  timeout: "300s"

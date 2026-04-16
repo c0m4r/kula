@@ -41,13 +41,15 @@ type Server struct {
 	httpSrv   *http.Server
 	templates *template.Template
 	sriHashes map[string]string
+	ollama        *ollamaClient
+	ollamaLimiter *chatRateLimiter
 
 	wsMu       sync.Mutex
 	wsCount    int
 	wsIPCounts map[string]int
 }
 
-func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Collector, s *storage.Store, storageDir string) *Server {
+func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Collector, s *storage.Store, storageDir string, ollamaCfg config.OllamaConfig) *Server {
 	srv := &Server{
 		cfg:        cfg,
 		global:     global,
@@ -57,6 +59,8 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 		hub:        newWSHub(),
 		sriHashes:  make(map[string]string),
 		wsIPCounts: make(map[string]int),
+		ollama:        newOllamaClient(ollamaCfg),
+		ollamaLimiter: newChatRateLimiter(),
 	}
 	srv.initializeTemplates()
 	srv.calculateSRIs()
@@ -81,6 +85,13 @@ type statusResponseWriter struct {
 func (w *statusResponseWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+// Flush implements the http.Flusher interface for SSE support.
+func (w *statusResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // Hijack exposes the underlying http.Hijacker to allow WebSockets to upgrade the connection.
@@ -132,10 +143,21 @@ func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
+// Flush implements the http.Flusher interface to support streaming inside compressed responses.
+func (w *gzipResponseWriter) Flush() {
+	if gz, ok := w.Writer.(*gzip.Writer); ok {
+		_ = gz.Flush()
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func gzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") ||
-			!strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			!strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") ||
+			r.Header.Get("Accept") == "text/event-stream" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -206,6 +228,7 @@ func (s *Server) Start() error {
 	apiMux.HandleFunc("/api/logout", s.handleLogout)
 	apiMux.HandleFunc("/api/auth/status", s.handleAuthStatus)
 	apiMux.HandleFunc("/api/i18n", s.handleI18n)
+	apiMux.HandleFunc("/api/ollama/chat", s.handleOllamaChat)
 
 	// Wrap apiMux with logging and CSRF protection
 	loggedApiMux := s.auth.CSRFMiddleware(loggingMiddleware(s.cfg, apiMux))
@@ -495,6 +518,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"default": s.cfg.Lang.Default,
 			"force":   s.cfg.Lang.Force,
 		},
+	}
+
+	info["ollama_enabled"] = s.ollama != nil && s.ollama.cfg.Enabled
+	if s.ollama != nil && s.ollama.cfg.Enabled {
+		info["ollama_model"] = s.ollama.cfg.Model
 	}
 
 	// Expose custom metric configs so the frontend knows units and maxima

@@ -90,7 +90,7 @@ func newTestServer(t *testing.T, store *storage.Store) *Server {
 	cfg := config.WebConfig{}
 	global := config.GlobalConfig{Hostname: "testhost"}
 	c := &collector.Collector{}
-	return NewServer(cfg, global, c, store, t.TempDir())
+	return NewServer(cfg, global, c, store, t.TempDir(), config.OllamaConfig{})
 }
 
 // TestHandleMetricsOK verifies that /metrics responds 200 with the correct

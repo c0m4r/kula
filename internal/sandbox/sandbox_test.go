@@ -41,7 +41,7 @@ func runHelperProcess() {
 	storageDir := os.Getenv("TEST_STORAGE_DIR")
 	
 	// Enforce sandbox (using a high port for testing)
-	err := Enforce(configPath, storageDir, 27999, config.ApplicationsConfig{})
+	err := Enforce(configPath, storageDir, 27999, config.ApplicationsConfig{}, config.OllamaConfig{})
 	if err != nil {
 		os.Exit(0) // Landlock might not be supported, skip test silently
 	}

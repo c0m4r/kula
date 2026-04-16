@@ -102,6 +102,9 @@ export function fetchConfig() {
                 state.customMetricsConfig = cfg.custom_metrics;
             }
 
+            // Notify other modules that config is available
+            document.dispatchEvent(new CustomEvent('kula-config-ready', { detail: cfg }));
+
             const versionStr = cfg.show_version === false ? '' : ' v' + (cfg.version || '0.0.0');
             console.log(
                 '%c K U L A %c' + versionStr + ' %c Welcome to your monitoring dashboard! ',

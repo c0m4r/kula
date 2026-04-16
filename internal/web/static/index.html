@@ -32,6 +32,7 @@
     <link rel="modulepreload" href="js/app/ui-actions.js" integrity="{{sri `js/app/ui-actions.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/focus-mode.js" integrity="{{sri `js/app/focus-mode.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/split.js" integrity="{{sri `js/app/split.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/ollama.js" integrity="{{sri `js/app/ollama.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/main.js" integrity="{{sri `js/app/main.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
 
 </head>
@@ -125,6 +126,8 @@
                     title="Toggle light/dark mode">🌓</button>
                 <!-- Focus mode -->
                 <button id="btn-focus" class="btn-icon" data-i18n-title="focus_mode" title="Focus mode">🎯</button>
+                <!-- AI Assistant -->
+                <button id="btn-ai" class="btn-icon hidden" title="AI">🤖</button>
                 <!-- Game easter egg -->
                 <a href="/game.html" class="btn-icon btn-game" data-i18n-title="space_invaders" title="Space Invaders"
                     id="btn-game">🎮</a>
@@ -435,6 +438,22 @@
                 <a href="https://github.com/c0m4r/kula" target="_blank" rel="noopener noreferrer">GitHub</a>
             </div>
         </footer>
+    </div>
+
+    <!-- AI Assistant Panel -->
+    <div id="ai-panel" class="ai-panel hidden">
+        <div class="ai-panel-header">
+            <div class="ai-panel-title">🤖 AI <span id="ai-model-label" class="ai-model-label"></span></div>
+            <div class="ai-panel-actions">
+                <button id="btn-ai-clear" class="btn-ai-action" title="Clear conversation">✕ Clear</button>
+                <button id="btn-ai-close" class="btn-ai-action" title="Close">✕</button>
+            </div>
+        </div>
+        <div id="ai-messages" class="ai-messages"></div>
+        <div class="ai-input-row">
+            <textarea id="ai-input" class="ai-input" placeholder="Ask about the metrics… (Enter to send)" rows="2" maxlength="2000"></textarea>
+            <button id="btn-ai-send" class="btn-ai-send">Analyse</button>
+        </div>
     </div>
 
     <!-- Main Entry Point -->

@@ -129,14 +129,14 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 	if cfg.Web.Enabled {
 		port = cfg.Web.Port
 	}
-	if err := sandbox.Enforce(configPath, cfg.Storage.Directory, port, cfg.Applications); err != nil {
+	if err := sandbox.Enforce(configPath, cfg.Storage.Directory, port, cfg.Applications, cfg.Ollama); err != nil {
 		log.Printf("Warning: Landlock sandbox not enforced: %v", err)
 	}
 
 	var server *web.Server
 	if cfg.Web.Enabled {
 
-		server = web.NewServer(cfg.Web, cfg.Global, coll, store, cfg.Storage.Directory)
+		server = web.NewServer(cfg.Web, cfg.Global, coll, store, cfg.Storage.Directory, cfg.Ollama)
 
 		// Start web server
 		go func() {

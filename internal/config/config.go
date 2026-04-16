@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +19,7 @@ type Config struct {
 	Web          WebConfig          `yaml:"web"`
 	Applications ApplicationsConfig `yaml:"applications"`
 	TUI          TUIConfig          `yaml:"tui"`
+	Ollama       OllamaConfig       `yaml:"ollama"`
 }
 
 type GlobalConfig struct {
@@ -126,6 +128,16 @@ type Argon2Config struct {
 
 type TUIConfig struct {
 	RefreshRate time.Duration `yaml:"refresh_rate"`
+}
+
+// OllamaConfig controls the optional Ollama LLM integration for AI-powered
+// metric analysis. When enabled, the backend proxies requests to the local
+// Ollama instance and streams responses to both the web UI and TUI.
+type OllamaConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	URL     string `yaml:"url"`     // e.g. http://localhost:11434
+	Model   string `yaml:"model"`   // e.g. llama3
+	Timeout string `yaml:"timeout"` // e.g. 120s
 }
 
 // ApplicationsConfig groups monitoring modules for external applications.
@@ -262,6 +274,12 @@ func DefaultConfig() *Config {
 		TUI: TUIConfig{
 			RefreshRate: time.Second,
 		},
+		Ollama: OllamaConfig{
+			Enabled: false,
+			URL:     "http://localhost:11434",
+			Model:   "llama3",
+			Timeout: "120s",
+		},
 	}
 }
 
@@ -327,7 +345,30 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	if cfg.Ollama.Enabled {
+		if err := validateOllamaURL(cfg.Ollama.URL); err != nil {
+			return nil, err
+		}
+	}
+
 	return cfg, nil
+}
+
+// validateOllamaURL ensures the Ollama URL only targets loopback addresses
+// to prevent SSRF via a maliciously crafted config file.
+func validateOllamaURL(rawURL string) error {
+	if rawURL == "" {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("ollama.url: invalid URL: %w", err)
+	}
+	host := u.Hostname()
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return fmt.Errorf("ollama.url: host %q is not a loopback address; only localhost, 127.0.0.1, or ::1 are allowed", host)
+	}
+	return nil
 }
 
 // validateTiers checks that collection.interval and storage.tiers form a
