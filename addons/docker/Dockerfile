@@ -14,7 +14,7 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -buildvcs=false -o kula ./cmd/kula/
 
 # ---- Final Stage ----
-FROM alpine:3.23
+FROM alpine:3.21
 
 # Create unprivileged user
 RUN addgroup -S kula && adduser -S kula -G kula
