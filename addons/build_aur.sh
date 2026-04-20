@@ -152,7 +152,7 @@ package() {
   install -Dm644 addons/bash-completion/kula "$pkgdir/usr/share/bash-completion/completions/kula"
 
   # Create man directory
-  install -dm755 "\$pkgdir/usr/share/man/man1"
+  install -dm755 "$pkgdir/usr/share/man/man1"
 
   # Install man page
   if [ -f "addons/man/kula.1" ]; then
