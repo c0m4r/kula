@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
-## [0.14.1] - TBA
+## [0.15.0] - 2026-04-20
+
+### Added
+
+- AI assistant via Ollama API
+- config option to disable space invaders [#14]
+- auth: multiple users support [#15]
 
 ### Changed
 
@@ -16,6 +22,21 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Tier resolutions ratio limit
 - Check prefers-color-scheme to honor user's requested theme
 - Default global.default_theme changed to auto
+
+### Fixed
+
+- fix storage directory handling being inconsistent
+- fix login throttling being only IP-based
+- fix argon2 mismatch with example config
+- fix: don't leak internal error details from /api/history
+- fix: sandbox log messages now match actual RWFiles/RWDirs permissions
+- fix: data race on WebSocket client.paused field in broadcast
+- fix: close WebSocket sendCh on client disconnect
+- other minor bugfixes
+
+### Security
+
+- HSTS, CSP update, minor safety fixes
 
 ## [0.14.0] - 2026-03-29
 
