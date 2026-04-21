@@ -13,6 +13,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 - New env var: KULA_POSTGRES_PASSWORD
 
+### Fixed
+
+- PostgreSQL password is now properly single-quoted with libpq escaping
+
 ## [0.15.0] - 2026-04-20
 
 ### Added

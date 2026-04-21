@@ -76,7 +76,7 @@ Linux Kernel (/proc, /sys)
 
 ## 3. Security Findings
 
-### SEC-01: PostgreSQL Credentials Logged or Exposed via DSN Construction
+### SEC-01: PostgreSQL Credentials Logged or Exposed via DSN Construction ✅ PARTIALLY VALID — FIXED
 
 **Severity: MEDIUM**  
 **File:** `internal/collector/postgres.go:44-56`  
@@ -84,117 +84,50 @@ Linux Kernel (/proc, /sys)
 
 The DSN string is constructed by concatenating the password directly into it. While it is not explicitly logged, the DSN is stored as a struct field on `postgresCollector` and could appear in error messages, stack traces, or debug output. The `fmt.Sprintf` approach also does not properly escape special characters in the password (e.g., spaces, quotes, or backslashes), which could lead to DSN injection or authentication bypass.
 
+**Validation notes:**
+- The DSN is never directly logged in the current code — `pc.dsn` only appears in `sql.Open()`. The "credential exposure in error messages" concern is theoretical, not currently exploitable.
+- The password escaping issue is **real**: in libpq key=value format, an unquoted value containing spaces, single quotes, or backslashes produces a malformed DSN, causing authentication to silently fail.
+
+**Fix applied:** Password value is now single-quoted with proper libpq escaping (backslashes and single quotes within the value are backslash-escaped):
+
 ```go
-// Current (vulnerable):
-dsn = fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s",
-    host, port, user, dbname, sslmode)
 if password != "" {
-    dsn += fmt.Sprintf(" password=%s", password)
-}
-```
-
-**Recommendation:** Use the `url.URL` approach or `dsn` library that properly escapes connection parameters. At a minimum, escape special characters in the password value:
-
-```go
-// Recommended:
-import "net/url"
-
-func buildDSN(host string, port int, user, password, dbname, sslmode string) string {
-    dsn := url.URL{
-        Scheme:   "postgres",
-        User:     url.UserPassword(user, password),
-        Host:     fmt.Sprintf("%s:%d", host, port),
-        Path:     dbname,
-        RawQuery: "sslmode=" + url.QueryEscape(sslmode),
-    }
-    if port == 0 {
-        // Unix socket mode
-        dsn = url.URL{
-            Scheme:   "postgres",
-            User:     url.UserPassword(user, password),
-            Host:     host,
-            Path:     dbname,
-            RawQuery: "sslmode=" + url.QueryEscape(sslmode),
-        }
-    }
-    return dsn.String()
+    escaped := strings.ReplaceAll(password, `\`, `\\`)
+    escaped = strings.ReplaceAll(escaped, `'`, `\'`)
+    dsn += " password='" + escaped + "'"
 }
 ```
 
 ---
 
-### SEC-02: Rate Limiter IP Bypass via X-Forwarded-For When TrustProxy Enabled
+### SEC-02: Rate Limiter IP Bypass via X-Forwarded-For When TrustProxy Enabled ❌ NOT VALID
 
 **Severity: MEDIUM**  
 **File:** `internal/web/server.go:753-768`, `internal/web/auth.go:70-91`  
 **CVSS: 5.0**
 
-When `trust_proxy` is enabled, the `getClientIP` function takes the **rightmost** entry from `X-Forwarded-For`. While the comment explains this design decision (trusting the rightmost entry from a proxy), this is still vulnerable if the deployment has multiple reverse proxy layers. An attacker behind a single trusted proxy could still inject an additional `X-Forwarded-For` entry, causing the rightmost IP to be the attacker's spoofed value rather than the real client IP, effectively bypassing rate limiting.
+~~An attacker behind a single trusted proxy could inject an additional `X-Forwarded-For` entry, causing the rightmost IP to be the attacker's spoofed value.~~
 
-```go
-// Current:
-func getClientIP(r *http.Request, trustProxy bool) string {
-    if trustProxy {
-        if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-            parts := strings.Split(xff, ",")
-            return strings.TrimSpace(parts[len(parts)-1])
-        }
-    }
-    // ...
-}
+**Finding is not valid.** The rightmost-XFF approach is correct for the documented single-proxy topology. When exactly one trusted proxy sits in front of Kula, it appends the real client IP as the rightmost entry. An attacker who prepends fake IPs to `X-Forwarded-For` cannot control the rightmost entry — that position is always written by the proxy. The code's own comment explains this accurately:
+
+```
+// The rightmost IP is the one appended by our trusted proxy.
+// Leftmost IPs are client-controlled and can be spoofed.
 ```
 
-**Recommendation:** Make the X-Forwarded-For parsing depth configurable, or use the leftmost untrusted entry (the first entry that is not from a known proxy). Document the exact proxy topology expected:
-
-```go
-// Recommended: configurable proxy depth
-func getClientIP(r *http.Request, trustProxy bool, trustedProxyCount int) string {
-    if trustProxy {
-        if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-            parts := strings.Split(xff, ",")
-            // Take the entry N positions from the right, where N = number of trusted proxies
-            idx := len(parts) - trustedProxyCount
-            if idx < 0 {
-                idx = 0
-            }
-            return strings.TrimSpace(parts[idx])
-        }
-    }
-    // ...
-}
-```
+The startup log already emits a `TrustProxy` security notice. Multi-proxy limitations are a documented deployment constraint, not a vulnerability.
 
 ---
 
-### SEC-03: Session CSRF Token Returned in Auth Status Endpoint
+### SEC-03: Session CSRF Token Returned in Auth Status Endpoint ❌ NOT VALID
 
 **Severity: LOW**  
 **File:** `internal/web/server.go:607-627`  
 **CVSS: 3.1**
 
-The `/api/auth/status` endpoint returns the CSRF token in its response for any valid session cookie. This endpoint is accessible without CSRF validation (it is a GET-equivalent endpoint), meaning any JavaScript on the same origin could fetch the CSRF token. While this is a common pattern for SPAs that need to obtain the token after page load, it slightly weakens CSRF protection because the token is no longer exclusively held by the legitimate page — any XSS vulnerability would allow the attacker to read this endpoint and obtain the token.
+~~The `/api/auth/status` endpoint returns the CSRF token, weakening CSRF protection because any XSS vulnerability would allow an attacker to read this endpoint and obtain the token.~~
 
-```go
-// Current:
-func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
-    status := map[string]interface{}{
-        "auth_required": s.cfg.Auth.Enabled,
-        "authenticated": false,
-    }
-    // ...
-    if err == nil && s.auth.ValidateSession(cookie.Value) {
-        status["authenticated"] = true
-        status["csrf_token"] = s.auth.GetCSRFToken(cookie.Value)  // Token exposed
-    }
-}
-```
-
-**Recommendation:** Consider embedding the CSRF token in the HTML template (via the existing nonce mechanism) rather than exposing it via an API endpoint. This way, only the legitimately rendered page has access:
-
-```html
-<!-- In the HTML template -->
-<meta name="csrf-token" content="{{ .CSRFToken }}">
-```
+**Finding is not valid.** Returning the CSRF token in `/api/auth/status` is intentional SPA design — the login handler already returns it on every successful login for the same reason (page-refresh recovery). CSRF protection specifically defends against cross-site request forgery; XSS has far more direct attack vectors than fetching a CSRF token from an API. A successful XSS attack can already forge requests directly using the victim's existing session cookie. No action needed.
 
 ---
 
@@ -864,7 +797,7 @@ for _, s := range samples {
 
 ### Priority 1 — Should Fix Before Next Release
 
-1. **Fix PostgreSQL DSN construction** (SEC-01): Use `url.URL` or proper escaping to prevent DSN injection and avoid credential exposure in error messages.
+1. ~~**Fix PostgreSQL DSN construction** (SEC-01): Use `url.URL` or proper escaping to prevent DSN injection and avoid credential exposure in error messages.~~ ✅ FIXED — password is now properly single-quoted with libpq escaping in `newPostgresCollector`.
 
 2. **Reduce write-path lock contention** (PERF-01): Move aggregation outside the global mutex to prevent read latency spikes. This is the single highest-impact performance improvement.
 
@@ -890,7 +823,7 @@ for _, s := range samples {
 
 11. **Derive CSRF token from session hash** (QUAL-06): Avoid storing CSRF tokens in plaintext on disk.
 
-12. **Add configurable proxy depth for X-Forwarded-For** (SEC-02): Support multi-proxy deployments with a `trusted_proxy_count` setting.
+12. ~~**Add configurable proxy depth for X-Forwarded-For** (SEC-02): Support multi-proxy deployments with a `trusted_proxy_count` setting.~~ ❌ NOT VALID — rightmost-XFF is correct for single-proxy topology.
 
 13. **Add gzip minimum size threshold** (PERF-05): Skip compression for responses under 512 bytes.
 

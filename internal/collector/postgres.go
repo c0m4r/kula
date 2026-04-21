@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	// PostgreSQL driver — imported for side-effect registration.
@@ -52,7 +53,12 @@ func newPostgresCollector(host string, port int, user, password, dbname, sslmode
 			host, port, user, dbname, sslmode)
 	}
 	if password != "" {
-		dsn += fmt.Sprintf(" password=%s", password)
+		// libpq key=value format requires single-quoting values that contain
+		// spaces or special characters; backslashes and single quotes within
+		// the quoted value must themselves be escaped with a backslash.
+		escaped := strings.ReplaceAll(password, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, `'`, `\'`)
+		dsn += " password='" + escaped + "'"
 	}
 
 	return &postgresCollector{
