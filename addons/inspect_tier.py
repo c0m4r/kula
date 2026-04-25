@@ -554,7 +554,7 @@ def _decode_variable(
     # 7d. MySQL — gated by has_mysql flag so old records skip this section.
     # Presence byte doubles as version tag:
     #   0 = not present
-    #   1 = v1 format (64-byte block: 4×i32 + 11×f32)
+    #   1 = v1 format (56-byte block: 4×i32 + 10×f32)
     if has_mysql:
         my_version, off = _get_u8(data, off)
         if my_version >= 1:

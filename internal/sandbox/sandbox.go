@@ -160,6 +160,18 @@ func Enforce(configPath string, storageDir string, webPort int, appCfg config.Ap
 		}
 	}
 
+	// MySQL: allow outbound TCP or Unix socket file access
+	if appCfg.Mysql.Enabled {
+		if appCfg.Mysql.Port > 0 {
+			netRules = append(netRules, landlock.ConnectTCP(uint16(appCfg.Mysql.Port)))
+			appInfo = append(appInfo, fmt.Sprintf("mysql:connect-tcp/%d", appCfg.Mysql.Port))
+		} else if appCfg.Mysql.Host != "" {
+			// Unix socket mode: host is the socket file path (e.g. /var/run/mysqld/mysqld.sock)
+			fsRules = append(fsRules, landlock.RWFiles(appCfg.Mysql.Host).IgnoreIfMissing())
+			appInfo = append(appInfo, fmt.Sprintf("mysql:rw(%s)", appCfg.Mysql.Host))
+		}
+	}
+
 	// Ollama: allow outbound TCP connection to the Ollama API port
 	if ollamaCfg.Enabled && ollamaCfg.URL != "" {
 		if u, err := url.Parse(ollamaCfg.URL); err == nil {

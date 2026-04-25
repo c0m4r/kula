@@ -113,7 +113,7 @@ Lightweight, self-contained Linux® server monitoring tool
 - **Landlock LSM** enforcement using `go-landlock` library (kernel 5.13+ required)
 - Restricts filesystem access to `/proc` (ro), `/sys` (ro), config file (ro), storage dir (rw)
 - Restricts network to TCP bind on web port only
-- Conditionally adds ConnectTCP for nginx, Postgres, Ollama ports
+- Conditionally adds ConnectTCP for nginx, Apache2, MySQL, Postgres, Ollama ports
 - Uses `BestEffort()` for graceful degradation on unsupported kernels
 
 ### Web Server — `internal/web/`
@@ -158,7 +158,8 @@ Each record has this structure:
 │          flagHasData    = 1 << 2                         │
 │          flagHasApps    = 1 << 3   (gate: app section)   │
 │          flagHasApache2 = 1 << 8   (gate: Apache2 block) │
-│          ... new flags: 1 << 9, 1 << 10, ...             │
+│          flagHasMysql   = 1 << 9   (gate: MySQL block)   │
+│          ... new flags: 1 << 10, 1 << 11, ...            │
 ├──────────────────────────────────────────────────────────┤
 │  Fixed block (218 bytes) — CPU, memory, swap, TCP,       │
 │  process, self metrics. Always the same size.            │
@@ -175,7 +176,7 @@ Each record has this structure:
 │       a. Nginx       (1 byte presence + 52 bytes data)   │
 │       b. Containers  (2 bytes count + variable per-ct)   │
 │       c. PostgreSQL  (1 byte version + 56/104 bytes)     │
-│       d. MySQL       (1 byte version + 64 bytes)         │
+│       d. MySQL       (1 byte version + 56 bytes)         │
 │       e. Apache2     (1 byte version + 72/100 bytes)     │
 │       f. Custom      (2 bytes group count + variable)    │
 │                                                          │
@@ -306,7 +307,8 @@ const (
     flagHasData    uint16 = 1 << 2
     flagHasApps    uint16 = 1 << 3
     flagHasApache2 uint16 = 1 << 8
-    flagHasFoo     uint16 = 1 << 9   // <-- NEW
+    flagHasMysql   uint16 = 1 << 9
+    flagHasFoo     uint16 = 1 << 10  // <-- NEW
 )
 ```
 
@@ -368,7 +370,7 @@ Extract the flag in `decodeSample()` and thread it through `decodeVariable()`:
 ```go
 hasFoo := flags&flagHasFoo != 0
 // ...
-vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasFoo)
+vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasFoo)
 ```
 
 Update the `decodeVariable` signature to accept the new `hasFoo bool` parameter.
@@ -382,7 +384,7 @@ Update all call sites (tests included).
 
 #### 10. Python decoder (`addons/inspect_tier.py`)
 
-- Add the flag constant: `FLAG_HAS_FOO = 1 << 9`
+- Add the flag constant: `FLAG_HAS_FOO = 1 << 10`
 - Extract `has_foo` from flags and pass to `_decode_variable()`.
 - Add the Foo decoding block at the same position (after Apache2, before Custom).
 - Gate with `if has_foo:`.
@@ -445,6 +447,7 @@ Use bit 10 for the next metric type. Bits 4–7 and 10–15 are free. Do not reu
 | `golang.org/x/sys` | System calls (adjtimex, statfs) |
 | `github.com/landlock-lsm/go-landlock` | Linux Landlock sandbox |
 | `github.com/lib/pq` | PostgreSQL driver |
+| `github.com/go-sql-driver/mysql` | MySQL driver |
 
 ### Config Files:
 - **`config.example.yaml`** — Template with all defaults (~238 lines)
@@ -482,7 +485,7 @@ Use bit 10 for the next metric type. Bits 4–7 and 10–15 are free. Do not reu
 
 ### Landlock Sandbox (v0.4.0+)
 - Filesystem: `/proc` and `/sys` read-only, config file read-only, storage dir read-write, `/etc/hosts`/`/etc/resolv.conf`/`/etc/nsswitch.conf` read-only
-- Network: Only TCP bind on configured web port, plus conditional ConnectTCP for nginx/Postgres/Ollama
+- Network: Only TCP bind on configured web port, plus conditional ConnectTCP for nginx/Apache2/MySQL/Postgres/Ollama ports
 - Checks Landlock ABI version at startup, gracefully degrades on older kernels
 
 ### Web Security Headers

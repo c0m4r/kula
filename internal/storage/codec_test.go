@@ -356,6 +356,171 @@ func TestDecodePostgresV1Block(t *testing.T) {
 	}
 }
 
+// ---- TestDecodeMysqlV1Block --------------------------------------------------
+// Regression test: MySQL v1 block is 56 bytes (4×int32 + 10×float32).
+// Construct the binary payload by hand and verify the decoder reads all 10
+// floats and leaves the offset at exactly 56 bytes past the presence byte.
+
+func TestDecodeMysqlV1Block(t *testing.T) {
+	now := time.Now().Truncate(time.Millisecond)
+	sample := makeSampleFull(now)
+
+	// Add MySQL data so appendVariable writes the MySQL section.
+	sample.Data.Apps.Mysql = &collector.MysqlStats{
+		ThreadsConnected:        5,
+		ThreadsRunning:          2,
+		ThreadsCached:           3,
+		MaxConnections:          151,
+		QueriesPS:               42.5,
+		ComSelectPS:             20.0,
+		ComInsertPS:             5.0,
+		ComUpdatePS:             3.0,
+		ComDeletePS:             1.0,
+		SlowQueriesPS:           0.5,
+		InnodbBufferPoolHitPct:  98.7,
+		InnodbBPReadsPS:         0.3,
+		TableLocksWaitedPS:      0.1,
+		RowLockWaitsPS:          0.2,
+	}
+
+	// Encode normally — this writes the corrected 56-byte v1 block.
+	enc, err := encodeSample(sample)
+	if err != nil {
+		t.Fatalf("encodeSample: %v", err)
+	}
+
+	// Decode and verify all MySQL fields survive the round-trip.
+	dec, err := decodeSample(enc)
+	if err != nil {
+		t.Fatalf("decodeSample: %v", err)
+	}
+	my := dec.Data.Apps.Mysql
+	if my == nil {
+		t.Fatal("expected Mysql to be non-nil after round-trip")
+	}
+	if my.ThreadsConnected != 5 || my.ThreadsRunning != 2 || my.ThreadsCached != 3 {
+		t.Errorf("thread fields: connected=%d running=%d cached=%d",
+			my.ThreadsConnected, my.ThreadsRunning, my.ThreadsCached)
+	}
+	if my.MaxConnections != 151 {
+		t.Errorf("MaxConnections = %d, want 151", my.MaxConnections)
+	}
+	if my.QueriesPS < 42.0 || my.QueriesPS > 43.0 {
+		t.Errorf("QueriesPS = %v, want ~42.5", my.QueriesPS)
+	}
+	if my.InnodbBufferPoolHitPct < 98.0 || my.InnodbBufferPoolHitPct > 99.0 {
+		t.Errorf("InnodbBufferPoolHitPct = %v, want ~98.7", my.InnodbBufferPoolHitPct)
+	}
+	// Custom metrics section must still decode correctly after MySQL (alignment check)
+	if dec.Data.System.Hostname != "test-host" {
+		t.Errorf("Hostname = %q after MySQL decode (alignment check)", dec.Data.System.Hostname)
+	}
+}
+
+// ---- TestDecodeApache2V1Block ------------------------------------------------
+// Regression test: Apache2 v1 block is 72 bytes (the layout before scoreboard
+// extended states were added). The current decoder must read v1 correctly and
+// leave Starting/DNS/Closing/Logging/Graceful/IdleCleanup/OpenSlots as zero.
+
+func TestDecodeApache2V1Block(t *testing.T) {
+	now := time.Now().Truncate(time.Millisecond)
+	sample := makeSampleFull(now)
+
+	// Encode with Apache2 data to get a reference variable buffer.
+	sample.Data.Apps.Apache2 = &collector.Apache2Stats{
+		BusyWorkers:   3,
+		IdleWorkers:   7,
+		TotalAccesses: 1234,
+		TotalKBytes:   5678,
+		AccessesPS:    2.5,
+		KBytesPS:      10.0,
+		ReqPerSec:     2.5,
+		BytesPerSec:   8192,
+		BytesPerReq:   3276,
+		CPULoad:       0.12,
+		Uptime:        12345,
+		Waiting:       5,
+		Reading:       2,
+		Sending:       1,
+		Keepalive:     0,
+		// v2-only fields intentionally left zero
+	}
+	varBuf, err := appendVariable(nil, sample.Data)
+	if err != nil {
+		t.Fatalf("appendVariable: %v", err)
+	}
+
+	// Find the Apache2 presence byte by encoding without Apache2 and locating divergence.
+	noApache := *sample.Data
+	noApache.Apps.Apache2 = nil
+	noApBuf, err := appendVariable(nil, &noApache)
+	if err != nil {
+		t.Fatalf("appendVariable (no apache2): %v", err)
+	}
+	apOff := -1
+	for i := 0; i < len(noApBuf) && i < len(varBuf); i++ {
+		if noApBuf[i] != varBuf[i] {
+			apOff = i
+			break
+		}
+	}
+	if apOff < 0 {
+		t.Fatal("could not find apache2 presence byte offset")
+	}
+
+	// Build a v1-format variable buffer:
+	// everything up to Apache2 presence + presence=1 + 72 bytes of v1 data + custom section.
+	var v1Var []byte
+	v1Var = append(v1Var, varBuf[:apOff]...) // up to apache2 presence
+	v1Var = append(v1Var, 1)                  // v1 presence tag
+	// 72-byte v1 block: 2×int32 + 2×uint64 + 6×float32 + 1×int64 + 4×int32
+	var ab [72]byte
+	binary.LittleEndian.PutUint32(ab[0:], uint32(int32(3)))   // BusyWorkers
+	binary.LittleEndian.PutUint32(ab[4:], uint32(int32(7)))   // IdleWorkers
+	binary.LittleEndian.PutUint64(ab[8:], 1234)               // TotalAccesses
+	binary.LittleEndian.PutUint64(ab[16:], 5678)              // TotalKBytes
+	putF32(ab[24:], 2.5)                                       // AccessesPS
+	putF32(ab[28:], 10.0)                                      // KBytesPS
+	putF32(ab[32:], 2.5)                                       // ReqPerSec
+	putF32(ab[36:], 8192)                                      // BytesPerSec
+	putF32(ab[40:], 3276)                                      // BytesPerReq
+	putF32(ab[44:], 0.12)                                      // CPULoad
+	binary.LittleEndian.PutUint64(ab[48:], uint64(12345))     // Uptime
+	binary.LittleEndian.PutUint32(ab[56:], uint32(int32(5)))  // Waiting
+	binary.LittleEndian.PutUint32(ab[60:], uint32(int32(2)))  // Reading
+	binary.LittleEndian.PutUint32(ab[64:], uint32(int32(1)))  // Sending
+	binary.LittleEndian.PutUint32(ab[68:], uint32(int32(0)))  // Keepalive
+	v1Var = append(v1Var, ab[:]...)
+	// Custom section: from after the v2 apache2 block (presence=2 + 100 bytes).
+	v1Var = append(v1Var, varBuf[apOff+1+100:]...)
+
+	// Decode v1 Apache2 variable section (hasMysql=true since encoder always sets it)
+	target := &collector.Sample{}
+	_, err = decodeVariable(v1Var, target, true, true, true)
+	if err != nil {
+		t.Fatalf("decodeVariable(v1 apache2) error: %v", err)
+	}
+	ap := target.Apps.Apache2
+	if ap == nil {
+		t.Fatal("expected Apache2 to be non-nil")
+	}
+	if ap.BusyWorkers != 3 || ap.IdleWorkers != 7 {
+		t.Errorf("workers: busy=%d idle=%d", ap.BusyWorkers, ap.IdleWorkers)
+	}
+	if ap.TotalAccesses != 1234 || ap.TotalKBytes != 5678 {
+		t.Errorf("counters: accesses=%d kbytes=%d", ap.TotalAccesses, ap.TotalKBytes)
+	}
+	if ap.Uptime != 12345 {
+		t.Errorf("Uptime = %d, want 12345", ap.Uptime)
+	}
+	// v2-only fields must be zero
+	if ap.Starting != 0 || ap.DNS != 0 || ap.Closing != 0 || ap.Logging != 0 ||
+		ap.Graceful != 0 || ap.IdleCleanup != 0 || ap.OpenSlots != 0 {
+		t.Errorf("v2-only scoreboard fields should be zero: S=%d D=%d C=%d L=%d G=%d I=%d .=%d",
+			ap.Starting, ap.DNS, ap.Closing, ap.Logging, ap.Graceful, ap.IdleCleanup, ap.OpenSlots)
+	}
+}
+
 // ---- extractTimestamp -------------------------------------------------------
 
 func TestExtractTimestamp_HappyPath(t *testing.T) {

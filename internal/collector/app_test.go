@@ -310,6 +310,133 @@ func TestPostgresDSN(t *testing.T) {
 	}
 }
 
+func TestMysqlDSN(t *testing.T) {
+	// TCP connection
+	mc1 := newMysqlCollector("localhost", 3306, "user", "pass", "mydb", false, time.Second)
+	if !strings.Contains(mc1.dsn, "tcp(localhost:3306)") {
+		t.Errorf("Unexpected TCP DSN: %s", mc1.dsn)
+	}
+	if !strings.Contains(mc1.dsn, "user:pass@") {
+		t.Errorf("DSN missing credentials: %s", mc1.dsn)
+	}
+	if !strings.Contains(mc1.dsn, "/mydb") {
+		t.Errorf("DSN missing dbname: %s", mc1.dsn)
+	}
+
+	// Unix socket connection (port == 0)
+	mc2 := newMysqlCollector("/var/run/mysqld/mysqld.sock", 0, "user", "", "mydb", false, time.Second)
+	if !strings.Contains(mc2.dsn, "unix(/var/run/mysqld/mysqld.sock)") {
+		t.Errorf("Unexpected Unix DSN: %s", mc2.dsn)
+	}
+	if strings.Contains(mc2.dsn, "tcp(") {
+		t.Errorf("Unix DSN should not contain tcp(): %s", mc2.dsn)
+	}
+}
+
+func TestMysqlCollectorMath(t *testing.T) {
+	mc := &mysqlCollector{
+		prev: mysqlRaw{
+			questions:        100,
+			comSelect:        50,
+			comInsert:        10,
+			comUpdate:        5,
+			comDelete:        2,
+			slowQueries:      1,
+			innodbBPReads:    20,
+			innodbBPRequests: 200,
+			tableLocksWaited: 3,
+			rowLockWaits:     4,
+		},
+	}
+
+	cur := mysqlRaw{
+		questions:        200,    // +100 over 10s → 10 q/s
+		comSelect:        100,    // +50  → 5 select/s
+		comInsert:        20,     // +10  → 1 insert/s
+		comUpdate:        10,     // +5   → 0.5 update/s
+		comDelete:        4,      // +2   → 0.2 delete/s
+		slowQueries:      3,      // +2   → 0.2 slow/s
+		innodbBPReads:    30,     // +10  → 1 bp_reads/s
+		innodbBPRequests: 1030,   // 1000 hits + 30 reads → 97.09% hit ratio
+		tableLocksWaited: 8,      // +5   → 0.5/s
+		rowLockWaits:     9,      // +5   → 0.5/s
+	}
+
+	stats := &MysqlStats{}
+	mc.calculateStats(stats, cur, 10.0) // 10 seconds elapsed
+
+	if stats.QueriesPS != 10.0 {
+		t.Errorf("Expected QueriesPS 10.0, got %.2f", stats.QueriesPS)
+	}
+	if stats.ComSelectPS != 5.0 {
+		t.Errorf("Expected ComSelectPS 5.0, got %.2f", stats.ComSelectPS)
+	}
+	if stats.ComInsertPS != 1.0 {
+		t.Errorf("Expected ComInsertPS 1.0, got %.2f", stats.ComInsertPS)
+	}
+	if stats.SlowQueriesPS != 0.2 {
+		t.Errorf("Expected SlowQueriesPS 0.2, got %.2f", stats.SlowQueriesPS)
+	}
+	if stats.InnodbBPReadsPS != 1.0 {
+		t.Errorf("Expected InnodbBPReadsPS 1.0, got %.2f", stats.InnodbBPReadsPS)
+	}
+	// Buffer pool hit pct: (1030-30)/1030 * 100 = 97.087...%
+	if stats.InnodbBufferPoolHitPct < 97.0 || stats.InnodbBufferPoolHitPct > 98.0 {
+		t.Errorf("Expected InnodbBufferPoolHitPct ~97%%, got %.2f", stats.InnodbBufferPoolHitPct)
+	}
+	if stats.TableLocksWaitedPS != 0.5 {
+		t.Errorf("Expected TableLocksWaitedPS 0.5, got %.2f", stats.TableLocksWaitedPS)
+	}
+	if stats.RowLockWaitsPS != 0.5 {
+		t.Errorf("Expected RowLockWaitsPS 0.5, got %.2f", stats.RowLockWaitsPS)
+	}
+}
+
+func TestMysqlCollectorCounterReset(t *testing.T) {
+	// Simulate a MySQL restart: previous counters are very high,
+	// current counters reset to small values.  Rates must be 0, not insane.
+	mc := &mysqlCollector{
+		prev: mysqlRaw{
+			questions:        50_000_000,
+			comSelect:        30_000_000,
+			comInsert:        5_000_000,
+			comUpdate:        2_000_000,
+			comDelete:        1_000_000,
+			slowQueries:      100_000,
+			innodbBPReads:    500_000,
+			innodbBPRequests: 5_000_000,
+			tableLocksWaited: 50_000,
+			rowLockWaits:     10_000,
+		},
+	}
+
+	cur := mysqlRaw{
+		questions:        100,
+		comSelect:        50,
+		comInsert:        10,
+		comUpdate:        5,
+		comDelete:        2,
+		slowQueries:      1,
+		innodbBPReads:    5,
+		innodbBPRequests: 200,
+		tableLocksWaited: 0,
+		rowLockWaits:     0,
+	}
+
+	stats := &MysqlStats{}
+	mc.calculateStats(stats, cur, 1.0)
+
+	// All rates must be zero (counter rollback guard)
+	if stats.QueriesPS != 0 || stats.ComSelectPS != 0 || stats.ComInsertPS != 0 ||
+		stats.ComUpdatePS != 0 || stats.ComDeletePS != 0 || stats.SlowQueriesPS != 0 ||
+		stats.InnodbBPReadsPS != 0 || stats.TableLocksWaitedPS != 0 || stats.RowLockWaitsPS != 0 {
+		t.Errorf("Expected all rates to be 0 after counter reset, got: q=%.2f sel=%.2f ins=%.2f upd=%.2f del=%.2f slow=%.2f bpReads=%.2f tblLk=%.2f rowLk=%.2f",
+			stats.QueriesPS, stats.ComSelectPS, stats.ComInsertPS, stats.ComUpdatePS,
+			stats.ComDeletePS, stats.SlowQueriesPS, stats.InnodbBPReadsPS,
+			stats.TableLocksWaitedPS, stats.RowLockWaitsPS)
+	}
+}
+
 func TestCustomCollector(t *testing.T) {
 	sockPath := "/tmp/kula_test.sock"
 	defer func() { _ = os.Remove(sockPath) }()

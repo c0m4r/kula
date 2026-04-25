@@ -520,11 +520,11 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 
 	// MySQL — presence byte doubles as version tag:
 	//   0 = not present
-	//   1 = v1 format (64-byte block: 4×int32 + 11×float32)
+	//   1 = v1 format (56-byte block: 4×int32 + 10×float32)
 	if s.Apps.Mysql != nil {
 		buf = append(buf, 1)
 		my := s.Apps.Mysql
-		var mb [64]byte
+		var mb [56]byte
 		binary.LittleEndian.PutUint32(mb[0:], uint32(int32(my.ThreadsConnected)))
 		binary.LittleEndian.PutUint32(mb[4:], uint32(int32(my.ThreadsRunning)))
 		binary.LittleEndian.PutUint32(mb[8:], uint32(int32(my.ThreadsCached)))
@@ -1077,7 +1077,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 		}
 		myVersion := data[off]; off++
 		if myVersion >= 1 {
-			if err := need(64, "mysql v1 fields"); err != nil {
+			if err := need(56, "mysql v1 fields"); err != nil {
 				return off, err
 			}
 			my := &collector.MysqlStats{}
