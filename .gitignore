@@ -2,6 +2,7 @@
 /addons/ansible/roles/kula/files/kula*
 /build_appimage
 /build_deb
+/build_rpm
 /data/
 /dist/
 /kula*
