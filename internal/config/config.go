@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -455,9 +456,17 @@ func (w WebConfig) CookiePath() string {
 }
 
 // normalizeBasePath cleans a user-supplied base path.
+// Accepts a bare path ("/kula") or a full URL — in the latter case only the
+// path component is kept ("https://host/kula/" → "/kula").
 // Returns "" for root (the default), otherwise a string that starts with "/"
 // and has no trailing slash (e.g. "/kula" or "/monitoring/kula").
 func normalizeBasePath(s string) string {
+	// If a full URL was supplied, extract just the path.
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		if u, err := url.Parse(s); err == nil {
+			s = u.Path
+		}
+	}
 	// Strip trailing slashes
 	for len(s) > 1 && s[len(s)-1] == '/' {
 		s = s[:len(s)-1]

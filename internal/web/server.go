@@ -389,14 +389,7 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	var root http.Handler = mux
-	if s.cfg.BasePath != "" {
-		outer := http.NewServeMux()
-		outer.Handle(s.cfg.BasePath+"/", http.StripPrefix(s.cfg.BasePath, mux))
-		root = outer
-	}
-
-	var handler = s.securityMiddleware(root)
+	var handler = s.securityMiddleware(mux)
 	if s.cfg.EnableCompression {
 		handler = gzipMiddleware(handler)
 	}
