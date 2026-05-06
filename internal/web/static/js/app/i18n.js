@@ -3,6 +3,7 @@
    Fetches translations from API and applies them to the DOM.
    ============================================================ */
 'use strict';
+import { apiUrl } from './url.js';
 export const i18n = {
     currentLang: 'en',
     translations: {},
@@ -11,7 +12,7 @@ export const i18n = {
     async init() {
         // Fetch server config first for language settings
         try {
-            const res = await fetch('/api/config');
+            const res = await fetch(apiUrl('/api/config'));
             if (res.ok) {
                 const config = await res.json();
                 this.serverConfig = config.lang || { default: 'en', force: false };
@@ -49,7 +50,7 @@ export const i18n = {
 
     async loadTranslations(lang) {
         try {
-            const response = await fetch(`/api/i18n?lang=${lang}`);
+            const response = await fetch(apiUrl(`/api/i18n?lang=${lang}`));
             if (!response.ok) throw new Error('Failed to load translations');
             this.translations = await response.json();
             this.currentLang = lang;

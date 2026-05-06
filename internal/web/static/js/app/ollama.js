@@ -6,6 +6,7 @@
 'use strict';
 import { state, escapeHTML } from './state.js';
 import { i18n } from './i18n.js';
+import { apiUrl } from './url.js';
 
 // ---- Conversation history (max 20 turns kept per session in memory) ----
 const MAX_HISTORY = 20;
@@ -229,7 +230,7 @@ async function fetchSessionContext() {
     try {
         const headers = {};
         if (state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
-        const resp = await fetch('/api/ollama/context', { headers });
+        const resp = await fetch(apiUrl('/api/ollama/context'), { headers });
         if (!resp.ok) return;
         const data = await resp.json();
         if (data.context) sess.context = data.context;
@@ -256,7 +257,7 @@ async function pollOllamaModels() {
     try {
         const headers = {};
         if (state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
-        const resp = await fetch('/api/ollama/models', { headers });
+        const resp = await fetch(apiUrl('/api/ollama/models'), { headers });
         if (!resp.ok) { setServiceAvailable(false); scheduleModelPoll(5000); return; }
         const data = await resp.json();
         const models = data.models || [];
@@ -635,7 +636,7 @@ async function streamChatResponse({ prompt, messages, context, assistantBody }) 
     const headers = { 'Content-Type': 'application/json' };
     if (state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
 
-    const resp = await fetch('/api/ollama/chat', {
+    const resp = await fetch(apiUrl('/api/ollama/chat'), {
         method: 'POST',
         headers,
         body: JSON.stringify({

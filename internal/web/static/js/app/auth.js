@@ -8,9 +8,10 @@ import { updateAllCharts, clearAllChartData } from './charts-data.js';
 import { connectWS, updateConnectionStatus } from './websocket.js';
 import { applyTheme } from './theme.js';
 import { applySplitFromConfig } from './split.js';
+import { apiUrl } from './url.js';
 
 export function checkAuth() {
-    fetch('/api/auth/status')
+    fetch(apiUrl('/api/auth/status'))
         .then(r => r.json())
         .then(data => {
             if (data.auth_required && !data.authenticated) {
@@ -39,7 +40,7 @@ export function checkAuth() {
 }
 
 export function fetchConfig() {
-    return fetch('/api/config')
+    return fetch(apiUrl('/api/config'))
         .then(r => {
             if (!r.ok) throw new Error('Unauthorized');
             return r.json();
@@ -122,7 +123,7 @@ export function handleLogin(e) {
     const pass = document.getElementById('login-pass')?.value;
     const errorEl = document.getElementById('login-error');
 
-    fetch('/api/login', {
+    fetch(apiUrl('/api/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: user, password: pass }),
@@ -155,7 +156,7 @@ export function handleLogout() {
     if (state.csrfToken) {
         headers['X-CSRF-Token'] = state.csrfToken;
     }
-    fetch('/api/logout', { 
+    fetch(apiUrl('/api/logout'), {
         method: 'POST',
         headers: headers
     })

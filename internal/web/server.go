@@ -389,7 +389,14 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	var handler = s.securityMiddleware(mux)
+	var root http.Handler = mux
+	if s.cfg.BasePath != "" {
+		outer := http.NewServeMux()
+		outer.Handle(s.cfg.BasePath+"/", http.StripPrefix(s.cfg.BasePath, mux))
+		root = outer
+	}
+
+	var handler = s.securityMiddleware(root)
 	if s.cfg.EnableCompression {
 		handler = gzipMiddleware(handler)
 	}
@@ -759,7 +766,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "kula_session",
 		Value:    token,
-		Path:     "/",
+		Path:     s.cfg.CookiePath(),
 		HttpOnly: true,
 		Secure:   secure,
 		MaxAge:   int(s.cfg.Auth.SessionTimeout.Seconds()),
@@ -793,7 +800,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "kula_session",
 		Value:    "",
-		Path:     "/",
+		Path:     s.cfg.CookiePath(),
 		HttpOnly: true,
 		Secure:   secure,
 		MaxAge:   -1,
@@ -1060,12 +1067,14 @@ func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, template
 		AuthEnabled bool
 		LangForce   bool
 		EasterEgg   bool
+		BasePath    string
 	}{
 		Nonce:       nonce,
 		SRI:         s.sriHashes,
 		AuthEnabled: s.cfg.Auth.Enabled,
 		LangForce:   s.cfg.Lang.Force,
 		EasterEgg:   s.global.EasterEgg,
+		BasePath:    s.cfg.BasePath,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

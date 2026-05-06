@@ -74,9 +74,10 @@ type WebConfig struct {
 	OS                 string      `yaml:"-"`
 	Kernel             string      `yaml:"-"`
 	Arch               string      `yaml:"-"`
-	MaxWebsocketConns  int         `yaml:"max_websocket_conns"`
-	MaxWebsocketConnsPerIP int         `yaml:"max_websocket_conns_per_ip"`
-	Security           SecurityConfig `yaml:"security"`
+	MaxWebsocketConns      int            `yaml:"max_websocket_conns"`
+	MaxWebsocketConnsPerIP int            `yaml:"max_websocket_conns_per_ip"`
+	BasePath               string         `yaml:"base_path"`
+	Security               SecurityConfig `yaml:"security"`
 }
 
 // SecurityConfig groups HTTP security features that can be relaxed for
@@ -439,7 +440,37 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
+	cfg.Web.BasePath = normalizeBasePath(cfg.Web.BasePath)
+
 	return cfg, nil
+}
+
+// CookiePath returns the Path attribute for the session cookie.
+// When BasePath is empty the cookie covers the whole site ("/").
+func (w WebConfig) CookiePath() string {
+	if w.BasePath == "" {
+		return "/"
+	}
+	return w.BasePath + "/"
+}
+
+// normalizeBasePath cleans a user-supplied base path.
+// Returns "" for root (the default), otherwise a string that starts with "/"
+// and has no trailing slash (e.g. "/kula" or "/monitoring/kula").
+func normalizeBasePath(s string) string {
+	// Strip trailing slashes
+	for len(s) > 1 && s[len(s)-1] == '/' {
+		s = s[:len(s)-1]
+	}
+	// Treat bare "/" or empty as "no prefix"
+	if s == "" || s == "/" {
+		return ""
+	}
+	// Ensure leading slash
+	if s[0] != '/' {
+		s = "/" + s
+	}
+	return s
 }
 
 // validateOllamaURL ensures the Ollama URL only targets loopback addresses

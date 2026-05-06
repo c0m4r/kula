@@ -82,6 +82,12 @@ web:
   max_websocket_conns: 100
   max_websocket_conns_per_ip: 5
 
+  # URL prefix when running behind a reverse proxy sub-path (default: "")
+  # Example: base_path: "/kula" serves the UI at https://example.com/kula/
+  # Caddy: handle_path /kula/* { reverse_proxy localhost:27960 }
+  # Leave empty (or omit) to serve at the root path.
+  base_path: ""
+
   # Trust X-Forwarded-Proto headers from reverse proxies for the Secure cookie flag
   trust_proxy: false
 

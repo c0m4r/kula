@@ -7,6 +7,7 @@
     <title>K U L A</title>
     <link rel="icon" href="kula.svg">
     <meta name="description" content="Lightweight, self-contained Linux® server monitoring tool">
+    <meta name="kula-base" content="{{.BasePath}}">
     <script src="js/chartjs/chart.umd.min.js" integrity="{{sri `chart.umd.min.js`}}" nonce="{{.Nonce}}"
         crossorigin="anonymous"></script>
     <script src="js/chartjs/chartjs-adapter-date-fns.bundle.min.js"
@@ -17,6 +18,7 @@
     <link rel="stylesheet" href="style.css">
 
     <!-- App modules preloading with Subresource Integrity (SRI) -->
+    <link rel="modulepreload" href="js/app/url.js" integrity="{{sri `js/app/url.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/state.js" integrity="{{sri `js/app/state.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/i18n.js" integrity="{{sri `js/app/i18n.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/utils.js" integrity="{{sri `js/app/utils.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
@@ -62,7 +64,7 @@
         <!-- Header -->
         <header class="header">
             <div class="header-left">
-                <a href="/" class="header-link"><span class="logo"><img src="kula.svg" alt="" /></span>
+                <a href="{{.BasePath}}/" class="header-link"><span class="logo"><img src="kula.svg" alt="" /></span>
                     <h1>KULA</h1>
                 </a>
                 <span id="hostname" class="hostname"></span>
@@ -129,7 +131,7 @@
                 <!-- AI Assistant -->
                 <button id="btn-ai" class="btn-icon hidden" data-i18n-title="ai_assistant" title="AI Assistant">🤖</button>
                 <!-- Game easter egg -->
-                {{if .EasterEgg}}<a href="/game.html" class="btn-icon btn-game" data-i18n-title="space_invaders" title="Space Invaders"
+                {{if .EasterEgg}}<a href="{{.BasePath}}/game.html" class="btn-icon btn-game" data-i18n-title="space_invaders" title="Space Invaders"
                     id="btn-game">🎮</a>{{end}}
                 <!-- Layout toggle -->
                 <button id="btn-layout" class="btn-icon" data-i18n-title="switch_list"

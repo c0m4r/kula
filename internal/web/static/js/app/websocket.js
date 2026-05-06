@@ -5,10 +5,10 @@
 'use strict';
 import { state } from './state.js';
 import { pushLiveSample, fetchHistory, fetchGapHistory } from './charts-data.js';
+import { connectWsUrl } from './url.js';
 
 export function connectWS() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${proto}//${location.host}/ws`;
+    const wsUrl = connectWsUrl();
 
     try {
         state.ws = new WebSocket(wsUrl);

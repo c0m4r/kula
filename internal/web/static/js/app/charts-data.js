@@ -5,6 +5,7 @@
 'use strict';
 import { state, colors } from './state.js';
 import { formatBytesShort } from './utils.js';
+import { apiUrl } from './url.js';
 import { createTimeSeriesChart, setChartTimeRange, updateChartLabels } from './charts-init.js';
 import { updateHeader, updateSubtitles } from './header.js';
 import { updateGauges } from './gauges.js';
@@ -1187,7 +1188,7 @@ export function fetchZoomedHistory(fromDate, toDate) {
     const from = fromDate.toISOString();
     const to = toDate.toISOString();
     const points = Math.max(600, window.innerWidth || 1000);
-    fetch(`/api/history?from=${from}&to=${to}&points=${points}`)
+    fetch(apiUrl(`/api/history?from=${from}&to=${to}&points=${points}`))
         .then(r => r.json())
         .then(response => {
             const data = response.samples || response;
@@ -1616,7 +1617,7 @@ export function fetchHistory(rangeSeconds) {
     const to = new Date().toISOString();
     const from = new Date(Date.now() - rangeSeconds * 1000).toISOString();
     const points = Math.max(600, window.innerWidth || 1000);
-    fetch(`/api/history?from=${from}&to=${to}&points=${points}`)
+    fetch(apiUrl(`/api/history?from=${from}&to=${to}&points=${points}`))
         .then(r => r.json())
         .then(response => {
             const data = response.samples || response;
@@ -1696,7 +1697,7 @@ export function fetchCustomHistory(fromDate, toDate) {
     const from = fromDate.toISOString();
     const to = toDate.toISOString();
     const points = Math.max(600, window.innerWidth || 1000);
-    fetch(`/api/history?from=${from}&to=${to}&points=${points}`)
+    fetch(apiUrl(`/api/history?from=${from}&to=${to}&points=${points}`))
         .then(r => r.json())
         .then(response => {
             const data = response.samples || response;
@@ -1761,7 +1762,7 @@ export function fetchGapHistory(fromDate, toDate) {
 
     const from = fromDate.toISOString();
     const to = toDate.toISOString();
-    fetch(`/api/history?from=${from}&to=${to}&points=300`)
+    fetch(apiUrl(`/api/history?from=${from}&to=${to}&points=300`))
         .then(r => r.json())
         .then(response => {
             const data = response.samples || response;
