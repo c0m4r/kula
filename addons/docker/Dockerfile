@@ -1,4 +1,4 @@
-FROM golang:1.26 AS builder
+FROM docker.io/library/golang:1.26 AS builder
 
 WORKDIR /app
 
@@ -14,7 +14,7 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -buildvcs=false -o kula ./cmd/kula/
 
 # ---- Final Stage ----
-FROM alpine:3.21
+FROM docker.io/library/alpine:3.21
 
 # Create unprivileged user
 RUN addgroup -S kula && adduser -S kula -G kula
