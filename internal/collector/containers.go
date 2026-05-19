@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -96,10 +97,14 @@ func (cc *containerCollector) resolveSocket() {
 	if cc.cfg.SocketPath != "" {
 		// User-configured socket
 		if _, err := os.Stat(cc.cfg.SocketPath); err == nil {
-			cc.socket = cc.cfg.SocketPath
-			cc.mode = containerModeSocket
-			log.Printf("[containers] using configured socket: %s", cc.socket)
-			return
+			if err := probeSocket(cc.cfg.SocketPath); err != nil {
+				logSocketAccessError(cc.cfg.SocketPath, err)
+			} else {
+				cc.socket = cc.cfg.SocketPath
+				cc.mode = containerModeSocket
+				log.Printf("[containers] using configured socket: %s", cc.socket)
+				return
+			}
 		}
 		log.Printf("[containers] configured socket %s not found, falling back to auto-detect", cc.cfg.SocketPath)
 	}
@@ -107,6 +112,10 @@ func (cc *containerCollector) resolveSocket() {
 	// Auto-detect
 	for _, path := range knownSocketPaths {
 		if _, err := os.Stat(path); err == nil {
+			if err := probeSocket(path); err != nil {
+				logSocketAccessError(path, err)
+				continue
+			}
 			cc.socket = path
 			cc.mode = containerModeSocket
 			log.Printf("[containers] discovered runtime socket: %s", cc.socket)
@@ -123,6 +132,26 @@ func (cc *containerCollector) resolveSocket() {
 
 	cc.mode = containerModeNone
 	log.Printf("[containers] no runtime socket or cgroups found, container monitoring disabled")
+}
+
+// probeSocket attempts a dial on the Unix socket to verify access.
+func probeSocket(path string) error {
+	conn, err := net.DialTimeout("unix", path, time.Second)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
+}
+
+// logSocketAccessError logs a socket access failure with a hint when the error is
+// permission-related.
+func logSocketAccessError(path string, err error) {
+	if errors.Is(err, os.ErrPermission) {
+		log.Printf("[containers] socket %s found but permission denied — add the current user to the docker/podman group or run as root", path)
+	} else {
+		log.Printf("[containers] socket %s found but not accessible: %v", path, err)
+	}
 }
 
 // debugf logs a formatted message only when DebugLog is enabled AND only once.
