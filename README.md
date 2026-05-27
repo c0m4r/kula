@@ -271,6 +271,28 @@ Both return:
 kula is healthy
 ```
 
+### Reverse Proxy / Sub-path
+
+Set `web.base_path` in `config.yaml` to serve Kula under a URL prefix:
+
+```yaml
+web:
+  base_path: "/kula"   # UI available at https://example.com/kula/
+  trust_proxy: true    # honour X-Forwarded-Proto for the Secure cookie flag
+```
+
+Reverse proxy examples (strip the prefix before forwarding):
+
+```
+# Caddy
+handle_path /kula/* { reverse_proxy localhost:27960 }
+
+# nginx
+location /kula/ { proxy_pass http://localhost:27960/; }
+```
+
+Health endpoints move accordingly: `/kula/health`, `/kula/status`.
+
 ### Authentication (Optional)
 
 ```bash
@@ -304,7 +326,20 @@ sudo ln -s /etc/sv/kula /var/service/
 
 ## ⚙️ Configuration
 
-All settings live in `config.yaml`. See [`config.example.yaml`](config.example.yaml) for defaults.
+All settings live in `config.yaml`. See [`config.example.yaml`](config.example.yaml) for the full reference with defaults.
+
+Key `web:` parameters:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `listen` | `""` (all interfaces) | Bind address |
+| `port` | `27960` | HTTP port |
+| `base_path` | `""` | URL prefix for reverse proxy sub-path deployments |
+| `trust_proxy` | `false` | Trust `X-Forwarded-Proto` for the Secure cookie flag |
+| `max_websocket_conns` | `100` | Global WebSocket connection limit |
+| `max_websocket_conns_per_ip` | `5` | Per-IP WebSocket connection limit |
+
+Environment variable overrides: `KULA_LISTEN`, `KULA_PORT`, `KULA_LOGLEVEL`, `KULA_DIRECTORY`.
 
 ---
 
