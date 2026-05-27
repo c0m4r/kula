@@ -9,9 +9,13 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ## [0.16.1] - TBA
 
+### Added
+
+- Configurable base path support (#25)
+
 ### Changed
 
-- Use shorter containers ID in cgroups mode #28
+- Use shorter containers ID in cgroups mode (#28)
 
 ## [0.16.0] - 2026-05-20
 
