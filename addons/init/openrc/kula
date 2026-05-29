@@ -19,4 +19,8 @@ depend() {
 
 start_pre() {
     checkpath --directory --owner kula:kula --mode 0755 /var/lib/kula
+    # Runtime dir for an optional Unix socket under /run/kula (web.unix_socket).
+    # /run is a tmpfs wiped each boot and kula does not create the socket's
+    # parent dir itself. Unused in the default TCP setup; harmless if so.
+    checkpath --directory --owner kula:kula --mode 0750 /run/kula
 }
