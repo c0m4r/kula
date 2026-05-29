@@ -2,10 +2,11 @@ package collector
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
+	"runtime"
 	"strings"
 )
 
@@ -33,39 +34,72 @@ func (c *Collector) parseProcStat() []cpuRaw {
 	}
 	defer func() { _ = f.Close() }()
 
-	var result []cpuRaw
+	// Preallocate to the previously seen core count (stable across ticks) so the
+	// per-second hot path performs no slice growth.
+	capHint := len(c.prevCPU)
+	if capHint == 0 {
+		capHint = runtime.NumCPU() + 1
+	}
+	result := make([]cpuRaw, 0, capHint)
+
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "cpu") {
+		line := scanner.Bytes()
+		// Only the aggregate "cpu" line and per-core "cpuN" lines are relevant.
+		// Skip everything else (notably the large intr/softirq lines, which can
+		// be several KB) *before* touching the bytes, so they are never copied.
+		if len(line) < 3 || line[0] != 'c' || line[1] != 'p' || line[2] != 'u' {
 			continue
 		}
-		fields := strings.Fields(line)
-		if len(fields) < 8 {
+
+		var r cpuRaw
+		idx := 0
+		pos := 0
+		for {
+			// Skip the spaces between fields ("cpu" has two leading spaces).
+			for pos < len(line) && line[pos] == ' ' {
+				pos++
+			}
+			if pos >= len(line) {
+				break
+			}
+			start := pos
+			for pos < len(line) && line[pos] != ' ' {
+				pos++
+			}
+			field := line[start:pos]
+			switch idx {
+			case 0:
+				r.id = string(field) // small (e.g. "cpu", "cpu0"); needed by callers
+			case 1:
+				r.user = parseUintBytes(field)
+			case 2:
+				r.nice = parseUintBytes(field)
+			case 3:
+				r.system = parseUintBytes(field)
+			case 4:
+				r.idle = parseUintBytes(field)
+			case 5:
+				r.iowait = parseUintBytes(field)
+			case 6:
+				r.irq = parseUintBytes(field)
+			case 7:
+				r.softirq = parseUintBytes(field)
+			case 8:
+				r.steal = parseUintBytes(field)
+			case 9:
+				r.guest = parseUintBytes(field)
+			case 10:
+				r.guestNice = parseUintBytes(field)
+			}
+			idx++
+			if idx > 10 {
+				break
+			}
+		}
+		// Require at least id + user..softirq (8 fields), matching prior behaviour.
+		if idx < 8 {
 			continue
-		}
-		r := cpuRaw{id: fields[0]}
-		r.user = c.parseUint(fields[1], 10, 64, "cpu.user")
-		r.nice = c.parseUint(fields[2], 10, 64, "cpu.nice")
-		r.system = c.parseUint(fields[3], 10, 64, "cpu.system")
-		r.idle = c.parseUint(fields[4], 10, 64, "cpu.idle")
-		if len(fields) > 5 {
-			r.iowait = c.parseUint(fields[5], 10, 64, "cpu.iowait")
-		}
-		if len(fields) > 6 {
-			r.irq = c.parseUint(fields[6], 10, 64, "cpu.irq")
-		}
-		if len(fields) > 7 {
-			r.softirq = c.parseUint(fields[7], 10, 64, "cpu.softirq")
-		}
-		if len(fields) > 8 {
-			r.steal = c.parseUint(fields[8], 10, 64, "cpu.steal")
-		}
-		if len(fields) > 9 {
-			r.guest = c.parseUint(fields[9], 10, 64, "cpu.guest")
-		}
-		if len(fields) > 10 {
-			r.guestNice = c.parseUint(fields[10], 10, 64, "cpu.guest_nice")
 		}
 		result = append(result, r)
 	}
@@ -360,62 +394,115 @@ func (c *Collector) DetectTjMax() float64 {
 	return maxCrit
 }
 
-func collectMemory() MemoryStats {
-	m := parseMemInfo()
+// memInfo holds only the /proc/meminfo fields Kula reports, avoiding a map.
+type memInfo struct {
+	memTotal, memFree, memAvailable, buffers, cached, shmem uint64
+	swapTotal, swapFree                                     uint64
+}
+
+// collectMemSwap reads /proc/meminfo once and derives both the memory and swap
+// stats from it. The collection loop calls this directly so the file is parsed a
+// single time per tick (the prior code called collectMemory and collectSwap
+// separately, parsing /proc/meminfo — and allocating a 50+ key map — twice).
+func collectMemSwap() (MemoryStats, SwapStats) {
+	mi := parseMemInfo()
+
 	mem := MemoryStats{
-		Total:     m["MemTotal"],
-		Free:      m["MemFree"],
-		Available: m["MemAvailable"],
-		Buffers:   m["Buffers"],
-		Cached:    m["Cached"],
-		Shmem:     m["Shmem"],
+		Total:     mi.memTotal,
+		Free:      mi.memFree,
+		Available: mi.memAvailable,
+		Buffers:   mi.buffers,
+		Cached:    mi.cached,
+		Shmem:     mi.shmem,
 	}
 	mem.Used = mem.Total - mem.Free - mem.Buffers - mem.Cached
 	if mem.Total > 0 {
 		mem.UsedPercent = round2(float64(mem.Used) / float64(mem.Total) * 100.0)
 	}
+
+	swap := SwapStats{
+		Total: mi.swapTotal,
+		Free:  mi.swapFree,
+	}
+	swap.Used = swap.Total - swap.Free
+	if swap.Total > 0 {
+		swap.UsedPercent = round2(float64(swap.Used) / float64(swap.Total) * 100.0)
+	}
+
+	return mem, swap
+}
+
+// collectMemory and collectSwap are retained for callers (and tests) that need
+// only one half; both defer to collectMemSwap.
+func collectMemory() MemoryStats {
+	mem, _ := collectMemSwap()
 	return mem
 }
 
 func collectSwap() SwapStats {
-	m := parseMemInfo()
-	s := SwapStats{
-		Total: m["SwapTotal"],
-		Free:  m["SwapFree"],
-	}
-	s.Used = s.Total - s.Free
-	if s.Total > 0 {
-		s.UsedPercent = round2(float64(s.Used) / float64(s.Total) * 100.0)
-	}
-	return s
+	_, swap := collectMemSwap()
+	return swap
 }
 
-func parseMemInfo() map[string]uint64 {
-	f, err := os.Open(filepath.Join(procPath, "meminfo"))
+// parseMemInfo reads /proc/meminfo and extracts only the fields Kula needs,
+// parsing directly from the file bytes — no scanner, no per-line strings, no map.
+func parseMemInfo() memInfo {
+	var mi memInfo
+	data, err := os.ReadFile(filepath.Join(procPath, "meminfo"))
 	if err != nil {
-		return nil
+		return mi
 	}
-	defer func() { _ = f.Close() }()
 
-	result := make(map[string]uint64)
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+	for len(data) > 0 {
+		line := data
+		if nl := bytes.IndexByte(data, '\n'); nl >= 0 {
+			line = data[:nl]
+			data = data[nl+1:]
+		} else {
+			data = nil
+		}
+
+		colon := bytes.IndexByte(line, ':')
+		if colon < 0 {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		valStr := strings.TrimSpace(parts[1])
-		valStr = strings.TrimSuffix(valStr, " kB")
-		val, err := strconv.ParseUint(strings.TrimSpace(valStr), 10, 64)
-		if err != nil {
+
+		var dst *uint64
+		switch string(line[:colon]) { // string(b) in a switch does not allocate
+		case "MemTotal":
+			dst = &mi.memTotal
+		case "MemFree":
+			dst = &mi.memFree
+		case "MemAvailable":
+			dst = &mi.memAvailable
+		case "Buffers":
+			dst = &mi.buffers
+		case "Cached":
+			dst = &mi.cached
+		case "Shmem":
+			dst = &mi.shmem
+		case "SwapTotal":
+			dst = &mi.swapTotal
+		case "SwapFree":
+			dst = &mi.swapFree
+		default:
 			continue
 		}
-		// Convert kB to bytes
-		result[key] = val * 1024
+
+		// Value layout: optional spaces, decimal digits, then " kB". Stored in bytes.
+		rest := line[colon+1:]
+		i := 0
+		for i < len(rest) && rest[i] == ' ' {
+			i++
+		}
+		start := i
+		for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+			i++
+		}
+		*dst = parseUintBytes(rest[start:i]) * 1024
 	}
-	return result
+
+	return mi
 }
 
 // FormatUptime converts seconds to human-readable uptime.

@@ -2,11 +2,26 @@ package collector
 
 import (
 	"bufio"
+	"bytes"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
+)
+
+// Block-device name prefixes for virtual/logical/optical devices that are
+// excluded from disk I/O monitoring (to avoid double-counting). Kept as
+// package-level byte slices so /proc/diskstats lines — which include many loop
+// and dm- entries on some hosts — can be filtered without allocating a string.
+var (
+	prefixDM   = []byte("dm-")
+	prefixMD   = []byte("md")
+	prefixLoop = []byte("loop")
+	prefixSR   = []byte("sr")
+	prefixRAM  = []byte("ram")
+	prefixZram = []byte("zram")
+	prefixFD   = []byte("fd")
 )
 
 
@@ -25,38 +40,76 @@ func (c *Collector) parseDiskStats() map[string]diskRaw {
 	defer func() { _ = f.Close() }()
 
 	explicitFilter := len(c.collCfg.Devices) > 0
+	// Only construct device-name strings for log lines when debug output is
+	// actually on this tick; the steady-state path stays allocation-light.
+	dbg := c.collCfg.DebugLog && !c.debugDone
 	result := make(map[string]diskRaw)
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) < 14 {
+		line := scanner.Bytes()
+
+		// Walk the columns once, capturing only the fields we use as sub-slices
+		// of the line: name=2, reads=3, sectors_read=5, writes=7,
+		// sectors_written=9. Nothing is allocated until the device is kept.
+		var nameB, readsB, readSectB, writesB, writeSectB []byte
+		fieldIdx := 0
+		pos := 0
+		for pos < len(line) {
+			for pos < len(line) && (line[pos] == ' ' || line[pos] == '\t') {
+				pos++
+			}
+			if pos >= len(line) {
+				break
+			}
+			start := pos
+			for pos < len(line) && line[pos] != ' ' && line[pos] != '\t' {
+				pos++
+			}
+			switch fieldIdx {
+			case 2:
+				nameB = line[start:pos]
+			case 3:
+				readsB = line[start:pos]
+			case 5:
+				readSectB = line[start:pos]
+			case 7:
+				writesB = line[start:pos]
+			case 9:
+				writeSectB = line[start:pos]
+			}
+			fieldIdx++
+		}
+		if fieldIdx < 14 {
 			continue
 		}
-		name := fields[2]
 
 		// Skip virtual, logical, and optical devices to prevent IO double-counting:
 		// dm- (device-mapper/LVM/LUKS), md (software RAID), loop, sr (optical), ram, zram, fd (floppy)
 		var virtualReason string
 		switch {
-		case strings.HasPrefix(name, "dm-"):
+		case bytes.HasPrefix(nameB, prefixDM):
 			virtualReason = "device-mapper (LVM/LUKS)"
-		case strings.HasPrefix(name, "md"):
+		case bytes.HasPrefix(nameB, prefixMD):
 			virtualReason = "software RAID"
-		case strings.HasPrefix(name, "loop"):
+		case bytes.HasPrefix(nameB, prefixLoop):
 			virtualReason = "loop device"
-		case strings.HasPrefix(name, "sr"):
+		case bytes.HasPrefix(nameB, prefixSR):
 			virtualReason = "optical drive"
-		case strings.HasPrefix(name, "ram"):
+		case bytes.HasPrefix(nameB, prefixRAM):
 			virtualReason = "RAM disk"
-		case strings.HasPrefix(name, "zram"):
+		case bytes.HasPrefix(nameB, prefixZram):
 			virtualReason = "zram (compressed RAM)"
-		case strings.HasPrefix(name, "fd"):
+		case bytes.HasPrefix(nameB, prefixFD):
 			virtualReason = "floppy disk"
 		}
 		if virtualReason != "" {
-			c.debugf(" disk: skipping %q — virtual device (%s)", name, virtualReason)
+			if dbg {
+				c.debugf(" disk: skipping %q — virtual device (%s)", nameB, virtualReason)
+			}
 			continue
 		}
+
+		name := string(nameB)
 
 		// When an explicit device list is configured, it takes full priority —
 		// partitions (e.g. sda1, mmcblk0p2) are allowed if explicitly listed.
@@ -69,28 +122,37 @@ func (c *Collector) parseDiskStats() map[string]diskRaw {
 				}
 			}
 			if !allowed {
-				c.debugf(" disk: skipping %q — not in configured devices list", name)
+				if dbg {
+					c.debugf(" disk: skipping %q — not in configured devices list", name)
+				}
 				continue
 			}
 		} else if isPartition(name) {
 			// Auto-discovery mode: skip partitions, only keep whole physical devices
 			// to avoid double-counting IO across parent disk + its partitions.
-			c.debugf(" disk: skipping %q — partition (auto-discovery mode; add to 'devices' config to include)", name)
+			if dbg {
+				c.debugf(" disk: skipping %q — partition (auto-discovery mode; add to 'devices' config to include)", name)
+			}
 			continue
 		}
 
-		d := diskRaw{}
-		d.reads = c.parseUint(fields[3], 10, 64, "disk.reads")
-		d.readSect = c.parseUint(fields[5], 10, 64, "disk.readSect")
-		d.writes = c.parseUint(fields[7], 10, 64, "disk.writes")
-		d.writeSect = c.parseUint(fields[9], 10, 64, "disk.writeSect")
+		d := diskRaw{
+			reads:     parseUintBytes(readsB),
+			readSect:  parseUintBytes(readSectB),
+			writes:    parseUintBytes(writesB),
+			writeSect: parseUintBytes(writeSectB),
+		}
 		result[name] = d
-		c.debugf(" disk: monitoring device %q", name)
+		if dbg {
+			c.debugf(" disk: monitoring device %q", name)
+		}
 	}
-	if len(result) == 0 {
-		c.debugf(" disk: no devices selected for monitoring")
-	} else {
-		c.debugf(" disk: monitoring %d device(s)", len(result))
+	if dbg {
+		if len(result) == 0 {
+			c.debugf(" disk: no devices selected for monitoring")
+		} else {
+			c.debugf(" disk: monitoring %d device(s)", len(result))
+		}
 	}
 	// Warn for any explicitly-configured device that was never found in /proc/diskstats
 	if explicitFilter && !c.debugDone {

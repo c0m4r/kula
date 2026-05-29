@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
+## [0.17.1] - TBA
+
+### Changed
+
+- Performance: reduced CPU and allocation overhead of the per-second collection loop
+
+### Added
+
+- Storage-independent collector micro-benchmarks
+
 ## [0.17.0] - 2026-05-28
 
 ### Added

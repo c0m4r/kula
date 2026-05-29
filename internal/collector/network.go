@@ -2,6 +2,7 @@ package collector
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,6 +24,9 @@ func (c *Collector) parseNetDev() map[string]netRaw {
 	defer func() { _ = f.Close() }()
 
 	explicitFilter := len(c.collCfg.Interfaces) > 0
+	// Only build interface-name strings for log lines when debug output is
+	// actually enabled this tick; otherwise the hot path stays allocation-free.
+	dbg := c.collCfg.DebugLog && !c.debugDone
 	result := make(map[string]netRaw)
 	scanner := bufio.NewScanner(f)
 	lineNum := 0
@@ -31,76 +35,127 @@ func (c *Collector) parseNetDev() map[string]netRaw {
 		if lineNum <= 2 {
 			continue // skip header lines
 		}
-		line := scanner.Text()
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
+		line := scanner.Bytes()
+		colon := bytes.IndexByte(line, ':')
+		if colon < 0 {
 			continue
 		}
-		name := strings.TrimSpace(parts[0])
+		name := bytes.TrimSpace(line[:colon])
 
 		if explicitFilter {
 			// Explicit list: the user gets exactly what they asked for, no filtering.
 			allowed := false
 			for _, allowedIface := range c.collCfg.Interfaces {
-				if allowedIface == name {
+				if string(name) == allowedIface { // string(b) == s does not allocate
 					allowed = true
 					break
 				}
 			}
 			if !allowed {
-				c.debugf(" net: skipping %q — not in configured interfaces list", name)
+				if dbg {
+					c.debugf(" net: skipping %q — not in configured interfaces list", name)
+				}
 				continue
 			}
 		} else {
 			// Auto-discovery mode: skip loopback and virtual/container interfaces.
+			// Matched on bytes so skipped interfaces (e.g. the many veth devices on
+			// a container host) never cost a string allocation.
 			var skipReason string
 			switch {
-			case name == "lo":
+			case string(name) == "lo":
 				skipReason = "loopback"
-			case strings.HasPrefix(name, "veth"):
+			case bytes.HasPrefix(name, prefixVeth):
 				skipReason = "veth (container virtual interface)"
-			case strings.HasPrefix(name, "docker"):
+			case bytes.HasPrefix(name, prefixDocker):
 				skipReason = "docker bridge"
-			case strings.HasPrefix(name, "br-"):
+			case bytes.HasPrefix(name, prefixBr):
 				skipReason = "Linux bridge"
-			case strings.HasPrefix(name, "virbr"):
+			case bytes.HasPrefix(name, prefixVirbr):
 				skipReason = "libvirt bridge"
-			case strings.HasPrefix(name, "vnet"):
+			case bytes.HasPrefix(name, prefixVnet):
 				skipReason = "KVM/QEMU virtual NIC"
-			case strings.HasPrefix(name, "tap"):
+			case bytes.HasPrefix(name, prefixTap):
 				skipReason = "TAP interface (VM/VPN)"
-			case strings.HasPrefix(name, "tun"):
+			case bytes.HasPrefix(name, prefixTun):
 				skipReason = "TUN interface (VPN)"
 			}
 			if skipReason != "" {
-				c.debugf(" net: skipping %q — %s", name, skipReason)
+				if dbg {
+					c.debugf(" net: skipping %q — %s", name, skipReason)
+				}
 				continue
 			}
 		}
 
-		fields := strings.Fields(parts[1])
-		if len(fields) < 16 {
+		// Parse the counter columns directly from the line bytes. /proc/net/dev
+		// lists 16 columns; we keep rx bytes/pkts/errs/drop (0-3) and tx
+		// bytes/pkts/errs/drop (8-11).
+		var n netRaw
+		idx := 0
+		pos := colon + 1
+		for {
+			for pos < len(line) && line[pos] == ' ' {
+				pos++
+			}
+			if pos >= len(line) {
+				break
+			}
+			start := pos
+			for pos < len(line) && line[pos] != ' ' {
+				pos++
+			}
+			field := line[start:pos]
+			switch idx {
+			case 0:
+				n.rxBytes = parseUintBytes(field)
+			case 1:
+				n.rxPkts = parseUintBytes(field)
+			case 2:
+				n.rxErrs = parseUintBytes(field)
+			case 3:
+				n.rxDrop = parseUintBytes(field)
+			case 8:
+				n.txBytes = parseUintBytes(field)
+			case 9:
+				n.txPkts = parseUintBytes(field)
+			case 10:
+				n.txErrs = parseUintBytes(field)
+			case 11:
+				n.txDrop = parseUintBytes(field)
+			}
+			idx++
+		}
+		if idx < 16 {
 			continue
 		}
-		n := netRaw{}
-		n.rxBytes = c.parseUint(fields[0], 10, 64, "network.rxBytes")
-		n.rxPkts = c.parseUint(fields[1], 10, 64, "network.rxPkts")
-		n.rxErrs = c.parseUint(fields[2], 10, 64, "network.rxErrs")
-		n.rxDrop = c.parseUint(fields[3], 10, 64, "network.rxDrop")
-		n.txBytes = c.parseUint(fields[8], 10, 64, "network.txBytes")
-		n.txPkts = c.parseUint(fields[9], 10, 64, "network.txPkts")
-		n.txErrs = c.parseUint(fields[10], 10, 64, "network.txErrs")
-		n.txDrop = c.parseUint(fields[11], 10, 64, "network.txDrop")
-		result[name] = n
-		c.debugf(" net: monitoring interface %q", name)
+		result[string(name)] = n
+		if dbg {
+			c.debugf(" net: monitoring interface %q", name)
+		}
 	}
-	if len(result) == 0 {
-		c.debugf(" net: no interfaces selected for monitoring")
-	} else {
-		c.debugf(" net: monitoring %d interface(s)", len(result))
+	if dbg {
+		if len(result) == 0 {
+			c.debugf(" net: no interfaces selected for monitoring")
+		} else {
+			c.debugf(" net: monitoring %d interface(s)", len(result))
+		}
 	}
 	return result
 }
+
+// Interface-name prefixes for virtual/container devices skipped during
+// auto-discovery, kept as package-level byte slices so the match loop allocates
+// nothing per line.
+var (
+	prefixVeth   = []byte("veth")
+	prefixDocker = []byte("docker")
+	prefixBr     = []byte("br-")
+	prefixVirbr  = []byte("virbr")
+	prefixVnet   = []byte("vnet")
+	prefixTap    = []byte("tap")
+	prefixTun    = []byte("tun")
+)
 
 func (c *Collector) collectNetwork(elapsed float64) NetworkStats {
 	current := c.parseNetDev()
