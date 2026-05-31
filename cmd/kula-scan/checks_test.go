@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,7 +162,18 @@ func secureMock() http.Handler {
 		if err != nil {
 			return
 		}
-		_ = c.Close()
+		// Mirror kula's read limit so the WS-MSGBOMB probe has something to assert
+		// against: an oversized client message trips ErrReadLimit and gorilla
+		// sends a 1009 close frame, dropping the connection.
+		c.SetReadLimit(4096)
+		go func() {
+			defer func() { _ = c.Close() }()
+			for {
+				if _, _, err := c.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}()
 	})
 
 	// Everything else (including the index) returns 200 so header checks have a page.
@@ -267,7 +279,10 @@ func insecureMock() http.Handler {
 
 func scannerFor(t *testing.T, ts *httptest.Server, user, pass string) *Scanner {
 	t.Helper()
-	s, err := NewScanner(ts.URL, "", user, pass, 5*time.Second, false, false, false)
+	s, err := NewScanner(Options{
+		Target: ts.URL, Username: user, Password: pass,
+		Timeout: 5 * time.Second, DoSWait: 3 * time.Second, FuzzIter: 60, Seed: 1,
+	})
 	if err != nil {
 		t.Fatalf("NewScanner: %v", err)
 	}
@@ -326,6 +341,7 @@ func TestSecureTargetPasses(t *testing.T) {
 
 	cors := runCORSChecks(s)
 	wantStatus(t, cors, "CORS-001", StatusPass)
+	wantStatus(t, cors, "CORS-003", StatusPass)
 
 	trav := runTraversalChecks(s)
 	wantStatus(t, trav, "TRAV-001", StatusPass)
@@ -369,6 +385,7 @@ func TestInsecureTargetFails(t *testing.T) {
 	if f, ok := byID(cors, "CORS-001"); !ok || f.Status != StatusFail || f.Severity != SevCritical {
 		t.Errorf("CORS-001: want FAIL/CRITICAL, got %v", f)
 	}
+	wantStatus(t, cors, "CORS-003", StatusFail)
 
 	trav := runTraversalChecks(s)
 	wantStatus(t, trav, "TRAV-001", StatusFail)
@@ -422,4 +439,238 @@ func TestJSONStringEscaping(t *testing.T) {
 	if !strings.HasPrefix(got, `"`) || strings.Contains(got, "\n") {
 		t.Errorf("jsonString did not escape control/quote chars: %s", got)
 	}
+}
+
+// ---- DoS / resource-exhaustion checks ----------------------------------------
+
+// scannerForDos builds a scanner with an explicit dosWait so the slow-connection
+// probes finish quickly in tests.
+func scannerForDos(t *testing.T, ts *httptest.Server, user, pass string, dosWait time.Duration) *Scanner {
+	t.Helper()
+	s, err := NewScanner(Options{
+		Target: ts.URL, Username: user, Password: pass,
+		Timeout: 5 * time.Second, DoSWait: dosWait, Seed: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewScanner: %v", err)
+	}
+	s.discover()
+	return s
+}
+
+// readTimeoutServer serves the secure mock with a short ReadTimeout, emulating
+// kula's http.Server.ReadTimeout so slow/idle connections get reaped.
+func readTimeoutServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewUnstartedServer(secureMock())
+	ts.Config.ReadTimeout = 1 * time.Second
+	ts.Start()
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func TestDoSSlowlorisReapedWithReadTimeout(t *testing.T) {
+	ts := readTimeoutServer(t)
+	s := scannerForDos(t, ts, mockUser, mockPass, 4*time.Second)
+	wantStatus(t, runSlowlorisCheck(s), "DOS-SLOWLORIS", StatusPass)
+}
+
+func TestDoSSlowlorisNotReapedWithoutTimeout(t *testing.T) {
+	ts := httptest.NewServer(secureMock()) // no ReadTimeout
+	defer ts.Close()
+	s := scannerForDos(t, ts, mockUser, mockPass, 1500*time.Millisecond)
+	f, _ := byID(runSlowlorisCheck(s), "DOS-SLOWLORIS")
+	if f.Status != StatusFail {
+		t.Errorf("DOS-SLOWLORIS without ReadTimeout = %s, want FAIL — %s", f.Status, f.Detail)
+	}
+}
+
+func TestDoSHeaderBombRejected(t *testing.T) {
+	ts := httptest.NewServer(secureMock()) // default MaxHeaderBytes = 1 MiB
+	defer ts.Close()
+	s := scannerForDos(t, ts, "", "", 3*time.Second)
+	wantStatus(t, runHeaderBombCheck(s), "DOS-HEADERBOMB", StatusPass)
+}
+
+func TestDoSConnFloodResilient(t *testing.T) {
+	ts := readTimeoutServer(t)
+	s := scannerForDos(t, ts, mockUser, mockPass, 4*time.Second)
+	wantStatus(t, runConnFloodCheck(s), "DOS-CONNFLOOD", StatusPass)
+}
+
+func TestDoSWSMessageBombDropped(t *testing.T) {
+	ts := httptest.NewServer(secureMock())
+	defer ts.Close()
+	s := scannerForDos(t, ts, mockUser, mockPass, 3*time.Second)
+	wantStatus(t, runWSMsgBombCheck(s), "WS-MSGBOMB", StatusPass)
+}
+
+// ---- fuzzing / fault injection -----------------------------------------------
+
+func scannerForFuzz(t *testing.T, ts *httptest.Server, user, pass string) *Scanner {
+	t.Helper()
+	s, err := NewScanner(Options{
+		Target: ts.URL, Username: user, Password: pass,
+		Timeout: 5 * time.Second, DoSWait: 2 * time.Second,
+		Fuzz: true, FuzzIter: 60, Seed: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewScanner: %v", err)
+	}
+	s.discover()
+	return s
+}
+
+func TestClassifyResultOracle(t *testing.T) {
+	cases := []struct {
+		name string
+		r    httpResult
+		bad  bool
+	}{
+		{"400 is fine", httpResult{status: 400}, false},
+		{"401 is fine", httpResult{status: 401}, false},
+		{"429 is fine", httpResult{status: 429}, false},
+		{"200 is fine", httpResult{status: 200}, false},
+		{"500 is an anomaly", httpResult{status: 500}, true},
+		{"503 is an anomaly", httpResult{status: 503}, true},
+		{"EOF is an anomaly", httpResult{err: errString("unexpected EOF")}, true},
+		{"reset is an anomaly", httpResult{err: errString("read: connection reset by peer")}, true},
+		{"timeout is an anomaly", httpResult{err: errString("context deadline exceeded")}, true},
+		{"dial refused later is noise", httpResult{err: errString("no such host")}, false},
+	}
+	for _, c := range cases {
+		if bad, _ := classifyResult(c.r); bad != c.bad {
+			t.Errorf("%s: classifyResult bad=%v, want %v", c.name, bad, c.bad)
+		}
+	}
+}
+
+type errString string
+
+func (e errString) Error() string { return string(e) }
+
+// TestFuzzRobustAgainstSecureMock confirms the well-behaved mock produces no
+// fuzz anomalies and survives the barrage.
+func TestFuzzRobustAgainstSecureMock(t *testing.T) {
+	ts := httptest.NewServer(secureMock())
+	defer ts.Close()
+	s := scannerForFuzz(t, ts, mockUser, mockPass)
+
+	for _, run := range []func(*Scanner) []Finding{runFuzzQuery, runFuzzPath, runFuzzBody, runFuzzMethods, runFuzzSmuggle, runFuzzWS, runFuzzLiveness} {
+		for _, f := range run(s) {
+			if f.Status == StatusFail {
+				t.Errorf("%s unexpectedly FAILed against the secure mock: %s | %s", f.ID, f.Detail, f.Evidence)
+			}
+		}
+	}
+}
+
+// buggyMock 500s on /api/history and reflects the request path into an HTML
+// body — exactly the anomalies the fuzzer should catch.
+func buggyMock() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/health":
+			_, _ = w.Write([]byte("ok"))
+		case r.URL.Path == "/api/auth/status":
+			writeJSONResp(w, map[string]any{"auth_required": false})
+		case strings.HasPrefix(r.URL.Path, "/api/history"):
+			http.Error(w, "boom", http.StatusInternalServerError)
+		case strings.HasPrefix(r.URL.Path, "/api/i18n"):
+			writeJSONResp(w, map[string]any{"ok": 1})
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte("<html>path=" + r.URL.Path + "</html>")) // reflects canary
+		}
+	})
+}
+
+func TestFuzzDetectsAnomalies(t *testing.T) {
+	ts := httptest.NewServer(buggyMock())
+	defer ts.Close()
+	s := scannerForFuzz(t, ts, "", "")
+
+	f, _ := byID(runFuzzQuery(s), "FUZZ-QUERY")
+	if f.Status != StatusFail {
+		t.Errorf("FUZZ-QUERY against a 500-ing endpoint = %s, want FAIL (%s)", f.Status, f.Evidence)
+	}
+	p, _ := byID(runFuzzPath(s), "FUZZ-PATH")
+	if p.Status != StatusFail {
+		t.Errorf("FUZZ-PATH against a path-reflecting endpoint = %s, want FAIL (%s)", p.Status, p.Evidence)
+	}
+}
+
+// ---- open redirect -----------------------------------------------------------
+
+func TestOpenRedirectDetected(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "evil.example") {
+			http.Redirect(w, r, "http://evil.example/", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+	s := scannerForDos(t, ts, "", "", time.Second)
+	wantStatus(t, runOpenRedirectCheck(s), "REDIR-001", StatusFail)
+}
+
+func TestNoOpenRedirectSecureMock(t *testing.T) {
+	ts := httptest.NewServer(secureMock())
+	defer ts.Close()
+	s := scannerForDos(t, ts, "", "", time.Second)
+	wantStatus(t, runOpenRedirectCheck(s), "REDIR-001", StatusPass)
+}
+
+// ---- X-Forwarded-For rate-limit bypass --------------------------------------
+
+// xffMock simulates a login endpoint that throttles after 5 attempts per key.
+// When trustProxy is true it (wrongly) keys on the X-Forwarded-For header, so
+// rotating it bypasses the throttle.
+func xffMock(trustProxy bool) http.Handler {
+	var mu sync.Mutex
+	counts := map[string]int{}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte("ok"))
+		case "/api/auth/status":
+			writeJSONResp(w, map[string]any{"auth_required": true})
+		case "/api/login":
+			key := r.RemoteAddr
+			if i := strings.LastIndexByte(key, ':'); i >= 0 {
+				key = key[:i]
+			}
+			if trustProxy {
+				if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+					key = xff
+				}
+			}
+			mu.Lock()
+			counts[key]++
+			n := counts[key]
+			mu.Unlock()
+			if n > 5 {
+				http.Error(w, `{"error":"too many requests"}`, http.StatusTooManyRequests)
+				return
+			}
+			http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+}
+
+func TestXFFBypassDetected(t *testing.T) {
+	ts := httptest.NewServer(xffMock(true)) // keys on X-Forwarded-For → bypassable
+	defer ts.Close()
+	s := scannerForDos(t, ts, "", "", time.Second)
+	wantStatus(t, runXFFBypassCheck(s), "BYPASS-XFF", StatusFail)
+}
+
+func TestXFFBypassNotPossible(t *testing.T) {
+	ts := httptest.NewServer(xffMock(false)) // keys on the real connection → throttled
+	defer ts.Close()
+	s := scannerForDos(t, ts, "", "", time.Second)
+	wantStatus(t, runXFFBypassCheck(s), "BYPASS-XFF", StatusPass)
 }

@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -133,13 +135,16 @@ func (f Finding) withRemediation(s string) Finding {
 	return f
 }
 
-// check is one named, categorised probe. aggressive checks have side effects
-// on the target (rate-limit lockout, connection floods) and only run when the
-// user passes -aggressive.
+// check is one named, categorised probe.
+//   - aggressive checks have side effects on the target (rate-limit lockout,
+//     connection floods) and only run with -aggressive.
+//   - fuzz checks perform blind fault injection (malformed/extreme inputs) and
+//     only run with -fuzz.
 type check struct {
 	id         string
 	category   string
 	aggressive bool
+	fuzz       bool
 	run        func(s *Scanner) []Finding
 }
 
@@ -151,7 +156,13 @@ type Scanner struct {
 	client     *http.Client
 	insecure   bool
 	timeout    time.Duration
+	dosWait    time.Duration // how long DoS probes wait for the server to reap a slow/idle connection
 	aggressive bool
+	fuzz       bool
+	fuzzIter   int
+	seed       int64
+	rng        *rand.Rand
+	rngMu      sync.Mutex
 	verbose    bool
 
 	username string
@@ -171,23 +182,40 @@ type Scanner struct {
 	loginTried  bool
 }
 
-// NewScanner builds a Scanner for target. basePath, when non-empty, is appended
-// to every request path (kula's web.base_path feature).
-func NewScanner(target, basePath, username, password string, timeout time.Duration, insecure, aggressive, verbose bool) (*Scanner, error) {
-	u, err := url.Parse(strings.TrimSpace(target))
+// Options configures a Scanner. Only Target is required; everything else has a
+// sensible zero/default.
+type Options struct {
+	Target     string
+	BasePath   string
+	Username   string
+	Password   string
+	Timeout    time.Duration
+	DoSWait    time.Duration
+	Insecure   bool
+	Aggressive bool
+	Fuzz       bool
+	FuzzIter   int
+	Seed       int64 // 0 → a random seed is chosen and reported
+	Verbose    bool
+}
+
+// NewScanner builds a Scanner for opt.Target. opt.BasePath, when non-empty, is
+// appended to every request path (kula's web.base_path feature).
+func NewScanner(opt Options) (*Scanner, error) {
+	u, err := url.Parse(strings.TrimSpace(opt.Target))
 	if err != nil {
-		return nil, fmt.Errorf("invalid target URL %q: %w", target, err)
+		return nil, fmt.Errorf("invalid target URL %q: %w", opt.Target, err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return nil, fmt.Errorf("target must use http or https scheme, got %q", u.Scheme)
 	}
 	if u.Host == "" {
-		return nil, fmt.Errorf("target URL %q has no host", target)
+		return nil, fmt.Errorf("target URL %q has no host", opt.Target)
 	}
 
 	// Fold a path component in the URL into basePath unless one was given
 	// explicitly. This lets `kula-scan http://host:1234/kula` work.
-	bp := strings.TrimRight(basePath, "/")
+	bp := strings.TrimRight(opt.BasePath, "/")
 	if bp == "" && u.Path != "" && u.Path != "/" {
 		bp = strings.TrimRight(u.Path, "/")
 	}
@@ -195,14 +223,27 @@ func NewScanner(target, basePath, username, password string, timeout time.Durati
 	u.RawQuery = ""
 	u.Fragment = ""
 
+	if opt.Timeout <= 0 {
+		opt.Timeout = 10 * time.Second
+	}
+	if opt.DoSWait <= 0 {
+		opt.DoSWait = 35 * time.Second
+	}
+	if opt.FuzzIter <= 0 {
+		opt.FuzzIter = 200
+	}
+	if opt.Seed == 0 {
+		opt.Seed = time.Now().UnixNano()
+	}
+
 	transport := &http.Transport{
 		// kula-scan probes arbitrary targets; the Go client default min (TLS 1.2) is correct, and InsecureSkipVerify is the opt-in below.
 		// nosemgrep: missing-ssl-minversion
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: insecure}, //nolint:gosec // -insecure is an explicit opt-in for self-signed test instances
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: opt.Insecure}, //nolint:gosec // -insecure is an explicit opt-in for self-signed test instances
 		ForceAttemptHTTP2: true,
 	}
 	client := &http.Client{
-		Timeout:   timeout,
+		Timeout:   opt.Timeout,
 		Transport: transport,
 		// Observe redirects (301/302) directly rather than following them, so
 		// base-path redirects and auth bounces are visible to the checks.
@@ -213,16 +254,32 @@ func NewScanner(target, basePath, username, password string, timeout time.Durati
 
 	return &Scanner{
 		base:       u,
-		rawBase:    target,
+		rawBase:    opt.Target,
 		client:     client,
-		insecure:   insecure,
-		timeout:    timeout,
-		aggressive: aggressive,
-		verbose:    verbose,
-		username:   username,
-		password:   password,
+		insecure:   opt.Insecure,
+		timeout:    opt.Timeout,
+		dosWait:    opt.DoSWait,
+		aggressive: opt.Aggressive,
+		fuzz:       opt.Fuzz,
+		fuzzIter:   opt.FuzzIter,
+		seed:       opt.Seed,
+		rng:        rand.New(rand.NewSource(opt.Seed)), //nolint:gosec // fuzzing inputs, not security-sensitive randomness
+		verbose:    opt.Verbose,
+		username:   opt.Username,
+		password:   opt.Password,
 		https:      u.Scheme == "https",
 	}, nil
+}
+
+// randIntn returns a non-negative pseudo-random int in [0,n) from the seeded
+// fuzz RNG. It is safe for the concurrent goroutines some fuzz probes spawn.
+func (s *Scanner) randIntn(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	s.rngMu.Lock()
+	defer s.rngMu.Unlock()
+	return s.rng.Intn(n)
 }
 
 // urlFor joins the configured base (scheme+host+base path) with a root-relative
@@ -286,12 +343,11 @@ func (s *Scanner) authedHeaders(csrf bool) map[string]string {
 	return h
 }
 
-// rawTCP opens a raw connection (TLS when the target is https) and writes a
-// literal HTTP/1.1 request line, so the path is sent verbatim without any
-// client-side URL normalisation. This is how traversal payloads are delivered.
-// It returns the status code and body; a status of 0 means the server rejected
-// the request at the protocol layer (an acceptable, safe outcome).
-func (s *Scanner) rawTCP(requestLine string) (int, string) {
+// dialRaw opens a raw connection to the target (TLS when https), with default
+// ports filled in. The caller owns the returned conn and must close it. DoS
+// probes use this to drive the socket directly (partial requests, oversized
+// headers); rawTCP layers a single request/response on top.
+func (s *Scanner) dialRaw() (net.Conn, error) {
 	host := s.base.Host
 	if !strings.Contains(host, ":") {
 		if s.https {
@@ -300,17 +356,22 @@ func (s *Scanner) rawTCP(requestLine string) (int, string) {
 			host += ":80"
 		}
 	}
-
-	var conn net.Conn
-	var err error
 	dialer := &net.Dialer{Timeout: s.timeout}
 	if s.https {
 		// Probe tool: connect to whatever the target offers; Go's client default min is TLS 1.2. InsecureSkipVerify is an explicit opt-in.
 		// nosemgrep: missing-ssl-minversion
-		conn, err = tls.DialWithDialer(dialer, "tcp", host, &tls.Config{InsecureSkipVerify: s.insecure}) //nolint:gosec // explicit opt-in
-	} else {
-		conn, err = dialer.Dial("tcp", host)
+		return tls.DialWithDialer(dialer, "tcp", host, &tls.Config{InsecureSkipVerify: s.insecure}) //nolint:gosec // explicit opt-in
 	}
+	return dialer.Dial("tcp", host)
+}
+
+// rawTCP opens a raw connection (TLS when the target is https) and writes a
+// literal HTTP/1.1 request line, so the path is sent verbatim without any
+// client-side URL normalisation. This is how traversal payloads are delivered.
+// It returns the status code and body; a status of 0 means the server rejected
+// the request at the protocol layer (an acceptable, safe outcome).
+func (s *Scanner) rawTCP(requestLine string) (int, string) {
+	conn, err := s.dialRaw()
 	if err != nil {
 		return 0, ""
 	}
@@ -318,6 +379,31 @@ func (s *Scanner) rawTCP(requestLine string) (int, string) {
 	_ = conn.SetDeadline(time.Now().Add(s.timeout))
 
 	if _, err := fmt.Fprintf(conn, "%s\r\nHost: %s\r\nConnection: close\r\n\r\n", requestLine, s.base.Host); err != nil {
+		return 0, ""
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		return 0, ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, string(body)
+}
+
+// rawExchange writes a fully caller-supplied raw HTTP request (request line,
+// headers, and body verbatim) and returns the response status and body. It is
+// used by the request-smuggling probes that need conflicting/duplicate framing
+// headers the net/http client refuses to send. A status of 0 means the server
+// closed or rejected the connection at the protocol layer.
+func (s *Scanner) rawExchange(raw string) (int, string) {
+	conn, err := s.dialRaw()
+	if err != nil {
+		return 0, ""
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(s.timeout))
+
+	if _, err := conn.Write([]byte(raw)); err != nil {
 		return 0, ""
 	}
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
@@ -470,7 +556,12 @@ func allChecks() []check {
 	checks = append(checks, metricsChecks()...)
 	checks = append(checks, wsChecks()...)
 	checks = append(checks, inputChecks()...)
+	checks = append(checks, redirectChecks()...)
+	checks = append(checks, tlsChecks()...)
 	checks = append(checks, aggressiveChecks()...)
+	checks = append(checks, dosChecks()...)
+	checks = append(checks, bypassChecks()...)
+	checks = append(checks, fuzzChecks()...) // runs last; ends with the liveness probe
 	return checks
 }
 
@@ -486,6 +577,11 @@ func (s *Scanner) Run(only map[string]bool) []Finding {
 
 	for _, c := range allChecks() {
 		if len(only) > 0 && !only[c.category] {
+			continue
+		}
+		if c.fuzz && !s.fuzz {
+			findings = append(findings, finding(c.id, c.category, "Skipped (fuzz)", SevInfo, StatusSkip,
+				"blind fault-injection check not run; pass -fuzz to enable (it sends malformed/extreme input to the live target)."))
 			continue
 		}
 		if c.aggressive && !s.aggressive {

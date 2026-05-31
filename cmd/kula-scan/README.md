@@ -34,7 +34,10 @@ kula-scan [flags] <target-url>
 | `-timeout` | Per-request timeout (default `10s`). |
 | `-insecure` | Skip TLS certificate verification (self-signed test instances). |
 | `-aggressive` | Enable disruptive checks (see below). |
-| `-only` | Comma-separated categories to run: `auth,csrf,cors,headers,traversal,metrics,ws,input,rate`. |
+| `-fuzz` | Enable blind fault-injection fuzzing (see [Fuzzing](#fuzzing--fault-injection)). |
+| `-fuzz-iter` | Iterations per randomized fuzz probe (default 200). |
+| `-seed` | PRNG seed for fuzzing (0 = random; the chosen seed is reported so any finding is reproducible). |
+| `-only` | Comma-separated categories to run: `auth,csrf,cors,headers,traversal,metrics,ws,input,rate,dos,redirect,tls,bypass,fuzz`. |
 | `-fail-on` | Minimum FAIL severity that forces a non-zero exit: `info\|low\|medium\|high\|critical` (default `high`). |
 | `-json` | Emit findings as JSON. |
 | `-no-color` | Disable ANSI colors (auto-disabled when stdout is not a TTY or `NO_COLOR` is set). |
@@ -54,6 +57,10 @@ kula-scan -only headers,traversal,cors http://10.0.0.5:27960
 
 # Include disruptive checks (rate-limit + connection floods)
 kula-scan -aggressive -username admin -password 'hunter2' http://localhost:27960
+
+# Blind fault-injection fuzzing (reproducible with -seed)
+kula-scan -fuzz -fuzz-iter 500 -username admin -password 'hunter2' http://localhost:27960
+kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960   # replay a finding
 
 # Machine-readable output for CI
 kula-scan -json https://mon.example.com > report.json
@@ -88,9 +95,14 @@ the build if a safeguard regressed.
 | `cors` | An arbitrary Origin is **not** reflected; never `ACAO: *` + credentials; `Vary: Origin` present | `corsMiddleware` |
 | `traversal` | Byte-level path-traversal payloads (encoded, dot-dot, backslash) over a raw socket leak no files; no directory listing | `handleStatic` |
 | `metrics` | `/metrics` bearer token enforced (and wrong token rejected); warns if exposed without a token | `handleMetrics` |
-| `ws` | Unauthenticated upgrade rejected; cross-origin upgrade rejected (CSWSH); same-origin upgrade allowed | `handleWebSocket`, `CheckOrigin` |
+| `ws` | Unauthenticated upgrade rejected; cross-origin upgrade rejected (CSWSH); same-origin upgrade allowed; per-IP connection cap *(aggressive)*; oversized-message read limit *(aggressive)* | `handleWebSocket`, `CheckOrigin`, `SetReadLimit` |
 | `input` | `/api/history` bad/inverted/over-long ranges → 400, huge `points` capped; `/api/i18n` rejects junk/traversal language codes | `handleHistory`, `handleI18n` |
 | `rate` *(aggressive)* | Login brute-force throttling; Ollama rate limiting | login `RateLimiter`, Ollama limiter |
+| `dos` *(aggressive)* | Slowloris / slow-request reaping; oversized request headers rejected; idle-connection-flood resilience | `ReadTimeout`, `MaxHeaderBytes`, `IdleTimeout` |
+| `redirect` | No open redirect to a foreign host via crafted paths (`//`, `\`, encoded, base-path tricks) | base-path redirect / CWE-601 |
+| `tls` *(https)* | Negotiated TLS version, cipher strength, certificate expiry | reverse-proxy TLS config |
+| `bypass` *(aggressive)* | X-Forwarded-For login rate-limit evasion (trust_proxy misconfig) | `getClientIP` / `trust_proxy` |
+| `fuzz` *(-fuzz)* | Blind fault injection — see below | the whole surface |
 
 ## Safety / `-aggressive`
 
@@ -103,9 +115,50 @@ with the flag (a warning is printed first):
 - **`RATE-LOGIN`** — a burst of failed logins to confirm throttling. This **locks out
   login from your IP for ~5 minutes**.
 - **`WS-FLOOD`** — opens more than the per-IP WebSocket limit to confirm the cap fires.
+- **`WS-MSGBOMB`** — sends an oversized WebSocket message to confirm the read limit.
 - **`INPUT-AGG`** — an oversized login body to confirm the `MaxBytesReader` cap.
+- **`DOS-SLOWLORIS`** — holds a handful of half-open (slow) requests and verifies the
+  server reaps them (and stays responsive). Waits up to `-dos-wait` for the read timeout.
+- **`DOS-HEADERBOMB`** — sends a 2 MiB header block to confirm `MaxHeaderBytes` rejects it.
+- **`DOS-CONNFLOOD`** — opens many idle connections and verifies the server stays
+  responsive and reaps them.
+- **`BYPASS-XFF`** — rotates spoofed `X-Forwarded-For` headers against the login limiter
+  to detect a `trust_proxy` misconfiguration; consumes login attempts (locks you out).
 
-Run `-aggressive` against staging, or accept the temporary lockout on production.
+The `dos` probes wait up to `-dos-wait` (default 35s) for the server to drop a stalled or
+idle connection — sized for Kula's default 30s `ReadTimeout`. **Raise `-dos-wait` if the
+target runs longer read timeouts**, or the slow-connection checks will report a false
+failure. Because each slow/idle probe waits out that window, a `-aggressive` run including
+`dos` takes around a minute.
+
+Run `-aggressive` against staging, or accept the temporary lockout/disruption on production.
+
+## Fuzzing / fault injection
+
+`-fuzz` flips kula-scan from "verify known safeguards" to **blind fault injection**: it
+throws malformed and extreme input at every surface and watches for things that should
+*never* happen. The categories above ask "is defense X present?"; fuzzing asks "what
+breaks that nobody thought to defend?" The **anomaly oracle** (black-box, no source
+needed) flags:
+
+- **HTTP 5xx** — a handler errored where it should have returned a 4xx.
+- **connection reset / EOF** on a valid request — `net/http` recovered a **handler panic**
+  and dropped the connection.
+- **hang / timeout** — unbounded work or a deadlock.
+- **reflected input** — an injected `<canary>` echoed **unescaped** into an HTML/JS
+  response (a real XSS sink; escaped reflections in JSON or redirect bodies are ignored).
+- **server death** — the final `FUZZ-LIVENESS` probe fails: the instance stopped serving
+  after the barrage.
+
+Probes (`-only fuzz`): `FUZZ-QUERY` (history/i18n params), `FUZZ-PATH` (paths + canary),
+`FUZZ-BODY` (malformed JSON: truncated, type-confused, deeply-nested, JSON-bomb,
+oversized), `FUZZ-METHODS` (verb matrix), `FUZZ-SMUGGLE` (conflicting CL/TE framing),
+`FUZZ-WS` (binary/garbage frames + churn), and `FUZZ-LIVENESS` (runs last).
+
+Every probe draws from a **seeded PRNG**. The seed is printed in the report (and the
+warning banner); rerun with `-seed <N>` to reproduce a finding exactly, and `-fuzz-iter`
+to scale coverage. Fuzzing may create junk sessions and log noise on the target; it is
+opt-in via `-fuzz` and independent of `-aggressive` (combine them for the widest sweep).
 
 ## How it works
 

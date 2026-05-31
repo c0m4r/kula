@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -450,7 +451,43 @@ func runCORSChecks(s *Scanner) []Finding {
 		}
 	}
 
+	out = append(out, corsEdgeCaseFinding(s))
 	return out
+}
+
+// corsEdgeCaseFinding probes Origins that commonly slip past sloppy allow-list
+// matching: the literal "null" origin, a trailing-dot host, a host with
+// embedded credentials, a case-varied host, and a look-alike subdomain. None of
+// them must be reflected back into Access-Control-Allow-Origin.
+func corsEdgeCaseFinding(s *Scanner) Finding {
+	host := s.base.Host
+	edge := []string{
+		"null",
+		s.base.Scheme + "://" + host + ".",             // trailing dot
+		s.base.Scheme + "://user:pass@" + host,         // userinfo
+		s.base.Scheme + "://" + strings.ToUpper(host),  // case variation
+		s.base.Scheme + "://" + host + ".evil.example", // look-alike suffix
+		s.base.Scheme + "://evil-" + host,              // look-alike prefix
+	}
+	var reflected []string
+	for _, o := range edge {
+		r := s.do(http.MethodGet, "/api/config", map[string]string{"Origin": o}, "")
+		if r.err != nil {
+			continue
+		}
+		acao := r.header.Get("Access-Control-Allow-Origin")
+		if acao != "" && (acao == o || acao == "*") {
+			reflected = append(reflected, fmt.Sprintf("%s → ACAO %s", o, acao))
+		}
+	}
+	if len(reflected) == 0 {
+		return finding("CORS-003", "cors", "CORS allow-list edge cases", SevMedium, StatusPass,
+			"null / trailing-dot / userinfo / case / look-alike origins are not reflected.")
+	}
+	return finding("CORS-003", "cors", "CORS allow-list edge cases", SevHigh, StatusFail,
+		"an edge-case origin slipped past CORS matching and was reflected, enabling cross-site reads.").
+		withEvidence("%s", strings.Join(reflected, " | ")).
+		withRemediation("Match origins by exact, normalized string equality; reject 'null' and any host that isn't an exact allow-list entry.")
 }
 
 // ============================== traversal ====================================

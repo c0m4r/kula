@@ -39,9 +39,13 @@ func run(args []string) int {
 		password   = fs.String("password", "", "password for authenticated checks (optional)")
 		basePath   = fs.String("base-path", "", "base path if kula is mounted under one, e.g. /kula")
 		timeout    = fs.Duration("timeout", 10*time.Second, "per-request timeout")
+		dosWait    = fs.Duration("dos-wait", 35*time.Second, "how long DoS probes wait for the server to reap a slow/idle connection (raise if the target uses long read timeouts)")
 		insecure   = fs.Bool("insecure", false, "skip TLS certificate verification")
-		aggressive = fs.Bool("aggressive", false, "enable disruptive checks (login lockout, WS/connection floods)")
-		only       = fs.String("only", "", "comma-separated categories to run (auth,csrf,cors,headers,traversal,metrics,ws,input,rate)")
+		aggressive = fs.Bool("aggressive", false, "enable disruptive checks (login lockout, slow/flood DoS probes, XFF bypass)")
+		fuzz       = fs.Bool("fuzz", false, "enable blind fault-injection fuzzing (malformed/extreme input across the surface)")
+		fuzzIter   = fs.Int("fuzz-iter", 200, "iterations per randomized fuzz probe")
+		seed       = fs.Int64("seed", 0, "PRNG seed for fuzzing (0 = random; the chosen seed is reported so runs are reproducible)")
+		only       = fs.String("only", "", "comma-separated categories to run (auth,csrf,cors,headers,traversal,metrics,ws,input,rate,dos,redirect,tls,bypass,fuzz)")
 		failOn     = fs.String("fail-on", "high", "min FAIL severity for non-zero exit: info|low|medium|high|critical")
 		asJSON     = fs.Bool("json", false, "emit findings as JSON")
 		noColor    = fs.Bool("no-color", false, "disable ANSI colors")
@@ -73,7 +77,20 @@ func run(args []string) int {
 
 	onlySet := parseOnly(*only)
 
-	scanner, err := NewScanner(tgt, *basePath, *username, *password, *timeout, *insecure, *aggressive, *verbose)
+	scanner, err := NewScanner(Options{
+		Target:     tgt,
+		BasePath:   *basePath,
+		Username:   *username,
+		Password:   *password,
+		Timeout:    *timeout,
+		DoSWait:    *dosWait,
+		Insecure:   *insecure,
+		Aggressive: *aggressive,
+		Fuzz:       *fuzz,
+		FuzzIter:   *fuzzIter,
+		Seed:       *seed,
+		Verbose:    *verbose,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
@@ -83,7 +100,12 @@ func run(args []string) int {
 
 	if *aggressive && !*asJSON {
 		fmt.Fprintln(os.Stderr, banner(useColor,
-			"AGGRESSIVE MODE: this will lock out login from your IP for ~5 min and open many WebSocket connections on the target."))
+			"AGGRESSIVE MODE: locks out login from your IP for ~5 min, floods connections, and holds slow requests open "+
+				"(up to -dos-wait="+dosWait.String()+" each). Run against staging, or accept the disruption."))
+	}
+	if *fuzz && !*asJSON {
+		fmt.Fprintln(os.Stderr, banner(useColor,
+			fmt.Sprintf("FUZZ MODE: sends malformed/extreme input across the surface (seed %d). May create junk sessions/log noise; reproduce findings with -seed.", scanner.seed)))
 	}
 
 	findings := scanner.Run(onlySet)
@@ -150,6 +172,8 @@ Examples:
   kula-scan -username admin -password secret https://mon.example.com
   kula-scan -only headers,traversal,cors http://10.0.0.5:27960
   kula-scan -aggressive -username admin -password secret http://localhost:27960
+  kula-scan -fuzz -fuzz-iter 500 -username admin -password secret http://localhost:27960
+  kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960
   kula-scan -json http://localhost:27960 > report.json
 
 Flags:
@@ -158,9 +182,13 @@ Flags:
   -password string    password for authenticated checks
   -base-path string   base path if kula is mounted under one (e.g. /kula)
   -timeout duration   per-request timeout (default 10s)
+  -dos-wait duration  how long DoS probes wait for a slow/idle connection to be reaped (default 35s)
   -insecure           skip TLS certificate verification
-  -aggressive         enable disruptive checks (login lockout, WS/connection floods)
-  -only string        comma-separated categories: auth,csrf,cors,headers,traversal,metrics,ws,input,rate
+  -aggressive         enable disruptive checks (login lockout, slow/flood DoS probes, XFF bypass)
+  -fuzz               enable blind fault-injection fuzzing (malformed/extreme input)
+  -fuzz-iter int      iterations per randomized fuzz probe (default 200)
+  -seed int           PRNG seed for fuzzing (0 = random; reported for reproducibility)
+  -only string        comma-separated categories: auth,csrf,cors,headers,traversal,metrics,ws,input,rate,dos,redirect,tls,bypass,fuzz
   -fail-on string     min FAIL severity for non-zero exit: info|low|medium|high|critical (default high)
   -json               emit findings as JSON
   -no-color           disable ANSI colors
