@@ -101,7 +101,9 @@ def make_handler(socket_path: str):
                 for k, v in _filter_headers(resp.headers):
                     self.send_header(k, v)
                 payload = resp.read()
-                if "content-length" not in {h.lower() for h, _ in _filter_headers(resp.headers)}:
+                if "content-length" not in {
+                    h.lower() for h, _ in _filter_headers(resp.headers)
+                }:
                     self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 if payload and self.command != "HEAD":
@@ -122,7 +124,9 @@ def make_handler(socket_path: str):
 
             try:
                 req_lines = [f"{self.command} {self.path} HTTP/1.1\r\n"]
-                hdrs = dict(_filter_headers(self.headers, drop_extra=["Connection", "Upgrade"]))
+                hdrs = dict(
+                    _filter_headers(self.headers, drop_extra=["Connection", "Upgrade"])
+                )
                 hdrs.setdefault("Host", "kula.local")
                 hdrs["Connection"] = "Upgrade"
                 hdrs["Upgrade"] = self.headers.get("Upgrade", "websocket")

@@ -267,8 +267,12 @@ def _decode_fixed(data: bytes, off: int) -> Tuple[Dict[str, Any], int]:
 
 
 def _decode_variable(
-    data: bytes, off: int, s: Dict[str, Any], has_apps: bool = False,
-    has_apache2: bool = False, has_mysql: bool = False,
+    data: bytes,
+    off: int,
+    s: Dict[str, Any],
+    has_apps: bool = False,
+    has_apache2: bool = False,
+    has_mysql: bool = False,
 ) -> Tuple[Dict[str, Any], int]:
     # pylint: disable=too-many-locals, too-many-statements
     # 1. Network interfaces
@@ -788,7 +792,9 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
     ]:
         if flags & flag:
             block, off = _decode_fixed(payload, off)
-            block, off = _decode_variable(payload, off, block, has_apps, has_apache2, has_mysql)
+            block, off = _decode_variable(
+                payload, off, block, has_apps, has_apache2, has_mysql
+            )
             result[label] = block
 
     return result
