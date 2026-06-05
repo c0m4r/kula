@@ -122,7 +122,7 @@ export function applyCustomRange() {
     document.getElementById('time-range-display').textContent = `${fmt(fromDate)} → ${fmt(toDate)}`;
 
     updateUrlState(fromDate.getTime(), toDate.getTime());
-    resetZoomAll();
+    resetZoomAll({ clearUrlState: false });
     fetchCustomHistory(fromDate, toDate);
 }
 

@@ -1336,8 +1336,10 @@ export function fetchZoomedHistory(fromDate, toDate) {
         });
 }
 
-export function resetZoomAll() {
-    clearUrlState();
+export function resetZoomAll(options = {}) {
+    if (options?.clearUrlState !== false) {
+        clearUrlState();
+    }
     const resetChart = (chart) => {
         if (!chart?.options?.scales?.x) return;
         delete chart.options.scales.x.min;

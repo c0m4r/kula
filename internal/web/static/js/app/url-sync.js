@@ -20,14 +20,23 @@ export function clearUrlState() {
     }
 }
 
+function parseUrlTimestamp(raw) {
+    if (!/^-?\d+$/.test(raw)) return null;
+    const ms = Number(raw);
+    if (!Number.isSafeInteger(ms)) return null;
+    const date = new Date(ms);
+    if (!Number.isFinite(date.getTime())) return null;
+    return date;
+}
+
 // Returns { from: Date, to: Date } if valid params are present, otherwise null.
 export function readUrlState() {
     const params = new URLSearchParams(window.location.search);
     const fromRaw = params.get('from');
     const toRaw = params.get('to');
     if (!fromRaw || !toRaw) return null;
-    const fromMs = parseInt(fromRaw, 10);
-    const toMs = parseInt(toRaw, 10);
-    if (isNaN(fromMs) || isNaN(toMs) || fromMs >= toMs) return null;
-    return { from: new Date(fromMs), to: new Date(toMs) };
+    const from = parseUrlTimestamp(fromRaw);
+    const to = parseUrlTimestamp(toRaw);
+    if (!from || !to || from.getTime() >= to.getTime()) return null;
+    return { from, to };
 }
