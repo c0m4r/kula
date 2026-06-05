@@ -7,6 +7,7 @@ import { state } from './state.js';
 import { i18n } from './i18n.js';
 import { initCharts } from './charts-init.js';
 import { resetZoomAll, fetchHistory, fetchCustomHistory } from './charts-data.js';
+import { updateUrlState, clearUrlState } from './url-sync.js';
 
 // ---- Pause/Resume ----
 export function syncPauseState() {
@@ -78,6 +79,7 @@ export function setTimeRange(seconds) {
     };
     document.getElementById('time-range-display').textContent = labels[seconds] || `${i18n.t('last')} ${seconds}s`;
 
+    clearUrlState();
     resetZoomAll();
     fetchHistory(seconds);
 }
@@ -119,6 +121,7 @@ export function applyCustomRange() {
     const fmt = d => d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     document.getElementById('time-range-display').textContent = `${fmt(fromDate)} → ${fmt(toDate)}`;
 
+    updateUrlState(fromDate.getTime(), toDate.getTime());
     resetZoomAll();
     fetchCustomHistory(fromDate, toDate);
 }

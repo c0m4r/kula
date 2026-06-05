@@ -13,6 +13,7 @@ import { checkAuth, handleLogin, handleLogout } from './auth.js';
 import { applyTheme, toggleTheme } from './theme.js';
 import { setupHoverPause, setupChartActions } from './ui-actions.js';
 import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
+import { readUrlState } from './url-sync.js';
 import { initSplitModule } from './split.js';
 import { initOllama } from './ollama.js';
 
@@ -89,6 +90,12 @@ async function init() {
         state.aggDropdownOpen = list.classList.contains('open');
     });
     document.getElementById('btn-focus').addEventListener('click', toggleFocusMode);
+    // If the page was opened with a shared URL, update the time display to reflect it
+    const urlRange = readUrlState();
+    if (urlRange) {
+        const fmt = d => d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        document.getElementById('time-range-display').textContent = `${fmt(urlRange.from)} → ${fmt(urlRange.to)}`;
+    }
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
     document.getElementById('btn-logout')?.addEventListener('click', handleLogout);
     document.getElementById('btn-custom-range').addEventListener('click', toggleCustomTimePicker);

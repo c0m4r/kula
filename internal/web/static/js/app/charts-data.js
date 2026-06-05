@@ -12,6 +12,7 @@ import { evaluateAlerts } from './alerts.js';
 import { applyStoredFocusMode } from './focus-mode.js';
 import { addSampleToSplitCharts, updateSplitSelectors } from './split.js';
 import { apiUrl } from './api.js';
+import { updateUrlState, clearUrlState } from './url-sync.js';
 
 // CSS order values for dynamic app chart grouping within the grid.
 const APP_ORDER_NGINX = 10;
@@ -1230,6 +1231,8 @@ export function syncZoom(sourceChart) {
     // If we're already at max resolution (raw tier) and the buffer completely covers
     // the window, we can skip the network request.
     if (min && max) {
+        updateUrlState(min, max);
+
         const fromDate = new Date(min);
         const toDate   = new Date(max);
 
@@ -1334,6 +1337,7 @@ export function fetchZoomedHistory(fromDate, toDate) {
 }
 
 export function resetZoomAll() {
+    clearUrlState();
     const resetChart = (chart) => {
         if (!chart?.options?.scales?.x) return;
         delete chart.options.scales.x.min;

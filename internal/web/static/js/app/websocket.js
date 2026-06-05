@@ -4,7 +4,8 @@
    ============================================================ */
 'use strict';
 import { state } from './state.js';
-import { pushLiveSample, fetchHistory, fetchGapHistory } from './charts-data.js';
+import { pushLiveSample, fetchHistory, fetchCustomHistory, fetchGapHistory } from './charts-data.js';
+import { readUrlState } from './url-sync.js';
 import { wsUrl } from './api.js';
 
 export function connectWS() {
@@ -22,7 +23,15 @@ export function connectWS() {
         // Load history for the current time window on first connect
         if (!state.historyLoaded) {
             state.historyLoaded = true;
-            fetchHistory(state.timeRange);
+            const urlRange = readUrlState();
+            if (urlRange) {
+                state.timeRange = null;
+                state.customFrom = urlRange.from;
+                state.customTo = urlRange.to;
+                fetchCustomHistory(urlRange.from, urlRange.to);
+            } else {
+                fetchHistory(state.timeRange);
+            }
         } else if (state.lastHistoricalTs) {
             fetchGapHistory(state.lastHistoricalTs, new Date());
         }
