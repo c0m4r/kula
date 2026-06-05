@@ -16,6 +16,10 @@ MAGIC = b"KULA"
 HEADER_SIZE = 64
 CODEC_V2 = 2
 
+# Header flags packed into bytes [4:8]. Absent (zero) in pre-tail-tracking files.
+FLAG_HAS_TAIL = 1 << 0  # header carries a valid oldest-record offset
+FLAG_WRAPPED = 1 << 1  # ring has wrapped; an old segment exists
+
 # Flag bits (preamble flags uint16)
 FLAG_HAS_MIN = 1 << 0
 FLAG_HAS_MAX = 1 << 1
@@ -32,10 +36,15 @@ FIXED_BLOCK_SIZE = 218  # must match fixedBlockSize in codec.go
 # ---------------------------------------------------------------------------
 
 
-def parse_header(buf: bytes) -> Tuple[bytes, int, int, int, int, int, int]:
-    """Parse a 64-byte tier header."""
-    unpacked = struct.unpack("<4s4xQQQQqq8s", buf)
-    return unpacked[:7]
+def parse_header(buf: bytes) -> Tuple[bytes, int, int, int, int, int, int, int, int]:
+    """Parse a 64-byte tier header.
+
+    Returns: magic, flags, codec_ver, max_data, write_off, count,
+    oldest_nano, newest_nano, oldest_off.
+    """
+    # magic[4] flags[4] version[8] maxData[8] writeOff[8] count[8]
+    # oldestNano[8] newestNano[8] oldestOff[8]
+    return struct.unpack("<4sIQQQQqqQ", buf)
 
 
 # ---------------------------------------------------------------------------
@@ -806,12 +815,16 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
 
 
 def find_latest_record(
-    f: BinaryIO, wrapped: bool, write_off: int, max_data: int
+    f: BinaryIO, wrapped: bool, write_off: int, max_data: int, old_start: int = 0
 ) -> Optional[bytes]:
-    """Find the latest record in the ring buffer."""
+    """Find the latest record in the ring buffer.
+
+    old_start is the byte offset of the oldest surviving record (the tail);
+    the old segment runs from there to the sentinel near max_data.
+    """
     segments: List[Tuple[int, int]] = []
     if wrapped:
-        segments.append((write_off, max_data - write_off))
+        segments.append((old_start, max_data - old_start))
         segments.append((0, write_off))
     else:
         segments.append((0, write_off))
@@ -884,9 +897,17 @@ def inspect_tier(filepath: str) -> None:
                 )
                 sys.exit(1)
 
-            magic, codec_ver, max_data, write_off, count, oldest_nano, newest_nano = (
-                parse_header(buf)
-            )
+            (
+                magic,
+                header_flags,
+                codec_ver,
+                max_data,
+                write_off,
+                count,
+                oldest_nano,
+                newest_nano,
+                oldest_off,
+            ) = parse_header(buf)
 
             if magic != MAGIC:
                 print(
@@ -895,13 +916,19 @@ def inspect_tier(filepath: str) -> None:
                 )
                 sys.exit(1)
 
-            # Wrapped when the file's persistent extent reaches past the
-            # current write offset — bytes there survive from a previous
-            # ring pass. Comparing against max_data misses this: the file's
-            # max extent after a wrap is HEADER_SIZE + write_off_at_wrap
-            # (+ a 4-byte sentinel), strictly less than HEADER_SIZE +
-            # max_data by up to one record's worth of bytes.
-            wrapped = count > 0 and file_size > HEADER_SIZE + write_off
+            if header_flags & FLAG_HAS_TAIL:
+                # Written by tail-tracking code: trust the persisted wrap state.
+                wrapped = bool(header_flags & FLAG_WRAPPED)
+            else:
+                # Legacy file: fall back to the file-size heuristic. The file's
+                # max extent after a wrap is HEADER_SIZE + write_off_at_wrap
+                # (+ a 4-byte sentinel), strictly less than HEADER_SIZE +
+                # max_data, so comparing against write_off (not max_data) is
+                # the only signal available pre-tail-tracking.
+                wrapped = count > 0 and file_size > HEADER_SIZE + write_off
+            # The oldest surviving record starts at oldest_off once wrapped;
+            # for non-wrapped (incl. self-healed) tiers it is at offset 0.
+            old_start = oldest_off if wrapped else 0
             codec_label = "v2 binary" if codec_ver >= CODEC_V2 else "v1 JSON (legacy)"
 
             print(f"File:          {filepath}")
@@ -931,7 +958,7 @@ def inspect_tier(filepath: str) -> None:
                 print("\nLatest Record: (none)")
                 return
 
-            payload = find_latest_record(f, wrapped, write_off, max_data)
+            payload = find_latest_record(f, wrapped, write_off, max_data, old_start)
             if payload:
                 print_record(payload, codec_ver)
             else:

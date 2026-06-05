@@ -31,7 +31,7 @@ if [ -n "$PLATFORM" ]; then
     docker buildx build --platform "$PLATFORM" -t "$TAG" --load -f addons/docker/Dockerfile .
 else
     echo "Building Docker image '$TAG' for host architecture..."
-    docker build -t "$TAG" -f addons/docker/Dockerfile .
+    docker buildx build -t "$TAG" --load -f addons/docker/Dockerfile .
 fi
 
 echo "Done!"

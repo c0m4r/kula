@@ -347,3 +347,77 @@ func TestLoadBasePathEnvInvalid(t *testing.T) {
 		t.Fatal("Load() expected error for invalid base path, got nil")
 	}
 }
+
+func TestParseRetention(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"", 0, false},
+		{"30s", 30 * time.Second, false},
+		{"15m", 15 * time.Minute, false},
+		{"12h", 12 * time.Hour, false},
+		{"1d", 24 * time.Hour, false},
+		{"2.5d", time.Duration(2.5 * 24 * float64(time.Hour)), false},
+		{"1w", 0, true},
+		{"abc", 0, true},
+		{"-1d", 0, true},
+		{"10", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := parseRetention(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseRetention(%q) expected error", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("parseRetention(%q) unexpected error: %v", tt.input, err)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("parseRetention(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateBackup(t *testing.T) {
+	// Disabled backup: invalid fields are ignored.
+	cfg := DefaultConfig()
+	cfg.Backup.Enabled = false
+	cfg.Backup.MaxTier = 0
+	cfg.Backup.Retention = "garbage"
+	if err := cfg.validateBackup(); err != nil {
+		t.Errorf("disabled backup should not validate: %v", err)
+	}
+
+	// Enabled with good defaults: retention parsed.
+	cfg = DefaultConfig()
+	cfg.Backup.Enabled = true
+	if err := cfg.validateBackup(); err != nil {
+		t.Fatalf("default backup should validate: %v", err)
+	}
+	if cfg.Backup.RetentionDur != 24*time.Hour {
+		t.Errorf("RetentionDur = %v, want 24h", cfg.Backup.RetentionDur)
+	}
+
+	// Enabled with bad maxtier.
+	cfg = DefaultConfig()
+	cfg.Backup.Enabled = true
+	cfg.Backup.MaxTier = 0
+	if err := cfg.validateBackup(); err == nil {
+		t.Error("maxtier 0 should fail validation")
+	}
+
+	// Enabled with bad retention.
+	cfg = DefaultConfig()
+	cfg.Backup.Enabled = true
+	cfg.Backup.Retention = "5x"
+	if err := cfg.validateBackup(); err == nil {
+		t.Error("bad retention should fail validation")
+	}
+}

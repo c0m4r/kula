@@ -55,6 +55,24 @@ storage:
     # Too high tier 2 and 3 resolutions could also cause high memory usage
     # and data loss on shutdown due to samples buffering
 
+# Backup settings (snapshots of the storage tier files)
+# Backups are written under <storage.directory>/backup, one timestamped
+# sub-directory per run (e.g. /var/lib/kula/backup/20060102-150405/).
+backup:
+  # Master switch for scheduled backups (default: false)
+  enabled: false
+  # When to run, as a standard 5-field crontab expression
+  # (minute hour day-of-month month day-of-week). Default: midnight.
+  cron: "0 0 * * *"
+  # How many tiers to back up, counting from the raw tier (default: 3).
+  # 1 = tier_0.dat only, 2 = tier_0 + tier_1, 3 = all three.
+  maxtier: 3
+  # How long to keep backups before pruning. Supports s, m, h, d.
+  # Empty disables pruning. Default: 1d.
+  retention: 1d
+  # Gzip each backed-up tier file to tier_N.dat.gz (default: true).
+  compress: true
+
 # Web UI settings
 web:
   # Master switch for the web server (default: true)
@@ -157,7 +175,9 @@ web:
       disk_temp: false  # one chart per disk device (thermals section)
       gpu: false        # one chart per GPU
 
-  # API Access and Performance Logging
+  # Access and Performance Logging
+  # Access lines are tagged [API] for JSON/WebSocket endpoints and [WEB]
+  # for served UI content (HTML, JS, CSS, fonts, icons).
   logging:
     enabled: true
     # "access" (request details)

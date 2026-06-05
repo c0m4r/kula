@@ -13,6 +13,23 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 - The page URL now reflects the selected time range — copy and share it to let others land on the exact same timespan
 
+## [0.18.0] - 2026-06-04
+
+### Added
+
+- Scheduled backups of the storage tier files
+- Missing access logs for served web UI content
+
+### Fixed
+
+- tier wrap fixes (#24)
+
+### Changed
+
+- gen-mock-data update and refactor
+- tier files intergrity improvements
+- logging minor improvements
+
 ## [0.17.3] - 2026-06-01
 
 ### Added

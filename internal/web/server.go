@@ -118,7 +118,11 @@ func (w *statusResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return h.Hijack()
 }
 
-func loggingMiddleware(cfg config.WebConfig, next http.Handler) http.Handler {
+// loggingMiddleware emits one access-log line per request when logging is
+// enabled. tag groups requests by source ("API" for the JSON/WebSocket
+// endpoints, "WEB" for served UI content) so the two streams stay
+// distinguishable in the logs.
+func loggingMiddleware(cfg config.WebConfig, tag string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !cfg.Logging.Enabled {
 			next.ServeHTTP(w, r)
@@ -133,7 +137,7 @@ func loggingMiddleware(cfg config.WebConfig, next http.Handler) http.Handler {
 		duration := time.Since(start)
 		clientIP := getClientIP(r, cfg.TrustProxy)
 
-		log.Printf("[API] %s %s %s %d %v", clientIP, r.Method, r.URL.Path, sw.status, duration)
+		log.Printf("[%s] %s %s %s %d %v", tag, clientIP, r.Method, r.URL.Path, sw.status, duration)
 	})
 }
 
@@ -343,14 +347,14 @@ func (s *Server) buildHandler() http.Handler {
 	apiMux.HandleFunc("/api/ollama/context", s.handleOllamaContext)
 
 	// Wrap apiMux with logging and CSRF protection.
-	loggedApiMux := s.auth.CSRFMiddleware(loggingMiddleware(s.cfg, apiMux))
+	loggedApiMux := s.auth.CSRFMiddleware(loggingMiddleware(s.cfg, "API", apiMux))
 
 	// Register /ws separately and explicitly through CORS, auth, CSRF and logging.
 	// CORS sits outermost so OPTIONS preflight short-circuits before auth/CSRF.
 	wsHandler := s.corsMiddleware(
 		s.auth.AuthMiddleware(
 			s.auth.CSRFMiddleware(
-				loggingMiddleware(s.cfg, http.HandlerFunc(s.handleWebSocket)),
+				loggingMiddleware(s.cfg, "API", http.HandlerFunc(s.handleWebSocket)),
 			),
 		),
 	)
@@ -364,21 +368,28 @@ func (s *Server) buildHandler() http.Handler {
 		mux.Handle("/api/", s.corsMiddleware(s.auth.AuthMiddleware(loggedApiMux)))
 		mux.Handle("/ws", wsHandler)
 
+		// Served UI content (templated HTML and static assets) is logged
+		// under the "WEB" tag so access logs cover the browser-facing
+		// surface, not just the API.
+		logWeb := func(h http.HandlerFunc) http.Handler {
+			return loggingMiddleware(s.cfg, "WEB", h)
+		}
+
 		// Templated HTML files
-		mux.HandleFunc("/", s.handleIndex)
-		mux.HandleFunc("/index.html", s.handleIndex)
+		mux.Handle("/", logWeb(s.handleIndex))
+		mux.Handle("/index.html", logWeb(s.handleIndex))
 		if s.global.EasterEgg {
-			mux.HandleFunc("/game.html", s.handleGame)
-			mux.HandleFunc("/game.css", s.handleStatic)
-			mux.HandleFunc("/game.js", s.handleStatic)
+			mux.Handle("/game.html", logWeb(s.handleGame))
+			mux.Handle("/game.css", logWeb(s.handleStatic))
+			mux.Handle("/game.js", logWeb(s.handleStatic))
 		}
 
 		// Static assets handler
-		mux.HandleFunc("/js/", s.handleStatic)
-		mux.HandleFunc("/fonts/", s.handleStatic)
-		mux.HandleFunc("/style.css", s.handleStatic)
-		mux.HandleFunc("/kula.svg", s.handleStatic)
-		mux.HandleFunc("/favicon.ico", s.handleStatic)
+		mux.Handle("/js/", logWeb(s.handleStatic))
+		mux.Handle("/fonts/", logWeb(s.handleStatic))
+		mux.Handle("/style.css", logWeb(s.handleStatic))
+		mux.Handle("/kula.svg", logWeb(s.handleStatic))
+		mux.Handle("/favicon.ico", logWeb(s.handleStatic))
 
 		log.Printf("Web UI and API enabled")
 	} else {
@@ -386,7 +397,7 @@ func (s *Server) buildHandler() http.Handler {
 	}
 
 	if s.cfg.PrometheusMetrics.Enabled {
-		mux.Handle("/metrics", loggingMiddleware(s.cfg, http.HandlerFunc(s.handleMetrics)))
+		mux.Handle("/metrics", loggingMiddleware(s.cfg, "API", http.HandlerFunc(s.handleMetrics)))
 		metricsPath := s.cfg.BasePath + "/metrics"
 		if s.cfg.PrometheusMetrics.Token != "" {
 			log.Printf("Prometheus metrics enabled at %s with bearer token authentication", metricsPath)
@@ -397,8 +408,8 @@ func (s *Server) buildHandler() http.Handler {
 
 	// Apply request logging to liveness endpoints when enabled
 	if s.cfg.Logging.Enabled {
-		mux.Handle("/health", loggingMiddleware(s.cfg, http.HandlerFunc(s.handleHealth)))
-		mux.Handle("/status", loggingMiddleware(s.cfg, http.HandlerFunc(s.handleHealth)))
+		mux.Handle("/health", loggingMiddleware(s.cfg, "API", http.HandlerFunc(s.handleHealth)))
+		mux.Handle("/status", loggingMiddleware(s.cfg, "API", http.HandlerFunc(s.handleHealth)))
 	} else {
 		// Fallback registrations when logging is disabled
 		mux.HandleFunc("/health", s.handleHealth)

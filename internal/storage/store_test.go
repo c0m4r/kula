@@ -1238,3 +1238,97 @@ func TestWrappedTierRecentQueryCorrect(t *testing.T) {
 		}
 	}
 }
+
+// TestWriteSampleClampsBackwardClock verifies a wall-clock regression does not
+// produce a record older than the previous one on disk; the timestamp is
+// clamped so stored order stays monotonic (otherwise range scans skip the
+// finest tier or hide records).
+func TestWriteSampleClampsBackwardClock(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.StorageConfig{
+		Directory: dir,
+		Tiers:     []config.TierConfig{{Resolution: time.Second, MaxSize: "1MB", MaxBytes: 1024 * 1024}},
+	}
+	store, err := NewStore(cfg)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	if err := store.WriteSample(makeVarSample(base, 2)); err != nil {
+		t.Fatalf("WriteSample 0: %v", err)
+	}
+	if err := store.WriteSample(makeVarSample(base.Add(time.Second), 2)); err != nil {
+		t.Fatalf("WriteSample 1: %v", err)
+	}
+
+	// Clock steps back an hour.
+	back := makeVarSample(base.Add(-time.Hour), 2)
+	if err := store.WriteSample(back); err != nil {
+		t.Fatalf("WriteSample back: %v", err)
+	}
+	if back.Timestamp.Before(base.Add(time.Second)) {
+		t.Errorf("sample timestamp not clamped: got %s, want >= %s",
+			back.Timestamp.Format(time.RFC3339), base.Add(time.Second).Format(time.RFC3339))
+	}
+
+	// Resume forward, then verify everything on disk is non-decreasing.
+	if err := store.WriteSample(makeVarSample(base.Add(2*time.Second), 2)); err != nil {
+		t.Fatalf("WriteSample 2: %v", err)
+	}
+	res, err := store.QueryRange(base.Add(-2*time.Hour), base.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("QueryRange: %v", err)
+	}
+	if len(res) == 0 {
+		t.Fatal("QueryRange returned nothing")
+	}
+	for i := 1; i < len(res); i++ {
+		if res[i].Timestamp.Before(res[i-1].Timestamp) {
+			t.Errorf("non-monotonic stored order at %d: %s before %s",
+				i, res[i].Timestamp.Format(time.RFC3339), res[i-1].Timestamp.Format(time.RFC3339))
+		}
+	}
+}
+
+// TestAggBufferBoundedOnTierWriteFailure verifies that if a lower tier's writes
+// keep failing, the in-memory aggregation buffer stays bounded (a stuck disk
+// must not OOM the process). Raw samples remain safe in tier 0.
+func TestAggBufferBoundedOnTierWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.StorageConfig{
+		Directory: dir,
+		Tiers: []config.TierConfig{
+			{Resolution: time.Second, MaxSize: "1MB", MaxBytes: 1024 * 1024},
+			{Resolution: 2 * time.Second, MaxSize: "1MB", MaxBytes: 1024 * 1024},
+		},
+	}
+	store, err := NewStore(cfg)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Break tier 1 so every tier-1 flush fails.
+	_ = store.tiers[1].file.Close()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 2000; i++ {
+		// Errors are expected once tier-1 flushing starts failing; tier 0 still
+		// stores the raw sample.
+		_ = store.WriteSample(makeVarSample(base.Add(time.Duration(i)*time.Second), 2))
+	}
+
+	if store.ratio1 <= 0 {
+		t.Fatalf("precondition: ratio1 should be > 0, got %d", store.ratio1)
+	}
+	cap1 := store.ratio1 * maxAggBufferFactor
+	if got := len(store.tier1Buf); got > cap1 {
+		t.Errorf("tier1Buf grew to %d after 2000 failing writes; expected bounded by %d", got, cap1)
+	}
+	// Tier 0 must still hold the data despite tier-1 failures.
+	if n := store.tiers[0].Count(); n == 0 {
+		t.Error("tier 0 lost data during tier-1 failures")
+	}
+}

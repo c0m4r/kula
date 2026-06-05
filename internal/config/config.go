@@ -18,6 +18,7 @@ type Config struct {
 	Global       GlobalConfig       `yaml:"global"`
 	Collection   CollectionConfig   `yaml:"collection"`
 	Storage      StorageConfig      `yaml:"storage"`
+	Backup       BackupConfig       `yaml:"backup"`
 	Web          WebConfig          `yaml:"web"`
 	Applications ApplicationsConfig `yaml:"applications"`
 	TUI          TUIConfig          `yaml:"tui"`
@@ -54,6 +55,30 @@ type TierConfig struct {
 	Resolution time.Duration `yaml:"resolution"`
 	MaxSize    string        `yaml:"max_size"`
 	MaxBytes   int64         `yaml:"-"`
+}
+
+// BackupConfig controls periodic snapshots of the storage tier files into
+// <storage.directory>/backup. Each run writes a timestamped sub-directory
+// (e.g. 20060102-150405) containing a consistent copy of tier_0.dat ..
+// tier_<maxtier-1>.dat. Disabled by default.
+type BackupConfig struct {
+	// Enabled toggles the backup scheduler. Default false.
+	Enabled bool `yaml:"enabled"`
+	// Cron is a standard 5-field crontab expression (minute hour dom month dow)
+	// controlling when backups run. Default "0 0 * * *" (every midnight).
+	Cron string `yaml:"cron"`
+	// MaxTier is the number of tiers to back up, counting from the raw tier.
+	// 1 backs up only tier_0.dat, 2 adds tier_1.dat, 3 adds tier_2.dat, etc.
+	// Default 3.
+	MaxTier int `yaml:"maxtier"`
+	// Retention is how long backups are kept before being pruned. Supports the
+	// suffixes s, m, h, d (e.g. "1d", "12h"). Default "1d". Empty disables
+	// pruning.
+	Retention string `yaml:"retention"`
+	// Compress gzips each backed-up tier file (tier_N.dat.gz). Default true.
+	Compress bool `yaml:"compress"`
+	// RetentionDur is the parsed form of Retention, populated at load time.
+	RetentionDur time.Duration `yaml:"-"`
 }
 
 type WebConfig struct {
@@ -285,6 +310,13 @@ func DefaultConfig() *Config {
 				{Resolution: 5 * time.Minute, MaxSize: "50MB"},
 			},
 		},
+		Backup: BackupConfig{
+			Enabled:   false,
+			Cron:      "0 0 * * *",
+			MaxTier:   3,
+			Retention: "1d",
+			Compress:  true,
+		},
 		Web: WebConfig{
 			Enabled:        true,
 			UI:             true,
@@ -449,6 +481,10 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	if err := cfg.validateBackup(); err != nil {
+		return nil, err
+	}
+
 	if cfg.Ollama.Enabled {
 		if err := validateOllamaURL(cfg.Ollama.URL); err != nil {
 			return nil, err
@@ -588,6 +624,54 @@ func (c *Config) validateTiers() error {
 	}
 
 	return nil
+}
+
+// validateBackup checks and normalizes the backup settings. It parses the
+// retention string into RetentionDur. Full validation of the cron expression
+// is deferred to the backup scheduler. Skipped entirely when backup is
+// disabled so an unused/blank section never blocks startup.
+func (c *Config) validateBackup() error {
+	if !c.Backup.Enabled {
+		return nil
+	}
+	if c.Backup.MaxTier < 1 {
+		return fmt.Errorf("backup.maxtier must be >= 1, got %d", c.Backup.MaxTier)
+	}
+	if c.Backup.Cron == "" {
+		return fmt.Errorf("backup.cron must not be empty when backup is enabled")
+	}
+	dur, err := parseRetention(c.Backup.Retention)
+	if err != nil {
+		return fmt.Errorf("backup.retention: %w", err)
+	}
+	c.Backup.RetentionDur = dur
+	return nil
+}
+
+// parseRetention parses a duration string with the suffixes s, m, h, or d.
+// An empty string returns a zero duration (pruning disabled).
+func parseRetention(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	unit := s[len(s)-1]
+	n, err := strconv.ParseFloat(s[:len(s)-1], 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid retention %q (expected e.g. 1d, 12h, 30m)", s)
+	}
+	switch unit {
+	case 's':
+		return time.Duration(n * float64(time.Second)), nil
+	case 'm':
+		return time.Duration(n * float64(time.Minute)), nil
+	case 'h':
+		return time.Duration(n * float64(time.Hour)), nil
+	case 'd':
+		return time.Duration(n * 24 * float64(time.Hour)), nil
+	default:
+		return 0, fmt.Errorf("invalid retention unit %q in %q (use s, m, h, or d)", string(unit), s)
+	}
 }
 
 func checkStorageDirectory(cfg *Config) error {

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -61,6 +62,13 @@ type Store struct {
 // operation WriteSample sweeps the cache every collection tick, so it stays far
 // below this; the cap only matters if writes stall while reads keep arriving.
 const maxQueryCacheEntries = 256
+
+// maxAggBufferFactor bounds the in-memory aggregation buffers at this multiple
+// of their tier ratio. The buffers normally reset to empty every ratio samples,
+// so this never trips in healthy operation; it only matters if a lower tier's
+// writes keep failing, bounding memory so a stuck disk can't OOM the process
+// (the raw samples remain safe in tier 0).
+const maxAggBufferFactor = 4
 
 // queryCacheKey identifies a unique query rounded to tier resolution.
 type queryCacheKey struct {
@@ -195,6 +203,18 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Guard against wall-clock regressions (NTP step-back, suspend/resume, VM
+	// migration, an RTC that was ahead at boot). The ring buffer and ReadRange
+	// assume non-decreasing timestamps; a record older than the previous one
+	// makes range scans skip the finest tier or mis-window records. Clamp to the
+	// last stored timestamp so on-disk order stays monotonic. During a backward
+	// step timestamps briefly flatten until the wall clock catches up — far
+	// preferable to losing query coverage. (This mutates the sample's timestamp,
+	// which is intentional: the stored and broadcast views stay consistent.)
+	if s.latestCache != nil && sample.Timestamp.Before(s.latestCache.Timestamp) {
+		sample.Timestamp = s.latestCache.Timestamp
+	}
+
 	// Use the actual tier-0 resolution as the default/fallback duration.
 	fallbackDur := s.configs[0].Resolution
 	dur := fallbackDur
@@ -223,6 +243,13 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 	if s.ratio1 > 0 && len(s.tiers) > 1 {
 		s.tier1Buf = append(s.tier1Buf, sample)
 		s.tier1Count++
+		// Bound the buffer in case tier-1 writes keep failing (a stuck/full
+		// disk): without this the buffer would grow every tick forever. Drops
+		// the oldest excess; those intervals stay available as raw tier-0 data.
+		if cap1 := s.ratio1 * maxAggBufferFactor; len(s.tier1Buf) > cap1 {
+			s.tier1Buf = append([]*collector.Sample(nil), s.tier1Buf[len(s.tier1Buf)-cap1:]...)
+			s.tier1Count = len(s.tier1Buf)
+		}
 
 		if s.tier1Count >= s.ratio1 {
 			agg := s.aggregateSamples(s.tier1Buf, s.configs[1].Resolution)
@@ -235,6 +262,10 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 			if s.ratio2 > 0 && len(s.tiers) > 2 {
 				s.tier2Buf = append(s.tier2Buf, agg)
 				s.tier2Count++
+				if cap2 := s.ratio2 * maxAggBufferFactor; len(s.tier2Buf) > cap2 {
+					s.tier2Buf = append([]*AggregatedSample(nil), s.tier2Buf[len(s.tier2Buf)-cap2:]...)
+					s.tier2Count = len(s.tier2Buf)
+				}
 
 				if s.tier2Count >= s.ratio2 {
 					agg3 := s.aggregateAggregated(s.tier2Buf, s.configs[2].Resolution)
@@ -458,6 +489,29 @@ func (s *Store) QueryLatest() (*AggregatedSample, error) {
 	// Cold path: only reached on an empty store where no sample has been
 	// written yet this process lifetime and warmLatestCache found nothing.
 	return nil, nil
+}
+
+// TierCount returns the number of configured storage tiers.
+func (s *Store) TierCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.tiers)
+}
+
+// SnapshotTier writes a consistent copy of tier i to w. The store's tier slice
+// is immutable after construction, so only the per-tier read lock (taken inside
+// SnapshotTo) is needed to guard against an in-flight Write; the brief store
+// lock here just bounds-checks the index without blocking the collection loop
+// for the duration of the copy.
+func (s *Store) SnapshotTier(i int, w io.Writer) (int64, error) {
+	s.mu.RLock()
+	if i < 0 || i >= len(s.tiers) {
+		s.mu.RUnlock()
+		return 0, fmt.Errorf("tier index %d out of range (have %d tiers)", i, len(s.tiers))
+	}
+	t := s.tiers[i]
+	s.mu.RUnlock()
+	return t.SnapshotTo(w)
 }
 
 func (s *Store) Close() error {

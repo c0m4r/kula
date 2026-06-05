@@ -117,18 +117,28 @@ parts:
   kula:
     plugin: go
     source: .
-    # Track the newest stable Go. go.mod pins `go 1.26.3`, so Go's default
-    # GOTOOLCHAIN will transparently fetch that exact toolchain at build time
-    # if the snap ships an older one.
+    # Track the newest stable Go. go.mod pins a `go` version (currently
+    # 1.26.4); when the snap's bundled Go is older, Go's GOTOOLCHAIN feature
+    # fetches the pinned toolchain on demand at build time.
+    #
+    # GOTOOLCHAIN is forced to `local` here for the snapcraft go plugin's
+    # environment check only: that check parses the output of a bare
+    # `go version`, and under the default GOTOOLCHAIN=auto that command emits a
+    # `go: downloading go1.26.4 ...` progress line on stderr, which the plugin
+    # mis-reads as the compiler version ("invalid go compiler version 'go:
+    # downloading ...'"). `local` keeps the check quiet; the override-build
+    # step below restores `auto` so the pinned toolchain is still fetched.
     build-snaps:
       - go/latest/stable
     build-environment:
       - CGO_ENABLED: "0"
+      - GOTOOLCHAIN: local
     override-build: |
       # Mirror the flags from addons/build.sh. Debian arch names
       # (amd64/arm64/riscv64) map 1:1 to Go's GOARCH, so cross-builds for the
-      # target platform just work.
-      GOOS=linux GOARCH="${CRAFT_ARCH_BUILD_FOR}" \
+      # target platform just work. GOTOOLCHAIN=auto lets Go fetch the toolchain
+      # pinned in go.mod when the snap's bundled Go is older.
+      GOTOOLCHAIN=auto GOOS=linux GOARCH="${CRAFT_ARCH_BUILD_FOR}" \
         go build -trimpath -ldflags="-s -w" -buildvcs=false \
         -o "${CRAFT_PART_INSTALL}/bin/kula" ./cmd/kula/
       install -D -m 0644 config.example.yaml \

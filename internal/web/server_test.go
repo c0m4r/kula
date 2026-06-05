@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"html"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -307,6 +309,68 @@ func TestTemplateBasePathEmpty(t *testing.T) {
 	}
 	if !strings.Contains(body, `window.KULA_BASE_PATH = ""`) {
 		t.Errorf("expected empty KULA_BASE_PATH string literal; body excerpt:\n%s", body[:min(len(body), 800)])
+	}
+}
+
+// TestWebContentAccessLog verifies that served UI content (HTML, JS, CSS,
+// fonts, icons) produces a "[WEB]" access-log line through the full handler
+// stack, and that nothing is logged when logging is disabled.
+func TestWebContentAccessLog(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+	}{
+		{"/"},
+		{"/style.css"},
+		{"/js/app/main.js"},
+		{"/kula.svg"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			cfg := config.WebConfig{
+				UI:      true,
+				Logging: config.LogConfig{Enabled: true, Level: "access"},
+			}
+			s := NewServer(cfg, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
+
+			var buf bytes.Buffer
+			orig := log.Writer()
+			log.SetOutput(&buf)
+			defer log.SetOutput(orig)
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			s.buildHandler().ServeHTTP(rec, req)
+
+			got := buf.String()
+			if !strings.Contains(got, "[WEB] ") {
+				t.Fatalf("expected a [WEB] access-log line for %s, got logs: %q", tc.path, got)
+			}
+			if !strings.Contains(got, tc.path) {
+				t.Errorf("expected access log to include path %s, got logs: %q", tc.path, got)
+			}
+		})
+	}
+}
+
+// TestWebContentAccessLogDisabled verifies no access-log line is emitted for
+// served UI content when logging is disabled.
+func TestWebContentAccessLogDisabled(t *testing.T) {
+	cfg := config.WebConfig{
+		UI:      true,
+		Logging: config.LogConfig{Enabled: false},
+	}
+	s := NewServer(cfg, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
+
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	s.buildHandler().ServeHTTP(rec, req)
+
+	if strings.Contains(buf.String(), "[WEB]") {
+		t.Errorf("expected no access log when logging disabled, got: %q", buf.String())
 	}
 }
 

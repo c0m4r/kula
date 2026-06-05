@@ -16,7 +16,8 @@ elif command -v govulncheck &>/dev/null; then
     echo -e "${CYAN}Running system govulncheck...${RESET}"
     govulncheck ./...
 else
-    echo "Skipping govulncheck: not found" ; sleep 3
+    echo "Skipping govulncheck: not found"
+    echo "Install with: go install golang.org/x/vuln/cmd/govulncheck@latest" ; sleep 3
 fi
 
 echo -e "${CYAN}Running go vet...${RESET}"

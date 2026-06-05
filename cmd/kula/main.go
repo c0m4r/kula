@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"kula"
+	"kula/internal/backup"
 	"kula/internal/collector"
 	"kula/internal/config"
 	"kula/internal/sandbox"
@@ -70,6 +71,10 @@ func main() {
 		cmd = flag.Arg(0)
 	}
 
+	if cmd == "serve" || cmd == "tui" {
+		log.Printf("Kula v%s starting...", version)
+	}
+
 	if cmd == "hash-password" {
 		// Just to read the password, we don't return yet as we need the config
 		password := readPasswordWithAsterisks()
@@ -123,6 +128,16 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 	}
 	defer func() { _ = store.Close() }()
 
+	// Build the backup scheduler up front so an invalid cron expression fails
+	// fast, before the server starts. Started below once the signal context exists.
+	var backupScheduler *backup.Scheduler
+	if cfg.Backup.Enabled {
+		backupScheduler, err = backup.New(store, cfg.Storage.Directory, cfg.Backup)
+		if err != nil {
+			log.Fatalf("Failed to initialize backup scheduler: %v", err)
+		}
+	}
+
 	// Enforce Landlock sandbox: restrict filesystem and network access
 	// to only what Kula needs. Non-fatal on unsupported kernels.
 	if err := sandbox.Enforce(configPath, cfg.Storage.Directory, cfg.Web, cfg.Applications, cfg.Ollama); err != nil {
@@ -147,6 +162,20 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 	// Signal handling with Context
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Backup scheduler
+	if backupScheduler != nil {
+		go backupScheduler.Run(ctx)
+		log.Printf("Backup enabled (schedule %q, maxtier %d, retention %s, compress %v)",
+			cfg.Backup.Cron, cfg.Backup.MaxTier, cfg.Backup.Retention, cfg.Backup.Compress)
+	}
+
+	log.Printf("Kula v%s started (collecting every %s)", version, cfg.Collection.Interval)
+	log.Printf("OS: %s, Kernel: %s, Arch: %s", osName, kernelVersion, cpuArch)
+
+	// Initialize optional application collectors after the startup banner so their
+	// (potentially noisy) discovery output appears below it rather than above.
+	coll.StartApplications()
 
 	// Collection loop
 	go func() {
@@ -178,8 +207,6 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 		}
 	}()
 
-	log.Printf("Kula v%s started (collecting every %s)", version, cfg.Collection.Interval)
-	log.Printf("OS: %s, Kernel: %s, Arch: %s", osName, kernelVersion, cpuArch)
 	<-ctx.Done()
 
 	log.Println("Shutting down...")
@@ -196,6 +223,7 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 
 func runTUI(cfg *config.Config, osName, kernelVersion, cpuArch string) {
 	coll := collector.New(cfg.Global, cfg.Collection, cfg.Applications, cfg.Storage.Directory)
+	coll.StartApplications()
 	if err := tui.RunHeadless(coll, cfg.TUI.RefreshRate, osName, kernelVersion, cpuArch, version, cfg.Global.ShowSystemInfo); err != nil {
 		log.Fatalf("TUI error: %v", err)
 	}

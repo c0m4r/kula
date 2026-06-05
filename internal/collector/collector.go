@@ -61,6 +61,18 @@ func New(cfg config.GlobalConfig, collCfg config.CollectionConfig, appCfg config
 		appCancel:  cancel,
 	}
 
+	return c
+}
+
+// StartApplications initializes the optional application collectors (containers,
+// databases, web servers, custom metrics) and emits their startup log lines.
+// It is split out from New so callers can defer this noisier output until after
+// the main "Kula started" banner has been printed.
+func (c *Collector) StartApplications() {
+	appCfg := c.appCfg
+	collCfg := c.collCfg
+	ctx := c.appCtx
+
 	// Initialize container collector if enabled
 	if appCfg.Containers.Enabled {
 		cc := newContainerCollector(ContainersCollectorConfig{
@@ -113,7 +125,7 @@ func New(cfg config.GlobalConfig, collCfg config.CollectionConfig, appCfg config
 
 	// Initialize custom metrics collector if any groups are configured
 	if len(appCfg.Custom) > 0 {
-		sockPath := storageDir + "/kula.sock"
+		sockPath := c.storageDir + "/kula.sock"
 		cc, err := newCustomCollector(ctx, sockPath, appCfg.Custom, collCfg.DebugLog)
 		if err != nil {
 			log.Printf("[custom] failed to start: %v", err)
@@ -121,8 +133,6 @@ func New(cfg config.GlobalConfig, collCfg config.CollectionConfig, appCfg config
 			c.customColl = cc
 		}
 	}
-
-	return c
 }
 
 // debugf logs a formatted message only when web.logging.level = "debug" is set
