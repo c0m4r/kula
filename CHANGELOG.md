@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
+## [Unreleased]
+
+### Added
+
+- The page URL now reflects the selected time range — copy and share it to let others land on the exact same timespan
+
 ## [0.17.3] - 2026-06-01
 
 ### Added
