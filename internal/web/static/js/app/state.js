@@ -64,7 +64,7 @@ export const state = {
     splitDiskTemp: JSON.parse(localStorage.getItem('kula_split_disktemp') || 'false'),
     splitGpu: JSON.parse(localStorage.getItem('kula_split_gpu') || 'false'),
     splitCharts: {}, // { type: { chartKey: chartInstance } }
-    containerCharts: {}, // { container_<id>: chartInstance }
+    containerCharts: {}, // { container_<name|id>_cpu|mem|io: chartInstance }
     customCharts: {}, // { group_name: chartInstance }
     customMetricsConfig: {}, // { group_name: [{name, unit, max}, ...] } from /api/config
 };

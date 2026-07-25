@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
+## [Unreleased]
+
+### Fixed
+
+- dashboard: keep container chart history across recreate by keying series on
+  container name (fall back to id when name is unavailable), instead of Docker
+  container id which changes on every recreate
+
 ## [0.18.6] - 2026-07-11
 
 ### Added
