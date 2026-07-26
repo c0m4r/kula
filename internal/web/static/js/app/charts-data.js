@@ -21,6 +21,14 @@ const APP_ORDER_POSTGRES = 30;
 const APP_ORDER_MYSQL = 38;
 const APP_ORDER_CUSTOM = 50;
 
+// Stable chart key for a container sample. Prefer the human-readable name so
+// history survives recreate (Docker assigns a new ID each time). Fall back to
+// id when name is empty (cgroups-only discovery has no names).
+function containerSeriesKey(ct) {
+    const raw = (ct.name && String(ct.name).trim()) || ct.id || 'unknown';
+    return 'container_' + String(raw).replace(/[^a-zA-Z0-9_-]+/g, '_');
+}
+
 // createAppChartCard creates a chart-card DOM structure in the applications
 // grid and returns the canvas ID for use with createTimeSeriesChart.
 function createAppChartCard(cardId, chartId, subtitleId, title, order) {
@@ -712,7 +720,7 @@ export function addSampleToCharts(item, ts) {
     if (s.apps?.containers?.length > 0) {
         appsVisible = true;
         for (const ct of s.apps.containers) {
-            const base = `container_${ct.id}`;
+            const base = containerSeriesKey(ct);
             const cpuKey = `${base}_cpu`;
             const memKey = `${base}_mem`;
             const ioKey  = `${base}_io`;
