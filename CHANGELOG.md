@@ -9,6 +9,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ## [Unreleased]
 
+### Added
+
+- container monitoring: support Podman Quadlet cgroups (#38)
+
 ### Fixed
 
 - keep container chart history across recreate (#39)
