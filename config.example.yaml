@@ -240,8 +240,10 @@ applications:
 
   # Container monitoring (Docker / Podman)
   # Discovery modes (logged at startup):
-  #   - "socket": uses the container runtime API for discovery + cgroups v2 for metrics
-  #   - "cgroups": fallback when no socket is available (no container name mapping)
+  #   - "socket": uses the runtime API for discovery and resolves cgroups v2 via PID
+  #     (supports Podman Quadlets, including rootless services)
+  #   - "cgroups": scans Docker, Podman, and Quadlet cgroups when no socket is
+  #     available (no container name mapping)
   # The socket_path is auto-detected by default; set it explicitly if using a
   # non-standard location or rootless Podman.
   containers:

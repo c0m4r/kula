@@ -25,6 +25,10 @@ const (
 	containerModeNone   = "none"    // no containers found / not available
 )
 
+// cgroupRoot is a variable so cgroup discovery and PID resolution can be
+// exercised against temporary trees in tests.
+var cgroupRoot = "/sys/fs/cgroup"
+
 // containerCollector runs async container discovery and metric collection.
 type containerCollector struct {
 	mu        sync.RWMutex
@@ -124,7 +128,7 @@ func (cc *containerCollector) resolveSocket() {
 	}
 
 	// Fallback to cgroups-based discovery (no name mapping)
-	if _, err := os.Stat("/sys/fs/cgroup"); err == nil {
+	if _, err := os.Stat(cgroupRoot); err == nil {
 		cc.mode = containerModeCgroup
 		log.Printf("[containers] no runtime socket found, using cgroups-based discovery (container names unavailable)")
 		return
@@ -292,16 +296,31 @@ func (cc *containerCollector) collectViaSocket(elapsed float64) []ContainerStats
 	return stats
 }
 
+// quadletCgroupPatterns returns the common rootful, custom-slice, and rootless
+// systemd layouts used by Podman containers running with cgroups=split.
+func quadletCgroupPatterns(idPattern string) []string {
+	payload := "libpod-payload-" + idPattern
+	return []string{
+		// Rootful/default: system.slice/<unit>.service/libpod-payload-<id>
+		filepath.Join(cgroupRoot, "*.slice", "*.service", payload),
+		// Rootful service placed in a nested custom slice.
+		filepath.Join(cgroupRoot, "*.slice", "*.slice", "*.service", payload),
+		// Rootless/default: user.slice/user-<uid>.slice/user@<uid>.service/
+		// app.slice/<unit>.service/libpod-payload-<id>. The *.slice component
+		// also permits a custom user slice.
+		filepath.Join(cgroupRoot, "user.slice", "user-*.slice", "user@*.service", "*.slice", "*.service", payload),
+	}
+}
+
 // collectViaCgroups enumerates container cgroup directories without API socket.
 // Container names are not available in this mode — IDs are used instead.
 func (cc *containerCollector) collectViaCgroups(elapsed float64) []ContainerStats {
-	cgroupRoot := "/sys/fs/cgroup"
-	// Look for docker scope directories under system.slice
 	patterns := []string{
 		filepath.Join(cgroupRoot, "system.slice", "docker-*.scope"),
 		filepath.Join(cgroupRoot, "system.slice", "libpod-*.scope"),
 		filepath.Join(cgroupRoot, "machine.slice", "libpod-*.scope"),
 	}
+	patterns = append(patterns, quadletCgroupPatterns("*")...)
 
 	var stats []ContainerStats
 	seen := make(map[string]bool)
@@ -313,9 +332,10 @@ func (cc *containerCollector) collectViaCgroups(elapsed float64) []ContainerStat
 		}
 		for _, dir := range matches {
 			base := filepath.Base(dir)
-			// Extract container ID from "docker-<id>.scope" or "libpod-<id>.scope"
+			// Extract the container ID from Docker/Podman scope names and
+			// Podman's split-payload cgroup name.
 			id := base
-			for _, prefix := range []string{"docker-", "libpod-"} {
+			for _, prefix := range []string{"docker-", "libpod-payload-", "libpod-"} {
 				if strings.HasPrefix(id, prefix) {
 					id = strings.TrimPrefix(id, prefix)
 					id = strings.TrimSuffix(id, ".scope")
@@ -354,17 +374,102 @@ func (cc *containerCollector) matchFilter(id, name string) bool {
 	return false
 }
 
+// containerPid queries the runtime's Docker-compatible inspect endpoint for a
+// container's host PID. It returns 0 when inspect is unavailable.
+func (cc *containerCollector) containerPid(id string) int {
+	if cc.client == nil {
+		return 0
+	}
+
+	resp, err := cc.client.Get(fmt.Sprintf("http://localhost/containers/%s/json", id))
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0
+	}
+
+	var info struct {
+		State struct {
+			Pid int `json:"Pid"`
+		} `json:"State"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&info); err != nil {
+		return 0
+	}
+	return info.State.Pid
+}
+
+// containerCgroupPath trims a process cgroup path back to the container root.
+// A payload running systemd may move PID 1 into a child such as init.scope;
+// reading metrics there would omit processes in sibling cgroups.
+func containerCgroupPath(path, id string) string {
+	if id == "" || !strings.HasPrefix(path, "/") {
+		return ""
+	}
+
+	clean := filepath.Clean(path)
+	parts := strings.Split(strings.TrimPrefix(clean, string(filepath.Separator)), string(filepath.Separator))
+	for i, part := range parts {
+		if part == id ||
+			part == "docker-"+id+".scope" ||
+			part == "libpod-"+id+".scope" ||
+			part == "libpod-"+id ||
+			part == "libpod-payload-"+id {
+			return string(filepath.Separator) + filepath.Join(parts[:i+1]...)
+		}
+	}
+	return ""
+}
+
+// cgroupDirFromPid resolves a process's cgroup v2 membership and normalizes it
+// to the matching container root. This supports arbitrary Docker/Podman cgroup
+// parents and Podman Quadlets, including rootless and custom-slice layouts.
+func cgroupDirFromPid(pid int, id string) string {
+	if pid <= 0 {
+		return ""
+	}
+
+	data, err := os.ReadFile(filepath.Join(procPath, strconv.Itoa(pid), "cgroup"))
+	if err != nil {
+		return ""
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.SplitN(line, ":", 3)
+		if len(fields) != 3 || fields[0] != "0" || fields[1] != "" {
+			continue
+		}
+
+		path := containerCgroupPath(fields[2], id)
+		if path == "" {
+			continue
+		}
+		dir := filepath.Join(cgroupRoot, strings.TrimPrefix(path, string(filepath.Separator)))
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return ""
+}
+
 // collectContainerMetrics gathers metrics for a container discovered via socket.
-// It reads cgroups v2 files using the container ID to locate the cgroup directory.
+// It resolves the cgroup via the container PID, then falls back to conventional
+// cgroup paths so an inspect failure does not disable CPU/memory/disk metrics.
 func (cc *containerCollector) collectContainerMetrics(id, name string, elapsed float64) ContainerStats {
 	s := ContainerStats{
 		ID:   id[:minInt(12, len(id))],
 		Name: name,
 	}
 
-	// Find cgroup directory for this container
-	cgroupDir := cc.findCgroupDir(id)
-	cc.debugf("[containers] id=%s name=%s cgroupDir=%q", id, name, cgroupDir)
+	pid := cc.containerPid(id)
+	cgroupDir := cgroupDirFromPid(pid, id)
+	if cgroupDir == "" {
+		cgroupDir = cc.findCgroupDir(id)
+	}
+	cc.debugf("[containers] id=%s name=%s pid=%d cgroupDir=%q", id, name, pid, cgroupDir)
 	if cgroupDir == "" {
 		return s
 	}
@@ -378,8 +483,11 @@ func (cc *containerCollector) collectContainerMetrics(id, name string, elapsed f
 		s.MemPct = round2(float64(s.MemUsed) / float64(s.MemLimit) * 100)
 	}
 
-	// Network I/O (via /proc/<pid>/net/dev — needs container PID)
-	s.NetRxBPS, s.NetTxBPS = cc.readNetIO(id, elapsed)
+	// Network I/O requires the runtime PID; the other metrics remain available
+	// through direct cgroup fallback when inspect is unavailable.
+	if pid > 0 {
+		s.NetRxBPS, s.NetTxBPS = cc.readNetIO(pid, id, elapsed)
+	}
 
 	// Disk I/O from io.stat
 	s.DiskRBPS, s.DiskWBPS = cc.readDiskIO(cgroupDir, id, elapsed)
@@ -407,13 +515,27 @@ func (cc *containerCollector) collectContainerMetricsCgroup(cgroupDir, id, short
 // findCgroupDir locates the cgroup v2 directory for a container ID.
 func (cc *containerCollector) findCgroupDir(id string) string {
 	candidates := []string{
-		filepath.Join("/sys/fs/cgroup/system.slice", "docker-"+id+".scope"),
-		filepath.Join("/sys/fs/cgroup/system.slice", "libpod-"+id+".scope"),
-		filepath.Join("/sys/fs/cgroup/machine.slice", "libpod-"+id+".scope"),
+		filepath.Join(cgroupRoot, "system.slice", "docker-"+id+".scope"),
+		filepath.Join(cgroupRoot, "system.slice", "libpod-"+id+".scope"),
+		filepath.Join(cgroupRoot, "machine.slice", "libpod-"+id+".scope"),
+		filepath.Join(cgroupRoot, "docker", id),
+		filepath.Join(cgroupRoot, "libpod-"+id),
 	}
 	for _, path := range candidates {
-		if _, err := os.Stat(path); err == nil {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			return path
+		}
+	}
+
+	for _, pattern := range quadletCgroupPatterns(id) {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, path := range matches {
+			if info, err := os.Stat(path); err == nil && info.IsDir() {
+				return path
+			}
 		}
 	}
 	return ""
@@ -444,32 +566,9 @@ func (cc *containerCollector) readCPUUsage(cgroupDir, id string, elapsed float64
 	return cpuPct
 }
 
-// readNetIO reads network I/O for a container by looking up its PID.
-func (cc *containerCollector) readNetIO(id string, elapsed float64) (rxBPS, txBPS float64) {
-	if cc.client == nil {
-		return
-	}
-
-	// Get container PID from inspect API
-	resp, err := cc.client.Get(fmt.Sprintf("http://localhost/containers/%s/json", id))
-	if err != nil {
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var info struct {
-		State struct {
-			Pid int `json:"Pid"`
-		} `json:"State"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil || info.State.Pid == 0 {
-		return
-	}
-
-	cc.debugf("[containers] id=%s pid=%d", id, info.State.Pid)
-
-	// Read /proc/<pid>/net/dev
-	netDevPath := filepath.Join("/proc", strconv.Itoa(info.State.Pid), "net/dev")
+// readNetIO reads network I/O for a container from /proc/<pid>/net/dev.
+func (cc *containerCollector) readNetIO(pid int, id string, elapsed float64) (rxBPS, txBPS float64) {
+	netDevPath := filepath.Join(procPath, strconv.Itoa(pid), "net/dev")
 	f, err := os.Open(netDevPath)
 	if err != nil {
 		return
