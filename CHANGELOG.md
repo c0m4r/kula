@@ -11,9 +11,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Fixed
 
-- dashboard: keep container chart history across recreate by keying series on
-  container name (fall back to id when name is unavailable), instead of Docker
-  container id which changes on every recreate
+- keep container chart history across recreate (#39)
 
 ## [0.18.6] - 2026-07-11
 

@@ -26,7 +26,9 @@ const APP_ORDER_CUSTOM = 50;
 // id when name is empty (cgroups-only discovery has no names).
 function containerSeriesKey(ct) {
     const raw = (ct.name && String(ct.name).trim()) || ct.id || 'unknown';
-    return 'container_' + String(raw).replace(/[^a-zA-Z0-9_-]+/g, '_');
+    // Keep the encoding reversible: replacing punctuation would make valid,
+    // distinct names such as "api.v1" and "api_v1" share the same charts.
+    return 'container_' + encodeURIComponent(String(raw));
 }
 
 // createAppChartCard creates a chart-card DOM structure in the applications
