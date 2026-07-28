@@ -11,6 +11,7 @@ import { updateGauges } from './gauges.js';
 import { evaluateAlerts } from './alerts.js';
 import { applyStoredFocusMode } from './focus-mode.js';
 import { addSampleToSplitCharts, updateSplitSelectors } from './split.js';
+import { addExpandButton, attachHoverPauseToCard } from './ui-actions.js';
 import { apiUrl } from './api.js';
 
 // CSS order values for dynamic app chart grouping within the grid.
@@ -61,6 +62,13 @@ function createAppChartCard(cardId, chartId, subtitleId, title, order) {
 
     wrapper.appendChild(header);
     wrapper.appendChild(body);
+
+    // Same header expand (🔍) + hover-pause as static system metric cards.
+    // setupChartActions only runs at page load, so dynamic app cards need this here.
+    addExpandButton(wrapper);
+    attachHoverPauseToCard(wrapper);
+    // resetZoomAll is defined later in this module (function declarations are hoisted).
+    canvas.addEventListener('dblclick', resetZoomAll);
 
     // If focus mode is active, place card in the combined grid and apply visibility
     if (state.focusMode && !state.focusSelecting && state.focusVisible) {

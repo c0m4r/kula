@@ -8,48 +8,78 @@ import { initCharts } from './charts-init.js';
 import { fetchHistory, fetchCustomHistory } from './charts-data.js';
 import { syncPauseState } from './controls.js';
 
+// Resolve a Chart.js instance from any chart store (system, apps, split, …).
+function findChartByCanvas(canvas) {
+    if (!canvas) return null;
+    for (const c of Object.values(state.charts || {})) {
+        if (c && c.canvas === canvas) return c;
+    }
+    for (const c of Object.values(state.containerCharts || {})) {
+        if (c && c.canvas === canvas) return c;
+    }
+    for (const entry of Object.values(state.customCharts || {})) {
+        const c = entry?.chart || entry;
+        if (c && c.canvas === canvas) return c;
+    }
+    for (const c of Object.values(state.psuCharts || {})) {
+        if (c && c.canvas === canvas) return c;
+    }
+    for (const typeCharts of Object.values(state.splitCharts || {})) {
+        for (const c of Object.values(typeCharts || {})) {
+            if (c && c.canvas === canvas) return c;
+        }
+    }
+    return null;
+}
+
 // ---- Hover Pause ----
-export function setupHoverPause() {
-    document.querySelectorAll('.chart-card').forEach(card => {
-        card.addEventListener('mouseenter', () => {
-            if (!state.pausedHover) {
-                state.pausedHover = true;
-                syncPauseState();
-            }
-        });
-        card.addEventListener('mouseleave', () => {
-            if (state.pausedHover) {
-                state.pausedHover = false;
-                syncPauseState();
-            }
-        });
+// Wire hover/touch pause on a single chart card (idempotent).
+export function attachHoverPauseToCard(card) {
+    if (!card || card.dataset.hoverPause === '1') return;
+    card.dataset.hoverPause = '1';
 
-        // Touch events for mobile
-        card.addEventListener('touchstart', () => {
-            if (!state.pausedHover) {
-                state.pausedHover = true;
-                syncPauseState();
-            }
-        }, { passive: true });
-
-        const resumeFromTouch = () => {
-            if (state.pausedHover) {
-                state.pausedHover = false;
-                syncPauseState();
-            }
-            const canvas = card.querySelector('canvas');
-            if (canvas) {
-                const chart = Object.values(state.charts).find(c => c && c.canvas === canvas);
-                if (chart && chart.tooltip) {
-                    chart.tooltip.setActiveElements([], { x: 0, y: 0 });
-                    chart.update();
-                }
-            }
-        };
-
-        card.addEventListener('touchend', resumeFromTouch, { passive: true });
-        card.addEventListener('touchcancel', resumeFromTouch, { passive: true });
+    card.addEventListener('mouseenter', () => {
+        if (!state.pausedHover) {
+            state.pausedHover = true;
+            syncPauseState();
+        }
     });
+    card.addEventListener('mouseleave', () => {
+        if (state.pausedHover) {
+            state.pausedHover = false;
+            syncPauseState();
+        }
+    });
+
+    // Touch events for mobile
+    card.addEventListener('touchstart', () => {
+        if (!state.pausedHover) {
+            state.pausedHover = true;
+            syncPauseState();
+        }
+    }, { passive: true });
+
+    const resumeFromTouch = () => {
+        if (state.pausedHover) {
+            state.pausedHover = false;
+            syncPauseState();
+        }
+        const canvas = card.querySelector('canvas');
+        if (canvas) {
+            const chart = findChartByCanvas(canvas);
+            if (chart && chart.tooltip) {
+                chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+                chart.update();
+            }
+        }
+    };
+
+    card.addEventListener('touchend', resumeFromTouch, { passive: true });
+    card.addEventListener('touchcancel', resumeFromTouch, { passive: true });
+}
+
+export function setupHoverPause() {
+    document.querySelectorAll('.chart-card').forEach(attachHoverPauseToCard);
 }
 
 // ---- Chart Expand / Collapse ----
@@ -63,13 +93,24 @@ export function toggleExpandChart(cardId) {
     const visibleCards = Array.from(grid.querySelectorAll('.chart-card:not(.hidden)'));
     const isExpanding = !card.classList.contains('chart-expanded');
 
+    // Snapshot original CSS order so collapse restores app-card grouping etc.
+    visibleCards.forEach(c => {
+        if (c.dataset.expandOrigOrder === undefined) {
+            c.dataset.expandOrigOrder = c.style.order;
+        }
+    });
+
     if (isExpanding) {
         // Baseline orders to DOM index if no cards are currently expanded
+        // and none already carry a preset order (e.g. Applications grid).
         const hasAnyExpanded = visibleCards.some(c => c.classList.contains('chart-expanded'));
         if (!hasAnyExpanded) {
-            visibleCards.forEach((c, idx) => {
-                c.style.order = (idx + 1) * 10;
-            });
+            const hasPresetOrder = visibleCards.some(c => c.dataset.expandOrigOrder !== '');
+            if (!hasPresetOrder) {
+                visibleCards.forEach((c, idx) => {
+                    c.style.order = String((idx + 1) * 10);
+                });
+            }
         }
 
         // Find all cards physically aligned on the same row vertically
@@ -86,36 +127,70 @@ export function toggleExpandChart(cardId) {
             const firstOrder = Number.isNaN(parsed) ? ((visibleCards.indexOf(firstInRow) + 1) * 10) : parsed;
 
             // Jump the expanding card to the front of this logical row, pushing others down
-            card.style.order = firstOrder - 5;
+            card.style.order = String(firstOrder - 5);
         }
     }
 
     const isExpanded = card.classList.toggle('chart-expanded');
 
     if (!isExpanded) {
-        // Restore natural DOM sequence order manually
-        const domIndex = visibleCards.indexOf(card);
-        card.style.order = (domIndex + 1) * 10;
+        // Restore this card's pre-expand order
+        card.style.order = card.dataset.expandOrigOrder || '';
 
-        // Optional cleanup - if no expanders remain, clear inline orders entirely
+        // If no expanders remain, restore every card and drop the snapshot
         const hasAnyExpanded = visibleCards.some(c => c.classList.contains('chart-expanded'));
         if (!hasAnyExpanded) {
-            visibleCards.forEach(c => c.style.order = '');
+            visibleCards.forEach(c => {
+                c.style.order = c.dataset.expandOrigOrder || '';
+                delete c.dataset.expandOrigOrder;
+            });
         }
     }
 
     const btn = card.querySelector('.btn-expand-chart');
     if (btn) btn.title = isExpanded ? 'Collapse chart' : 'Expand chart';
-    if (btn) btn.textContent = isExpanded ? '🔍' : '🔍';
 
     // Resize the Chart.js instance so it fills the new dimensions
     const canvas = card.querySelector('canvas');
     if (canvas) {
-        const chartInst = Object.values(state.charts).find(c => c && c.canvas === canvas);
+        const chartInst = findChartByCanvas(canvas);
         if (chartInst) {
             setTimeout(() => chartInst.resize(), 50);
         }
     }
+}
+
+// Add the 🔍 expand button to a chart card header (idempotent).
+// Used for static system cards (via setupChartActions) and dynamically
+// created Applications cards (via createAppChartCard).
+export function addExpandButton(card) {
+    if (!card?.id) return;
+    if (card.querySelector('.btn-expand-chart')) return;
+
+    const header = card.querySelector('.chart-header');
+    if (!header) return;
+
+    let actions = header.querySelector('.chart-header-right');
+    if (!actions) {
+        actions = document.createElement('div');
+        actions.className = 'chart-header-right';
+        header.appendChild(actions);
+    }
+    actions.style.marginLeft = actions.style.marginLeft || 'auto';
+    actions.style.display = actions.style.display || 'flex';
+    actions.style.alignItems = actions.style.alignItems || 'center';
+    if (!actions.style.gap) actions.style.gap = '0.35rem';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-icon btn-expand-chart';
+    btn.title = 'Expand chart';
+    btn.textContent = '🔍';
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleExpandChart(card.id);
+    });
+    actions.appendChild(btn);
 }
 
 // ---- Chart Header Actions (expand button + settings dropdown) ----
@@ -294,15 +369,6 @@ export function setupChartActions() {
             _docClickListeners.push(dismissDropdown);
         }
 
-        const btn = document.createElement('button');
-        btn.className = 'btn-icon btn-expand-chart';
-        btn.title = 'Expand chart';
-        btn.textContent = '🔍';
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            toggleExpandChart(card.id);
-        });
-
-        actions.appendChild(btn);
+        addExpandButton(card);
     });
 }
