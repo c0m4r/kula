@@ -11,7 +11,11 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Changed
 
-- keep time range controls sticky under the header while scrolling the dashboard
+- sticky time range controls (#41)
+
+### Fixed
+
+- add missing expand button to dynamically created charts (#40)
 
 ## [0.18.7] - 2026-07-26
 
