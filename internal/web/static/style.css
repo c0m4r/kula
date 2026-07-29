@@ -200,6 +200,17 @@ body {
     }
 }
 
+/* ---- Sticky topbar (header + time controls) ----
+   Keeps the time range / aggregation controls reachable while scrolling
+   long dashboards (many application/container charts). */
+.sticky-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    /* Opaque enough that chart content does not show through while stuck */
+    background: var(--bg-primary);
+}
+
 /* ---- Header ---- */
 .header {
     display: flex;
@@ -209,9 +220,9 @@ body {
     background: var(--bg-card);
     border-bottom: 1px solid var(--border-color);
     backdrop-filter: blur(10px);
-    position: sticky;
-    top: 0;
-    z-index: 100;
+    /* Sticky is owned by .sticky-topbar so header + time bar move as one unit */
+    position: relative;
+    z-index: 1;
 }
 
 .header-left,
@@ -597,6 +608,8 @@ body {
     border-bottom: 1px solid var(--border-color);
     flex-wrap: wrap;
     gap: 0.5rem;
+    background: var(--bg-card);
+    backdrop-filter: blur(10px);
 }
 
 .time-presets {
@@ -665,6 +678,8 @@ body {
     padding: 0.5rem 1.5rem;
     border-bottom: 1px solid var(--border-color);
     flex-wrap: wrap;
+    background: var(--bg-card);
+    backdrop-filter: blur(10px);
 }
 
 .time-input {
@@ -1151,7 +1166,8 @@ body.light-mode .focus-selecting .chart-card::after {
         border-radius: var(--radius);
         padding: 0.5rem;
         flex-direction: column;
-        z-index: 100;
+        /* Above sticky topbar siblings / chart content */
+        z-index: 110;
         box-shadow: var(--shadow-lg);
         margin-top: 0.5rem;
         min-width: 120px;

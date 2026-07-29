@@ -63,6 +63,8 @@
 
     <!-- Main dashboard -->
     <div id="dashboard" class="dashboard">
+        <!-- Sticky top: main header + time/aggregation controls stay visible while scrolling -->
+        <div class="sticky-topbar">
         <!-- Header -->
         <header class="header">
             <div class="header-left">
@@ -182,41 +184,7 @@
             </div>
         </header>
 
-        <!-- Gauges row -->
-        <section class="gauges-row" id="gauges-row">
-            <div class="gauge-card" id="gauge-cpu">
-                <div id="gauge-cpu-canvas"></div>
-                <div class="gauge-label" data-i18n="cpu">CPU</div>
-                <div class="gauge-value" id="gauge-cpu-value">0%</div>
-            </div>
-            <div class="gauge-card" id="gauge-ram">
-                <div id="gauge-ram-canvas"></div>
-                <div class="gauge-label" data-i18n="ram">RAM</div>
-                <div class="gauge-value" id="gauge-ram-value">0%</div>
-            </div>
-            <div class="gauge-card" id="gauge-swap">
-                <div id="gauge-swap-canvas"></div>
-                <div class="gauge-label" data-i18n="swap">SWAP</div>
-                <div class="gauge-value" id="gauge-swap-value">0%</div>
-            </div>
-            <div class="gauge-card" id="gauge-lavg">
-                <div id="gauge-lavg-canvas"></div>
-                <div class="gauge-label" data-i18n="load_avg">Load Avg (1m)</div>
-                <div class="gauge-value" id="gauge-lavg-value">0.00</div>
-            </div>
-            <div class="gauge-card" id="gauge-dl">
-                <div id="gauge-dl-canvas"></div>
-                <div class="gauge-label" data-i18n="download">↓ Download</div>
-                <div class="gauge-value" id="gauge-dl-value">0 Mbps</div>
-            </div>
-            <div class="gauge-card" id="gauge-ul">
-                <div id="gauge-ul-canvas"></div>
-                <div class="gauge-label" data-i18n="upload">↑ Upload</div>
-                <div class="gauge-value" id="gauge-ul-value">0 Mbps</div>
-            </div>
-        </section>
-
-        <!-- Time controls -->
+        <!-- Time controls (sticky with header so they stay reachable while scrolling charts) -->
         <section class="time-controls">
             <div class="time-presets">
                 <button id="btn-time-menu" class="btn-icon btn-time-menu" data-i18n-title="time_presets"
@@ -261,6 +229,41 @@
             <input type="datetime-local" id="custom-to" class="time-input">
             <button class="time-btn time-apply" id="btn-apply-custom" data-i18n="apply">Apply</button>
         </div>
+        </div><!-- /.sticky-topbar -->
+
+        <!-- Gauges row -->
+        <section class="gauges-row" id="gauges-row">
+            <div class="gauge-card" id="gauge-cpu">
+                <div id="gauge-cpu-canvas"></div>
+                <div class="gauge-label" data-i18n="cpu">CPU</div>
+                <div class="gauge-value" id="gauge-cpu-value">0%</div>
+            </div>
+            <div class="gauge-card" id="gauge-ram">
+                <div id="gauge-ram-canvas"></div>
+                <div class="gauge-label" data-i18n="ram">RAM</div>
+                <div class="gauge-value" id="gauge-ram-value">0%</div>
+            </div>
+            <div class="gauge-card" id="gauge-swap">
+                <div id="gauge-swap-canvas"></div>
+                <div class="gauge-label" data-i18n="swap">SWAP</div>
+                <div class="gauge-value" id="gauge-swap-value">0%</div>
+            </div>
+            <div class="gauge-card" id="gauge-lavg">
+                <div id="gauge-lavg-canvas"></div>
+                <div class="gauge-label" data-i18n="load_avg">Load Avg (1m)</div>
+                <div class="gauge-value" id="gauge-lavg-value">0.00</div>
+            </div>
+            <div class="gauge-card" id="gauge-dl">
+                <div id="gauge-dl-canvas"></div>
+                <div class="gauge-label" data-i18n="download">↓ Download</div>
+                <div class="gauge-value" id="gauge-dl-value">0 Mbps</div>
+            </div>
+            <div class="gauge-card" id="gauge-ul">
+                <div id="gauge-ul-canvas"></div>
+                <div class="gauge-label" data-i18n="upload">↑ Upload</div>
+                <div class="gauge-value" id="gauge-ul-value">0 Mbps</div>
+            </div>
+        </section>
 
         <!-- Charts grid -->
         <h2 class="section-title" data-i18n="system_metrics">System Metrics</h2>
