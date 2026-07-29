@@ -11,7 +11,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Fixed
 
-- add expand (🔍) button to dynamically created Applications and power-supply charts
+- add missing expand button to dynamically created charts (#40)
 
 ## [0.18.7] - 2026-07-26
 
