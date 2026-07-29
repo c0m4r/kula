@@ -9,6 +9,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ## [Unreleased]
 
+### Changed
+
+- sticky time range controls (#41)
+
 ### Fixed
 
 - add missing expand button to dynamically created charts (#40)
