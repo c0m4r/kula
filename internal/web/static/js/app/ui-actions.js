@@ -1,121 +1,15 @@
 /* ============================================================
-   ui-actions.js — Hover-pause on chart cards, chart
-   expand/collapse, and per-chart settings (Y-axis bounds).
+   ui-actions.js — Set up static chart-card interactions and
+   per-chart settings (Y-axis bounds).
    ============================================================ */
 'use strict';
 import { state } from './state.js';
 import { initCharts } from './charts-init.js';
 import { fetchHistory, fetchCustomHistory } from './charts-data.js';
-import { syncPauseState } from './controls.js';
+import { addExpandButton, attachHoverPauseToCard } from './chart-card-actions.js';
 
-// ---- Hover Pause ----
 export function setupHoverPause() {
-    document.querySelectorAll('.chart-card').forEach(card => {
-        card.addEventListener('mouseenter', () => {
-            if (!state.pausedHover) {
-                state.pausedHover = true;
-                syncPauseState();
-            }
-        });
-        card.addEventListener('mouseleave', () => {
-            if (state.pausedHover) {
-                state.pausedHover = false;
-                syncPauseState();
-            }
-        });
-
-        // Touch events for mobile
-        card.addEventListener('touchstart', () => {
-            if (!state.pausedHover) {
-                state.pausedHover = true;
-                syncPauseState();
-            }
-        }, { passive: true });
-
-        const resumeFromTouch = () => {
-            if (state.pausedHover) {
-                state.pausedHover = false;
-                syncPauseState();
-            }
-            const canvas = card.querySelector('canvas');
-            if (canvas) {
-                const chart = Object.values(state.charts).find(c => c && c.canvas === canvas);
-                if (chart && chart.tooltip) {
-                    chart.tooltip.setActiveElements([], { x: 0, y: 0 });
-                    chart.update();
-                }
-            }
-        };
-
-        card.addEventListener('touchend', resumeFromTouch, { passive: true });
-        card.addEventListener('touchcancel', resumeFromTouch, { passive: true });
-    });
-}
-
-// ---- Chart Expand / Collapse ----
-export function toggleExpandChart(cardId) {
-    const card = document.getElementById(cardId);
-    if (!card) return;
-
-    const grid = card.closest('.charts-grid');
-    if (!grid) return;
-    // Capture all currently visible cards from this grid
-    const visibleCards = Array.from(grid.querySelectorAll('.chart-card:not(.hidden)'));
-    const isExpanding = !card.classList.contains('chart-expanded');
-
-    if (isExpanding) {
-        // Baseline orders to DOM index if no cards are currently expanded
-        const hasAnyExpanded = visibleCards.some(c => c.classList.contains('chart-expanded'));
-        if (!hasAnyExpanded) {
-            visibleCards.forEach((c, idx) => {
-                c.style.order = (idx + 1) * 10;
-            });
-        }
-
-        // Find all cards physically aligned on the same row vertically
-        const myTop = card.offsetTop;
-        const sameRowCards = visibleCards.filter(c => Math.abs(c.offsetTop - myTop) < 10);
-
-        if (sameRowCards.length > 0) {
-            // Sort by physical horizontal offset to reliably find the first one on this row
-            sameRowCards.sort((a, b) => a.offsetLeft - b.offsetLeft);
-            const firstInRow = sameRowCards[0];
-
-            // Extract its current order or construct it
-            const parsed = parseInt(firstInRow.style.order, 10);
-            const firstOrder = Number.isNaN(parsed) ? ((visibleCards.indexOf(firstInRow) + 1) * 10) : parsed;
-
-            // Jump the expanding card to the front of this logical row, pushing others down
-            card.style.order = firstOrder - 5;
-        }
-    }
-
-    const isExpanded = card.classList.toggle('chart-expanded');
-
-    if (!isExpanded) {
-        // Restore natural DOM sequence order manually
-        const domIndex = visibleCards.indexOf(card);
-        card.style.order = (domIndex + 1) * 10;
-
-        // Optional cleanup - if no expanders remain, clear inline orders entirely
-        const hasAnyExpanded = visibleCards.some(c => c.classList.contains('chart-expanded'));
-        if (!hasAnyExpanded) {
-            visibleCards.forEach(c => c.style.order = '');
-        }
-    }
-
-    const btn = card.querySelector('.btn-expand-chart');
-    if (btn) btn.title = isExpanded ? 'Collapse chart' : 'Expand chart';
-    if (btn) btn.textContent = isExpanded ? '🔍' : '🔍';
-
-    // Resize the Chart.js instance so it fills the new dimensions
-    const canvas = card.querySelector('canvas');
-    if (canvas) {
-        const chartInst = Object.values(state.charts).find(c => c && c.canvas === canvas);
-        if (chartInst) {
-            setTimeout(() => chartInst.resize(), 50);
-        }
-    }
+    document.querySelectorAll('.chart-card').forEach(attachHoverPauseToCard);
 }
 
 // ---- Chart Header Actions (expand button + settings dropdown) ----
@@ -294,15 +188,6 @@ export function setupChartActions() {
             _docClickListeners.push(dismissDropdown);
         }
 
-        const btn = document.createElement('button');
-        btn.className = 'btn-icon btn-expand-chart';
-        btn.title = 'Expand chart';
-        btn.textContent = '🔍';
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            toggleExpandChart(card.id);
-        });
-
-        actions.appendChild(btn);
+        addExpandButton(card);
     });
 }

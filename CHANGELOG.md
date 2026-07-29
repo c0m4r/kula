@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
+## [Unreleased]
+
+### Fixed
+
+- add missing expand button to dynamically created charts (#40)
+
 ## [0.18.7] - 2026-07-26
 
 ### Added
