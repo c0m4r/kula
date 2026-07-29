@@ -16,6 +16,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Fixed
 
 - add missing expand button to dynamically created charts (#40)
+- keep mobile time preset menus usable on short viewports
 
 ## [0.18.7] - 2026-07-26
 

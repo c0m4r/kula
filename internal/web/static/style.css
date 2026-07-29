@@ -1168,6 +1168,11 @@ body.light-mode .focus-selecting .chart-card::after {
         flex-direction: column;
         /* Above sticky topbar siblings / chart content */
         z-index: 110;
+        /* Keep every preset reachable when the sticky topbar consumes much of
+           a short mobile/landscape viewport. */
+        max-height: 50vh;
+        max-height: 50dvh;
+        overflow-y: auto;
         box-shadow: var(--shadow-lg);
         margin-top: 0.5rem;
         min-width: 120px;
