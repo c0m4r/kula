@@ -11,7 +11,7 @@ import { updateGauges } from './gauges.js';
 import { evaluateAlerts } from './alerts.js';
 import { applyStoredFocusMode } from './focus-mode.js';
 import { addSampleToSplitCharts, updateSplitSelectors } from './split.js';
-import { addExpandButton, attachHoverPauseToCard } from './ui-actions.js';
+import { attachDynamicChartCardActions } from './chart-card-actions.js';
 import { apiUrl } from './api.js';
 
 // CSS order values for dynamic app chart grouping within the grid.
@@ -63,12 +63,10 @@ function createAppChartCard(cardId, chartId, subtitleId, title, order) {
     wrapper.appendChild(header);
     wrapper.appendChild(body);
 
-    // Same header expand (🔍) + hover-pause as static system metric cards.
-    // setupChartActions only runs at page load, so dynamic app cards need this here.
-    addExpandButton(wrapper);
-    attachHoverPauseToCard(wrapper);
+    // setupChartActions only runs at page load, so dynamic app cards need
+    // their expand, hover-pause, and zoom-reset interactions wired here.
     // resetZoomAll is defined later in this module (function declarations are hoisted).
-    canvas.addEventListener('dblclick', resetZoomAll);
+    attachDynamicChartCardActions(wrapper, resetZoomAll);
 
     // If focus mode is active, place card in the combined grid and apply visibility
     if (state.focusMode && !state.focusSelecting && state.focusVisible) {
@@ -434,6 +432,7 @@ export function addSampleToCharts(item, ts) {
                     wrapper.appendChild(header);
                     wrapper.appendChild(body);
                     grid.appendChild(wrapper);
+                    attachDynamicChartCardActions(wrapper, resetZoomAll);
 
                     state.psuCharts[psuKey] = createTimeSeriesChart(`chart-${psuKey}`, [
                         { label: 'Capacity %', borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
