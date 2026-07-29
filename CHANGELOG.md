@@ -12,6 +12,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Changed
 
 - sticky time range controls (#41)
+- update github.com/mattn/go-isatty v0.0.22 => v0.0.24
+- update github.com/mattn/go-runewidth v0.0.24 => v0.0.27
 
 ### Fixed
 
