@@ -12,25 +12,15 @@ import { evaluateAlerts } from './alerts.js';
 import { applyStoredFocusMode } from './focus-mode.js';
 import { addSampleToSplitCharts, updateSplitSelectors } from './split.js';
 import { attachDynamicChartCardActions } from './chart-card-actions.js';
+import { addContainerSample, showContainerFilter } from './container-apps.js';
 import { apiUrl } from './api.js';
 
 // CSS order values for dynamic app chart grouping within the grid.
 const APP_ORDER_NGINX = 10;
 const APP_ORDER_APACHE2 = 15;
-const APP_ORDER_CONTAINERS = 20;
 const APP_ORDER_POSTGRES = 30;
 const APP_ORDER_MYSQL = 38;
 const APP_ORDER_CUSTOM = 50;
-
-// Stable chart key for a container sample. Prefer the human-readable name so
-// history survives recreate (Docker assigns a new ID each time). Fall back to
-// id when name is empty (cgroups-only discovery has no names).
-function containerSeriesKey(ct) {
-    const raw = (ct.name && String(ct.name).trim()) || ct.id || 'unknown';
-    // Keep the encoding reversible: replacing punctuation would make valid,
-    // distinct names such as "api.v1" and "api_v1" share the same charts.
-    return 'container_' + encodeURIComponent(String(raw));
-}
 
 // createAppChartCard creates a chart-card DOM structure in the applications
 // grid and returns the canvas ID for use with createTimeSeriesChart.
@@ -488,7 +478,6 @@ export function addSampleToCharts(item, ts) {
 
     // ---- Applications (all charts created dynamically) ----
     let appsVisible = false;
-    const seenContainers = new Set();
     const seenCustom = new Set();
     const colorList = [colors.blue, colors.green, colors.orange, colors.purple, colors.cyan, colors.red, colors.yellow, colors.pink, colors.teal, colors.lime];
 
@@ -740,93 +729,15 @@ export function addSampleToCharts(item, ts) {
         }
     }
 
-    // Containers (3 charts per container: CPU, Memory, I/O)
+    // Containers — one multi-series chart per metric type (CPU / Memory /
+    // Network / Disk I/O) with a multi-select application filter.
     if (s.apps?.containers?.length > 0) {
         appsVisible = true;
-        for (const ct of s.apps.containers) {
-            const base = containerSeriesKey(ct);
-            const cpuKey = `${base}_cpu`;
-            const memKey = `${base}_mem`;
-            const ioKey  = `${base}_io`;
-            const label = ct.name || ct.id;
-
-            // CPU chart
-            if (!state.containerCharts[cpuKey]) {
-                createAppChartCard(`card-${cpuKey}`, `chart-${cpuKey}`, `${cpuKey}-subtitle`, `${label} \u2014 CPU`, APP_ORDER_CONTAINERS);
-                state.containerCharts[cpuKey] = createTimeSeriesChart(`chart-${cpuKey}`, [
-                    { label: 'CPU %', borderColor: colors.blue, backgroundColor: colors.blueAlpha, fill: true, data: [] },
-                ], { beginAtZero: true, ticks: { callback: v => v + '%' } });
-            }
-
-            // Memory chart (absolute bytes) \u2014 usage only; the limit is shown in
-            // the subtitle since it is typically the host total RAM and would
-            // otherwise flatten the usage line against the top of the chart.
-            if (!state.containerCharts[memKey]) {
-                createAppChartCard(`card-${memKey}`, `chart-${memKey}`, `${memKey}-subtitle`, `${label} \u2014 Memory`, APP_ORDER_CONTAINERS + 1);
-                state.containerCharts[memKey] = createTimeSeriesChart(`chart-${memKey}`, [
-                    { label: 'Used', borderColor: colors.purple, backgroundColor: colors.purpleAlpha, fill: true, data: [] },
-                ], { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) } });
-            }
-
-            // I/O chart (Net + Block combined)
-            if (!state.containerCharts[ioKey]) {
-                createAppChartCard(`card-${ioKey}`, `chart-${ioKey}`, `${ioKey}-subtitle`, `${label} \u2014 I/O`, APP_ORDER_CONTAINERS + 2);
-                state.containerCharts[ioKey] = createTimeSeriesChart(`chart-${ioKey}`, [
-                    { label: 'Net Rx', borderColor: colors.green, data: [], fill: false },
-                    { label: 'Net Tx', borderColor: colors.orange, data: [], fill: false },
-                    { label: 'Disk Read', borderColor: colors.cyan, data: [], fill: false, borderDash: [4, 2] },
-                    { label: 'Disk Write', borderColor: colors.pink, data: [], fill: false, borderDash: [4, 2] },
-                ], { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } });
-            }
-
-            // Push data points
-            const cpuChart = state.containerCharts[cpuKey];
-            if (cpuChart) {
-                cpuChart.data.datasets[0].data.push(point(ct.cpu_pct || 0));
-                if (!state.loadingHistory) cpuChart.update('none');
-            }
-
-            const memChart = state.containerCharts[memKey];
-            if (memChart) {
-                memChart.data.datasets[0].data.push(point(ct.mem_used || 0));
-                if (!state.loadingHistory) memChart.update('none');
-                const memSub = document.getElementById(`${memKey}-subtitle`);
-                if (memSub) {
-                    const used = formatBytesShort(ct.mem_used || 0);
-                    if (ct.mem_limit > 0) {
-                        memSub.textContent = `Used: ${used} / Limit: ${formatBytesShort(ct.mem_limit)} (${(ct.mem_pct || 0).toFixed(1)}%)`;
-                    } else {
-                        memSub.textContent = `Used: ${used}`;
-                    }
-                }
-            }
-
-            const ioChart = state.containerCharts[ioKey];
-            if (ioChart) {
-                ioChart.data.datasets[0].data.push(point(ct.net_rx_bps || 0));
-                ioChart.data.datasets[1].data.push(point(ct.net_tx_bps || 0));
-                ioChart.data.datasets[2].data.push(point(ct.disk_r_bps || 0));
-                ioChart.data.datasets[3].data.push(point(ct.disk_w_bps || 0));
-                if (!state.loadingHistory) ioChart.update('none');
-            }
-
-            const sub = document.getElementById(`${cpuKey}-subtitle`);
-            if (sub) sub.textContent = `CPU: ${(ct.cpu_pct || 0).toFixed(1)}%  Mem: ${formatBytesShort(ct.mem_used || 0)}`;
-
-            seenContainers.add(cpuKey);
-            seenContainers.add(memKey);
-            seenContainers.add(ioKey);
-        }
+        addContainerSample(s.apps.containers, point, createAppChartCard, resetZoomAll);
+        showContainerFilter(true);
+    } else {
+        showContainerFilter(false);
     }
-    // Hide container cards not in this sample
-    Object.keys(state.containerCharts || {}).forEach(k => {
-        const el = document.getElementById(`card-${k}`);
-        if (seenContainers.has(k)) {
-            el?.classList.remove('hidden');
-        } else {
-            el?.classList.add('hidden');
-        }
-    });
 
     // PostgreSQL — create charts on first data
     if (s.apps?.postgres) {
@@ -1074,12 +985,15 @@ export function addSampleToCharts(item, ts) {
 
     // Show/hide applications section
     const titleEl = document.getElementById('applications-title');
+    const headerEl = document.getElementById('applications-header');
     const gridEl = document.getElementById('applications-grid');
     if (appsVisible) {
         titleEl?.classList.remove('hidden');
+        headerEl?.classList.remove('hidden');
         gridEl?.classList.remove('hidden');
     } else {
         titleEl?.classList.add('hidden');
+        headerEl?.classList.add('hidden');
         gridEl?.classList.add('hidden');
     }
 

@@ -15,6 +15,20 @@ export const chartCardIds = [
     'card-cpu-temp', 'card-disk-temp', 'card-gpu-temp'
 ];
 
+// Charts grid that follows a section title. Titles may sit inside a
+// .section-head wrapper (e.g. Applications header + filter); walk past it.
+function _chartsGridForTitle(t) {
+    let start = t;
+    if (t.parentElement?.classList.contains('section-head')) {
+        start = t.parentElement;
+    }
+    let el = start.nextElementSibling;
+    while (el && !el.classList.contains('charts-grid')) {
+        el = el.nextElementSibling;
+    }
+    return el;
+}
+
 // Returns all currently visible split chart card elements
 function _getSplitCards() {
     return Array.from(document.querySelectorAll('.chart-card[data-split-type]'));
@@ -103,10 +117,15 @@ export function toggleFocusMode() {
 
         document.querySelectorAll('.section-title').forEach(t => {
             t.classList.remove('focus-selecting');
-            const grid = t.nextElementSibling;
+            const grid = _chartsGridForTitle(t);
             const hasVisible = grid?.classList.contains('charts-grid') && grid.classList.contains('focus-active');
             t.classList.toggle('focus-active', !!hasVisible);
             t.classList.toggle('focus-hidden', !hasVisible);
+            // Keep Applications header (title + filter) in sync with the title
+            if (t.parentElement?.classList.contains('section-head')) {
+                t.parentElement.classList.toggle('focus-hidden', !hasVisible);
+                t.parentElement.classList.toggle('focus-active', !!hasVisible);
+            }
         });
 
         chartCardIds.forEach(id => {
@@ -347,10 +366,14 @@ export function applyStoredFocusMode() {
         });
 
         document.querySelectorAll('.section-title').forEach(t => {
-            const grid = t.nextElementSibling;
+            const grid = _chartsGridForTitle(t);
             const hasVisible = grid?.classList.contains('charts-grid') && grid.classList.contains('focus-active');
             t.classList.toggle('focus-active', !!hasVisible);
             t.classList.toggle('focus-hidden', !hasVisible);
+            if (t.parentElement?.classList.contains('section-head')) {
+                t.parentElement.classList.toggle('focus-hidden', !hasVisible);
+                t.parentElement.classList.toggle('focus-active', !!hasVisible);
+            }
         });
 
         chartCardIds.forEach(id => {

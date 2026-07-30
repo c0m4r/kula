@@ -12,6 +12,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Changed
 
 - TUI redesign
+- container metrics: one multi-series chart per metric type with app filter
 
 ### Fixed
 

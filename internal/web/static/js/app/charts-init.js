@@ -104,11 +104,24 @@ export function destroyAllCharts() {
 // destroyAppCharts cleans up all dynamically created application chart
 // instances and their associated DOM elements from the applications grid.
 export function destroyAppCharts() {
+    // Container metric charts use stable card ids (card-containers-cpu, …).
+    const containerCardIds = [
+        'card-containers-cpu', 'card-containers-mem',
+        'card-containers-net-rx', 'card-containers-net-tx',
+        'card-containers-disk-r', 'card-containers-disk-w',
+        // legacy combined I/O cards (pre-split)
+        'card-containers-net', 'card-containers-diskio',
+    ];
     Object.entries(state.containerCharts || {}).forEach(([key, chart]) => {
         if (chart) chart.destroy();
+        // Prefer explicit card ids; fall back to legacy card-${key} for safety.
+        document.getElementById(`card-containers-${key}`)?.remove();
         document.getElementById(`card-${key}`)?.remove();
     });
+    containerCardIds.forEach(id => document.getElementById(id)?.remove());
     state.containerCharts = {};
+    // Keep containerApps / containerFilter so colors and selection survive a
+    // chart rebuild (e.g. after changing aggregation or y-axis prefs).
 
     Object.entries(state.customCharts || {}).forEach(([group, entry]) => {
         if (entry?.chart) entry.chart.destroy();
