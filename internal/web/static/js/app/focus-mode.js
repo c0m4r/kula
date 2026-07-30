@@ -20,6 +20,11 @@ function _getSplitCards() {
     return Array.from(document.querySelectorAll('.chart-card[data-split-type]'));
 }
 
+// Returns all dynamically created system chart cards (batteries/UPS)
+function _getDynamicSystemCards() {
+    return Array.from(document.querySelectorAll('.chart-card[data-system-chart]'));
+}
+
 // Returns all dynamically created app chart cards (nginx, containers, postgres, custom)
 function _getAppCards() {
     return Array.from(document.querySelectorAll('.chart-card[data-app-chart]'));
@@ -42,6 +47,7 @@ export function toggleFocusMode() {
             if (el) el.classList.remove('focus-visible', 'focus-selected');
         });
         _getSplitCards().forEach(card => card.classList.remove('focus-visible', 'focus-selected'));
+        _getDynamicSystemCards().forEach(card => card.classList.remove('focus-visible', 'focus-selected'));
         _getAppCards().forEach(card => card.classList.remove('focus-visible', 'focus-selected'));
         removeFocusBar();
         localStorage.removeItem('kula_focus_visible');
@@ -58,6 +64,9 @@ export function toggleFocusMode() {
             if (el?.classList.contains('focus-selected')) selected.push(id);
         });
         _getSplitCards().forEach(card => {
+            if (card.classList.contains('focus-selected')) selected.push(card.id);
+        });
+        _getDynamicSystemCards().forEach(card => {
             if (card.classList.contains('focus-selected')) selected.push(card.id);
         });
         _getAppCards().forEach(card => {
@@ -115,6 +124,12 @@ export function toggleFocusMode() {
             card.classList.toggle('focus-visible', isSelected && !isHidden);
             card.classList.remove('focus-selected');
         });
+        _getDynamicSystemCards().forEach(card => {
+            const isSelected = selected.includes(card.id);
+            const isHidden = card.classList.contains('hidden');
+            card.classList.toggle('focus-visible', isSelected && !isHidden);
+            card.classList.remove('focus-selected');
+        });
         _getAppCards().forEach(card => {
             const isSelected = selected.includes(card.id);
             card.classList.toggle('focus-visible', isSelected);
@@ -164,6 +179,15 @@ export function toggleFocusMode() {
             }
         }
     });
+    _getDynamicSystemCards().forEach(card => {
+        if (!card.classList.contains('hidden')) {
+            if (state.focusVisible?.includes(card.id)) {
+                card.classList.add('focus-selected');
+            } else {
+                card.classList.remove('focus-selected');
+            }
+        }
+    });
     _getAppCards().forEach(card => {
         if (state.focusVisible?.includes(card.id)) {
             card.classList.add('focus-selected');
@@ -183,6 +207,12 @@ export function toggleFocusMode() {
         }
     });
     _getSplitCards().forEach(card => {
+        if (!card.classList.contains('hidden')) {
+            card._focusClick = () => card.classList.toggle('focus-selected');
+            card.addEventListener('click', card._focusClick);
+        }
+    });
+    _getDynamicSystemCards().forEach(card => {
         if (!card.classList.contains('hidden')) {
             card._focusClick = () => card.classList.toggle('focus-selected');
             card.addEventListener('click', card._focusClick);
@@ -285,6 +315,12 @@ export function removeFocusBar() {
             delete card._focusClick;
         }
     });
+    _getDynamicSystemCards().forEach(card => {
+        if (card._focusClick) {
+            card.removeEventListener('click', card._focusClick);
+            delete card._focusClick;
+        }
+    });
     _getAppCards().forEach(card => {
         if (card._focusClick) {
             card.removeEventListener('click', card._focusClick);
@@ -331,6 +367,11 @@ export function applyStoredFocusMode() {
             const isHidden = card.classList.contains('hidden');
             card.classList.toggle('focus-visible', isSelected && !isHidden);
         });
+        _getDynamicSystemCards().forEach(card => {
+            const isSelected = state.focusVisible.includes(card.id);
+            const isHidden = card.classList.contains('hidden');
+            card.classList.toggle('focus-visible', isSelected && !isHidden);
+        });
         _getAppCards().forEach(card => {
             const isSelected = state.focusVisible.includes(card.id);
             card.classList.toggle('focus-visible', isSelected);
@@ -354,6 +395,8 @@ export function combineGrids() {
     });
     // Also move split cards into the main grid for a unified focus layout
     _getSplitCards().forEach(card => mainGrid.appendChild(card));
+    // Keep dynamic system cards after the canonical system and split cards.
+    _getDynamicSystemCards().forEach(card => mainGrid.appendChild(card));
     // Move app cards (nginx, containers, postgres, custom) into the main grid
     _getAppCards().forEach(card => mainGrid.appendChild(card));
 }
@@ -397,6 +440,9 @@ export function restoreGrids() {
             insertAfter = card;
         }
     }
+
+    // Dynamic system cards are normally created at the end of the system grid.
+    _getDynamicSystemCards().forEach(card => mainGrid.appendChild(card));
 
     // Restore app cards back to applications-grid
     const appsGrid = document.getElementById('applications-grid');

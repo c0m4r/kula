@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
+## [Unreleased]
+
+### Fixed
+
+- battery graph out of order after exiting focus mode
+
 ## [0.18.8] - 2026-07-29
 
 ### Changed

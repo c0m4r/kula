@@ -415,6 +415,7 @@ export function addSampleToCharts(item, ts) {
                     const wrapper = document.createElement('div');
                     wrapper.className = 'chart-card';
                     wrapper.id = `card-${psuKey}`;
+                    wrapper.dataset.systemChart = '';
                     const header = document.createElement('div');
                     header.className = 'chart-header';
                     const h3 = document.createElement('h3');
@@ -434,6 +435,14 @@ export function addSampleToCharts(item, ts) {
                     grid.appendChild(wrapper);
                     attachDynamicChartCardActions(wrapper, resetZoomAll);
 
+                    if (state.focusSelecting) {
+                        if (state.focusVisible?.includes(wrapper.id)) {
+                            wrapper.classList.add('focus-selected');
+                        }
+                        wrapper._focusClick = () => wrapper.classList.toggle('focus-selected');
+                        wrapper.addEventListener('click', wrapper._focusClick);
+                    }
+
                     state.psuCharts[psuKey] = createTimeSeriesChart(`chart-${psuKey}`, [
                         { label: 'Capacity %', borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
                         { label: 'Power W', borderColor: colors.orange, data: [], fill: false },
@@ -449,6 +458,12 @@ export function addSampleToCharts(item, ts) {
                             ticks: { callback: v => v.toFixed(1) + ' W' },
                         };
                         state.psuCharts[psuKey].update('none');
+                    }
+
+                    // A stored focus selection may be restored before telemetry
+                    // creates this card, so re-apply it once the card exists.
+                    if (state.focusMode && !state.focusSelecting) {
+                        applyStoredFocusMode();
                     }
                 }
             }
