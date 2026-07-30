@@ -1,24 +1,23 @@
 package tui
 
 import (
+	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"kula/internal/collector"
 	"kula/internal/i18n"
 )
 
-// ── Test helpers ──────────────────────────────────────────────────────────────
-
-// newTestSample returns a fully-populated Sample so view functions never hit
-// nil-pointer paths during tests.
 func newTestSample() *collector.Sample {
 	return &collector.Sample{
-		Timestamp: time.Now(),
+		Timestamp: time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC),
 		CPU: collector.CPUStats{
 			Total: collector.CPUCoreStats{
 				User:    10.5,
@@ -26,14 +25,16 @@ func newTestSample() *collector.Sample {
 				IOWait:  0.3,
 				IRQ:     0.1,
 				SoftIRQ: 0.2,
-				Steal:   0.0,
+				Steal:   0,
 				Usage:   16.3,
 			},
 			NumCores:    4,
-			Temperature: 55.0,
-			Sensors:     []collector.CPUTempSensor{{Name: "core0", Value: 54.0}},
+			Temperature: 55,
+			Sensors:     []collector.CPUTempSensor{{Name: "core0", Value: 54}},
 		},
-		LoadAvg: collector.LoadAvg{Load1: 0.5, Load5: 0.8, Load15: 1.0, Running: 2, Total: 200},
+		LoadAvg: collector.LoadAvg{
+			Load1: 0.5, Load5: 0.8, Load15: 1, Running: 2, Total: 200,
+		},
 		Memory: collector.MemoryStats{
 			Total:       16 * 1024 * 1024 * 1024,
 			Used:        8 * 1024 * 1024 * 1024,
@@ -41,711 +42,604 @@ func newTestSample() *collector.Sample {
 			Available:   5 * 1024 * 1024 * 1024,
 			Cached:      2 * 1024 * 1024 * 1024,
 			Buffers:     512 * 1024 * 1024,
-			UsedPercent: 50.0,
+			Shmem:       256 * 1024 * 1024,
+			UsedPercent: 50,
 		},
 		Swap: collector.SwapStats{
 			Total:       4 * 1024 * 1024 * 1024,
 			Used:        1 * 1024 * 1024 * 1024,
 			Free:        3 * 1024 * 1024 * 1024,
-			UsedPercent: 25.0,
+			UsedPercent: 25,
 		},
 		Network: collector.NetworkStats{
-			Interfaces: []collector.NetInterface{
-				{Name: "eth0", RxMbps: 10.5, TxMbps: 2.3, RxPPS: 500, TxPPS: 100},
+			Interfaces: []collector.NetInterface{{
+				Name: "eth0", RxMbps: 10.5, TxMbps: 2.3,
+				RxPPS: 500, TxPPS: 100, RxDrop: 1,
+			}},
+			TCP: collector.TCPStats{
+				CurrEstab: 42, InErrs: 0.01, OutRsts: 0.05, Retrans: 0.2,
 			},
-			TCP:     collector.TCPStats{CurrEstab: 42, InErrs: 0.01, OutRsts: 0.05},
 			Sockets: collector.SocketStats{TCPInUse: 30, TCPTw: 5, UDPInUse: 10},
 		},
 		Disks: collector.DiskStats{
-			Devices: []collector.DiskDevice{
-				{Name: "sda", ReadsPerSec: 10, WritesPerSec: 5, Utilization: 30.0},
-			},
+			Devices: []collector.DiskDevice{{
+				Name: "nvme0n1", ReadsPerSec: 10, WritesPerSec: 5,
+				ReadBytesPS: 2e6, WriteBytesPS: 1e6,
+				Utilization: 30, Temperature: 38,
+			}},
 			FileSystems: []collector.FileSystemInfo{
-				{MountPoint: "/", Total: 100e9, Used: 40e9, UsedPct: 40.0},
-				{MountPoint: "/home", Total: 500e9, Used: 200e9, UsedPct: 40.0},
+				{
+					Device: "/dev/nvme0n1p2", MountPoint: "/", FSType: "ext4",
+					Total: 100e9, Used: 40e9, UsedPct: 40,
+				},
+				{
+					Device: "/dev/nvme0n1p3", MountPoint: "/home", FSType: "ext4",
+					Total: 500e9, Used: 200e9, UsedPct: 40,
+				},
 			},
 		},
 		System: collector.SystemStats{
-			Hostname:    "testhost",
-			Uptime:      3600,
-			UptimeHuman: "1h 0m",
-			ClockSync:   true,
-			ClockSource: "ntp",
-			Entropy:     3500,
-			UserCount:   2,
+			Hostname: "testhost", Uptime: 3600, UptimeHuman: "1h 0m",
+			ClockSync: true, ClockSource: "ntp", Entropy: 3500, UserCount: 2,
 		},
 		Process: collector.ProcessStats{
-			Total:    200,
-			Running:  2,
-			Sleeping: 195,
-			Zombie:   1,
-			Blocked:  2,
-			Threads:  800,
+			Total: 200, Running: 2, Sleeping: 198, Threads: 800,
 		},
 		Self: collector.SelfStats{
-			CPUPercent: 0.5,
-			MemRSS:     10 * 1024 * 1024,
-			FDs:        15,
+			CPUPercent: 0.5, MemRSS: 10 * 1024 * 1024, FDs: 15,
 		},
+		GPU: []collector.GPUStats{{
+			Index: 0, Name: "NVIDIA RTX 4090", Driver: "nvidia",
+			LoadPct: 45, Temperature: 55,
+			VRAMUsed: 4 * 1024 * 1024 * 1024, VRAMTotal: 24 * 1024 * 1024 * 1024,
+			VRAMUsedPct: 16.7, PowerW: 120,
+		}},
 	}
 }
 
-// newTestModel returns a model pre-populated with a sample, ready for View().
-func newTestModel(w, h int) model {
-	return model{
-		width:          w,
-		height:         h,
-		sample:         newTestSample(),
-		now:            time.Now(),
+func newTestModel(width, height int) model {
+	sample := newTestSample()
+	m := model{
+		width:          width,
+		height:         height,
+		sample:         sample,
+		now:            time.Date(2026, 7, 30, 14, 30, 0, 0, time.UTC),
+		lastUpdated:    time.Date(2026, 7, 30, 14, 30, 0, 0, time.UTC),
+		refreshRate:    time.Second,
 		osName:         "Test Linux",
 		kernelVersion:  "6.1.0-test",
 		cpuArch:        "amd64",
 		version:        "1.0.0",
 		showSystemInfo: true,
-		activeTab:      tabOverview,
+		t:              i18n.NewTranslator("en"),
 		histCPU:        newRing(),
 		histMem:        newRing(),
 		histSwap:       newRing(),
 		histNetRx:      newRing(),
 		histNetTx:      newRing(),
 		histDisk:       newRing(),
-		histLoad:       newRing(),
 		histRunning:    newRing(),
-		t:              i18n.NewTranslator("en"),
+		histTimes:      newTimestampRing(defaultHistoryLen),
+	}
+	m.pushSample(sample)
+	return m
+}
+
+func runeKey(character rune) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{character}}
+}
+
+func stripped(value string) string {
+	return ansi.Strip(value)
+}
+
+func assertFrameFits(t *testing.T, m model) {
+	t.Helper()
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) != m.height {
+		t.Fatalf("frame has %d lines, want %d", len(lines), m.height)
+	}
+	for index, line := range lines {
+		if got := lipgloss.Width(line); got != m.width {
+			t.Errorf("line %d has width %d, want %d: %q", index+1, got, m.width, stripped(line))
+		}
 	}
 }
 
-// runeKey constructs a KeyMsg for a printable character.
-func runeKey(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
-}
-
-// ── metricRing ────────────────────────────────────────────────────────────────
-
-func TestMetricRingPush(t *testing.T) {
-	r := newRing()
-	r.push(1.0)
-	r.push(2.0)
-	r.push(3.0)
-
-	if r.len != 3 {
-		t.Fatalf("expected len 3, got %d", r.len)
+func TestMetricRingChronologyAndCapacity(t *testing.T) {
+	ring := newRing(3)
+	for _, value := range []float64{1, 2, 3, 4, 5} {
+		ring.push(value)
 	}
-	// Check the actual values in the buffer (not getAll since it's not full yet)
-	if r.buf[0] != 1.0 || r.buf[2] != 3.0 {
-		t.Errorf("unexpected values: %v", r.buf[:r.len])
+	got := ring.getAll()
+	want := []float64{3, 4, 5}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("history[%d] = %.0f, want %.0f", index, got[index], want[index])
+		}
 	}
 }
 
-func TestMetricRingCap(t *testing.T) {
-	r := newRing()
-	for i := 0; i < histLen+10; i++ {
-		r.push(float64(i))
-	}
-	if r.len != histLen {
-		t.Fatalf("expected len %d, got %d", histLen, r.len)
-	}
-	// With circular buffer, after histLen+10 pushes, the oldest value should be 10
-	// and the newest should be histLen+9
-	all := r.getAll()
-	if all[0] != float64(10) {
-		t.Errorf("expected oldest value 10, got %f", all[0])
-	}
-	if all[histLen-1] != float64(histLen+9) {
-		t.Errorf("expected newest value %d, got %f", histLen+9, all[histLen-1])
+func TestMetricRingZeroCapacityIsSafe(t *testing.T) {
+	ring := metricRing{}
+	ring.push(1)
+	if values := ring.getAll(); values != nil {
+		t.Fatalf("zero-capacity history = %v, want nil", values)
 	}
 }
 
-func TestMetricRingPushNilSample(t *testing.T) {
-	m := newTestModel(120, 40)
-	// pushSample should be a no-op for nil — must not panic.
+func TestPushSamplePopulatesAllTrends(t *testing.T) {
+	m := newTestModel(80, 24)
+	sample := newTestSample()
+	sample.Network.Interfaces = append(sample.Network.Interfaces,
+		collector.NetInterface{RxMbps: 1.5, TxMbps: 0.7})
+	sample.Disks.Devices = append(sample.Disks.Devices,
+		collector.DiskDevice{Utilization: 50})
+
+	before := m.histCPU.len
+	m.pushSample(sample)
+	if m.histCPU.len != before+1 || m.histMem.len != before+1 ||
+		m.histNetRx.len != before+1 || m.histDisk.len != before+1 {
+		t.Fatal("pushSample did not advance every trend")
+	}
+	rx := m.histNetRx.getAll()
+	if rx[len(rx)-1] != 12 {
+		t.Fatalf("aggregate receive = %.1f, want 12.0", rx[len(rx)-1])
+	}
+	disk := m.histDisk.getAll()
+	if disk[len(disk)-1] != 40 {
+		t.Fatalf("average disk utilization = %.1f, want 40.0", disk[len(disk)-1])
+	}
+
 	m.pushSample(nil)
 }
 
-// ── Helper functions ──────────────────────────────────────────────────────────
-
-func TestClampLines(t *testing.T) {
-	tests := []struct {
-		name      string
-		input     string
-		n         int
-		wantLines int
-		wantEmpty bool
-	}{
-		{"zero n returns empty", "a\nb\nc", 0, 0, true},
-		{"fewer lines than n", "a\nb", 5, 2, false},
-		{"exact match", "a\nb\nc", 3, 3, false},
-		{"truncates to n", "a\nb\nc\nd\ne", 3, 3, false},
-		{"single line no trim", "hello", 5, 1, false},
-		{"single line trim to 1", "hello", 1, 1, false},
+func TestViewFillsRepresentativeTerminalSizes(t *testing.T) {
+	sizes := [][2]int{
+		{32, 8},
+		{40, 12},
+		{50, 18},
+		{80, 24},
+		{120, 35},
+		{180, 50},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := clampLines(tt.input, tt.n)
-			if tt.wantEmpty {
-				if got != "" {
-					t.Errorf("expected empty string, got %q", got)
-				}
-				return
-			}
-			gotLines := strings.Split(got, "\n")
-			if len(gotLines) != tt.wantLines {
-				t.Errorf("expected %d lines, got %d (output=%q)", tt.wantLines, len(gotLines), got)
-			}
-			// Verify content starts from the top (first line preserved).
-			firstInputLine := strings.Split(tt.input, "\n")[0]
-			if gotLines[0] != firstInputLine {
-				t.Errorf("expected first line %q, got %q", firstInputLine, gotLines[0])
+	for _, size := range sizes {
+		t.Run(strings.Join([]string{
+			strconv.Itoa(size[0]), "x", strconv.Itoa(size[1]),
+		}, ""), func(t *testing.T) {
+			for tab := tabID(0); tab < numTabs; tab++ {
+				m := newTestModel(size[0], size[1])
+				m.activeTab = tab
+				assertFrameFits(t, m)
 			}
 		})
 	}
 }
 
-func TestFmtBytes(t *testing.T) {
-	tests := []struct {
-		input uint64
-		want  string
-	}{
-		{0, "0 B"},
-		{512, "512 B"},
-		{1023, "1023 B"},
-		{1024, "1.0 KiB"},
-		{1536, "1.5 KiB"},
-		{1024 * 1024, "1.0 MiB"},
-		{1024 * 1024 * 1024, "1.0 GiB"},
-		{1024 * 1024 * 1024 * 1024, "1.0 TiB"},
-	}
-	for _, tt := range tests {
-		if got := fmtBytes(tt.input); got != tt.want {
-			t.Errorf("fmtBytes(%d) = %q, want %q", tt.input, got, tt.want)
+func TestViewTooSmallIsUsefulAndBounded(t *testing.T) {
+	for _, size := range [][2]int{{20, 5}, {31, 7}, {12, 2}} {
+		m := newTestModel(size[0], size[1])
+		assertFrameFits(t, m)
+		if size[0] >= 20 && size[1] >= 5 &&
+			!strings.Contains(stripped(m.View()), "Terminal too small") {
+			t.Errorf("%dx%d fallback lacks guidance", size[0], size[1])
 		}
 	}
 }
 
-func TestFmtMbps(t *testing.T) {
-	tests := []struct {
-		input float64
-		want  string
-	}{
-		{0.0, "0K"},
-		{0.5, "500K"},
-		{1.0, "1.0M"},
-		{100.5, "100.5M"},
+func TestViewBeforeWindowSizeIsEmpty(t *testing.T) {
+	m := newTestModel(0, 0)
+	if view := m.View(); view != "" {
+		t.Fatalf("pre-size View = %q, want empty", view)
 	}
-	for _, tt := range tests {
-		if got := fmtMbps(tt.input); got != tt.want {
-			t.Errorf("fmtMbps(%f) = %q, want %q", tt.input, got, tt.want)
+}
+
+func TestOverviewFitsStandardTerminalWithoutScrolling(t *testing.T) {
+	m := newTestModel(80, 24)
+	if got := m.maxScroll(); got != 0 {
+		t.Fatalf("80x24 overview needs %d lines of scrolling", got)
+	}
+	view := stripped(m.View())
+	for _, want := range []string{
+		"SYSTEM STATUS", "CPU", "MEMORY", "TRAFFIC", "STORAGE", "HOST",
+		"testhost", "NVIDIA",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("overview missing %q", want)
 		}
 	}
 }
 
-func TestPadRight(t *testing.T) {
-	if got := padRight("ab", 5); got != "ab   " {
-		t.Errorf("padRight pad: got %q", got)
-	}
-	if got := padRight("abcde", 3); got != "abc" {
-		t.Errorf("padRight truncate: got %q", got)
-	}
-	if got := padRight("abc", 3); got != "abc" {
-		t.Errorf("padRight exact: got %q", got)
-	}
-	if got := padRight("", 3); got != "   " {
-		t.Errorf("padRight empty: got %q", got)
-	}
-}
-
-func TestPadLeft(t *testing.T) {
-	if got := padLeft("ab", 5); got != "   ab" {
-		t.Errorf("padLeft pad: got %q", got)
-	}
-	if got := padLeft("abcde", 3); got != "abc" {
-		t.Errorf("padLeft truncate: got %q", got)
-	}
-	if got := padLeft("abc", 3); got != "abc" {
-		t.Errorf("padLeft exact: got %q", got)
-	}
-}
-
-func TestClamp(t *testing.T) {
-	tests := []struct{ v, lo, hi, want int }{
-		{5, 0, 10, 5},
-		{-5, 0, 10, 0},
-		{15, 0, 10, 10},
-		{0, 0, 0, 0},
-		{10, 10, 10, 10},
-	}
-	for _, tt := range tests {
-		if got := clamp(tt.v, tt.lo, tt.hi); got != tt.want {
-			t.Errorf("clamp(%d,%d,%d) = %d, want %d", tt.v, tt.lo, tt.hi, got, tt.want)
+func TestNavigationAlwaysExposesViews(t *testing.T) {
+	wide := newTestModel(80, 24)
+	wideTabs := stripped(wide.renderTabBar())
+	for _, want := range []string{"1 Overview", "2 CPU", "7 GPU"} {
+		if !strings.Contains(wideTabs, want) {
+			t.Errorf("standard tab bar missing %q", want)
 		}
 	}
-}
 
-func TestSumInts(t *testing.T) {
-	if got := sumInts([]int{1, 2, 3, 4}); got != 10 {
-		t.Errorf("sumInts = %d, want 10", got)
-	}
-	if got := sumInts(nil); got != 0 {
-		t.Errorf("sumInts(nil) = %d, want 0", got)
-	}
-	if got := sumInts([]int{}); got != 0 {
-		t.Errorf("sumInts([]) = %d, want 0", got)
-	}
-}
-
-func TestBarW(t *testing.T) {
-	tests := []struct {
-		inner int
-		want  int
-	}{
-		// inner=15: computed=clamp(-5,0,50)=0, 0<minBarWidth → 0
-		{15, 0},
-		// inner=25: computed=clamp(5,0,50)=5, 5<minBarWidth=10 → 0
-		{25, 0},
-		// inner=35: computed=clamp(15,0,50)=15, ≥10 → 15
-		{35, 15},
-		// inner=70: computed=clamp(50,0,50)=50 (capped at maxBarWidth)
-		{70, 50},
-		// inner=100: still capped at 50
-		{100, 50},
-	}
-	for _, tt := range tests {
-		if got := barW(tt.inner); got != tt.want {
-			t.Errorf("barW(%d) = %d, want %d", tt.inner, got, tt.want)
+	narrow := newTestModel(40, 18)
+	narrow.activeTab = tabNetwork
+	narrowTabs := stripped(narrow.renderTabBar())
+	for _, want := range []string{"3 Memory", "4 Network", "5 Storage"} {
+		if !strings.Contains(narrowTabs, want) {
+			t.Errorf("compact tab bar missing %q", want)
 		}
 	}
-}
-
-// ── renderMetricBarFull ───────────────────────────────────────────────────────
-
-func TestRenderMetricBarFull_TextOnlyWhenNarrow(t *testing.T) {
-	// barW=0 → text-only: no bracket characters in output
-	out := renderMetricBarFull("CPU", 50.0, 0, "")
-	if strings.Contains(out, "[") || strings.Contains(out, "█") {
-		t.Errorf("narrow mode should not render bar chars, got: %q", out)
-	}
-	if !strings.Contains(out, "50.0") {
-		t.Errorf("narrow mode should still show percentage, got: %q", out)
+	if lipgloss.Width(narrow.renderTabBar()) > narrow.width {
+		t.Fatal("compact tab bar overflows")
 	}
 }
 
-func TestRenderMetricBarFull_BarMode(t *testing.T) {
-	out := renderMetricBarFull("CPU", 50.0, 20, "8 GiB / 16 GiB")
-	if !strings.Contains(out, "[") {
-		t.Errorf("bar mode should contain '[', got: %q", out)
-	}
-	if !strings.Contains(out, "50.0") {
-		t.Errorf("bar mode should show percentage, got: %q", out)
-	}
-}
-
-func TestRenderMetricBarFull_ClampsPct(t *testing.T) {
-	// Values outside [0,100] should not panic or produce negative repeats.
-	renderMetricBarFull("X", -10.0, 20, "")
-	renderMetricBarFull("X", 110.0, 20, "")
-}
-
-func TestRenderMetricBarFull_Detail(t *testing.T) {
-	out := renderMetricBarFull("RAM", 60.0, 0, "8 GiB / 16 GiB")
-	if !strings.Contains(out, "8 GiB") {
-		t.Errorf("detail string should appear in output, got: %q", out)
-	}
-}
-
-// ── renderCPUBreakdown ────────────────────────────────────────────────────────
-
-func TestRenderCPUBreakdown(t *testing.T) {
-	c := collector.CPUCoreStats{
-		User: 10.5, System: 5.0, IOWait: 0.3,
-		IRQ: 0.1, SoftIRQ: 0.2, Steal: 0.0,
-	}
-	out := renderCPUBreakdown(c)
-	for _, label := range []string{"usr", "sys", "io", "irq", "sirq", "stl"} {
-		if !strings.Contains(out, label) {
-			t.Errorf("breakdown missing label %q in: %q", label, out)
-		}
-	}
-	if !strings.Contains(out, "10.5") {
-		t.Errorf("breakdown missing usr value 10.5 in: %q", out)
-	}
-}
-
-// ── Update: keyboard navigation ───────────────────────────────────────────────
-
-func TestUpdate_TabForward(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabOverview
-
+func TestKeyboardTabNavigationAndDirectJump(t *testing.T) {
+	m := newTestModel(80, 24)
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if next.(model).activeTab != tabCPU {
-		t.Errorf("Tab → expected tabCPU, got %d", next.(model).activeTab)
+	if got := next.(model).activeTab; got != tabCPU {
+		t.Fatalf("Tab selected %d, want CPU", got)
 	}
-}
 
-func TestUpdate_TabBackward(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabCPU
-
-	prev, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if prev.(model).activeTab != tabOverview {
-		t.Errorf("ShiftTab → expected tabOverview, got %d", prev.(model).activeTab)
+	previous, _ := next.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := previous.(model).activeTab; got != tabOverview {
+		t.Fatalf("Shift+Tab selected %d, want Overview", got)
 	}
-}
 
-func TestUpdate_TabWrapsForward(t *testing.T) {
-	m := newTestModel(120, 40)
 	m.activeTab = tabGPU
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if next.(model).activeTab != tabOverview {
-		t.Errorf("Tab wrap → expected tabOverview, got %d", next.(model).activeTab)
+	wrapped, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if got := wrapped.(model).activeTab; got != tabOverview {
+		t.Fatalf("right-arrow wrap selected %d, want Overview", got)
 	}
-}
 
-func TestUpdate_TabWrapsBackward(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabOverview
-
-	prev, _ := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if prev.(model).activeTab != tabGPU {
-		t.Errorf("ShiftTab wrap → expected tabGPU, got %d", prev.(model).activeTab)
-	}
-}
-
-func TestUpdate_DirectJump(t *testing.T) {
-	tests := []struct {
-		key  rune
-		want tabID
-	}{
-		{'1', tabOverview},
-		{'2', tabCPU},
-		{'3', tabMemory},
-		{'4', tabNetwork},
-		{'5', tabDisk},
-		{'6', tabProcesses},
-		{'7', tabGPU},
-	}
-	for _, tt := range tests {
-		m := newTestModel(120, 40)
-		m.activeTab = tabProcesses // start somewhere different
-
-		next, _ := m.Update(runeKey(tt.key))
-		if got := next.(model).activeTab; got != tt.want {
-			t.Errorf("key '%c' → expected tab %d, got %d", tt.key, tt.want, got)
+	for key := '1'; key <= '7'; key++ {
+		jumped, _ := m.Update(runeKey(key))
+		if got, want := jumped.(model).activeTab, tabID(key-'1'); got != want {
+			t.Errorf("%c selected %d, want %d", key, got, want)
 		}
 	}
 }
 
-func TestUpdate_RightLeftArrow(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabOverview
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if next.(model).activeTab != tabCPU {
-		t.Errorf("Right → expected tabCPU, got %d", next.(model).activeTab)
-	}
-
-	prev, _ := next.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	if prev.(model).activeTab != tabOverview {
-		t.Errorf("Left → expected tabOverview, got %d", prev.(model).activeTab)
+func TestSelectingViewResetsScroll(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.scroll = 9
+	m.selectTab(tabMemory)
+	if m.activeTab != tabMemory || m.scroll != 0 {
+		t.Fatalf("selectTab left tab=%d scroll=%d", m.activeTab, m.scroll)
 	}
 }
 
-func TestUpdate_HLKeys(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabOverview
-
-	next, _ := m.Update(runeKey('l'))
-	if next.(model).activeTab != tabCPU {
-		t.Errorf("'l' → expected tabCPU, got %d", next.(model).activeTab)
-	}
-
-	prev, _ := next.Update(runeKey('h'))
-	if prev.(model).activeTab != tabOverview {
-		t.Errorf("'h' → expected tabOverview, got %d", prev.(model).activeTab)
-	}
-}
-
-func TestUpdate_QuitReturnsCmd(t *testing.T) {
-	m := newTestModel(120, 40)
-
-	for _, k := range []rune{'q', 'Q'} {
-		_, cmd := m.Update(runeKey(k))
-		if cmd == nil {
-			t.Errorf("key '%c' should return a quit cmd", k)
-		}
-	}
-}
-
-func TestUpdate_WindowSize(t *testing.T) {
-	m := newTestModel(0, 0)
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 50})
-	nm := next.(model)
-	if nm.width != 160 || nm.height != 50 {
-		t.Errorf("WindowSizeMsg: expected 160×50, got %d×%d", nm.width, nm.height)
-	}
-}
-
-func TestUpdate_UnknownKeyNoChange(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabMemory
-
-	next, cmd := m.Update(runeKey('z'))
-	if next.(model).activeTab != tabMemory {
-		t.Errorf("unknown key should not change tab")
-	}
-	if cmd != nil {
-		t.Errorf("unknown key should not return a cmd")
-	}
-}
-
-// ── View: rendering ───────────────────────────────────────────────────────────
-
-// viewLines returns the rendered View() split into lines (ANSI stripped by
-// counting via lipgloss.Height for the total, raw split for content checks).
-func viewHeight(m model) int {
-	return lipgloss.Height(m.View())
-}
-
-func TestView_EmptyBeforeSize(t *testing.T) {
-	m := newTestModel(0, 0)
-	if got := m.View(); got != "" {
-		t.Errorf("View() before WindowSizeMsg should be empty, got len=%d", len(got))
-	}
-}
-
-func TestView_HeightEqualsTerminal(t *testing.T) {
-	for _, h := range []int{20, 30, 40, 50} {
-		m := newTestModel(120, h)
-		got := viewHeight(m)
-		if got != h {
-			t.Errorf("height=%d: View() has %d lines, want %d", h, got, h)
-		}
-	}
-}
-
-func TestView_NeverExceedsHeight(t *testing.T) {
-	// Very small terminals should not overflow.
-	for _, h := range []int{5, 8, 10, 15} {
-		m := newTestModel(80, h)
-		got := viewHeight(m)
-		if got > h {
-			t.Errorf("height=%d: View() overflows with %d lines", h, got)
-		}
-	}
-}
-
-func TestView_AllTabsRenderWithoutPanic(t *testing.T) {
-	for tab := tabID(0); tab < numTabs; tab++ {
-		m := newTestModel(120, 40)
-		m.activeTab = tab
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("tab %d panicked: %v", tab, r)
-				}
-			}()
-			_ = m.View()
-		}()
-	}
-}
-
-func TestView_NarrowTerminal(t *testing.T) {
-	// Very narrow: bars should be absent (text-only mode), no panic.
-	m := newTestModel(40, 30)
-	view := m.View()
-	// The output must still be anchored to height.
-	if got := viewHeight(m); got != m.height {
-		t.Errorf("narrow: expected %d lines, got %d", m.height, got)
-	}
-	_ = view
-}
-
-func TestView_NilSampleShowsLoading(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.sample = nil
-	// Must not panic; loading message should appear.
-	view := m.View()
-	if !strings.Contains(view, m.t.T("collecting_data")) {
-		t.Errorf("nil sample should show loading message, got view of len %d", len(view))
-	}
-}
-
-func TestView_WideLayoutUsedAboveThreshold(t *testing.T) {
-	// Width >= narrowWidth should trigger two-column overview layout.
-	m := newTestModel(narrowWidth+10, 40)
-	m.activeTab = tabOverview
-	view := m.View()
-	// In wide mode both translated panels appear.
-	if !strings.Contains(view, m.t.T("system_metrics")) {
-		t.Errorf("wide layout missing Resources panel (translated)")
-	}
-	if !strings.Contains(view, m.t.T("system_info")) {
-		t.Errorf("wide layout missing System panel (translated)")
-	}
-}
-
-func TestView_ShowSystemInfo(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabOverview
-	m.showSystemInfo = true
-	view := m.View()
-	if !strings.Contains(view, "testhost") {
-		t.Errorf("showSystemInfo=true: hostname not in view")
-	}
-}
-
-func TestView_HideSystemInfo(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabOverview
-	m.showSystemInfo = false
-	view := m.View()
-	if strings.Contains(view, "testhost") {
-		t.Errorf("showSystemInfo=false: hostname should not appear in view")
-	}
-}
-
-func TestView_HeaderContainsTime(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.now = time.Date(2026, 3, 13, 14, 30, 0, 0, time.UTC)
-	view := m.View()
-	if !strings.Contains(view, "14:30:00") {
-		t.Errorf("header should contain time 14:30:00")
-	}
-}
-
-func TestView_FooterContainsHints(t *testing.T) {
-	m := newTestModel(120, 40)
-	view := m.View()
-	for _, hint := range []string{m.t.T("logout"), m.t.T("next"), m.t.T("prev"), m.t.T("jump")} {
-		if !strings.Contains(view, hint) {
-			t.Errorf("footer missing hint %q", hint)
-		}
-	}
-}
-
-func TestView_CPUTabContent(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabCPU
-	view := m.View()
-	for _, want := range []string{"CPU", "usr", "sys", "io", "Load"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("CPU tab missing %q", want)
-		}
-	}
-}
-
-func TestView_MemoryTabContent(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabMemory
-	view := m.View()
-	for _, want := range []string{"RAM", "Swap", "Cached", "Buffers"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("Memory tab missing %q", want)
-		}
-	}
-}
-
-func TestView_NetworkTabContent(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabNetwork
-	view := m.View()
-	for _, want := range []string{"eth0", "TCP", "Established"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("Network tab missing %q", want)
-		}
-	}
-}
-
-func TestView_DiskTabContent(t *testing.T) {
-	m := newTestModel(120, 40)
+func TestLongViewsScrollAndClamp(t *testing.T) {
+	m := newTestModel(80, 16)
 	m.activeTab = tabDisk
-	view := m.View()
-	for _, want := range []string{"sda", m.t.T("disk_space"), "/"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("Disk tab missing %q", want)
+	for index := 0; index < 20; index++ {
+		m.sample.Disks.FileSystems = append(m.sample.Disks.FileSystems,
+			collector.FileSystemInfo{
+				MountPoint: "/srv/volume-" + strconv.Itoa(index),
+				Total:      100e9,
+				Used:       50e9,
+				UsedPct:    50,
+			})
+	}
+	if m.maxScroll() <= 0 {
+		t.Fatal("long storage view unexpectedly fits without scrolling")
+	}
+
+	down, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := down.(model).scroll; got != 1 {
+		t.Fatalf("down scroll = %d, want 1", got)
+	}
+
+	bottom, _ := down.Update(runeKey('G'))
+	if got, want := bottom.(model).scroll, bottom.(model).maxScroll(); got != want {
+		t.Fatalf("bottom scroll = %d, want %d", got, want)
+	}
+
+	top, _ := bottom.Update(runeKey('g'))
+	if got := top.(model).scroll; got != 0 {
+		t.Fatalf("top scroll = %d, want 0", got)
+	}
+
+	m.scroll = 10_000
+	m.width = 120
+	m.height = 40
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if got, maxScroll := resized.(model).scroll, resized.(model).maxScroll(); got > maxScroll {
+		t.Fatalf("resize left scroll %d beyond max %d", got, maxScroll)
+	}
+}
+
+func TestFooterReportsScrollPosition(t *testing.T) {
+	m := newTestModel(80, 12)
+	m.activeTab = tabCPU
+	if m.maxScroll() == 0 {
+		t.Fatal("test needs overflowing content")
+	}
+	if footer := stripped(m.renderFooter()); !strings.Contains(footer, "1/") {
+		t.Fatalf("footer lacks scroll position: %q", footer)
+	}
+}
+
+func TestPauseHelpAndQuitControls(t *testing.T) {
+	m := newTestModel(80, 24)
+	paused, command := m.Update(runeKey(' '))
+	if command != nil {
+		t.Fatal("pausing without a collector should not start a command")
+	}
+	pm := paused.(model)
+	if !pm.paused || !strings.Contains(stripped(pm.renderHeader()), "PAUSED") {
+		t.Fatal("space did not expose paused state")
+	}
+
+	help, _ := pm.Update(runeKey('?'))
+	hm := help.(model)
+	if !hm.showHelp || !strings.Contains(stripped(hm.View()), "keyboard") {
+		t.Fatal("? did not open keyboard help")
+	}
+
+	closed, _ := hm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if closed.(model).showHelp {
+		t.Fatal("escape did not close help")
+	}
+
+	hm.showHelp = true
+	_, quit := hm.Update(runeKey('q'))
+	if quit == nil {
+		t.Fatal("q from help should quit")
+	}
+}
+
+func TestHelpRemainsCompleteInSmallTerminals(t *testing.T) {
+	for _, size := range [][2]int{{32, 8}, {50, 18}, {80, 24}} {
+		m := newTestModel(size[0], size[1])
+		m.showHelp = true
+		assertFrameFits(t, m)
+		view := stripped(m.View())
+		for _, want := range []string{"KULA", "q"} {
+			if !strings.Contains(view, want) {
+				t.Errorf("%dx%d help missing %q", size[0], size[1], want)
+			}
 		}
 	}
 }
 
-func TestView_ProcessesTabContent(t *testing.T) {
-	m := newTestModel(120, 40)
-	m.activeTab = tabProcesses
-	view := m.View()
-	for _, want := range []string{m.t.T("processes"), m.t.T("running"), m.t.T("sleeping"), m.t.T("self_monitoring")} {
-		if !strings.Contains(view, want) {
-			t.Errorf("Processes tab missing %q", want)
+func TestHeaderShowsPausedAgeAndStaleSamples(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.now = m.lastUpdated.Add(5 * time.Second)
+	if header := stripped(m.renderHeader()); !strings.Contains(header, "STALE 5s") {
+		t.Fatalf("stale header = %q", header)
+	}
+
+	m.paused = true
+	if header := stripped(m.renderHeader()); !strings.Contains(header, "PAUSED 5s") {
+		t.Fatalf("paused header = %q", header)
+	}
+}
+
+func TestSampleMessageUpdatesStateAndHistory(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.sample = nil
+	m.collecting = true
+	before := m.histCPU.len
+	finished := time.Date(2026, 7, 30, 15, 0, 0, 0, time.UTC)
+
+	next, command := m.Update(sampleMsg{
+		sample:      newTestSample(),
+		finishedAt:  finished,
+		collectTime: 25 * time.Millisecond,
+	})
+	if command != nil {
+		t.Fatal("sample completion should not create a second timer")
+	}
+	got := next.(model)
+	if got.collecting || got.sample == nil || got.lastUpdated != finished ||
+		got.collectTime != 25*time.Millisecond {
+		t.Fatalf("sample state not applied: %+v", got)
+	}
+	if got.histCPU.len != before+1 {
+		t.Fatalf("history length = %d, want %d", got.histCPU.len, before+1)
+	}
+}
+
+func TestTickKeepsTimerAliveWhilePaused(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.paused = true
+	now := time.Date(2026, 7, 30, 15, 1, 0, 0, time.UTC)
+	next, command := m.Update(tickMsg(now))
+	if command == nil {
+		t.Fatal("tick should schedule the next timer")
+	}
+	if got := next.(model).now; got != now {
+		t.Fatalf("clock = %v, want %v", got, now)
+	}
+}
+
+func TestLoadingState(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.sample = nil
+	m.collecting = true
+	view := stripped(m.View())
+	if !strings.Contains(view, "Collecting data") ||
+		!strings.Contains(view, "STARTING") {
+		t.Fatalf("loading frame lacks feedback: %q", view)
+	}
+	assertFrameFits(t, m)
+}
+
+func TestSystemInfoCanBeHidden(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.showSystemInfo = false
+	view := stripped(m.View())
+	for _, hidden := range []string{"testhost", "Test Linux", "6.1.0-test", "amd64"} {
+		if strings.Contains(view, hidden) {
+			t.Errorf("hidden system info leaked %q", hidden)
 		}
 	}
 }
 
-func TestView_GPUTabContent(t *testing.T) {
-	m := newTestModel(120, 40)
+func TestEveryDetailedViewContainsOperationalData(t *testing.T) {
+	m := newTestModel(100, 40)
+	tests := []struct {
+		tab   tabID
+		wants []string
+	}{
+		{tabCPU, []string{"TIME SHARE", "I/O wait", "LOAD AVERAGE", "THERMALS"}},
+		{tabMemory, []string{"MEMORY", "Available", "Cached", "SWAP"}},
+		{tabNetwork, []string{"NETWORK", "eth0", "TCP / SOCKETS", "Retrans"}},
+		{tabDisk, []string{"STORAGE I/O", "nvme0n1", "FILESYSTEMS", "/home"}},
+		{tabProcesses, []string{"PROCESSES", "Running", "Zombie", "KULA PROCESS"}},
+		{tabGPU, []string{"NVIDIA RTX 4090", "Core", "VRAM", "Temperature", "Power"}},
+	}
+	for _, test := range tests {
+		m.activeTab = test.tab
+		content := stripped(strings.Join(m.contentLines(m.contentWidth()), "\n"))
+		for _, want := range test.wants {
+			if !strings.Contains(content, want) {
+				t.Errorf("%s view missing %q", tabNames[test.tab], want)
+			}
+		}
+	}
+}
+
+func TestEmptyHardwareStatesAreExplicit(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.sample.GPU = nil
 	m.activeTab = tabGPU
-	m.sample.GPU = []collector.GPUStats{
-		{Name: "NVIDIA RTX 4090", Driver: "nvidia", LoadPct: 45.0, Temperature: 55.0},
+	if content := stripped(strings.Join(m.contentLines(m.contentWidth()), "\n")); !strings.Contains(content, "No GPUs detected") {
+		t.Fatalf("empty GPU state = %q", content)
 	}
-	view := m.View()
-	for _, want := range []string{"NVIDIA", "driver", "Load", "Temp"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("GPU tab missing %q", want)
+
+	m.sample.Network.Interfaces = nil
+	m.activeTab = tabNetwork
+	if content := stripped(strings.Join(m.contentLines(m.contentWidth()), "\n")); !strings.Contains(content, "No active interfaces") {
+		t.Fatalf("empty network state = %q", content)
+	}
+}
+
+func TestHealthAssessment(t *testing.T) {
+	sample := newTestSample()
+	level, findings := assessHealth(sample)
+	if level != healthOK || len(findings) != 0 {
+		t.Fatalf("nominal sample assessed level=%d findings=%v", level, findings)
+	}
+
+	sample.Memory.UsedPercent = 82
+	sample.Process.Zombie = 1
+	level, findings = assessHealth(sample)
+	if level != healthWatch || len(findings) < 2 {
+		t.Fatalf("watch sample assessed level=%d findings=%v", level, findings)
+	}
+
+	sample.Disks.FileSystems[0].UsedPct = 95
+	level, findings = assessHealth(sample)
+	if level != healthCritical {
+		t.Fatalf("critical filesystem assessed level=%d findings=%v", level, findings)
+	}
+
+	sample = newTestSample()
+	sample.LoadAvg.Load1 = 7
+	level, findings = assessHealth(sample)
+	if level != healthCritical {
+		t.Fatalf("critical load assessed level=%d findings=%v", level, findings)
+	}
+
+	sample = newTestSample()
+	sample.Disks.Devices[0].Utilization = 85
+	level, findings = assessHealth(sample)
+	if level != healthWatch {
+		t.Fatalf("busy disk assessed level=%d findings=%v", level, findings)
+	}
+}
+
+func TestSparklineWidthAndInvalidValues(t *testing.T) {
+	values := []float64{0, 25, 50, 75, 100, math.NaN(), math.Inf(1)}
+	for _, width := range []int{1, 4, 12} {
+		line := sparkline(values, width, 0, 100)
+		if got := lipgloss.Width(line); got != width {
+			t.Errorf("sparkline width = %d, want %d (%q)", got, width, stripped(line))
 		}
 	}
 }
 
-// ── pushSample ────────────────────────────────────────────────────────────────
-
-func TestPushSample_PopulatesHistory(t *testing.T) {
-	m := newTestModel(120, 40)
-	s := newTestSample()
-	s.CPU.Total.Usage = 42.0
-
-	m.pushSample(s)
-
-	if m.histCPU.len != 1 {
-		t.Fatalf("expected 1 CPU history entry, got %d", m.histCPU.len)
+func TestGaugeClampsPercent(t *testing.T) {
+	for _, value := range []float64{-10, 0, 50, 110, math.NaN()} {
+		line := stripped(renderGauge("CPU", value, "", 60))
+		if strings.Contains(line, "NaN") {
+			t.Errorf("gauge exposed invalid value: %q", line)
+		}
 	}
-	if m.histCPU.buf[0] != 42.0 {
-		t.Errorf("expected CPU history 42.0, got %f", m.histCPU.buf[0])
+	if line := stripped(renderGauge("CPU", 110, "", 60)); !strings.Contains(line, "100.0%") {
+		t.Fatalf("high gauge not clamped: %q", line)
 	}
 }
 
-func TestPushSample_AggregatesNetwork(t *testing.T) {
-	m := newTestModel(120, 40)
-	s := newTestSample()
-	s.Network.Interfaces = []collector.NetInterface{
-		{RxMbps: 10.0, TxMbps: 5.0},
-		{RxMbps: 3.0, TxMbps: 1.0},
+func TestFormattingHelpers(t *testing.T) {
+	byteTests := map[uint64]string{
+		0:                         "0 B",
+		1024:                      "1.0 KiB",
+		1536:                      "1.5 KiB",
+		1024 * 1024:               "1.0 MiB",
+		1024 * 1024 * 1024:        "1.0 GiB",
+		1024 * 1024 * 1024 * 1024: "1.0 TiB",
 	}
-	m.pushSample(s)
+	for input, want := range byteTests {
+		if got := fmtBytes(input); got != want {
+			t.Errorf("fmtBytes(%d) = %q, want %q", input, got, want)
+		}
+	}
 
-	if m.histNetRx.len != 1 {
-		t.Fatalf("expected 1 NetRx history entry, got %d", m.histNetRx.len)
+	rateTests := map[float64]string{
+		0:      "0 bit/s",
+		0.0005: "500 bit/s",
+		0.5:    "500 kbit/s",
+		1:      "1.0 Mbit/s",
+		1200:   "1.20 Gbit/s",
 	}
-	if m.histNetRx.buf[0] != 13.0 {
-		t.Errorf("NetRx aggregation: expected 13.0, got %f", m.histNetRx.buf[0])
-	}
-	if m.histNetTx.len != 1 {
-		t.Fatalf("expected 1 NetTx history entry, got %d", m.histNetTx.len)
-	}
-	if m.histNetTx.buf[0] != 6.0 {
-		t.Errorf("NetTx aggregation: expected 6.0, got %f", m.histNetTx.buf[0])
+	for input, want := range rateTests {
+		if got := fmtBitRate(input); got != want {
+			t.Errorf("fmtBitRate(%v) = %q, want %q", input, got, want)
+		}
 	}
 }
 
-func TestPushSample_AveragesDiskUtil(t *testing.T) {
-	m := newTestModel(120, 40)
-	s := newTestSample()
-	s.Disks.Devices = []collector.DiskDevice{
-		{Utilization: 40.0},
-		{Utilization: 60.0},
+func TestDisplayWidthHelpersHandleUnicode(t *testing.T) {
+	value := "磁盘-alpha"
+	for _, width := range []int{2, 5, 12} {
+		right := padRight(value, width)
+		left := padLeft(value, width)
+		if lipgloss.Width(right) != width || lipgloss.Width(left) != width {
+			t.Errorf("unicode padding width %d: left=%d right=%d",
+				width, lipgloss.Width(left), lipgloss.Width(right))
+		}
 	}
-	m.pushSample(s)
 
-	if m.histDisk.len != 1 {
-		t.Fatalf("expected 1 Disk history entry, got %d", m.histDisk.len)
+	styled := sCrit.Render("critical")
+	if got := lipgloss.Width(fitLine(styled, 15)); got != 15 {
+		t.Fatalf("styled fit width = %d, want 15", got)
 	}
-	if m.histDisk.buf[0] != 50.0 {
-		t.Errorf("Disk avg util: expected 50.0, got %f", m.histDisk.buf[0])
+}
+
+func TestTrendWindowUsesConfiguredRefresh(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.refreshRate = 2 * time.Second
+	m.histCPU = newRing()
+	m.histCPU.push(1)
+	m.histCPU.push(2)
+	m.histCPU.push(3)
+	if got := m.trendWindow(); got != "last 4s" {
+		t.Fatalf("trend window = %q, want last 4s", got)
+	}
+}
+
+func TestTrendWindowUsesActualSampleSpan(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.histCPU = newRing()
+	m.histTimes = newTimestampRing(defaultHistoryLen)
+	start := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	m.histCPU.push(1)
+	m.histTimes.push(start)
+	m.histCPU.push(2)
+	m.histTimes.push(start.Add(9 * time.Second))
+	if got := m.trendWindow(); got != "last 9s" {
+		t.Fatalf("trend window = %q, want last 9s", got)
 	}
 }

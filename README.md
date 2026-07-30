@@ -255,6 +255,10 @@ export KULA_PORT="27960"
 ./kula tui
 ```
 
+The terminal monitor is designed for a fast live read rather than as a second
+web dashboard. Its overview keeps CPU, memory, traffic, storage pressure, host
+health, and short-term trends visible in a standard terminal.
+
 ### Inspect storage
 
 ```bash

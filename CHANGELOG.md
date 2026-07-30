@@ -9,6 +9,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ## [Unreleased]
 
+### Changed
+
+- TUI redesign
+
 ### Fixed
 
 - battery graph out of order after exiting focus mode

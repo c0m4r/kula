@@ -248,6 +248,7 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 
 func runTUI(cfg *config.Config, osName, kernelVersion, cpuArch string) {
 	coll := collector.New(cfg.Global, cfg.Collection, cfg.Applications, cfg.Storage.Directory)
+	defer coll.Stop()
 	coll.StartApplications()
 	if err := tui.RunHeadless(coll, cfg.TUI.RefreshRate, osName, kernelVersion, cpuArch, version, cfg.Global.ShowSystemInfo); err != nil {
 		log.Fatalf("TUI error: %v", err)

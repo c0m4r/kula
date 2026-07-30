@@ -1,234 +1,67 @@
 package tui
 
-import (
-	"sync"
+import "github.com/charmbracelet/lipgloss"
 
-	"github.com/charmbracelet/lipgloss"
-)
-
-// styleCache provides thread-safe caching for expensive style calculations.
-type styleCache struct {
-	mu     sync.RWMutex
-	bars   map[float64]lipgloss.Style
-	status map[float64]lipgloss.Style
-	load   map[float64]lipgloss.Style
-}
-
-var cache = &styleCache{
-	bars:   make(map[float64]lipgloss.Style),
-	status: make(map[float64]lipgloss.Style),
-	load:   make(map[float64]lipgloss.Style),
-}
-
-// getBarStyle returns cached bar style or creates and caches a new one.
-func (c *styleCache) getBarStyle(pct float64) lipgloss.Style {
-	c.mu.RLock()
-	if style, exists := c.bars[pct]; exists {
-		c.mu.RUnlock()
-		return style
-	}
-	c.mu.RUnlock()
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if style, exists := c.bars[pct]; exists {
-		return style
-	}
-
-	var style lipgloss.Style
-	if pct >= 85 {
-		style = sBarCrit
-	} else if pct >= 65 {
-		style = sBarWarn
-	} else {
-		style = sBarGood
-	}
-
-	c.bars[pct] = style
-	return style
-}
-
-// getStatusStyle returns cached status style or creates and caches a new one.
-func (c *styleCache) getStatusStyle(pct float64) lipgloss.Style {
-	c.mu.RLock()
-	if style, exists := c.status[pct]; exists {
-		c.mu.RUnlock()
-		return style
-	}
-	c.mu.RUnlock()
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if style, exists := c.status[pct]; exists {
-		return style
-	}
-
-	var style lipgloss.Style
-	if pct >= 85 {
-		style = sCrit
-	} else if pct >= 65 {
-		style = sWarn
-	} else {
-		style = sGood
-	}
-
-	c.status[pct] = style
-	return style
-}
-
-// getLoadStyle returns cached load style or creates and caches a new one.
-func (c *styleCache) getLoadStyle(load float64) lipgloss.Style {
-	c.mu.RLock()
-	if style, exists := c.load[load]; exists {
-		c.mu.RUnlock()
-		return style
-	}
-	c.mu.RUnlock()
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if style, exists := c.load[load]; exists {
-		return style
-	}
-
-	var style lipgloss.Style
-	if load >= 4 {
-		style = sCrit
-	} else if load >= 2 {
-		style = sWarn
-	} else {
-		style = sGood
-	}
-
-	c.load[load] = style
-	return style
-}
-
-// Palette — dark purple/slate theme inspired by Charmbracelet's aesthetic.
+// The TUI deliberately avoids a painted background. Adaptive foreground
+// colours preserve the operator's terminal theme and remain legible in both
+// light and dark environments.
 var (
-	clrPrimary = lipgloss.Color("#5B80B5")
-	clrSky     = lipgloss.Color("#38BDF8") // sky-400
-	clrGreen   = lipgloss.Color("#4ADE80") // green-400
-	clrYellow  = lipgloss.Color("#FBBF24") // amber-400
-	clrRed     = lipgloss.Color("#F87171") // red-400
-	clrBg      = lipgloss.Color("#0D0E1A")
-	clrSurface = lipgloss.Color("#141527")
-	clrCard    = lipgloss.Color("#1A1B2E")
-	clrBorder  = lipgloss.Color("#2D2E48")
-	clrText    = lipgloss.Color("#E2E8F0")
-	clrSubtext = lipgloss.Color("#94A3B8")
-	clrDim     = lipgloss.Color("#475569")
-)
+	clrAccent = lipgloss.AdaptiveColor{Light: "#005F87", Dark: "#7DD3FC"}
+	clrText   = lipgloss.AdaptiveColor{Light: "#1F2937", Dark: "#E5E7EB"}
+	clrMuted  = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#94A3B8"}
+	clrFaint  = lipgloss.AdaptiveColor{Light: "#CBD5E1", Dark: "#475569"}
+	clrGood   = lipgloss.AdaptiveColor{Light: "#167545", Dark: "#4ADE80"}
+	clrWarn   = lipgloss.AdaptiveColor{Light: "#9A6700", Dark: "#FBBF24"}
+	clrCrit   = lipgloss.AdaptiveColor{Light: "#B42318", Dark: "#FB7185"}
 
-// ── Header ───────────────────────────────────────────────────────────────────
+	sBrand = lipgloss.NewStyle().
+		Foreground(clrAccent).
+		Bold(true)
+	sStrong = lipgloss.NewStyle().
+		Foreground(clrText).
+		Bold(true)
+	sText    = lipgloss.NewStyle().Foreground(clrText)
+	sMuted   = lipgloss.NewStyle().Foreground(clrMuted)
+	sFaint   = lipgloss.NewStyle().Foreground(clrFaint)
+	sAccent  = lipgloss.NewStyle().Foreground(clrAccent)
+	sSection = lipgloss.NewStyle().
+			Foreground(clrAccent).
+			Bold(true)
+	sRule = lipgloss.NewStyle().Foreground(clrFaint)
 
-var (
-	sHeaderBg = lipgloss.NewStyle().Background(clrSurface)
-	sLogo     = lipgloss.NewStyle().
-			Background(clrPrimary).
-			Foreground(clrBg).
+	sTabActive = lipgloss.NewStyle().
+			Foreground(clrAccent).
 			Bold(true).
-			Padding(0, 1)
-	sHeaderPipe = lipgloss.NewStyle().
-			Background(clrSurface).
-			Foreground(clrBorder)
-	sHeaderKey = lipgloss.NewStyle().
-			Background(clrSurface).
-			Foreground(clrSubtext)
-	sHeaderVal = lipgloss.NewStyle().
-			Background(clrSurface).
-			Foreground(clrText).
+			Underline(true)
+	sTabInactive = lipgloss.NewStyle().Foreground(clrMuted)
+
+	sKey = lipgloss.NewStyle().
+		Foreground(clrAccent).
+		Bold(true)
+
+	sGood = lipgloss.NewStyle().
+		Foreground(clrGood).
+		Bold(true)
+	sWarn = lipgloss.NewStyle().
+		Foreground(clrWarn).
+		Bold(true)
+	sCrit = lipgloss.NewStyle().
+		Foreground(clrCrit).
+		Bold(true)
+
+	sBarGood = lipgloss.NewStyle().Foreground(clrGood)
+	sBarWarn = lipgloss.NewStyle().Foreground(clrWarn)
+	sBarCrit = lipgloss.NewStyle().Foreground(clrCrit)
+	sBarRest = lipgloss.NewStyle().Foreground(clrFaint)
+
+	sTableHead = lipgloss.NewStyle().
+			Foreground(clrMuted).
 			Bold(true)
-	sHeaderTime = lipgloss.NewStyle().
-			Background(clrSurface).
-			Foreground(clrPrimary).
-			Bold(true)
-)
+	sTableCell = lipgloss.NewStyle().Foreground(clrText)
+	sTableDim  = lipgloss.NewStyle().Foreground(clrMuted)
 
-// ── Tab bar ──────────────────────────────────────────────────────────────────
-
-var (
-	sTabBarBg = lipgloss.NewStyle().Background(clrSurface)
-	sTabAct   = lipgloss.NewStyle().
-			Background(clrPrimary).
-			Foreground(clrBg).
-			Bold(true).
-			Padding(0, 2)
-	sTabInact = lipgloss.NewStyle().
-			Background(clrSurface).
-			Foreground(clrSubtext).
-			Padding(0, 2)
-	sTabNum = lipgloss.NewStyle().
-		Background(clrSurface).
-		Foreground(clrDim)
-	sTabNumAct = lipgloss.NewStyle().
-			Background(clrPrimary).
-			Foreground(clrBg)
-)
-
-// ── Footer ───────────────────────────────────────────────────────────────────
-
-var (
-	sFooterBg  = lipgloss.NewStyle().Background(clrSurface)
-	sFooterKey = lipgloss.NewStyle().
-			Background(clrPrimary).
-			Foreground(clrBg).
-			Padding(0, 1)
-	sFooterHint = lipgloss.NewStyle().
-			Background(clrSurface).
-			Foreground(clrSubtext)
-	sFooterSep = lipgloss.NewStyle().
-			Background(clrSurface).
-			Foreground(clrBorder)
-)
-
-// ── Content ──────────────────────────────────────────────────────────────────
-
-var sContent = lipgloss.NewStyle().Background(clrBg)
-
-// ── Panels ───────────────────────────────────────────────────────────────────
-
-var (
-	sPanel = lipgloss.NewStyle().
-		Background(clrCard).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(clrBorder).
-		Padding(1, 2)
-	sPanelTitle = lipgloss.NewStyle().
-			Foreground(clrSky).
-			Bold(true)
-	sPanelTitleAlt = lipgloss.NewStyle().
-			Foreground(clrPrimary).
-			Bold(true)
-	sDivider = lipgloss.NewStyle().Foreground(clrBorder)
-)
-
-// ── Table / Labels / Values ───────────────────────────────────────────────────
-
-var (
-	sTH    = lipgloss.NewStyle().Foreground(clrSubtext).Bold(true)
-	sTD    = lipgloss.NewStyle().Foreground(clrText)
-	sTDDim = lipgloss.NewStyle().Foreground(clrSubtext)
-
-	sLabel = lipgloss.NewStyle().Foreground(clrSubtext)
-	sValue = lipgloss.NewStyle().Foreground(clrText).Bold(true)
-	sGood  = lipgloss.NewStyle().Foreground(clrGreen).Bold(true)
-	sWarn  = lipgloss.NewStyle().Foreground(clrYellow).Bold(true)
-	sCrit  = lipgloss.NewStyle().Foreground(clrRed).Bold(true)
-	sMuted = lipgloss.NewStyle().Foreground(clrDim)
-)
-
-// ── Progress bars ────────────────────────────────────────────────────────────
-
-var (
-	sBarGood  = lipgloss.NewStyle().Foreground(clrGreen)
-	sBarWarn  = lipgloss.NewStyle().Foreground(clrYellow)
-	sBarCrit  = lipgloss.NewStyle().Foreground(clrRed)
-	sBarEmpty = lipgloss.NewStyle().Foreground(clrDim)
+	sHelpPanel = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(clrFaint).
+			Padding(1, 2)
 )

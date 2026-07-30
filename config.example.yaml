@@ -338,6 +338,8 @@ applications:
 
 # TUI settings
 tui:
+  # Live sampling/redraw interval. Values below 100ms are capped to protect
+  # terminal responsiveness.
   refresh_rate: 1s
 
 # Ollama AI analysis (optional)

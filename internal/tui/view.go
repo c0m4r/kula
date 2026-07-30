@@ -2,777 +2,1273 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"kula/internal/collector"
 )
 
-// Layout constants define responsive design thresholds and dimensions.
 const (
-	// maxBarWidth sets the maximum width for progress bars.
-	// Wider bars provide better visual precision but consume more horizontal space.
-	maxBarWidth = 50
-
-	// minBarWidth defines the minimum width required to render a progress bar.
-	// Below this threshold, text-only representation is used for better readability.
-	minBarWidth = 10
-
-	// narrowWidth is the terminal width threshold below which the overview
-	// layout switches from two-column to single-column for better readability.
-	// This ensures content remains accessible on smaller screens.
-	narrowWidth = 110
+	minTerminalWidth  = 32
+	minTerminalHeight = 8
+	maxBarWidth       = 48
+	minBarWidth       = 8
 )
 
-// ── Top-level View ────────────────────────────────────────────────────────────
+type metricItem struct {
+	label string
+	value string
+}
+
+type healthLevel int
+
+const (
+	healthOK healthLevel = iota
+	healthWatch
+	healthCritical
+)
 
 func (m model) View() string {
-	if m.width == 0 {
+	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
-	header := m.renderHeader()
-	tabBar := m.renderTabBar()
-	footer := m.renderFooter()
-
-	used := lipgloss.Height(header) + lipgloss.Height(tabBar) + lipgloss.Height(footer)
-	contentH := m.height - used
-	if contentH < 1 {
-		contentH = 1
+	if m.width < minTerminalWidth || m.height < minTerminalHeight {
+		return m.renderTooSmall()
 	}
 
-	content := m.renderContent(m.width, contentH)
-	return lipgloss.JoinVertical(lipgloss.Left, header, tabBar, content, footer)
+	header := fitLine(m.renderHeader(), m.width)
+	tabs := fitLine(m.renderTabBar(), m.width)
+	footer := fitLine(m.renderFooter(), m.width)
+
+	var content string
+	if m.showHelp {
+		content = m.renderHelp(m.width, m.contentHeight())
+	} else {
+		content = m.renderViewport(m.width, m.contentHeight())
+	}
+
+	return strings.Join([]string{header, tabs, content, footer}, "\n")
 }
 
-// ── Header ────────────────────────────────────────────────────────────────────
+func (m model) contentHeight() int {
+	return clamp(m.height-3, 1, m.height)
+}
+
+func (m model) contentWidth() int {
+	switch {
+	case m.width >= 48:
+		return m.width - 4
+	case m.width >= 34:
+		return m.width - 2
+	default:
+		return m.width
+	}
+}
+
+func (m model) renderTooSmall() string {
+	message := sBrand.Render("KULA") + "\n" +
+		sStrong.Render("Terminal too small") + "\n" +
+		sMuted.Render(fmt.Sprintf("Need %d×%d · have %d×%d",
+			minTerminalWidth, minTerminalHeight, m.width, m.height))
+	return fitBlock(lipgloss.Place(m.width, m.height,
+		lipgloss.Center, lipgloss.Center, message), m.width, m.height)
+}
 
 func (m model) renderHeader() string {
-	pipe := sHeaderPipe.Render(" │ ")
-	left := sLogo.Render(" KULA ")
-
-	if m.showSystemInfo && m.sample != nil {
-		hostname := m.sample.System.Hostname
-		if hostname == "" {
-			hostname = "—"
-		}
-		left += pipe + sHeaderKey.Render(m.t.T("username")+" ") + sHeaderVal.Render(hostname)
-		if m.width >= 80 {
-			left += pipe + sHeaderKey.Render(m.t.T("kernel")+" ") + sHeaderVal.Render(m.kernelVersion)
-		}
-		if m.width >= 100 {
-			left += pipe + sHeaderKey.Render(m.t.T("architecture")+" ") + sHeaderVal.Render(m.cpuArch)
-		}
-	}
-	if m.sample != nil && m.sample.System.UptimeHuman != "" && m.width >= 70 {
-		left += pipe + sHeaderKey.Render(m.t.T("uptime")+" ") + sHeaderVal.Render(m.sample.System.UptimeHuman)
+	left := sBrand.Render("KULA")
+	if m.showSystemInfo && m.sample != nil && m.sample.System.Hostname != "" {
+		hostWidth := clamp(m.width/3, 10, 32)
+		left += sFaint.Render(" / ") + sStrong.Render(truncatePlain(m.sample.System.Hostname, hostWidth))
 	}
 
-	right := " " + sHeaderTime.Render(m.now.Format("15:04:05")) + " "
-	padW := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if padW < 0 {
-		padW = 0
+	if m.width >= 88 && m.sample != nil && m.sample.System.UptimeHuman != "" {
+		left += sFaint.Render("  uptime ") + sText.Render(m.sample.System.UptimeHuman)
 	}
-	return left + sHeaderBg.Render(strings.Repeat(" ", padW)) + right
+
+	var state string
+	age := m.sampleAge()
+	switch {
+	case m.paused:
+		state = sWarn.Render("Ⅱ PAUSED")
+		if !m.lastUpdated.IsZero() {
+			state += sFaint.Render(" " + compactAge(age))
+		}
+	case m.sample == nil:
+		state = sAccent.Render("◌ STARTING")
+	case age > max(3*time.Second, 2*m.refreshRate):
+		state = sWarn.Render("! STALE " + compactAge(age))
+	default:
+		state = sGood.Render("● LIVE")
+		if m.width >= 108 && m.collectTime > 0 {
+			state += sFaint.Render("  sample " + compactDuration(m.collectTime))
+		}
+	}
+
+	right := state
+	if m.width >= 52 {
+		right += sFaint.Render("  ") + sText.Render(m.now.Format("15:04:05"))
+	}
+	return joinSides(left, right, m.width)
 }
-
-// ── Tab bar ───────────────────────────────────────────────────────────────────
 
 func (m model) renderTabBar() string {
-	var tabs string
-	for i := tabID(0); i < numTabs; i++ {
-		num := fmt.Sprintf("%d", i+1)
-		name := m.t.T(tabKeys[i])
-		if i == m.activeTab {
-			tabs += sTabNumAct.Render(num) + sTabAct.Render(name)
+	var tabs []string
+	for tab := tabID(0); tab < numTabs; tab++ {
+		label := fmt.Sprintf("%d %s", tab+1, tabNames[tab])
+		if tab == m.activeTab {
+			tabs = append(tabs, sTabActive.Render(label))
 		} else {
-			tabs += sTabNum.Render(" "+num+" ") + sTabInact.Render(name)
+			tabs = append(tabs, sTabInactive.Render(label))
 		}
 	}
-	padW := m.width - lipgloss.Width(tabs)
-	if padW > 0 {
-		tabs += sTabBarBg.Render(strings.Repeat(" ", padW))
-	}
-	return tabs
-}
 
-// ── Footer ────────────────────────────────────────────────────────────────────
+	full := strings.Join(tabs, sFaint.Render("  "))
+	if lipgloss.Width(full) <= m.width-2 {
+		return centerLine(full, m.width)
+	}
+
+	previous := (m.activeTab - 1 + numTabs) % numTabs
+	next := (m.activeTab + 1) % numTabs
+	compact := sFaint.Render("‹ ") +
+		sTabInactive.Render(fmt.Sprintf("%d %s", previous+1, tabNames[previous])) +
+		sFaint.Render("  ") +
+		sTabActive.Render(fmt.Sprintf("%d %s", m.activeTab+1, tabNames[m.activeTab])) +
+		sFaint.Render("  ") +
+		sTabInactive.Render(fmt.Sprintf("%d %s", next+1, tabNames[next])) +
+		sFaint.Render(" ›")
+	return centerLine(compact, m.width)
+}
 
 func (m model) renderFooter() string {
-	type hint struct{ key, desc string }
-	hints := []hint{{"Tab/→", m.t.T("next")}, {"←", m.t.T("prev")}, {"1-7", m.t.T("jump")}, {"q", m.t.T("logout")}}
-	sep := sFooterSep.Render("  ")
-	var parts []string
-	for _, h := range hints {
-		parts = append(parts, sFooterKey.Render(h.key)+" "+sFooterHint.Render(h.desc))
-	}
-	left := sep + strings.Join(parts, sep)
-	right := sMuted.Render("v"+m.version) + " "
-	padW := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if padW > 0 {
-		left += sFooterBg.Render(strings.Repeat(" ", padW))
-	}
-	return left + right
-}
-
-// ── Content dispatcher ────────────────────────────────────────────────────────
-
-func (m model) renderContent(w, h int) string {
-	var body string
-	switch m.activeTab {
-	case tabOverview:
-		body = m.viewOverview(w, h)
-	case tabCPU:
-		body = m.viewCPU(w, h)
-	case tabMemory:
-		body = m.viewMemory(w, h)
-	case tabNetwork:
-		body = m.viewNetwork(w, h)
-	case tabDisk:
-		body = m.viewDisk(w, h)
-	case tabProcesses:
-		body = m.viewProcesses(w, h)
-	case tabGPU:
-		body = m.viewGPU(w, h)
-	}
-	// Clamp to available height BEFORE adding background fill,
-	// so the total View() string never exceeds m.height lines.
-	body = clampLines(body, h)
-	return sContent.Width(w).Height(h).Render(body)
-}
-
-// barW computes a progress bar width for a given panel inner width.
-// Returns 0 when the terminal is too narrow for a meaningful bar (→ text-only).
-func barW(inner int) int {
-	w := clamp(inner-20, 0, maxBarWidth)
-	if w < minBarWidth {
-		return 0
-	}
-	return w
-}
-
-// ── Overview tab ──────────────────────────────────────────────────────────────
-
-func (m model) viewOverview(w, h int) string {
-	if m.sample == nil {
-		return m.centerText("Collecting data…", w, h)
-	}
-
-	if w >= narrowWidth {
-		gap := 2
-		leftW := (w - gap) / 2
-		rightW := w - leftW - gap
-		left := m.buildOverviewLeft(leftW)
-		right := m.buildOverviewRight(rightW)
-		return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.buildOverviewLeft(w), m.buildOverviewRight(w))
-}
-
-func (m model) buildOverviewLeft(colW int) string {
-	s := m.sample
-	inner := colW - 6
-	bw := barW(inner)
-
-	var builder strings.Builder
-
-	builder.WriteString(sPanelTitleAlt.Render("◈ " + m.t.T("system_metrics")))
-	builder.WriteString("\n")
-	builder.WriteString(sDivider.Render(strings.Repeat("─", inner)))
-	builder.WriteString("\n\n")
-	builder.WriteString(renderMetricBarFull(padRight(m.t.T("cpu"), 6), s.CPU.Total.Usage, bw, ""))
-	builder.WriteString("\n")
-	builder.WriteString(renderMetricBarFull(padRight(m.t.T("ram"), 6), s.Memory.UsedPercent, bw,
-		fmtBytes(s.Memory.Used)+" / "+fmtBytes(s.Memory.Total)))
-	builder.WriteString("\n")
-	builder.WriteString(renderMetricBarFull(padRight(m.t.T("swap"), 6), s.Swap.UsedPercent, bw,
-		fmtBytes(s.Swap.Used)+" / "+fmtBytes(s.Swap.Total)))
-	builder.WriteString("\n\n")
-	builder.WriteString(sPanelTitle.Render(m.t.T("load_average")))
-	builder.WriteString("\n")
-	builder.WriteString(m.renderLoadRow(s.LoadAvg.Load1, s.LoadAvg.Load5, s.LoadAvg.Load15))
-	builder.WriteString("\n\n")
-	builder.WriteString(renderLabelVal(m.t.T("processes"), fmt.Sprintf("%d total  %d running  %d zombie",
-		s.Process.Total, s.Process.Running, s.Process.Zombie)))
-
-	if len(s.GPU) > 0 {
-		builder.WriteString("\n\n")
-		builder.WriteString(sPanelTitle.Render("GPU Utilization"))
-		builder.WriteString("\n")
-		for _, gpu := range s.GPU {
-			builder.WriteString(renderMetricBarFull(padRight(gpu.Name, 10), gpu.LoadPct, bw, ""))
-			builder.WriteString("\n")
-		}
-	}
-
-	return sPanel.Width(inner).Render(builder.String())
-}
-
-func (m model) buildOverviewRight(colW int) string {
-	s := m.sample
-	inner := colW - 6
-	var builder strings.Builder
-
-	builder.WriteString(sPanelTitleAlt.Render("◈ " + m.t.T("system_info")))
-	builder.WriteString("\n")
-	builder.WriteString(sDivider.Render(strings.Repeat("─", inner)))
-	builder.WriteString("\n\n")
-
-	if m.showSystemInfo {
-		builder.WriteString(renderLabelVal(padRight(m.t.T("username"), 10), s.System.Hostname))
-		builder.WriteString("\n")
-		builder.WriteString(renderLabelVal(padRight(m.t.T("os"), 10), m.osName))
-		builder.WriteString("\n")
-		builder.WriteString(renderLabelVal(padRight(m.t.T("kernel"), 10), m.kernelVersion))
-		builder.WriteString("\n")
-		builder.WriteString(renderLabelVal(padRight(m.t.T("architecture"), 10), m.cpuArch))
-		builder.WriteString("\n\n")
-	}
-
-	builder.WriteString(renderLabelVal(padRight(m.t.T("uptime"), 10), s.System.UptimeHuman))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal(padRight(m.t.T("clock"), 10), clockStr(s.System.ClockSync, s.System.ClockSource)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal(padRight(m.t.T("entropy"), 10), fmt.Sprintf("%d bits", s.System.Entropy)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal(padRight(m.t.T("user"), 10), fmt.Sprintf("%d", s.System.UserCount)))
-
-	if len(s.Network.Interfaces) > 0 {
-		builder.WriteString("\n\n")
-		builder.WriteString(sPanelTitle.Render(m.t.T("network_throughput")))
-		builder.WriteString("\n\n")
-		for _, iface := range s.Network.Interfaces {
-			builder.WriteString(sLabel.Render(padRight(iface.Name, 10)) + " " +
-				sGood.Render("↓"+fmtMbps(iface.RxMbps)) + " " +
-				sCrit.Render("↑"+fmtMbps(iface.TxMbps)))
-			builder.WriteString("\n")
-		}
-	}
-
-	return sPanel.Width(inner).Render(builder.String())
-}
-
-// ── CPU tab ───────────────────────────────────────────────────────────────────
-
-func (m model) viewCPU(w, h int) string {
-	if m.sample == nil {
-		return m.centerText("Collecting data…", w, h)
-	}
-	s := m.sample.CPU
-	la := m.sample.LoadAvg
-	compact := h < 18
-
-	inner := w - 6
-	bw := barW(inner)
-
-	var builder strings.Builder
-
-	builder.WriteString(sPanelTitleAlt.Render("◈ CPU Usage"))
-	builder.WriteString("\n")
-	builder.WriteString(sDivider.Render(strings.Repeat("─", inner)))
-	builder.WriteString("\n\n")
-	builder.WriteString(renderMetricBarFull(m.t.T("total"), s.Total.Usage, bw, fmt.Sprintf("%d cores", s.NumCores)))
-	builder.WriteString("\n\n")
-	builder.WriteString(sPanelTitle.Render(m.t.T("breakdown")))
-	builder.WriteString("\n\n")
-	builder.WriteString(renderCPUBreakdown(s.Total))
-	builder.WriteString("\n\n")
-	builder.WriteString(sPanelTitle.Render(m.t.T("load_average")))
-	builder.WriteString("\n\n")
-	builder.WriteString(m.renderLoadRow(la.Load1, la.Load5, la.Load15))
-	builder.WriteString("\n\n")
-	builder.WriteString(renderLabelVal(m.t.T("threads"), fmt.Sprintf("%d running / %d total", la.Running, la.Total)))
-
-	if !compact && s.Temperature > 0 {
-		builder.WriteString("\n\n")
-		builder.WriteString(sPanelTitle.Render(m.t.T("temperature")))
-		builder.WriteString("\n\n")
-		builder.WriteString(renderLabelVal("Package", fmt.Sprintf("%.1f °C", s.Temperature)))
-		builder.WriteString("\n")
-		for _, sen := range s.Sensors {
-			builder.WriteString(renderLabelVal(padRight(sen.Name, 7), fmt.Sprintf("%.1f °C", sen.Value)))
-			builder.WriteString("\n")
-		}
-	}
-	return sPanel.Width(inner).Render(builder.String())
-}
-
-// renderCPUBreakdown renders all CPU time components on one compact text line.
-func renderCPUBreakdown(c collector.CPUCoreStats) string {
-	fields := []struct {
-		label string
-		val   float64
-	}{
-		{"usr", c.User}, {"sys", c.System}, {"io", c.IOWait},
-		{"irq", c.IRQ}, {"sirq", c.SoftIRQ}, {"stl", c.Steal},
-	}
-	var parts []string
-	for _, f := range fields {
-		parts = append(parts,
-			sLabel.Render(f.label+" ")+statusStyle(f.val).Render(fmt.Sprintf("%.1f%%", f.val)),
+	if m.showHelp {
+		return joinSides(
+			sKey.Render("? / esc")+" "+sMuted.Render("close help"),
+			sMuted.Render("v"+m.version),
+			m.width,
 		)
 	}
-	return strings.Join(parts, sMuted.Render("  "))
-}
 
-// ── Memory tab ────────────────────────────────────────────────────────────────
-
-// buildMemorySection renders the RAM breakdown section with all memory metrics.
-func (m model) buildMemorySection(mem collector.MemoryStats) string {
-	var builder strings.Builder
-
-	builder.WriteString(renderLabelVal(padRight(m.t.T("used"), 10), fmtBytes(mem.Used)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal(padRight(m.t.T("free"), 10), fmtBytes(mem.Free)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal(padRight(m.t.T("available"), 10), fmtBytes(mem.Available)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal("Buffers  ", fmtBytes(mem.Buffers)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal("Cached   ", fmtBytes(mem.Cached)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal("Shared   ", fmtBytes(mem.Shmem)))
-
-	return builder.String()
-}
-
-// buildSwapSection renders the swap information section.
-func (m model) buildSwapSection(swap collector.SwapStats, bw int) string {
-	var builder strings.Builder
-
-	if swap.Total == 0 {
-		builder.WriteString(sMuted.Render("  " + m.t.T("no_swap")))
-	} else {
-		builder.WriteString(renderMetricBarFull("Swap", swap.UsedPercent, bw,
-			fmtBytes(swap.Used)+" / "+fmtBytes(swap.Total)))
-		builder.WriteString("\n\n")
-		builder.WriteString(renderLabelVal("Used ", fmtBytes(swap.Used)))
-		builder.WriteString("\n")
-		builder.WriteString(renderLabelVal("Free ", fmtBytes(swap.Free)))
+	pauseLabel := "pause"
+	if m.paused {
+		pauseLabel = "resume"
 	}
 
-	return builder.String()
-}
-
-func (m model) viewMemory(w, h int) string {
-	if m.sample == nil {
-		return m.centerText("Collecting data…", w, h)
+	type hint struct {
+		key  string
+		text string
 	}
-	_ = h
-	mem := m.sample.Memory
-	swap := m.sample.Swap
-	inner := w - 6
-	bw := barW(inner)
-
-	var builder strings.Builder
-
-	builder.WriteString(sPanelTitleAlt.Render("◈ Memory"))
-	builder.WriteString("\n")
-	builder.WriteString(sDivider.Render(strings.Repeat("─", inner)))
-	builder.WriteString("\n\n")
-	builder.WriteString(renderMetricBarFull("RAM ", mem.UsedPercent, bw,
-		fmtBytes(mem.Used)+" / "+fmtBytes(mem.Total)))
-	builder.WriteString("\n\n")
-	builder.WriteString(sPanelTitle.Render("RAM Breakdown"))
-	builder.WriteString("\n\n")
-	builder.WriteString(m.buildMemorySection(mem))
-	builder.WriteString("\n\n")
-	builder.WriteString(sPanelTitle.Render("Swap"))
-	builder.WriteString("\n\n")
-	builder.WriteString(m.buildSwapSection(swap, bw))
-
-	return sPanel.Width(inner).Render(builder.String())
-}
-
-// ── Network tab ───────────────────────────────────────────────────────────────
-
-// buildNetworkInterfacesTable renders the network interfaces table.
-func (m model) buildNetworkInterfacesTable(interfaces []collector.NetInterface, inner int) string {
-	showExtra := inner >= 90
-	cols := []int{12, 10, 10, 10, 10}
-	if showExtra {
-		cols = append(cols, 8, 8)
-	}
-
-	var builder strings.Builder
-
-	header := sTH.Render(padRight("Interface", cols[0])) +
-		sTH.Render(padLeft("Rx Mbps", cols[1])) +
-		sTH.Render(padLeft("Tx Mbps", cols[2])) +
-		sTH.Render(padLeft("Rx Pkt/s", cols[3])) +
-		sTH.Render(padLeft("Tx Pkt/s", cols[4]))
-	if showExtra {
-		header += sTH.Render(padLeft("RxDrop", cols[5])) +
-			sTH.Render(padLeft("TxDrop", cols[6]))
-	}
-
-	builder.WriteString(header)
-	builder.WriteString("\n")
-	builder.WriteString(sDivider.Render(strings.Repeat("─", sumInts(cols))))
-	builder.WriteString("\n")
-
-	for _, iface := range interfaces {
-		row := sTD.Render(padRight(iface.Name, cols[0])) +
-			sTD.Render(padLeft(fmt.Sprintf("%.2f", iface.RxMbps), cols[1])) +
-			sTD.Render(padLeft(fmt.Sprintf("%.2f", iface.TxMbps), cols[2])) +
-			sTD.Render(padLeft(fmt.Sprintf("%.0f", iface.RxPPS), cols[3])) +
-			sTD.Render(padLeft(fmt.Sprintf("%.0f", iface.TxPPS), cols[4]))
-		if showExtra {
-			row += sTDDim.Render(padLeft(fmt.Sprintf("%d", iface.RxDrop), cols[5])) +
-				sTDDim.Render(padLeft(fmt.Sprintf("%d", iface.TxDrop), cols[6]))
+	var hints []hint
+	switch {
+	case m.width >= 104:
+		hints = []hint{
+			{"tab", "switch"},
+			{"↑↓", "scroll"},
+			{"space", pauseLabel},
+			{"r", "sample now"},
+			{"?", "keys"},
+			{"q", "quit"},
 		}
-		builder.WriteString(row)
-		builder.WriteString("\n")
+	case m.width >= 66:
+		hints = []hint{
+			{"tab", "switch"},
+			{"↑↓", "scroll"},
+			{"space", pauseLabel},
+			{"r", "now"},
+			{"?", "help"},
+			{"q", "quit"},
+		}
+	default:
+		hints = []hint{
+			{"tab", "switch"},
+			{"↑↓", "scroll"},
+			{"?", "help"},
+			{"q", "quit"},
+		}
 	}
 
-	return builder.String()
+	parts := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		parts = append(parts, sKey.Render(hint.key)+" "+sMuted.Render(hint.text))
+	}
+	left := strings.Join(parts, sFaint.Render("  "))
+
+	right := sMuted.Render("v" + m.version)
+	if maxScroll := m.maxScroll(); maxScroll > 0 {
+		right = sAccent.Render(fmt.Sprintf("↑ %d/%d ↓", m.clampScroll(m.scroll)+1, maxScroll+1))
+	}
+	return joinSides(left, right, m.width)
 }
 
-// buildTCPSocketsSection renders TCP and sockets statistics.
-func (m model) buildTCPSocketsSection(tcp collector.TCPStats, sock collector.SocketStats) string {
-	var builder strings.Builder
+func (m model) renderHelp(width, height int) string {
+	var rows []string
+	switch {
+	case height < 12:
+		rows = []string{
+			sBrand.Render("KULA KEYS"),
+			sKey.Render("tab h l ← →") + sMuted.Render("  switch view"),
+			sKey.Render("j k ↑ ↓") + sMuted.Render("  scroll"),
+			sKey.Render("space / r") + sMuted.Render("  pause / sample"),
+			sKey.Render("? esc / q") + sMuted.Render("  close / quit"),
+		}
+	case height < 20:
+		rows = []string{
+			sBrand.Render("KULA") + sFaint.Render("  keyboard"),
+			"",
+			helpRow("tab / shift+tab", "switch view"),
+			helpRow("h l  /  ← →", "switch view"),
+			helpRow("1 … 7", "jump to view"),
+			helpRow("j k  /  ↑ ↓", "scroll"),
+			helpRow("pgup / pgdown", "scroll page"),
+			helpRow("g / G", "top / bottom"),
+			helpRow("space", "pause / resume"),
+			helpRow("r", "sample now"),
+			helpRow("? / esc", "close help"),
+			helpRow("q", "quit"),
+		}
+	default:
+		rows = []string{
+			sBrand.Render("KULA") + sFaint.Render("  keyboard"),
+			"",
+			sSection.Render("Navigate"),
+			helpRow("tab / shift+tab", "next / previous view"),
+			helpRow("h l  /  ← →", "next / previous view"),
+			helpRow("1 … 7", "jump directly to a view"),
+			"",
+			sSection.Render("Move"),
+			helpRow("j k  /  ↑ ↓", "scroll one line"),
+			helpRow("pgup / pgdown", "scroll one page"),
+			helpRow("g / G", "top / bottom"),
+			"",
+			sSection.Render("Live data"),
+			helpRow("space", "pause / resume sampling"),
+			helpRow("r", "sample immediately"),
+			helpRow("q", "quit"),
+		}
+	}
 
-	builder.WriteString(renderLabelVal("Established", fmt.Sprintf("%d", tcp.CurrEstab)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal("TCP In Use ", fmt.Sprintf("%d", sock.TCPInUse)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal("TCP TW     ", fmt.Sprintf("%d", sock.TCPTw)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal("UDP In Use ", fmt.Sprintf("%d", sock.UDPInUse)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal("In Errors/s", fmt.Sprintf("%.2f", tcp.InErrs)))
-	builder.WriteString("\n")
-	builder.WriteString(renderLabelVal("Out RSTs/s ", fmt.Sprintf("%.2f", tcp.OutRsts)))
+	panelWidth := clamp(width-4, 28, 62)
+	contentWidth := clamp(panelWidth-6, 1, panelWidth)
+	for i := range rows {
+		rows[i] = fitLine(rows[i], contentWidth)
+	}
+	panel := sHelpPanel.Width(contentWidth).Render(strings.Join(rows, "\n"))
 
-	return builder.String()
+	if lipgloss.Height(panel) > height || lipgloss.Width(panel) > width {
+		return fitBlock(strings.Join(rows, "\n"), width, height)
+	}
+	return fitBlock(lipgloss.Place(width, height,
+		lipgloss.Center, lipgloss.Center, panel), width, height)
 }
 
-func (m model) viewNetwork(w, h int) string {
+func helpRow(key, description string) string {
+	return sKey.Render(padRight(key, 19)) + sText.Render(description)
+}
+
+func (m model) renderViewport(width, height int) string {
+	contentWidth := m.contentWidth()
+	lines := m.contentLines(contentWidth)
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+
+	scroll := clamp(m.scroll, 0, max(0, len(lines)-height))
+	end := min(len(lines), scroll+height)
+	visible := lines[scroll:end]
+
+	leftMargin := (width - contentWidth) / 2
+	rightMargin := width - contentWidth - leftMargin
+	rendered := make([]string, 0, height)
+	for _, line := range visible {
+		line = fitLine(line, contentWidth)
+		rendered = append(rendered,
+			strings.Repeat(" ", leftMargin)+line+strings.Repeat(" ", rightMargin))
+	}
+	for len(rendered) < height {
+		rendered = append(rendered, strings.Repeat(" ", width))
+	}
+	return strings.Join(rendered, "\n")
+}
+
+func (m model) contentLines(width int) []string {
 	if m.sample == nil {
-		return m.centerText("Collecting data…", w, h)
+		status := m.t.T("collecting_data")
+		if !m.collecting {
+			status = "No sample available"
+		}
+		return []string{"", centerLine(sAccent.Render("◌")+" "+sMuted.Render(status), width)}
 	}
-	_ = h
-	net := m.sample.Network
-	inner := w - 6
 
-	var builder strings.Builder
-
-	builder.WriteString(sPanelTitleAlt.Render("◈ Network Interfaces"))
-	builder.WriteString("\n")
-	builder.WriteString(sDivider.Render(strings.Repeat("─", inner)))
-	builder.WriteString("\n\n")
-	builder.WriteString(m.buildNetworkInterfacesTable(net.Interfaces, inner))
-	builder.WriteString("\n\n")
-	builder.WriteString(sPanelTitle.Render("TCP / Sockets"))
-	builder.WriteString("\n\n")
-	builder.WriteString(m.buildTCPSocketsSection(net.TCP, net.Sockets))
-
-	return sPanel.Width(inner).Render(builder.String())
+	switch m.activeTab {
+	case tabOverview:
+		return m.overviewLines(width)
+	case tabCPU:
+		return m.cpuLines(width)
+	case tabMemory:
+		return m.memoryLines(width)
+	case tabNetwork:
+		return m.networkLines(width)
+	case tabDisk:
+		return m.diskLines(width)
+	case tabProcesses:
+		return m.processLines(width)
+	case tabGPU:
+		return m.gpuLines(width)
+	default:
+		return nil
+	}
 }
 
-// ── Disk tab ──────────────────────────────────────────────────────────────────
-
-func (m model) viewDisk(w, h int) string {
-	if m.sample == nil {
-		return m.centerText("Collecting data…", w, h)
+func (m model) overviewLines(width int) []string {
+	sample := m.sample
+	level, findings := assessHealth(sample)
+	trendWidth := width
+	if width >= 66 {
+		trendWidth = (width - 3) / 2
 	}
-	_ = h
-	disks := m.sample.Disks
-	inner := w - 6
-
 	lines := []string{
-		sPanelTitleAlt.Render("◈ Block Devices"),
-		sDivider.Render(strings.Repeat("─", inner)),
+		"",
+		sectionLine("System status", width),
+		renderHealth(level, findings, width),
 		"",
 	}
 
-	if len(disks.Devices) > 0 {
-		dcols := []int{10, 9, 10, 11, 11, 8}
+	cpuTile := []string{
+		sSection.Render("CPU"),
+		statusStyle(sample.CPU.Total.Usage).Render(fmt.Sprintf("%.1f%%", sample.CPU.Total.Usage)) +
+			sMuted.Render(fmt.Sprintf("  ·  load %.2f", sample.LoadAvg.Load1)),
+		sparkline(m.histCPU.getAll(), max(8, trendWidth), 0, 100),
+		sMuted.Render(fmt.Sprintf("%d cores  ·  %s", sample.CPU.NumCores, m.trendWindow())),
+	}
+	memoryTile := []string{
+		sSection.Render("MEMORY"),
+		statusStyle(sample.Memory.UsedPercent).Render(fmt.Sprintf("%.1f%%", sample.Memory.UsedPercent)) +
+			sMuted.Render("  ·  "+fmtBytes(sample.Memory.Used)+" / "+fmtBytes(sample.Memory.Total)),
+		sparkline(m.histMem.getAll(), max(8, trendWidth), 0, 100),
+		sMuted.Render(fmtBytes(sample.Memory.Available) + " available"),
+	}
+
+	totalRx, totalTx := networkTotals(sample.Network.Interfaces)
+	trafficTile := []string{
+		sSection.Render("TRAFFIC"),
+		sGood.Render("↓ "+fmtBitRate(totalRx)) +
+			sFaint.Render("   ") + sAccent.Render("↑ "+fmtBitRate(totalTx)),
+		sGood.Render("↓ ") + sparkline(m.histNetRx.getAll(), max(7, trendWidth-2), 0, 0),
+		sAccent.Render("↑ ") + sparkline(m.histNetTx.getAll(), max(7, trendWidth-2), 0, 0),
+	}
+	diskRead, diskWrite, diskBusy := diskTotals(sample.Disks.Devices)
+	storageTile := []string{
+		sSection.Render("STORAGE"),
+		statusStyle(diskBusy).Render(fmt.Sprintf("%.1f%% busy", diskBusy)),
+		sparkline(m.histDisk.getAll(), max(8, trendWidth), 0, 100),
+		sMuted.Render("R " + fmtByteRate(diskRead) + "  ·  W " + fmtByteRate(diskWrite)),
+	}
+
+	if width >= 66 {
+		columnWidth := (width - 3) / 2
+		lines = append(lines, joinBlocks(cpuTile, memoryTile, columnWidth, 3)...)
+		lines = append(lines, "")
+		lines = append(lines, joinBlocks(trafficTile, storageTile, columnWidth, 3)...)
+	} else {
+		lines = append(lines, cpuTile...)
+		lines = append(lines, "")
+		lines = append(lines, memoryTile...)
+		lines = append(lines, "")
+		lines = append(lines, trafficTile...)
+		lines = append(lines, "")
+		lines = append(lines, storageTile...)
+	}
+
+	lines = append(lines, "", sectionLine("Host", width))
+	hostItems := []metricItem{
+		{"Uptime", fallback(sample.System.UptimeHuman, "—")},
+		{"Processes", fmt.Sprintf("%d · %d running", sample.Process.Total, sample.Process.Running)},
+		{"Clock", clockText(sample.System.ClockSync, sample.System.ClockSource)},
+		{"Users", fmt.Sprintf("%d", sample.System.UserCount)},
+	}
+	lines = append(lines, metricGrid(hostItems, width, responsiveColumns(width, 1, 4))...)
+
+	if m.showSystemInfo {
+		system := strings.TrimSpace(strings.Join([]string{m.osName, m.kernelVersion, m.cpuArch}, "  ·  "))
+		if system != "" {
+			lines = append(lines, sMuted.Render(truncatePlain(system, width)))
+		}
+	}
+
+	if len(sample.GPU) > 0 {
+		gpu := sample.GPU[0]
+		detail := fmt.Sprintf("%.1f%% load", gpu.LoadPct)
+		if gpu.Temperature > 0 {
+			detail += fmt.Sprintf("  ·  %.1f°C", gpu.Temperature)
+		}
+		lines = append(lines, sMuted.Render("GPU  ")+
+			sText.Render(truncatePlain(gpu.Name, max(8, width-lipgloss.Width(detail)-7)))+
+			sFaint.Render("  ")+statusStyle(gpu.LoadPct).Render(detail))
+	}
+
+	return lines
+}
+
+func (m model) cpuLines(width int) []string {
+	cpu := m.sample.CPU
+	load := m.sample.LoadAvg
+	lines := []string{
+		"",
+		sectionLine("CPU", width),
+		renderGauge("Total", cpu.Total.Usage,
+			fmt.Sprintf("%d logical cores", cpu.NumCores), width),
+		sparkline(m.histCPU.getAll(), width, 0, 100),
+		sMuted.Render("Trend  " + m.trendWindow()),
+		"",
+		sectionLine("Time share", width),
+	}
+
+	timeShare := []metricItem{
+		{"User", fmt.Sprintf("%.1f%%", cpu.Total.User)},
+		{"System", fmt.Sprintf("%.1f%%", cpu.Total.System)},
+		{"I/O wait", fmt.Sprintf("%.1f%%", cpu.Total.IOWait)},
+		{"IRQ", fmt.Sprintf("%.1f%%", cpu.Total.IRQ)},
+		{"Soft IRQ", fmt.Sprintf("%.1f%%", cpu.Total.SoftIRQ)},
+		{"Steal", fmt.Sprintf("%.1f%%", cpu.Total.Steal)},
+	}
+	lines = append(lines, metricGrid(timeShare, width, responsiveColumns(width, 2, 3))...)
+
+	lines = append(lines, "", sectionLine("Load average", width))
+	loadItems := []metricItem{
+		{"1 minute", fmt.Sprintf("%.2f", load.Load1)},
+		{"5 minutes", fmt.Sprintf("%.2f", load.Load5)},
+		{"15 minutes", fmt.Sprintf("%.2f", load.Load15)},
+		{"Runnable", fmt.Sprintf("%d / %d", load.Running, load.Total)},
+	}
+	lines = append(lines, metricGrid(loadItems, width, responsiveColumns(width, 2, 4))...)
+	if cpu.NumCores > 0 {
+		pressure := load.Load1 / float64(cpu.NumCores) * 100
+		lines = append(lines, renderGauge("Capacity", pressure, "1m load / cores", width))
+	}
+
+	if cpu.Temperature > 0 || len(cpu.Sensors) > 0 {
+		lines = append(lines, "", sectionLine("Thermals", width))
+		if cpu.Temperature > 0 {
+			lines = append(lines, renderTemperature("Package", cpu.Temperature, width))
+		}
+		for _, sensor := range cpu.Sensors {
+			lines = append(lines, renderTemperature(sensor.Name, sensor.Value, width))
+		}
+	}
+	return lines
+}
+
+func (m model) memoryLines(width int) []string {
+	memory := m.sample.Memory
+	swap := m.sample.Swap
+	lines := []string{
+		"",
+		sectionLine("Memory", width),
+		renderGauge("RAM", memory.UsedPercent,
+			fmtBytes(memory.Used)+" / "+fmtBytes(memory.Total), width),
+		sparkline(m.histMem.getAll(), width, 0, 100),
+		sMuted.Render("Trend  " + m.trendWindow()),
+		"",
+		sectionLine("Breakdown", width),
+	}
+	items := []metricItem{
+		{"Available", fmtBytes(memory.Available)},
+		{"Free", fmtBytes(memory.Free)},
+		{"Cached", fmtBytes(memory.Cached)},
+		{"Buffers", fmtBytes(memory.Buffers)},
+		{"Shared", fmtBytes(memory.Shmem)},
+		{"Used", fmtBytes(memory.Used)},
+	}
+	lines = append(lines, metricGrid(items, width, responsiveColumns(width, 2, 3))...)
+
+	lines = append(lines, "", sectionLine("Swap", width))
+	if swap.Total == 0 {
+		lines = append(lines, sMuted.Render(m.t.T("no_swap")))
+		return lines
+	}
+	lines = append(lines,
+		renderGauge("Swap", swap.UsedPercent,
+			fmtBytes(swap.Used)+" / "+fmtBytes(swap.Total), width),
+		sparkline(m.histSwap.getAll(), width, 0, 100),
+	)
+	return lines
+}
+
+func (m model) networkLines(width int) []string {
+	network := m.sample.Network
+	totalRx, totalTx := networkTotals(network.Interfaces)
+	lines := []string{
+		"",
+		sectionLine("Network", width),
+		sGood.Render("↓ "+fmtBitRate(totalRx)) +
+			sFaint.Render("   receive total"),
+		sGood.Render("↓ ") + sparkline(m.histNetRx.getAll(), max(1, width-2), 0, 0),
+		sAccent.Render("↑ "+fmtBitRate(totalTx)) +
+			sFaint.Render("   transmit total"),
+		sAccent.Render("↑ ") + sparkline(m.histNetTx.getAll(), max(1, width-2), 0, 0),
+		"",
+		sectionLine("Interfaces", width),
+	}
+
+	if len(network.Interfaces) == 0 {
+		lines = append(lines, sMuted.Render("No active interfaces"))
+	} else if width >= 72 {
+		columns := []int{14, 12, 12, 10, 10, 10}
 		lines = append(lines,
-			sTH.Render(padRight("Device", dcols[0]))+
-				sTH.Render(padLeft("Reads/s", dcols[1]))+
-				sTH.Render(padLeft("Writes/s", dcols[2]))+
-				sTH.Render(padLeft("Read MB/s", dcols[3]))+
-				sTH.Render(padLeft("Write MB/s", dcols[4]))+
-				sTH.Render(padLeft("Util%", dcols[5])),
-			sDivider.Render(strings.Repeat("─", sumInts(dcols))),
+			tableRow([]string{"INTERFACE", "RECEIVE", "TRANSMIT", "RX PKT/S", "TX PKT/S", "DROPS"},
+				columns, true),
+			sRule.Render(strings.Repeat("─", min(width, sumInts(columns)))),
 		)
-		for _, dev := range disks.Devices {
-			util := statusStyle(dev.Utilization).Render(
-				padLeft(fmt.Sprintf("%.1f%%", dev.Utilization), dcols[5]))
+		for _, iface := range network.Interfaces {
+			drops := iface.RxDrop + iface.TxDrop
+			lines = append(lines, tableRow([]string{
+				iface.Name,
+				fmtBitRate(iface.RxMbps),
+				fmtBitRate(iface.TxMbps),
+				fmt.Sprintf("%.0f", iface.RxPPS),
+				fmt.Sprintf("%.0f", iface.TxPPS),
+				fmt.Sprintf("%d", drops),
+			}, columns, false))
+		}
+	} else {
+		for _, iface := range network.Interfaces {
 			lines = append(lines,
-				sTD.Render(padRight(dev.Name, dcols[0]))+
-					sTD.Render(padLeft(fmt.Sprintf("%.1f", dev.ReadsPerSec), dcols[1]))+
-					sTD.Render(padLeft(fmt.Sprintf("%.1f", dev.WritesPerSec), dcols[2]))+
-					sTD.Render(padLeft(fmt.Sprintf("%.2f", dev.ReadBytesPS/1e6), dcols[3]))+
-					sTD.Render(padLeft(fmt.Sprintf("%.2f", dev.WriteBytesPS/1e6), dcols[4]))+util,
+				sStrong.Render(truncatePlain(iface.Name, max(6, width/3)))+
+					sFaint.Render("  ↓ ")+sText.Render(fmtBitRate(iface.RxMbps))+
+					sFaint.Render("  ↑ ")+sText.Render(fmtBitRate(iface.TxMbps)),
+				sMuted.Render(fmt.Sprintf("  packets %.0f ↓  %.0f ↑  ·  drops %d",
+					iface.RxPPS, iface.TxPPS, iface.RxDrop+iface.TxDrop)),
 			)
 		}
-		if disks.Devices[0].Temperature > 0 {
-			lines = append(lines, "", sPanelTitle.Render("Temperatures"), "")
-			for _, dev := range disks.Devices {
-				if dev.Temperature > 0 {
-					lines = append(lines, renderLabelVal(padRight(dev.Name, 10),
-						fmt.Sprintf("%.1f °C", dev.Temperature)))
-				}
+	}
+
+	lines = append(lines, "", sectionLine("TCP / sockets", width))
+	tcpItems := []metricItem{
+		{"Established", fmt.Sprintf("%d", network.TCP.CurrEstab)},
+		{"TCP in use", fmt.Sprintf("%d", network.Sockets.TCPInUse)},
+		{"Time wait", fmt.Sprintf("%d", network.Sockets.TCPTw)},
+		{"UDP in use", fmt.Sprintf("%d", network.Sockets.UDPInUse)},
+		{"Retrans / s", fmt.Sprintf("%.2f", network.TCP.Retrans)},
+		{"Input errors / s", fmt.Sprintf("%.2f", network.TCP.InErrs)},
+		{"Resets / s", fmt.Sprintf("%.2f", network.TCP.OutRsts)},
+	}
+	lines = append(lines, metricGrid(tcpItems, width, responsiveColumns(width, 2, 4))...)
+	return lines
+}
+
+func (m model) diskLines(width int) []string {
+	disks := m.sample.Disks
+	readRate, writeRate, busy := diskTotals(disks.Devices)
+	lines := []string{
+		"",
+		sectionLine("Storage I/O", width),
+		renderGauge("Busy", busy,
+			"R "+fmtByteRate(readRate)+"  ·  W "+fmtByteRate(writeRate), width),
+		sparkline(m.histDisk.getAll(), width, 0, 100),
+		sMuted.Render("Average device utilization  ·  " + m.trendWindow()),
+		"",
+		sectionLine("Block devices", width),
+	}
+
+	if len(disks.Devices) == 0 {
+		lines = append(lines, sMuted.Render("No block-device activity"))
+	} else if width >= 72 {
+		columns := []int{13, 10, 10, 12, 12, 9}
+		lines = append(lines,
+			tableRow([]string{"DEVICE", "READS/S", "WRITES/S", "READ", "WRITE", "BUSY"},
+				columns, true),
+			sRule.Render(strings.Repeat("─", min(width, sumInts(columns)))),
+		)
+		for _, device := range disks.Devices {
+			lines = append(lines, tableRow([]string{
+				device.Name,
+				fmt.Sprintf("%.1f", device.ReadsPerSec),
+				fmt.Sprintf("%.1f", device.WritesPerSec),
+				fmtByteRate(device.ReadBytesPS),
+				fmtByteRate(device.WriteBytesPS),
+				fmt.Sprintf("%.1f%%", device.Utilization),
+			}, columns, false))
+			if device.Temperature > 0 {
+				lines = append(lines, sMuted.Render("  ")+
+					renderTemperature(device.Name+" temperature", device.Temperature, width-2))
+			}
+		}
+	} else {
+		for _, device := range disks.Devices {
+			lines = append(lines,
+				sStrong.Render(truncatePlain(device.Name, max(6, width/4)))+
+					sFaint.Render("  R ")+sText.Render(fmtByteRate(device.ReadBytesPS))+
+					sFaint.Render("  W ")+sText.Render(fmtByteRate(device.WriteBytesPS))+
+					sFaint.Render("  ")+statusStyle(device.Utilization).Render(fmt.Sprintf("%.1f%%", device.Utilization)),
+			)
+		}
+	}
+
+	lines = append(lines, "", sectionLine("Filesystems", width))
+	if len(disks.FileSystems) == 0 {
+		lines = append(lines, sMuted.Render("No filesystems reported"))
+	} else {
+		for _, filesystem := range disks.FileSystems {
+			detail := fmtBytes(filesystem.Used) + " / " + fmtBytes(filesystem.Total)
+			lines = append(lines,
+				renderGauge(truncatePlain(filesystem.MountPoint, max(8, width/3)),
+					filesystem.UsedPct, detail, width),
+			)
+			if width >= 76 && (filesystem.Device != "" || filesystem.FSType != "") {
+				lines = append(lines, sMuted.Render("  "+
+					truncatePlain(strings.TrimSpace(filesystem.Device+"  "+filesystem.FSType), width-2)))
 			}
 		}
 	}
-
-	bw := barW(clamp(inner-36, 0, maxBarWidth))
-	lines = append(lines, "", sPanelTitle.Render(m.t.T("disk_space")), "")
-	for _, fs := range disks.FileSystems {
-		lines = append(lines,
-			renderMetricBarFull(padRight(fs.MountPoint, 16), fs.UsedPct, bw,
-				fmtBytes(fs.Used)+" / "+fmtBytes(fs.Total)),
-		)
-	}
-	return sPanel.Width(inner).Render(strings.Join(lines, "\n"))
+	return lines
 }
 
-// ── Processes tab ─────────────────────────────────────────────────────────────
-
-func (m model) viewProcesses(w, h int) string {
-	if m.sample == nil {
-		return m.centerText("Collecting data…", w, h)
-	}
-	_ = h
-	p := m.sample.Process
-	inner := w - 6
-	bw := clamp(40, minBarWidth, maxBarWidth)
-
-	type stat struct {
-		label string
-		val   int
-		style lipgloss.Style
-	}
-	stats := []stat{
-		{"Running ", p.Running, sGood},
-		{"Sleeping", p.Sleeping, sMuted},
-		{"Blocked ", p.Blocked, sWarn},
-		{"Zombie  ", p.Zombie, sCrit},
-	}
-
+func (m model) processLines(width int) []string {
+	process := m.sample.Process
 	lines := []string{
-		sPanelTitleAlt.Render("◈ Processes"),
-		sDivider.Render(strings.Repeat("─", inner)),
 		"",
-		renderLabelVal("Total  ", fmt.Sprintf("%d", p.Total)),
-		renderLabelVal("Threads", fmt.Sprintf("%d", p.Threads)),
+		sectionLine("Processes", width),
+		sStrong.Render(fmt.Sprintf("%d total", process.Total)) +
+			sFaint.Render(fmt.Sprintf("  ·  %d threads", process.Threads)),
+		sparkline(m.histRunning.getAll(), width, 0, 0),
+		sMuted.Render("Runnable processes  ·  " + m.trendWindow()),
 		"",
+		sectionLine("States", width),
 	}
-	for _, st := range stats {
-		pct := 0.0
-		if p.Total > 0 {
-			pct = float64(st.val) / float64(p.Total) * 100
-		}
-		filled := int(pct / 100 * float64(bw))
-		bar := "[" + st.style.Render(strings.Repeat("█", filled)) +
-			sBarEmpty.Render(strings.Repeat("░", bw-filled)) + "]"
-		lines = append(lines, sLabel.Render(st.label+"  ")+bar+" "+st.style.Render(fmt.Sprintf("%d", st.val)))
+
+	states := []struct {
+		name      string
+		value     int
+		active    lipgloss.Style
+		activeBar lipgloss.Style
+	}{
+		{"Running", process.Running, sGood, sBarGood},
+		{"Sleeping", process.Sleeping, sText, sBarRest},
+		{"Blocked", process.Blocked, sWarn, sBarWarn},
+		{"Zombie", process.Zombie, sCrit, sBarCrit},
+	}
+	for _, state := range states {
+		lines = append(lines, renderStateGauge(state.name, state.value,
+			process.Total, width, state.active, state.activeBar))
 	}
 
 	self := m.sample.Self
-	lines = append(lines,
-		"", sPanelTitle.Render(m.t.T("self_monitoring")), "",
-		renderLabelVal(padRight(m.t.T("cpu_pct"), 11), fmt.Sprintf("%.2f%%", self.CPUPercent)),
-		renderLabelVal(padRight(m.t.T("rss"), 11), fmtBytes(self.MemRSS)),
-		renderLabelVal(padRight("Open FDs", 11), fmt.Sprintf("%d", self.FDs)),
-	)
-	return sPanel.Width(inner).Render(strings.Join(lines, "\n"))
+	lines = append(lines, "", sectionLine("Kula process", width))
+	items := []metricItem{
+		{"CPU", fmt.Sprintf("%.2f%%", self.CPUPercent)},
+		{"Resident memory", fmtBytes(self.MemRSS)},
+		{"Open files", fmt.Sprintf("%d", self.FDs)},
+	}
+	lines = append(lines, metricGrid(items, width, responsiveColumns(width, 1, 3))...)
+	return lines
 }
 
-// ── Render helpers ────────────────────────────────────────────────────────────
-
-// renderMetricBarFull renders a labelled progress bar. When bw == 0 (narrow
-// terminal), it falls back to a compact text-only representation.
-func renderMetricBarFull(label string, pct float64, bw int, detail string) string {
-	if pct < 0 {
-		pct = 0
+func (m model) gpuLines(width int) []string {
+	gpus := m.sample.GPU
+	lines := []string{"", sectionLine("GPU", width)}
+	if len(gpus) == 0 {
+		return append(lines, "", sMuted.Render(m.t.T("no_gpus")))
 	}
-	if pct > 100 {
-		pct = 100
-	}
-	pctStr := statusStyle(pct).Render(fmt.Sprintf("%5.1f%%", pct))
 
-	if bw <= 0 {
-		// Text-only mode for very narrow terminals.
-		line := sLabel.Render(label) + " " + pctStr
-		if detail != "" {
-			line += "  " + sMuted.Render(detail)
+	for index, gpu := range gpus {
+		if index > 0 {
+			lines = append(lines, "")
 		}
-		return line
+		title := fmt.Sprintf("%d  %s", gpu.Index, fallback(gpu.Name, "GPU"))
+		lines = append(lines,
+			sStrong.Render(truncatePlain(title, max(1, width-18)))+
+				sFaint.Render("  "+fallback(gpu.Driver, "unknown driver")),
+			renderGauge("Core", gpu.LoadPct, "", width),
+		)
+		if gpu.VRAMTotal > 0 {
+			lines = append(lines, renderGauge("VRAM", gpu.VRAMUsedPct,
+				fmtBytes(gpu.VRAMUsed)+" / "+fmtBytes(gpu.VRAMTotal), width))
+		}
+
+		details := make([]metricItem, 0, 2)
+		if gpu.Temperature > 0 {
+			details = append(details, metricItem{"Temperature", fmt.Sprintf("%.1f°C", gpu.Temperature)})
+		}
+		if gpu.PowerW > 0 {
+			details = append(details, metricItem{"Power", fmt.Sprintf("%.1f W", gpu.PowerW)})
+		}
+		if len(details) > 0 {
+			lines = append(lines, metricGrid(details, width, responsiveColumns(width, 1, 2))...)
+		}
+	}
+	return lines
+}
+
+func assessHealth(sample *collector.Sample) (healthLevel, []string) {
+	level := healthOK
+	var findings []string
+
+	add := func(finding string, findingLevel healthLevel) {
+		findings = append(findings, finding)
+		if findingLevel > level {
+			level = findingLevel
+		}
+	}
+	pressure := func(label string, value float64) {
+		switch {
+		case value >= 90:
+			add(fmt.Sprintf("%s %.0f%%", label, value), healthCritical)
+		case value >= 75:
+			add(fmt.Sprintf("%s %.0f%%", label, value), healthWatch)
+		}
 	}
 
-	filled := int(pct / 100 * float64(bw))
-	bar := "[" + barStyle(pct).Render(strings.Repeat("█", filled)) +
-		sBarEmpty.Render(strings.Repeat("░", bw-filled)) + "]"
-	line := sLabel.Render(label) + " " + bar + " " + pctStr
+	pressure("CPU", sample.CPU.Total.Usage)
+	pressure("memory", sample.Memory.UsedPercent)
+	if sample.CPU.NumCores > 0 {
+		loadRatio := sample.LoadAvg.Load1 / float64(sample.CPU.NumCores)
+		switch {
+		case loadRatio >= 1.5:
+			add(fmt.Sprintf("load %.1f/core", loadRatio), healthCritical)
+		case loadRatio >= 1:
+			add(fmt.Sprintf("load %.1f/core", loadRatio), healthWatch)
+		}
+	}
+	if sample.Swap.Total > 0 {
+		pressure("swap", sample.Swap.UsedPercent)
+	}
+	for _, device := range sample.Disks.Devices {
+		switch {
+		case device.Utilization >= 95:
+			add(fmt.Sprintf("%s %.0f%% busy", device.Name, device.Utilization), healthCritical)
+		case device.Utilization >= 80:
+			add(fmt.Sprintf("%s %.0f%% busy", device.Name, device.Utilization), healthWatch)
+		}
+	}
+	for _, filesystem := range sample.Disks.FileSystems {
+		if filesystem.UsedPct >= 90 {
+			add(fmt.Sprintf("%s %.0f%% full", filesystem.MountPoint, filesystem.UsedPct), healthCritical)
+		} else if filesystem.UsedPct >= 80 {
+			add(fmt.Sprintf("%s %.0f%% full", filesystem.MountPoint, filesystem.UsedPct), healthWatch)
+		}
+	}
+	if sample.CPU.Temperature >= 90 {
+		add(fmt.Sprintf("CPU %.0f°C", sample.CPU.Temperature), healthCritical)
+	} else if sample.CPU.Temperature >= 80 {
+		add(fmt.Sprintf("CPU %.0f°C", sample.CPU.Temperature), healthWatch)
+	}
+	for _, gpu := range sample.GPU {
+		if gpu.Temperature >= 90 {
+			add(fmt.Sprintf("GPU %.0f°C", gpu.Temperature), healthCritical)
+		} else if gpu.Temperature >= 82 {
+			add(fmt.Sprintf("GPU %.0f°C", gpu.Temperature), healthWatch)
+		}
+	}
+	if sample.Process.Zombie > 0 {
+		add(fmt.Sprintf("%d zombie", sample.Process.Zombie), healthWatch)
+	}
+	if sample.Process.Blocked > 0 {
+		add(fmt.Sprintf("%d blocked", sample.Process.Blocked), healthWatch)
+	}
+	if !sample.System.ClockSync {
+		add("clock not synchronized", healthWatch)
+	}
+	if sample.Network.TCP.Retrans >= 10 {
+		add(fmt.Sprintf("%.1f TCP retrans/s", sample.Network.TCP.Retrans), healthWatch)
+	}
+
+	return level, findings
+}
+
+func renderHealth(level healthLevel, findings []string, width int) string {
+	var badge string
+	switch level {
+	case healthCritical:
+		badge = sCrit.Render("! CRITICAL")
+	case healthWatch:
+		badge = sWarn.Render("! WATCH")
+	default:
+		badge = sGood.Render("✓ NOMINAL")
+	}
+
+	detail := "No pressure or fault signals"
+	if len(findings) > 0 {
+		detail = strings.Join(findings, "  ·  ")
+	}
+	return fitLine(badge+sFaint.Render("  ")+sText.Render(detail), width)
+}
+
+func renderGauge(label string, percent float64, detail string, width int) string {
+	percent = sanePercent(percent)
+	labelWidth := clamp(width/5, 7, 16)
+	label = padRight(label, labelWidth)
+	percentText := fmt.Sprintf("%5.1f%%", percent)
+	reserved := labelWidth + 1 + lipgloss.Width(percentText)
 	if detail != "" {
-		line += "  " + sMuted.Render(detail)
+		reserved += min(lipgloss.Width(detail)+2, max(0, width/3))
+	}
+	barWidth := clamp(width-reserved-2, 0, maxBarWidth)
+	if barWidth < minBarWidth {
+		barWidth = 0
+	}
+	return renderMetricBarFull(label, percent, barWidth, detail)
+}
+
+func renderStateGauge(
+	label string,
+	count, total, width int,
+	active, activeBar lipgloss.Style,
+) string {
+	percent := 0.0
+	if total > 0 {
+		percent = float64(count) / float64(total) * 100
+	}
+	percent = sanePercent(percent)
+
+	labelWidth := clamp(width/5, 7, 16)
+	barWidth := clamp(width-labelWidth-20, 0, maxBarWidth)
+	if barWidth < minBarWidth {
+		barWidth = 0
+	}
+	filled := clamp(int(math.Round(percent/100*float64(barWidth))), 0, barWidth)
+
+	valueStyle := active
+	fillStyle := activeBar
+	if count == 0 {
+		valueStyle = sMuted
+		fillStyle = sBarRest
+	}
+
+	line := sMuted.Render(padRight(label, labelWidth)) + " "
+	if barWidth > 0 {
+		line += fillStyle.Render(strings.Repeat("━", filled)) +
+			sBarRest.Render(strings.Repeat("─", barWidth-filled)) + " "
+	}
+	line += valueStyle.Render(fmt.Sprintf("%d", count)) +
+		sFaint.Render(fmt.Sprintf("  %.1f%%", percent))
+	return line
+}
+
+// renderMetricBarFull renders a labelled gauge and falls back to a compact
+// value when the available width cannot hold a meaningful bar.
+func renderMetricBarFull(label string, percent float64, barWidth int, detail string) string {
+	percent = sanePercent(percent)
+	value := statusStyle(percent).Render(fmt.Sprintf("%5.1f%%", percent))
+	line := sMuted.Render(label) + " "
+
+	if barWidth >= minBarWidth {
+		filled := int(math.Round(percent / 100 * float64(barWidth)))
+		filled = clamp(filled, 0, barWidth)
+		line += barStyle(percent).Render(strings.Repeat("━", filled)) +
+			sBarRest.Render(strings.Repeat("─", barWidth-filled)) + " "
+	}
+	line += value
+	if detail != "" {
+		line += sFaint.Render("  " + detail)
 	}
 	return line
 }
 
-func renderLabelVal(label, val string) string {
-	return sLabel.Render(label+":  ") + sValue.Render(val)
-}
-
-func (m model) renderLoadRow(l1, l5, l15 float64) string {
-	return sLabel.Render("  "+m.t.T("1_min")+": ") + loadStyle(l1).Render(fmt.Sprintf("%.2f", l1)) +
-		sLabel.Render("   "+m.t.T("5_min")+": ") + loadStyle(l5).Render(fmt.Sprintf("%.2f", l5)) +
-		sLabel.Render("   "+m.t.T("15_min")+": ") + loadStyle(l15).Render(fmt.Sprintf("%.2f", l15))
-}
-
-func clockStr(synced bool, source string) string {
-	if synced {
-		return sGood.Render("✓ synced") + sMuted.Render(" ("+source+")")
-	}
-	return sWarn.Render("✗ not synced")
-}
-
-func barStyle(pct float64) lipgloss.Style {
-	return cache.getBarStyle(pct)
-}
-
-func statusStyle(pct float64) lipgloss.Style {
-	return cache.getStatusStyle(pct)
-}
-
-func loadStyle(load float64) lipgloss.Style {
-	return cache.getLoadStyle(load)
-}
-
-func fmtBytes(b uint64) string {
-	const k = 1024
+func renderTemperature(label string, temperature float64, width int) string {
+	style := sGood
 	switch {
-	case b >= k*k*k*k:
-		return fmt.Sprintf("%.1f TiB", float64(b)/(k*k*k*k))
-	case b >= k*k*k:
-		return fmt.Sprintf("%.1f GiB", float64(b)/(k*k*k))
-	case b >= k*k:
-		return fmt.Sprintf("%.1f MiB", float64(b)/(k*k))
-	case b >= k:
-		return fmt.Sprintf("%.1f KiB", float64(b)/k)
-	default:
-		return fmt.Sprintf("%d B", b)
+	case temperature >= 90:
+		style = sCrit
+	case temperature >= 80:
+		style = sWarn
 	}
+	return fitLine(sMuted.Render(padRight(label, clamp(width/3, 10, 24)))+" "+
+		style.Render(fmt.Sprintf("%.1f°C", temperature)), width)
 }
 
-func fmtMbps(mbps float64) string {
-	if mbps < 1 {
-		return fmt.Sprintf("%.0fK", mbps*1000)
+func metricGrid(items []metricItem, width, columns int) []string {
+	if len(items) == 0 {
+		return nil
 	}
-	return fmt.Sprintf("%.1fM", mbps)
+	columns = clamp(columns, 1, len(items))
+	gap := 3
+	cellWidth := max(1, (width-gap*(columns-1))/columns)
+	lines := make([]string, 0, (len(items)+columns-1)/columns)
+
+	for start := 0; start < len(items); start += columns {
+		cells := make([]string, 0, columns)
+		for column := 0; column < columns; column++ {
+			index := start + column
+			if index >= len(items) {
+				cells = append(cells, strings.Repeat(" ", cellWidth))
+				continue
+			}
+			item := items[index]
+			label := truncatePlain(item.label, max(1, cellWidth/2))
+			cell := sMuted.Render(label+" ") + sStrong.Render(item.value)
+			cells = append(cells, fitLine(cell, cellWidth))
+		}
+		lines = append(lines, strings.Join(cells, strings.Repeat(" ", gap)))
+	}
+	return lines
 }
 
-func padRight(s string, n int) string {
-	if len(s) >= n {
-		return s[:n]
+func tableRow(values []string, widths []int, header bool) string {
+	var builder strings.Builder
+	for index, width := range widths {
+		value := ""
+		if index < len(values) {
+			value = values[index]
+		}
+		if index == 0 {
+			value = padRight(value, width)
+		} else {
+			value = padLeft(value, width)
+		}
+		if header {
+			builder.WriteString(sTableHead.Render(value))
+		} else if index == 0 {
+			builder.WriteString(sTableCell.Render(value))
+		} else {
+			builder.WriteString(sTableDim.Render(value))
+		}
 	}
-	return s + strings.Repeat(" ", n-len(s))
+	return builder.String()
 }
 
-func padLeft(s string, n int) string {
-	if len(s) >= n {
-		return s[:n]
+func joinBlocks(left, right []string, columnWidth, gap int) []string {
+	height := max(len(left), len(right))
+	lines := make([]string, 0, height)
+	for row := 0; row < height; row++ {
+		leftLine, rightLine := "", ""
+		if row < len(left) {
+			leftLine = left[row]
+		}
+		if row < len(right) {
+			rightLine = right[row]
+		}
+		lines = append(lines,
+			fitLine(leftLine, columnWidth)+strings.Repeat(" ", gap)+fitLine(rightLine, columnWidth))
 	}
-	return strings.Repeat(" ", n-len(s)) + s
+	return lines
 }
 
-func sumInts(a []int) int {
-	t := 0
-	for _, v := range a {
-		t += v
+func sectionLine(title string, width int) string {
+	title = strings.ToUpper(title)
+	rendered := sSection.Render(title)
+	ruleWidth := width - lipgloss.Width(rendered) - 2
+	if ruleWidth <= 0 {
+		return ansi.Truncate(rendered, width, "")
 	}
-	return t
+	return rendered + sFaint.Render("  ") + sRule.Render(strings.Repeat("─", ruleWidth))
 }
 
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-// clampLines truncates s to at most n lines, keeping content anchored to the
-// top. This prevents the View() string from exceeding m.height lines, which
-// would cause the terminal to show the bottom portion instead of the top.
-func clampLines(s string, n int) string {
-	if n <= 0 {
+func sparkline(values []float64, width int, minimum, maximum float64) string {
+	if width <= 0 {
 		return ""
 	}
-	lines := strings.Split(s, "\n")
-	if len(lines) <= n {
-		return s
+	if len(values) > width {
+		values = values[len(values)-width:]
 	}
-	return strings.Join(lines[:n], "\n")
+
+	if maximum <= minimum {
+		minimum = 0
+		maximum = 0
+		for _, value := range values {
+			if isFinite(value) && value > maximum {
+				maximum = value
+			}
+		}
+		if maximum <= minimum {
+			maximum = 1
+		}
+	}
+
+	const blocks = "▁▂▃▄▅▆▇█"
+	var builder strings.Builder
+	if missing := width - len(values); missing > 0 {
+		builder.WriteString(sFaint.Render(strings.Repeat("·", missing)))
+	}
+	for _, value := range values {
+		if !isFinite(value) {
+			value = minimum
+		}
+		ratio := (value - minimum) / (maximum - minimum)
+		ratio = math.Max(0, math.Min(1, ratio))
+		index := int(math.Round(ratio * float64(len([]rune(blocks))-1)))
+		builder.WriteRune([]rune(blocks)[index])
+	}
+	return sAccent.Render(builder.String())
 }
 
-// ── GPU tab ───────────────────────────────────────────────────────────────────
-
-func (m model) viewGPU(w, h int) string {
-	if m.sample == nil {
-		return m.centerText("Collecting data…", w, h)
+func (m model) trendWindow() string {
+	samples := m.histCPU.len
+	if samples <= 1 {
+		return "trend starting"
 	}
-	gpus := m.sample.GPU
-	inner := w - 6
-	bw := barW(inner)
+	duration := m.histTimes.span()
+	if duration <= 0 {
+		duration = time.Duration(samples-1) * m.refreshRate
+	}
+	if duration < time.Minute {
+		return fmt.Sprintf("last %ds", int(duration.Seconds()))
+	}
+	if duration < time.Hour {
+		return fmt.Sprintf("last %dm", int(duration.Minutes()))
+	}
+	return fmt.Sprintf("last %.1fh", duration.Hours())
+}
 
-	if len(gpus) == 0 {
-		return m.centerText("no_gpus", w, h)
+func (m model) sampleAge() time.Duration {
+	if m.lastUpdated.IsZero() || m.now.Before(m.lastUpdated) {
+		return 0
+	}
+	return m.now.Sub(m.lastUpdated)
+}
+
+func compactDuration(duration time.Duration) string {
+	if duration < 0 {
+		duration = 0
+	}
+	switch {
+	case duration < time.Millisecond:
+		return duration.Round(time.Microsecond).String()
+	case duration < time.Second:
+		return duration.Round(time.Millisecond).String()
+	case duration < time.Minute:
+		return fmt.Sprintf("%ds", int(duration.Seconds()))
+	case duration < time.Hour:
+		return fmt.Sprintf("%dm", int(duration.Minutes()))
+	default:
+		return fmt.Sprintf("%.1fh", duration.Hours())
+	}
+}
+
+func compactAge(duration time.Duration) string {
+	if duration < time.Second {
+		return "0s"
+	}
+	return compactDuration(duration)
+}
+
+func networkTotals(interfaces []collector.NetInterface) (float64, float64) {
+	var receive, transmit float64
+	for _, iface := range interfaces {
+		receive += iface.RxMbps
+		transmit += iface.TxMbps
+	}
+	return receive, transmit
+}
+
+func diskTotals(devices []collector.DiskDevice) (float64, float64, float64) {
+	var readRate, writeRate, busy float64
+	for _, device := range devices {
+		readRate += device.ReadBytesPS
+		writeRate += device.WriteBytesPS
+		busy += device.Utilization
+	}
+	if len(devices) > 0 {
+		busy /= float64(len(devices))
+	}
+	return readRate, writeRate, busy
+}
+
+func clockText(synchronized bool, source string) string {
+	if synchronized {
+		if source != "" {
+			return "synced · " + source
+		}
+		return "synced"
+	}
+	return "not synced"
+}
+
+func barStyle(percent float64) lipgloss.Style {
+	switch {
+	case percent >= 90:
+		return sBarCrit
+	case percent >= 75:
+		return sBarWarn
+	default:
+		return sBarGood
+	}
+}
+
+func statusStyle(percent float64) lipgloss.Style {
+	switch {
+	case percent >= 90:
+		return sCrit
+	case percent >= 75:
+		return sWarn
+	default:
+		return sGood
+	}
+}
+
+func fmtBytes(bytes uint64) string {
+	const unit = 1024
+	switch {
+	case bytes >= unit*unit*unit*unit:
+		return fmt.Sprintf("%.1f TiB", float64(bytes)/(unit*unit*unit*unit))
+	case bytes >= unit*unit*unit:
+		return fmt.Sprintf("%.1f GiB", float64(bytes)/(unit*unit*unit))
+	case bytes >= unit*unit:
+		return fmt.Sprintf("%.1f MiB", float64(bytes)/(unit*unit))
+	case bytes >= unit:
+		return fmt.Sprintf("%.1f KiB", float64(bytes)/unit)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
+func fmtByteRate(bytesPerSecond float64) string {
+	if !isFinite(bytesPerSecond) || bytesPerSecond < 0 {
+		bytesPerSecond = 0
+	}
+	switch {
+	case bytesPerSecond >= 1e9:
+		return fmt.Sprintf("%.1f GB/s", bytesPerSecond/1e9)
+	case bytesPerSecond >= 1e6:
+		return fmt.Sprintf("%.1f MB/s", bytesPerSecond/1e6)
+	case bytesPerSecond >= 1e3:
+		return fmt.Sprintf("%.1f kB/s", bytesPerSecond/1e3)
+	default:
+		return fmt.Sprintf("%.0f B/s", bytesPerSecond)
+	}
+}
+
+func fmtBitRate(megabitsPerSecond float64) string {
+	if !isFinite(megabitsPerSecond) || megabitsPerSecond < 0 {
+		megabitsPerSecond = 0
+	}
+	switch {
+	case megabitsPerSecond >= 1000:
+		return fmt.Sprintf("%.2f Gbit/s", megabitsPerSecond/1000)
+	case megabitsPerSecond >= 1:
+		return fmt.Sprintf("%.1f Mbit/s", megabitsPerSecond)
+	case megabitsPerSecond >= 0.001:
+		return fmt.Sprintf("%.0f kbit/s", megabitsPerSecond*1000)
+	default:
+		return fmt.Sprintf("%.0f bit/s", megabitsPerSecond*1e6)
+	}
+}
+
+func padRight(value string, width int) string {
+	value = truncatePlain(value, width)
+	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
+}
+
+func padLeft(value string, width int) string {
+	value = truncatePlain(value, width)
+	return strings.Repeat(" ", max(0, width-lipgloss.Width(value))) + value
+}
+
+func truncatePlain(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) <= width {
+		return value
 	}
 
 	var builder strings.Builder
-	builder.WriteString(sPanelTitleAlt.Render("◈ Graphics Processing Units"))
-	builder.WriteString("\n")
-	builder.WriteString(sDivider.Render(strings.Repeat("─", inner)))
-	builder.WriteString("\n\n")
-
-	for i, gpu := range gpus {
-		if i > 0 {
-			builder.WriteString("\n")
-			builder.WriteString(sDivider.Render(strings.Repeat("┄", inner)))
-			builder.WriteString("\n\n")
+	for _, character := range value {
+		next := builder.String() + string(character)
+		if lipgloss.Width(next) > width {
+			break
 		}
-
-		builder.WriteString(sPanelTitle.Render(fmt.Sprintf("[%d] %s", gpu.Index, gpu.Name)))
-		builder.WriteString(sMuted.Render("  driver: " + gpu.Driver))
-		builder.WriteString("\n\n")
-
-		// Load
-		builder.WriteString(renderMetricBarFull("Load ", gpu.LoadPct, bw, ""))
-		builder.WriteString("\n")
-
-		// VRAM
-		if gpu.VRAMTotal > 0 {
-			builder.WriteString(renderMetricBarFull("VRAM ", gpu.VRAMUsedPct, bw,
-				fmtBytes(gpu.VRAMUsed)+" / "+fmtBytes(gpu.VRAMTotal)))
-			builder.WriteString("\n")
-		}
-
-		// Row for Temp and Power
-		var details []string
-		if gpu.Temperature > 0 {
-			details = append(details, renderLabelVal("Temp ", fmt.Sprintf("%.1f °C", gpu.Temperature)))
-		}
-		if gpu.PowerW > 0 {
-			details = append(details, renderLabelVal("Power", fmt.Sprintf("%.1f W", gpu.PowerW)))
-		}
-
-		if len(details) > 0 {
-			builder.WriteString("\n")
-			builder.WriteString(strings.Join(details, "    "))
-			builder.WriteString("\n")
-		}
+		builder.WriteRune(character)
 	}
-
-	return sPanel.Width(inner).Render(builder.String())
+	return builder.String()
 }
 
-func (m model) centerText(msg string, w, h int) string {
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, sMuted.Render(m.t.T(msg)))
+func fitLine(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) > width {
+		value = ansi.Truncate(value, width, "")
+	}
+	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
+}
+
+func fitBlock(value string, width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	lines := strings.Split(value, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for index := range lines {
+		lines[index] = fitLine(lines[index], width)
+	}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func centerLine(value string, width int) string {
+	if lipgloss.Width(value) >= width {
+		return ansi.Truncate(value, width, "")
+	}
+	left := (width - lipgloss.Width(value)) / 2
+	return strings.Repeat(" ", left) + value
+}
+
+func joinSides(left, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	rightWidth := lipgloss.Width(right)
+	if rightWidth >= width {
+		return ansi.Truncate(right, width, "")
+	}
+	left = ansi.Truncate(left, max(0, width-rightWidth-1), "")
+	gap := max(1, width-lipgloss.Width(left)-rightWidth)
+	return left + strings.Repeat(" ", gap) + right
+}
+
+func responsiveColumns(width, narrow, wide int) int {
+	switch {
+	case width >= 90:
+		return wide
+	case width >= 56:
+		return min(wide, max(narrow, 2))
+	default:
+		return narrow
+	}
+}
+
+func fallback(value, fallbackValue string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallbackValue
+	}
+	return value
+}
+
+func sanePercent(value float64) float64 {
+	if !isFinite(value) {
+		return 0
+	}
+	return math.Max(0, math.Min(100, value))
+}
+
+func isFinite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func sumInts(values []int) int {
+	total := 0
+	for _, value := range values {
+		total += value
+	}
+	return total
+}
+
+func clamp(value, low, high int) int {
+	if high < low {
+		return low
+	}
+	if value < low {
+		return low
+	}
+	if value > high {
+		return high
+	}
+	return value
 }
