@@ -128,5 +128,7 @@
     "ai_prompt_status": "Apakah status semasa?",
     "ai_prompt_load": "Periksa beban pelayan dalam 5 minit lepas.",
     "ai_prompt_network": "Berapa banyak antara muka rangkaian yang kami pantau?",
-    "ai_analyse_prompt": "Analisis data ini untuk {title}."
+    "ai_analyse_prompt": "Analisis data ini untuk {title}.",
+    "select_all": "Pilih semua",
+    "deselect_all": "Nyahpilih semua"
 }

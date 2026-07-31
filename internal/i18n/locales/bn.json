@@ -128,5 +128,7 @@
     "ai_prompt_status": "বর্তমান অবস্থা কী?",
     "ai_prompt_load": "গত ৫ মিনিটে সার্ভার লোড পরীক্ষা করুন।",
     "ai_prompt_network": "আমরা কতটি নেটওয়ার্ক ইন্টারফেস পর্যবেক্ষণ করি?",
-    "ai_analyse_prompt": "{title} এর জন্য এই ডেটা বিশ্লেষণ করুন।"
+    "ai_analyse_prompt": "{title} এর জন্য এই ডেটা বিশ্লেষণ করুন।",
+    "select_all": "সব নির্বাচন",
+    "deselect_all": "সব বাদ"
 }

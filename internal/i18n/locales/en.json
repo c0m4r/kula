@@ -129,5 +129,7 @@
     "ai_prompt_status": "What is the current status?",
     "ai_prompt_load": "Check server load over the last 5 minutes.",
     "ai_prompt_network": "How many network interfaces do we monitor?",
-    "ai_analyse_prompt": "Analyse this data for {title}."
+    "ai_analyse_prompt": "Analyse this data for {title}.",
+    "select_all": "Select all",
+    "deselect_all": "Deselect all"
 }

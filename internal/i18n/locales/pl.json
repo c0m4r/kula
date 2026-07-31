@@ -128,5 +128,7 @@
     "ai_prompt_status": "Jaki jest obecny stan?",
     "ai_prompt_load": "Sprawdź obciążenie serwera w ciągu ostatnich 5 minut.",
     "ai_prompt_network": "Ile interfejsów sieciowych monitorujemy?",
-    "ai_analyse_prompt": "Przeanalizuj te dane dla {title}."
+    "ai_analyse_prompt": "Przeanalizuj te dane dla {title}.",
+    "select_all": "Zaznacz wszystko",
+    "deselect_all": "Odznacz wszystko"
 }

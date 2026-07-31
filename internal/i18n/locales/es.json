@@ -128,5 +128,7 @@
     "ai_prompt_status": "¿Cuál es el estado actual?",
     "ai_prompt_load": "Comprobar la carga del servidor en los últimos 5 minutos.",
     "ai_prompt_network": "¿Cuántas interfaces de red monitorizamos?",
-    "ai_analyse_prompt": "Analiza estos datos para {title}."
+    "ai_analyse_prompt": "Analiza estos datos para {title}.",
+    "select_all": "Seleccionar todo",
+    "deselect_all": "Deseleccionar todo"
 }

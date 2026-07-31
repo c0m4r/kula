@@ -11,6 +11,7 @@
 import { state, colors } from './state.js';
 import { formatBytesShort } from './utils.js';
 import { createTimeSeriesChart } from './charts-init.js';
+import { i18n } from './i18n.js';
 
 // Palette for assigning a stable color per container/app.
 const CONTAINER_COLOR_LIST = [
@@ -19,13 +20,16 @@ const CONTAINER_COLOR_LIST = [
 ];
 
 // Metric chart definitions: one chart per metric type, one series per app.
+// Titles reuse the same i18n keys as System Metrics wherever possible
+// (cpu_usage, memory_usage, network_throughput, disk_io, rx/tx, read_bs/write_bs).
 const CONTAINER_METRICS = [
     {
         key: 'cpu',
         cardId: 'card-containers-cpu',
         chartId: 'chart-containers-cpu',
         subtitleId: 'containers-cpu-subtitle',
-        title: 'Containers \u2014 CPU',
+        // Same label as System Metrics → "CPU Usage" / "Usage CPU" / …
+        i18nKeys: ['cpu_usage'],
         order: 20,
         yConfig: { beginAtZero: true, ticks: { callback: v => v + '%' } },
         field: 'cpu_pct',
@@ -35,7 +39,7 @@ const CONTAINER_METRICS = [
         cardId: 'card-containers-mem',
         chartId: 'chart-containers-mem',
         subtitleId: 'containers-mem-subtitle',
-        title: 'Containers \u2014 Memory',
+        i18nKeys: ['memory_usage'],
         order: 21,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) } },
         field: 'mem_used',
@@ -45,7 +49,9 @@ const CONTAINER_METRICS = [
         cardId: 'card-containers-net-rx',
         chartId: 'chart-containers-net-rx',
         subtitleId: 'containers-net-rx-subtitle',
-        title: 'Containers \u2014 Network Rx',
+        // System has a single "Network Throughput" chart with RX/TX series;
+        // we split direction into two cards and keep the same base label.
+        i18nKeys: ['network_throughput', 'rx'],
         order: 22,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'net_rx_bps',
@@ -55,7 +61,7 @@ const CONTAINER_METRICS = [
         cardId: 'card-containers-net-tx',
         chartId: 'chart-containers-net-tx',
         subtitleId: 'containers-net-tx-subtitle',
-        title: 'Containers \u2014 Network Tx',
+        i18nKeys: ['network_throughput', 'tx'],
         order: 23,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'net_tx_bps',
@@ -65,7 +71,8 @@ const CONTAINER_METRICS = [
         cardId: 'card-containers-disk-r',
         chartId: 'chart-containers-disk-r',
         subtitleId: 'containers-disk-r-subtitle',
-        title: 'Containers \u2014 Disk Read',
+        // System "Disk I/O" chart series use read_bs / write_bs.
+        i18nKeys: ['disk_io', 'read_bs'],
         order: 24,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'disk_r_bps',
@@ -75,12 +82,54 @@ const CONTAINER_METRICS = [
         cardId: 'card-containers-disk-w',
         chartId: 'chart-containers-disk-w',
         subtitleId: 'containers-disk-w-subtitle',
-        title: 'Containers \u2014 Disk Write',
+        i18nKeys: ['disk_io', 'write_bs'],
         order: 25,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'disk_w_bps',
     },
 ];
+
+/** Build a chart title from one or more existing i18n keys (no new locale strings). */
+function metricTitle(m) {
+    const keys = m.i18nKeys || [];
+    if (keys.length === 0) return m.key;
+    if (keys.length === 1) return i18n.t(keys[0]);
+    // e.g. "Network Throughput (RX)" / "Netzwerkdurchsatz (RX)"
+    return `${i18n.t(keys[0])} (${i18n.t(keys[1])})`;
+}
+
+function applyMetricCardTitle(m) {
+    const h3 = document.querySelector(`#${m.cardId} h3`);
+    if (!h3) return;
+    h3.textContent = metricTitle(m);
+    // Single-key titles can also ride the global data-i18n pass.
+    if (m.i18nKeys?.length === 1) {
+        h3.setAttribute('data-i18n', m.i18nKeys[0]);
+    } else {
+        h3.removeAttribute('data-i18n');
+    }
+}
+
+function retranslateContainerUI() {
+    for (const m of CONTAINER_METRICS) applyMetricCardTitle(m);
+    // Filter chrome
+    const btnLabel = document.querySelector('.container-app-filter-btn-label');
+    if (btnLabel) btnLabel.textContent = i18n.t('applications');
+    const selAll = document.querySelector('#container-app-filter-panel .container-app-filter-action:first-child');
+    const deselAll = document.querySelector('#container-app-filter-panel .container-app-filter-action:last-child');
+    // Prefer dedicated keys when present; fall back to English literals.
+    if (selAll) selAll.textContent = i18n.t('select_all') !== 'select_all' ? i18n.t('select_all') : 'Select all';
+    if (deselAll) deselAll.textContent = i18n.t('deselect_all') !== 'deselect_all' ? i18n.t('deselect_all') : 'Deselect all';
+    updateFilterButtonLabel();
+    renderSharedLegend();
+    const panel = document.getElementById('container-app-filter-panel');
+    if (panel && !panel.classList.contains('hidden')) renderFilterList();
+}
+
+// Re-apply titles when the user switches language.
+if (typeof document !== 'undefined') {
+    document.addEventListener('kula-i18n-changed', retranslateContainerUI);
+}
 
 const FILTER_STORAGE_KEY = 'kula_container_filter';
 
@@ -200,7 +249,8 @@ function ensureMetricCharts(createAppChartCard) {
     if (!state.containerCharts) state.containerCharts = {};
     for (const m of CONTAINER_METRICS) {
         if (state.containerCharts[m.key]) continue;
-        createAppChartCard(m.cardId, m.chartId, m.subtitleId, m.title, m.order);
+        createAppChartCard(m.cardId, m.chartId, m.subtitleId, metricTitle(m), m.order);
+        applyMetricCardTitle(m);
         const chart = createTimeSeriesChart(m.chartId, [], m.yConfig);
         if (chart) {
             // Shared legend under Applications; no per-card Chart.js legend.
@@ -432,7 +482,7 @@ function ensureFilterUI() {
     btn.className = 'container-app-filter-btn';
     btn.setAttribute('aria-haspopup', 'true');
     btn.setAttribute('aria-expanded', 'false');
-    btn.innerHTML = '<span class="container-app-filter-btn-label">Applications</span><span class="container-app-filter-btn-count" id="container-app-filter-count"></span><span class="container-app-filter-caret">▾</span>';
+    btn.innerHTML = `<span class="container-app-filter-btn-label">${i18n.t('applications')}</span><span class="container-app-filter-btn-count" id="container-app-filter-count"></span><span class="container-app-filter-caret">▾</span>`;
 
     const panel = document.createElement('div');
     panel.id = 'container-app-filter-panel';
@@ -444,11 +494,11 @@ function ensureFilterUI() {
     const selAll = document.createElement('button');
     selAll.type = 'button';
     selAll.className = 'container-app-filter-action';
-    selAll.textContent = 'Select all';
+    selAll.textContent = i18n.t('select_all') !== 'select_all' ? i18n.t('select_all') : 'Select all';
     const deselAll = document.createElement('button');
     deselAll.type = 'button';
     deselAll.className = 'container-app-filter-action';
-    deselAll.textContent = 'Deselect all';
+    deselAll.textContent = i18n.t('deselect_all') !== 'deselect_all' ? i18n.t('deselect_all') : 'Deselect all';
     actions.appendChild(selAll);
     actions.appendChild(deselAll);
 

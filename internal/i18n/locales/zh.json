@@ -128,5 +128,7 @@
     "ai_prompt_status": "当前状态如何？",
     "ai_prompt_load": "查看过去5分钟的服务器负载。",
     "ai_prompt_network": "我们监控多少个网络接口？",
-    "ai_analyse_prompt": "分析{title}的数据。"
+    "ai_analyse_prompt": "分析{title}的数据。",
+    "select_all": "全选",
+    "deselect_all": "取消全选"
 }
