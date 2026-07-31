@@ -128,5 +128,8 @@
     "ai_prompt_status": "מה הסטטוס הנוכחי?",
     "ai_prompt_load": "בדוק את עומס השרת ב-5 הדקות האחרונות.",
     "ai_prompt_network": "כמה ממשקי רשת אנו מנטרים?",
-    "ai_analyse_prompt": "נתח את הנתונים עבור {title}."
+    "ai_analyse_prompt": "נתח את הנתונים עבור {title}.",
+    "select_all": "בחר הכל",
+    "deselect_all": "בטל בחירה",
+    "applications": "יישומים"
 }

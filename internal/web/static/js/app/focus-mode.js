@@ -5,6 +5,11 @@
 'use strict';
 import { state } from './state.js';
 import { i18n } from './i18n.js';
+import {
+    chartsGridForTitle,
+    setSectionFocusChrome,
+    clearAllSectionFocusChrome,
+} from './section-utils.js';
 
 export const chartCardIds = [
     'card-cpu', 'card-loadavg', 'card-memory', 'card-swap',
@@ -38,7 +43,7 @@ export function toggleFocusMode() {
         // Exit focus mode
         state.focusMode = false;
         grids.forEach(g => g.classList.remove('focus-active', 'focus-selecting', 'focus-hidden'));
-        document.querySelectorAll('.section-title').forEach(t => t.classList.remove('focus-active', 'focus-selecting', 'focus-hidden'));
+        clearAllSectionFocusChrome();
         btn.classList.remove('focus-active');
         document.getElementById('gauges-row')?.classList.remove('focus-hidden');
         document.getElementById('chart-search')?.classList.remove('focus-hidden');
@@ -78,7 +83,7 @@ export function toggleFocusMode() {
             state.focusMode = false;
             state.focusSelecting = false;
             grids.forEach(g => g.classList.remove('focus-active', 'focus-selecting'));
-            document.querySelectorAll('.section-title').forEach(t => t.classList.remove('focus-active', 'focus-selecting'));
+            clearAllSectionFocusChrome();
             btn.classList.remove('focus-active');
             removeFocusBar();
             restoreGrids();
@@ -102,11 +107,9 @@ export function toggleFocusMode() {
         });
 
         document.querySelectorAll('.section-title').forEach(t => {
-            t.classList.remove('focus-selecting');
-            const grid = t.nextElementSibling;
+            const grid = chartsGridForTitle(t);
             const hasVisible = grid?.classList.contains('charts-grid') && grid.classList.contains('focus-active');
-            t.classList.toggle('focus-active', !!hasVisible);
-            t.classList.toggle('focus-hidden', !hasVisible);
+            setSectionFocusChrome(t, { active: !!hasVisible, selecting: false, hidden: !hasVisible });
         });
 
         chartCardIds.forEach(id => {
@@ -154,8 +157,7 @@ export function toggleFocusMode() {
         g.classList.remove('focus-active', 'focus-hidden');
     });
     document.querySelectorAll('.section-title').forEach(t => {
-        t.classList.add('focus-selecting');
-        t.classList.remove('focus-active', 'focus-hidden');
+        setSectionFocusChrome(t, { active: false, selecting: true, hidden: false });
     });
     btn.classList.add('focus-active');
 
@@ -284,7 +286,7 @@ export function showFocusBar() {
         state.focusSelecting = false;
         state.focusMode = false;
         document.querySelectorAll('.charts-grid').forEach(g => g.classList.remove('focus-selecting', 'focus-hidden'));
-        document.querySelectorAll('.section-title').forEach(t => t.classList.remove('focus-selecting', 'focus-hidden'));
+        clearAllSectionFocusChrome();
         document.getElementById('btn-focus').classList.remove('focus-active');
         document.getElementById('gauges-row')?.classList.remove('focus-hidden');
         document.getElementById('chart-search')?.classList.remove('focus-hidden');
@@ -347,10 +349,9 @@ export function applyStoredFocusMode() {
         });
 
         document.querySelectorAll('.section-title').forEach(t => {
-            const grid = t.nextElementSibling;
+            const grid = chartsGridForTitle(t);
             const hasVisible = grid?.classList.contains('charts-grid') && grid.classList.contains('focus-active');
-            t.classList.toggle('focus-active', !!hasVisible);
-            t.classList.toggle('focus-hidden', !hasVisible);
+            setSectionFocusChrome(t, { active: !!hasVisible, selecting: false, hidden: !hasVisible });
         });
 
         chartCardIds.forEach(id => {

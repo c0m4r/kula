@@ -128,5 +128,8 @@
     "ai_prompt_status": "Vad är den aktuella statusen?",
     "ai_prompt_load": "Kontrollera serverbelastningen de senaste 5 minuterna.",
     "ai_prompt_network": "Hur många nätverksgränssnitt övervakar vi?",
-    "ai_analyse_prompt": "Analysera dessa data för {title}."
+    "ai_analyse_prompt": "Analysera dessa data för {title}.",
+    "select_all": "Markera alla",
+    "deselect_all": "Avmarkera alla",
+    "applications": "Applikationer"
 }

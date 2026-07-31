@@ -128,5 +128,8 @@
     "ai_prompt_status": "현재 상태는 무엇입니까?",
     "ai_prompt_load": "지난 5분 동안의 서버 부하를 확인하세요.",
     "ai_prompt_network": "몇 개의 네트워크 인터페이스를 모니터링하고 있습니까?",
-    "ai_analyse_prompt": "{title}에 대한 데이터를 분석하세요."
+    "ai_analyse_prompt": "{title}에 대한 데이터를 분석하세요.",
+    "select_all": "모두 선택",
+    "deselect_all": "모두 해제",
+    "applications": "애플리케이션"
 }

@@ -26,6 +26,8 @@
     <link rel="modulepreload" href="js/app/utils.js" integrity="{{sri `js/app/utils.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/charts-init.js" integrity="{{sri `js/app/charts-init.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/chart-card-actions.js" integrity="{{sri `js/app/chart-card-actions.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/section-utils.js" integrity="{{sri `js/app/section-utils.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/container-apps.js" integrity="{{sri `js/app/container-apps.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/charts-data.js" integrity="{{sri `js/app/charts-data.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/header.js" integrity="{{sri `js/app/header.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/gauges.js" integrity="{{sri `js/app/gauges.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
@@ -434,7 +436,13 @@
         </section>
 
         <!-- Applications (all charts created dynamically by JS) -->
-        <h2 class="section-title hidden" id="applications-title" data-i18n="applications">Applications</h2>
+        <div class="section-head hidden" id="applications-header">
+            <div class="section-head-row">
+                <h2 class="section-title" id="applications-title" data-i18n="applications">Applications</h2>
+                <!-- Container multi-select filter is injected into this row by container-apps.js -->
+            </div>
+            <!-- Shared container color legend is injected here by container-apps.js -->
+        </div>
         <section class="charts-grid hidden" id="applications-grid"></section>
 
         <!-- System info footer -->

@@ -128,5 +128,8 @@
     "ai_prompt_status": "موجودہ صورتحال کیا ہے؟",
     "ai_prompt_load": "گزشتہ 5 منٹ میں سرور لوڈ چیک کریں۔",
     "ai_prompt_network": "ہم کتنے نیٹ ورک انٹرفیس مانیٹر کرتے ہیں؟",
-    "ai_analyse_prompt": "{title} کے لیے اس ڈیٹا کا تجزیہ کریں۔"
+    "ai_analyse_prompt": "{title} کے لیے اس ڈیٹا کا تجزیہ کریں۔",
+    "select_all": "سب منتخب کریں",
+    "deselect_all": "سب ہٹائیں",
+    "applications": "ایپلیکیشنز"
 }

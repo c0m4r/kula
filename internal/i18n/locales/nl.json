@@ -128,5 +128,8 @@
     "ai_prompt_status": "Wat is de huidige status?",
     "ai_prompt_load": "Controleer de serverbelasting in de afgelopen 5 minuten.",
     "ai_prompt_network": "Hoeveel netwerkinterfaces monitoren we?",
-    "ai_analyse_prompt": "Analyseer deze gegevens voor {title}."
+    "ai_analyse_prompt": "Analyseer deze gegevens voor {title}.",
+    "select_all": "Alles selecteren",
+    "deselect_all": "Alles deselecteren",
+    "applications": "Applicaties"
 }

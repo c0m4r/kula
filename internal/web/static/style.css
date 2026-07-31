@@ -755,6 +755,199 @@ body.light-mode .time-input {
     animation: fadeInUp 0.5s ease;
 }
 
+/* Section head: title + optional controls (e.g. container app filter) */
+.section-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding-right: 1.5rem;
+}
+
+.section-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    width: 100%;
+}
+
+.section-head .section-title {
+    padding-right: 0;
+    margin: 0;
+}
+
+/* Shared color legend under Applications (one place, not per chart) */
+.container-app-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.85rem;
+    padding: 0 0 0.25rem 1.5rem;
+    max-width: 100%;
+}
+
+.container-app-legend.hidden {
+    display: none;
+}
+
+.container-app-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    max-width: 14rem;
+}
+
+.container-app-legend-swatch {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 2px;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+.container-app-legend-name {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---- Container application multi-select filter ---- */
+.container-app-filter {
+    position: relative;
+    margin: 1rem 0 0.25rem auto;
+}
+
+.container-app-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.container-app-filter-btn:hover {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+}
+
+.container-app-filter-btn-count {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.container-app-filter-caret {
+    font-size: 0.7rem;
+    opacity: 0.7;
+}
+
+.container-app-filter-panel {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    right: 0;
+    min-width: 240px;
+    max-width: min(360px, 90vw);
+    max-height: 360px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    z-index: 120;
+    overflow: hidden;
+}
+
+.container-app-filter-panel.hidden {
+    display: none;
+}
+
+.container-app-filter-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.container-app-filter-action {
+    flex: 1;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.container-app-filter-action:hover {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+}
+
+.container-app-filter-list {
+    overflow-y: auto;
+    padding: 0.35rem 0;
+    max-height: 300px;
+}
+
+.container-app-filter-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    user-select: none;
+}
+
+.container-app-filter-item:hover {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.container-app-filter-item input[type="checkbox"] {
+    accent-color: var(--accent-blue);
+    width: 0.95rem;
+    height: 0.95rem;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.container-app-filter-swatch {
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 2px;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+.container-app-filter-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+}
+
+.container-app-filter-empty {
+    padding: 0.75rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    text-align: center;
+}
+
 /* ---- Charts Grid ---- */
 .charts-grid {
     display: grid;
