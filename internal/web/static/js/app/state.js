@@ -68,8 +68,9 @@ export const state = {
     containerCharts: {}, // { cpu|mem|net_rx|net_tx|disk_r|disk_w: chartInstance }
     // Metadata for discovered containers: { key: { key, label, color, colorIndex } }
     containerApps: {},
-    // Selected container keys for the Applications filter. null = all selected.
-    containerFilter: null,
+    // Explicitly deselected container keys (empty Set = all selected).
+    // New containers are selected by default (not listed here).
+    containerExcluded: null,
     customCharts: {}, // { group_name: chartInstance }
     customMetricsConfig: {}, // { group_name: [{name, unit, max}, ...] } from /api/config
 };

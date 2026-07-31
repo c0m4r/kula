@@ -120,7 +120,7 @@ export function destroyAppCharts() {
     });
     containerCardIds.forEach(id => document.getElementById(id)?.remove());
     state.containerCharts = {};
-    // Keep containerApps / containerFilter so colors and selection survive a
+    // Keep containerApps / containerExcluded so colors and selection survive a
     // chart rebuild (e.g. after changing aggregation or y-axis prefs).
 
     Object.entries(state.customCharts || {}).forEach(([group, entry]) => {

@@ -1,12 +1,16 @@
 /* ============================================================
    container-apps.js — Multi-series container charts (one chart
    per metric type) + multi-select application filter.
+
+   Review fixes (PR #42):
+   - Filter persists as exclusions so reload keeps deselections
+   - Every sample tick appends aligned points (null backfill)
+   - Card visibility is reconciled via syncContainerMetricsUI
    ============================================================ */
 'use strict';
 import { state, colors } from './state.js';
 import { formatBytesShort } from './utils.js';
 import { createTimeSeriesChart } from './charts-init.js';
-import { attachDynamicChartCardActions } from './chart-card-actions.js';
 
 // Palette for assigning a stable color per container/app.
 const CONTAINER_COLOR_LIST = [
@@ -15,8 +19,6 @@ const CONTAINER_COLOR_LIST = [
 ];
 
 // Metric chart definitions: one chart per metric type, one series per app.
-// I/O is split (Net Rx/Tx, Disk Read/Write) so each line keeps a unique app
-// color without overlapping Rx/Tx or R/W on the same canvas.
 const CONTAINER_METRICS = [
     {
         key: 'cpu',
@@ -26,7 +28,7 @@ const CONTAINER_METRICS = [
         title: 'Containers \u2014 CPU',
         order: 20,
         yConfig: { beginAtZero: true, ticks: { callback: v => v + '%' } },
-        series: [{ field: 'cpu_pct', labelSuffix: '', dash: null }],
+        field: 'cpu_pct',
     },
     {
         key: 'mem',
@@ -36,7 +38,7 @@ const CONTAINER_METRICS = [
         title: 'Containers \u2014 Memory',
         order: 21,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) } },
-        series: [{ field: 'mem_used', labelSuffix: '', dash: null }],
+        field: 'mem_used',
     },
     {
         key: 'net_rx',
@@ -46,7 +48,7 @@ const CONTAINER_METRICS = [
         title: 'Containers \u2014 Network Rx',
         order: 22,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
-        series: [{ field: 'net_rx_bps', labelSuffix: '', dash: null }],
+        field: 'net_rx_bps',
     },
     {
         key: 'net_tx',
@@ -56,7 +58,7 @@ const CONTAINER_METRICS = [
         title: 'Containers \u2014 Network Tx',
         order: 23,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
-        series: [{ field: 'net_tx_bps', labelSuffix: '', dash: null }],
+        field: 'net_tx_bps',
     },
     {
         key: 'disk_r',
@@ -66,7 +68,7 @@ const CONTAINER_METRICS = [
         title: 'Containers \u2014 Disk Read',
         order: 24,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
-        series: [{ field: 'disk_r_bps', labelSuffix: '', dash: null }],
+        field: 'disk_r_bps',
     },
     {
         key: 'disk_w',
@@ -76,7 +78,7 @@ const CONTAINER_METRICS = [
         title: 'Containers \u2014 Disk Write',
         order: 25,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
-        series: [{ field: 'disk_w_bps', labelSuffix: '', dash: null }],
+        field: 'disk_w_bps',
     },
 ];
 
@@ -103,42 +105,71 @@ function hexToRgba(hex, alpha) {
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function loadFilterSelection() {
+// ---- Filter state: exclusions (not selections) ----
+// localStorage shape: { "excluded": ["container_foo", ...] }
+// Empty / missing → all selected. New containers are never in excluded → on by default.
+
+function loadExcluded() {
     try {
         const raw = localStorage.getItem(FILTER_STORAGE_KEY);
-        if (!raw) return null; // null = no saved preference → all selected
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) return new Set(arr);
+        if (!raw) return new Set();
+        const parsed = JSON.parse(raw);
+        // New format
+        if (parsed && Array.isArray(parsed.excluded)) {
+            return new Set(parsed.excluded);
+        }
+        // Legacy format was a selected-keys array — migrate best-effort:
+        // we cannot know full universe at load time, so drop legacy and start fresh
+        // (safer than re-selecting everything after user deselected all).
+        if (Array.isArray(parsed)) {
+            // Treat legacy empty selection as "exclude all known later" is impossible
+            // without known keys; store as empty exclusions and let user re-filter.
+            // Prefer: if legacy was empty array, mark a sentinel so first discover
+            // deselects all? Too magic. Clear legacy key.
+            localStorage.removeItem(FILTER_STORAGE_KEY);
+            return new Set();
+        }
     } catch (_) { /* ignore */ }
-    return null;
+    return new Set();
 }
 
-function saveFilterSelection() {
-    // Persist only when user has deselected something; null means all.
-    const known = Object.keys(state.containerApps || {});
-    if (known.length === 0) return;
-    const selected = known.filter(k => isContainerSelected(k));
-    if (selected.length === known.length) {
+function saveExcluded() {
+    ensureFilterState();
+    const excluded = [...state.containerExcluded];
+    if (excluded.length === 0) {
         localStorage.removeItem(FILTER_STORAGE_KEY);
     } else {
-        localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(selected));
+        localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ excluded }));
+    }
+}
+
+function ensureFilterState() {
+    if (!(state.containerExcluded instanceof Set)) {
+        state.containerExcluded = loadExcluded();
     }
 }
 
 export function isContainerSelected(key) {
-    // Missing entry in selected set map: treat as selected (new apps default on).
-    if (!state.containerFilter) return true;
-    // containerFilter is a Set of selected keys; if the key is unknown to the
-    // set because it is brand new, default to selected.
-    if (!state.containerApps[key]) return true;
-    return state.containerFilter.has(key);
+    ensureFilterState();
+    return !state.containerExcluded.has(key);
 }
 
-function ensureFilterState() {
-    if (!state.containerFilter) {
-        const saved = loadFilterSelection();
-        state.containerFilter = saved; // may be null → all selected
-    }
+function setContainerSelected(key, selected) {
+    ensureFilterState();
+    if (selected) state.containerExcluded.delete(key);
+    else state.containerExcluded.add(key);
+}
+
+function selectAllContainers() {
+    ensureFilterState();
+    state.containerExcluded.clear();
+    saveExcluded();
+}
+
+function deselectAllContainers() {
+    ensureFilterState();
+    state.containerExcluded = new Set(Object.keys(state.containerApps || {}));
+    saveExcluded();
 }
 
 function ensureContainerApp(key, label) {
@@ -147,7 +178,6 @@ function ensureContainerApp(key, label) {
         state.containerApps[key].label = label;
         return state.containerApps[key];
     }
-    // Prefer an unused palette slot; wrap when there are more apps than colors.
     const used = new Set(Object.values(state.containerApps).map(a => a.colorIndex));
     let colorIndex = 0;
     for (let i = 0; i < CONTAINER_COLOR_LIST.length; i++) {
@@ -159,94 +189,167 @@ function ensureContainerApp(key, label) {
     }
     const color = CONTAINER_COLOR_LIST[colorIndex];
     state.containerApps[key] = { key, label, color, colorIndex };
+    // New apps are selected by default: do NOT add to containerExcluded.
     ensureFilterState();
-    if (state.containerFilter) {
-        // New app: selected by default
-        state.containerFilter.add(key);
-    }
     return state.containerApps[key];
 }
 
-function ensureMetricCharts(createAppChartCard, resetZoomAll) {
+// ---- Charts ----
+
+function ensureMetricCharts(createAppChartCard) {
     if (!state.containerCharts) state.containerCharts = {};
     for (const m of CONTAINER_METRICS) {
         if (state.containerCharts[m.key]) continue;
         createAppChartCard(m.cardId, m.chartId, m.subtitleId, m.title, m.order);
-        // Empty datasets — series are added per container dynamically.
-        // Per-chart legends are disabled: a single shared legend lives under
-        // the Applications section title (see renderSharedLegend).
         const chart = createTimeSeriesChart(m.chartId, [], m.yConfig);
-        if (chart?.options?.plugins?.legend) {
-            chart.options.plugins.legend.display = false;
+        if (chart) {
+            // Shared legend under Applications; no per-card Chart.js legend.
+            if (chart.options.plugins?.legend) chart.options.plugins.legend.display = false;
+            // Multi-series with null gaps must not use normalized mode.
+            chart.options.normalized = false;
         }
         state.containerCharts[m.key] = chart;
-        // Tag card for filter visibility logic
         const card = document.getElementById(m.cardId);
         if (card) card.dataset.containerMetric = m.key;
     }
 }
 
-function ensureSeriesForApp(app) {
+/** Align a new dataset length to existing series on the same chart (null backfill). */
+function alignedNullPrefix(chart, ts) {
+    let len = 0;
+    for (const ds of chart.data.datasets) {
+        if (Array.isArray(ds.data) && ds.data.length > len) len = ds.data.length;
+    }
+    if (len === 0) return [];
+    // Prefer real timestamps from a peer dataset when available.
+    const peer = chart.data.datasets.find(d => Array.isArray(d.data) && d.data.length === len);
+    const out = new Array(len);
+    for (let i = 0; i < len; i++) {
+        const pt = peer?.data[i];
+        const x = pt && typeof pt === 'object' && pt.x != null ? pt.x : ts;
+        out[i] = { x, y: null };
+    }
+    return out;
+}
+
+function ensureSeriesForApp(app, ts) {
     for (const m of CONTAINER_METRICS) {
         const chart = state.containerCharts[m.key];
         if (!chart) continue;
-        for (const s of m.series) {
-            const dsId = app.key + '::' + s.field;
-            let ds = chart.data.datasets.find(d => d._dsId === dsId);
-            if (ds) {
-                ds.label = app.label + s.labelSuffix;
-                ds.borderColor = app.color;
-                ds.backgroundColor = hexToRgba(app.color, 0.12);
-                ds.hidden = !isContainerSelected(app.key);
-                continue;
-            }
-            ds = {
-                _dsId: dsId,
-                containerKey: app.key,
-                label: app.label + s.labelSuffix,
-                borderColor: app.color,
-                backgroundColor: hexToRgba(app.color, 0.12),
-                fill: m.series.length === 1,
-                data: [],
-                pointRadius: 0,
-                borderWidth: 1.5,
-                tension: 0.2,
-                borderDash: s.dash || [],
-                hidden: !isContainerSelected(app.key),
-            };
-            chart.data.datasets.push(ds);
+        let ds = chart.data.datasets.find(d => d._dsId === app.key);
+        if (ds) {
+            ds.label = app.label;
+            ds.borderColor = app.color;
+            ds.backgroundColor = hexToRgba(app.color, 0.12);
+            ds.hidden = !isContainerSelected(app.key);
+            continue;
         }
+        ds = {
+            _dsId: app.key,
+            containerKey: app.key,
+            label: app.label,
+            borderColor: app.color,
+            backgroundColor: hexToRgba(app.color, 0.12),
+            fill: false,
+            data: alignedNullPrefix(chart, ts),
+            pointRadius: 0,
+            borderWidth: 1.5,
+            tension: 0.2,
+            hidden: !isContainerSelected(app.key),
+        };
+        chart.data.datasets.push(ds);
     }
 }
 
-function applyFilterToCharts() {
+/**
+ * Append one tick to every known series on every metric chart.
+ * Present containers get real values; others get {x:ts, y:null} so dataset
+ * lengths stay aligned for Chart.js interaction.mode: 'index'.
+ */
+function appendAlignedTick(ts, liveByKey, point) {
     for (const m of CONTAINER_METRICS) {
         const chart = state.containerCharts?.[m.key];
         if (!chart) continue;
-        let anyVisible = false;
         for (const ds of chart.data.datasets) {
-            const selected = isContainerSelected(ds.containerKey);
-            ds.hidden = !selected;
-            if (selected) anyVisible = true;
+            const key = ds.containerKey;
+            if (!key) continue;
+            const ct = liveByKey[key];
+            if (ct) {
+                ds.data.push(point(ct[m.field] || 0));
+            } else {
+                ds.data.push({ x: ts, y: null });
+            }
+            ds.hidden = !isContainerSelected(key);
         }
-        chart.update('none');
-        // Hide chart card entirely if nothing selected
-        const card = document.getElementById(m.cardId);
-        if (card) card.classList.toggle('hidden', !anyVisible && chart.data.datasets.length > 0);
+        if (!state.loadingHistory) chart.update('none');
     }
-    updateMetricSubtitles();
-    renderSharedLegend();
 }
 
-function updateMetricSubtitles() {
-    const selected = Object.values(state.containerApps || {}).filter(a => isContainerSelected(a.key));
-    const n = selected.length;
+/**
+ * Single source of truth for container metric card / filter / legend visibility.
+ * @param {Set<string>} liveKeys containers present in the current sample (may be empty)
+ */
+function syncContainerMetricsUI(liveKeys) {
+    const hasLive = liveKeys && liveKeys.size > 0;
+    const anySelected = Object.keys(state.containerApps || {}).some(k => isContainerSelected(k));
+    const showCards = hasLive && anySelected;
+
+    for (const m of CONTAINER_METRICS) {
+        const chart = state.containerCharts?.[m.key];
+        const card = document.getElementById(m.cardId);
+        if (chart) {
+            for (const ds of chart.data.datasets) {
+                if (ds.containerKey) ds.hidden = !isContainerSelected(ds.containerKey);
+            }
+            if (!state.loadingHistory) chart.update('none');
+        }
+        if (card) card.classList.toggle('hidden', !showCards);
+    }
+
+    const filterRoot = document.getElementById('container-app-filter');
+    if (filterRoot) filterRoot.classList.toggle('hidden', !hasLive);
+
+    if (hasLive) {
+        renderSharedLegend();
+        updateFilterButtonLabel();
+        // Subtitles with live values are set by addContainerSample(liveByKey).
+        // Here only refresh the generic "N apps" summary when we lack latests.
+        if (!(state._containerLatestByKey)) updateMetricSubtitles({});
+    } else {
+        const legend = document.getElementById('container-app-legend');
+        if (legend) legend.classList.add('hidden');
+    }
+
+    const panel = document.getElementById('container-app-filter-panel');
+    if (panel && !panel.classList.contains('hidden')) renderFilterList();
+}
+
+function updateMetricSubtitles(latestByKey) {
+    const selectedKeys = Object.keys(state.containerApps || {}).filter(k => isContainerSelected(k));
+    const n = selectedKeys.length;
     const total = Object.keys(state.containerApps || {}).length;
     const summary = n === total ? `${total} apps` : `${n}/${total} apps`;
+    const latest = latestByKey && typeof latestByKey === 'object' && !(latestByKey instanceof Set)
+        ? latestByKey
+        : (state._containerLatestByKey || {});
 
     for (const m of CONTAINER_METRICS) {
         const el = document.getElementById(m.subtitleId);
-        if (el) el.textContent = summary;
+        if (!el) continue;
+        if (m.key === 'mem' && selectedKeys.length === 1 && latest[selectedKeys[0]]) {
+            const ct = latest[selectedKeys[0]];
+            const used = formatBytesShort(ct.mem_used || 0);
+            if (ct.mem_limit > 0) {
+                el.textContent = `Used: ${used} / Limit: ${formatBytesShort(ct.mem_limit)} (${(ct.mem_pct || 0).toFixed(1)}%)`;
+            } else {
+                el.textContent = `Used: ${used}`;
+            }
+        } else if (m.key === 'cpu' && selectedKeys.length === 1 && latest[selectedKeys[0]]) {
+            const ct = latest[selectedKeys[0]];
+            el.textContent = `CPU: ${(ct.cpu_pct || 0).toFixed(1)}%  Mem: ${formatBytesShort(ct.mem_used || 0)}`;
+        } else {
+            el.textContent = summary;
+        }
     }
 }
 
@@ -259,13 +362,12 @@ function ensureSharedLegendEl() {
     if (legend) return legend;
     legend = document.createElement('div');
     legend.id = 'container-app-legend';
-    legend.className = 'container-app-legend';
+    legend.className = 'container-app-legend hidden';
     legend.setAttribute('aria-label', 'Container color legend');
     header.appendChild(legend);
     return legend;
 }
 
-// Single shared color legend under Applications (not repeated on each chart).
 function renderSharedLegend() {
     const legend = ensureSharedLegendEl();
     if (!legend) return;
@@ -302,26 +404,27 @@ function renderSharedLegend() {
 
 function ensureFilterUI() {
     const header = document.getElementById('applications-header');
-    if (!header) return;
+    if (!header) return null;
+
+    // Prefer static structure from index.html (.section-head-row already present).
+    let titleRow = header.querySelector('.section-head-row');
+    if (!titleRow) {
+        // Fallback for unexpected markup: wrap existing children once.
+        titleRow = document.createElement('div');
+        titleRow.className = 'section-head-row';
+        while (header.firstChild) titleRow.appendChild(header.firstChild);
+        header.appendChild(titleRow);
+    }
+
     let root = document.getElementById('container-app-filter');
     if (root) {
         ensureSharedLegendEl();
         return root;
     }
 
-    // Title row: keep filter button aligned with the section title.
-    let titleRow = header.querySelector('.section-head-row');
-    if (!titleRow) {
-        titleRow = document.createElement('div');
-        titleRow.className = 'section-head-row';
-        // Move existing title (and anything else already in the header) into the row
-        while (header.firstChild) titleRow.appendChild(header.firstChild);
-        header.appendChild(titleRow);
-    }
-
     root = document.createElement('div');
     root.id = 'container-app-filter';
-    root.className = 'container-app-filter';
+    root.className = 'container-app-filter hidden';
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -378,25 +481,20 @@ function ensureFilterUI() {
 
     selAll.addEventListener('click', (e) => {
         e.stopPropagation();
-        ensureFilterState();
-        if (!state.containerFilter) state.containerFilter = new Set();
-        Object.keys(state.containerApps || {}).forEach(k => state.containerFilter.add(k));
-        // All selected → store as null semantics
-        state.containerFilter = new Set(Object.keys(state.containerApps || {}));
-        saveFilterSelection();
+        selectAllContainers();
         renderFilterList();
-        applyFilterToCharts();
-        updateFilterButtonLabel();
+        const live = state._containerLiveKeys || new Set(Object.keys(state.containerApps || {}));
+        syncContainerMetricsUI(live);
+        updateMetricSubtitles(state._containerLatestByKey || {});
     });
 
     deselAll.addEventListener('click', (e) => {
         e.stopPropagation();
-        ensureFilterState();
-        state.containerFilter = new Set(); // empty = none selected
-        saveFilterSelection();
+        deselectAllContainers();
         renderFilterList();
-        applyFilterToCharts();
-        updateFilterButtonLabel();
+        // Keep last live keys so we know containers still exist; cards hide via anySelected=false
+        syncContainerMetricsUI(state._containerLiveKeys || new Set());
+        updateMetricSubtitles(state._containerLatestByKey || {});
     });
 
     return root;
@@ -438,16 +536,11 @@ function renderFilterList() {
         name.textContent = app.label;
 
         chk.addEventListener('change', () => {
-            ensureFilterState();
-            if (!state.containerFilter) {
-                // Was "all selected" (null). Materialize full set then toggle.
-                state.containerFilter = new Set(Object.keys(state.containerApps || {}));
-            }
-            if (chk.checked) state.containerFilter.add(app.key);
-            else state.containerFilter.delete(app.key);
-            saveFilterSelection();
-            applyFilterToCharts();
-            updateFilterButtonLabel();
+            setContainerSelected(app.key, chk.checked);
+            saveExcluded();
+            const live = state._containerLiveKeys || new Set(Object.keys(state.containerApps || {}));
+            syncContainerMetricsUI(live);
+            updateMetricSubtitles(state._containerLatestByKey || {});
         });
 
         row.appendChild(chk);
@@ -459,102 +552,66 @@ function renderFilterList() {
 
 function updateFilterButtonLabel() {
     const countEl = document.getElementById('container-app-filter-count');
-    const filterRoot = document.getElementById('container-app-filter');
+    if (!countEl) return;
     const total = Object.keys(state.containerApps || {}).length;
-    if (!countEl || !filterRoot) return;
     if (total === 0) {
-        filterRoot.classList.add('hidden');
+        countEl.textContent = '';
         return;
     }
-    filterRoot.classList.remove('hidden');
     const n = Object.keys(state.containerApps || {}).filter(k => isContainerSelected(k)).length;
     countEl.textContent = n === total ? `(${total})` : `(${n}/${total})`;
 }
 
 /**
- * Process one sample's container list: ensure charts/series exist, push points.
- * @param {object[]} containers - sample.apps.containers
- * @param {{x:number,y:number}} point - helper that wraps a value
+ * Process one sample's container list.
+ * @param {object[]} containers
+ * @param {number|Date} ts sample timestamp
+ * @param {function} point (v) => ({x: ts, y: v})
  * @param {function} createAppChartCard
- * @param {function} resetZoomAll
  * @returns {boolean} true if any containers were present
  */
-export function addContainerSample(containers, point, createAppChartCard, resetZoomAll) {
-    if (!containers || containers.length === 0) {
-        // Hide metric cards if we ever had them and no containers remain
+export function addContainerSample(containers, ts, point, createAppChartCard) {
+    ensureFilterState();
+    ensureFilterUI();
+
+    const list = containers || [];
+    const liveKeys = new Set();
+    const liveByKey = {};
+
+    if (list.length === 0) {
+        state._containerLiveKeys = liveKeys;
+        // Still append null ticks so series stay aligned if charts already exist
+        if (Object.keys(state.containerCharts || {}).length > 0) {
+            appendAlignedTick(ts, liveByKey, point);
+        }
+        syncContainerMetricsUI(liveKeys);
         return false;
     }
 
-    ensureFilterUI();
-    ensureMetricCharts(createAppChartCard, resetZoomAll);
+    ensureMetricCharts(createAppChartCard);
 
-    const seen = new Set();
-    const latestByKey = {};
-
-    for (const ct of containers) {
+    for (const ct of list) {
         const key = containerSeriesKey(ct);
         const label = containerDisplayName(ct);
         const app = ensureContainerApp(key, label);
-        ensureSeriesForApp(app);
-        seen.add(key);
-        latestByKey[key] = ct;
-
-        for (const m of CONTAINER_METRICS) {
-            const chart = state.containerCharts[m.key];
-            if (!chart) continue;
-            for (const s of m.series) {
-                const dsId = key + '::' + s.field;
-                const ds = chart.data.datasets.find(d => d._dsId === dsId);
-                if (!ds) continue;
-                const val = ct[s.field] || 0;
-                ds.data.push(point(val));
-                ds.hidden = !isContainerSelected(key);
-            }
-            if (!state.loadingHistory) chart.update('none');
-        }
+        ensureSeriesForApp(app, ts);
+        liveKeys.add(key);
+        liveByKey[key] = ct;
     }
 
-    // Hide series for containers not in this sample (stale)
-    for (const m of CONTAINER_METRICS) {
-        const chart = state.containerCharts[m.key];
-        if (!chart) continue;
-        for (const ds of chart.data.datasets) {
-            if (ds.containerKey && !seen.has(ds.containerKey)) {
-                // Keep historical data; just leave as-is. Optionally mark inactive.
-            }
-        }
-        // Show cards
-        document.getElementById(m.cardId)?.classList.remove('hidden');
-    }
+    // One aligned tick for ALL known series (present → value, absent → null)
+    appendAlignedTick(ts, liveByKey, point);
 
-    // Richer memory subtitle when a single app is selected
-    const selectedKeys = Object.keys(state.containerApps || {}).filter(k => isContainerSelected(k));
-    const memSub = document.getElementById('containers-mem-subtitle');
-    if (memSub && selectedKeys.length === 1 && latestByKey[selectedKeys[0]]) {
-        const ct = latestByKey[selectedKeys[0]];
-        const used = formatBytesShort(ct.mem_used || 0);
-        if (ct.mem_limit > 0) {
-            memSub.textContent = `Used: ${used} / Limit: ${formatBytesShort(ct.mem_limit)} (${(ct.mem_pct || 0).toFixed(1)}%)`;
-        } else {
-            memSub.textContent = `Used: ${used}`;
-        }
-    } else {
-        updateMetricSubtitles();
-    }
-
-    const cpuSub = document.getElementById('containers-cpu-subtitle');
-    if (cpuSub && selectedKeys.length === 1 && latestByKey[selectedKeys[0]]) {
-        const ct = latestByKey[selectedKeys[0]];
-        cpuSub.textContent = `CPU: ${(ct.cpu_pct || 0).toFixed(1)}%  Mem: ${formatBytesShort(ct.mem_used || 0)}`;
-    }
-
-    updateFilterButtonLabel();
-    renderSharedLegend();
-    // Keep list fresh if panel open
-    const panel = document.getElementById('container-app-filter-panel');
-    if (panel && !panel.classList.contains('hidden')) renderFilterList();
-
+    state._containerLiveKeys = liveKeys;
+    state._containerLatestByKey = liveByKey;
+    syncContainerMetricsUI(liveKeys);
+    updateMetricSubtitles(liveByKey);
     return true;
+}
+
+/** Hide container metric UI when no containers in this sample (nginx may still show). */
+export function markContainersAbsent(ts, point) {
+    return addContainerSample([], ts, point, () => null);
 }
 
 export function destroyContainerMetricCharts() {
@@ -563,7 +620,6 @@ export function destroyContainerMetricCharts() {
         if (chart) chart.destroy();
         document.getElementById(m.cardId)?.remove();
     }
-    // Also remove any legacy combined I/O cards from earlier iterations
     ['card-containers-net', 'card-containers-diskio'].forEach(id => {
         document.getElementById(id)?.remove();
     });
@@ -575,8 +631,9 @@ export function destroyContainerMetricCharts() {
 }
 
 export function showContainerFilter(show) {
+    // Compatibility shim: visibility is owned by syncContainerMetricsUI.
     const filter = document.getElementById('container-app-filter');
-    if (filter) filter.classList.toggle('hidden', !show);
+    if (filter && !show) filter.classList.add('hidden');
     const legend = document.getElementById('container-app-legend');
     if (legend && !show) legend.classList.add('hidden');
 }

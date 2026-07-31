@@ -12,7 +12,7 @@ import { evaluateAlerts } from './alerts.js';
 import { applyStoredFocusMode } from './focus-mode.js';
 import { addSampleToSplitCharts, updateSplitSelectors } from './split.js';
 import { attachDynamicChartCardActions } from './chart-card-actions.js';
-import { addContainerSample, showContainerFilter } from './container-apps.js';
+import { addContainerSample, markContainersAbsent } from './container-apps.js';
 import { apiUrl } from './api.js';
 
 // CSS order values for dynamic app chart grouping within the grid.
@@ -729,14 +729,14 @@ export function addSampleToCharts(item, ts) {
         }
     }
 
-    // Containers — one multi-series chart per metric type (CPU / Memory /
-    // Network / Disk I/O) with a multi-select application filter.
+    // Containers — one multi-series chart per metric type with app filter.
+    // Always call the container pipeline so absent ticks stay time-aligned and
+    // cards hide when no containers remain (even if Nginx keeps the section open).
     if (s.apps?.containers?.length > 0) {
         appsVisible = true;
-        addContainerSample(s.apps.containers, point, createAppChartCard, resetZoomAll);
-        showContainerFilter(true);
+        addContainerSample(s.apps.containers, ts, point, createAppChartCard);
     } else {
-        showContainerFilter(false);
+        markContainersAbsent(ts, point);
     }
 
     // PostgreSQL — create charts on first data
