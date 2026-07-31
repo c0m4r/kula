@@ -71,8 +71,9 @@ const CONTAINER_METRICS = [
         cardId: 'card-containers-disk-r',
         chartId: 'chart-containers-disk-r',
         subtitleId: 'containers-disk-r-subtitle',
-        // System "Disk I/O" chart series use read_bs / write_bs.
+        // System "Disk I/O" chart series use read_bs / write_bs (B/s stripped in title).
         i18nKeys: ['disk_io', 'read_bs'],
+        stripUnitFromQualifier: true,
         order: 24,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'disk_r_bps',
@@ -83,19 +84,30 @@ const CONTAINER_METRICS = [
         chartId: 'chart-containers-disk-w',
         subtitleId: 'containers-disk-w-subtitle',
         i18nKeys: ['disk_io', 'write_bs'],
+        stripUnitFromQualifier: true,
         order: 25,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'disk_w_bps',
     },
 ];
 
+/** Strip unit suffixes from series labels when used as a chart-title qualifier. */
+function titleQualifier(key) {
+    // read_bs → "Read B/s" / "Lecture B/s" — B/s is for series axes, not card titles.
+    return i18n.t(key)
+        .replace(/\s*B\/s\s*$/i, '')
+        .replace(/\s*\/s\s*$/i, '')
+        .trim();
+}
+
 /** Build a chart title from one or more existing i18n keys (no new locale strings). */
 function metricTitle(m) {
     const keys = m.i18nKeys || [];
     if (keys.length === 0) return m.key;
     if (keys.length === 1) return i18n.t(keys[0]);
-    // e.g. "Network Throughput (RX)" / "Netzwerkdurchsatz (RX)"
-    return `${i18n.t(keys[0])} (${i18n.t(keys[1])})`;
+    // e.g. "Network Throughput (RX)" / "Disk I/O (Read)" — reuse system labels.
+    const qual = m.stripUnitFromQualifier ? titleQualifier(keys[1]) : i18n.t(keys[1]);
+    return `${i18n.t(keys[0])} (${qual})`;
 }
 
 function applyMetricCardTitle(m) {
