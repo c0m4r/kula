@@ -130,5 +130,6 @@
     "ai_prompt_network": "Quantas interfaces de rede monitorizamos?",
     "ai_analyse_prompt": "Analise estes dados para {title}.",
     "select_all": "Selecionar tudo",
-    "deselect_all": "Desmarcar tudo"
+    "deselect_all": "Desmarcar tudo",
+    "applications": "Aplicações"
 }

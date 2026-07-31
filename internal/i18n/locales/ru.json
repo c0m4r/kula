@@ -130,5 +130,6 @@
     "ai_prompt_network": "Сколько сетевых интерфейсов мы мониторим?",
     "ai_analyse_prompt": "Проанализируйте эти данные для {title}.",
     "select_all": "Выбрать все",
-    "deselect_all": "Снять выбор"
+    "deselect_all": "Снять выбор",
+    "applications": "Приложения"
 }

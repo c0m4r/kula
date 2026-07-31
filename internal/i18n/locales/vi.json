@@ -130,5 +130,6 @@
     "ai_prompt_network": "Chúng tôi theo dõi bao nhiêu giao diện mạng?",
     "ai_analyse_prompt": "Phân tích dữ liệu này cho {title}.",
     "select_all": "Chọn tất cả",
-    "deselect_all": "Bỏ chọn tất cả"
+    "deselect_all": "Bỏ chọn tất cả",
+    "applications": "Ứng dụng"
 }

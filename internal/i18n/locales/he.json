@@ -130,5 +130,6 @@
     "ai_prompt_network": "כמה ממשקי רשת אנו מנטרים?",
     "ai_analyse_prompt": "נתח את הנתונים עבור {title}.",
     "select_all": "בחר הכל",
-    "deselect_all": "בטל בחירה"
+    "deselect_all": "בטל בחירה",
+    "applications": "יישומים"
 }

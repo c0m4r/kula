@@ -131,5 +131,6 @@
     "ai_prompt_network": "How many network interfaces do we monitor?",
     "ai_analyse_prompt": "Analyse this data for {title}.",
     "select_all": "Select all",
-    "deselect_all": "Deselect all"
+    "deselect_all": "Deselect all",
+    "applications": "Applications"
 }

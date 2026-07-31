@@ -130,5 +130,6 @@
     "ai_prompt_network": "Kolik síťových rozhraní sledujeme?",
     "ai_analyse_prompt": "Analyzujte tato data pro {title}.",
     "select_all": "Vybrat vše",
-    "deselect_all": "Zrušit výběr"
+    "deselect_all": "Zrušit výběr",
+    "applications": "Aplikace"
 }

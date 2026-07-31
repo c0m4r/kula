@@ -130,5 +130,6 @@
     "ai_prompt_network": "हम कितने नेटवर्क इंटरफेस मॉनिटर करते हैं?",
     "ai_analyse_prompt": "{title} के लिए इस डेटा का विश्लेषण करें।",
     "select_all": "सभी चुनें",
-    "deselect_all": "सभी हटाएँ"
+    "deselect_all": "सभी हटाएँ",
+    "applications": "अनुप्रयोग"
 }

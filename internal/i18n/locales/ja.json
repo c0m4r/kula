@@ -130,5 +130,6 @@
     "ai_prompt_network": "いくつのネットワークインターフェースを監視していますか？",
     "ai_analyse_prompt": "{title} のデータを分析してください。",
     "select_all": "すべて選択",
-    "deselect_all": "すべて解除"
+    "deselect_all": "すべて解除",
+    "applications": "アプリケーション"
 }

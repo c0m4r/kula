@@ -130,5 +130,6 @@
     "ai_prompt_network": "Câte interfețe de rețea monitorizăm?",
     "ai_analyse_prompt": "Analizează aceste date pentru {title}.",
     "select_all": "Selectează tot",
-    "deselect_all": "Deselectează tot"
+    "deselect_all": "Deselectează tot",
+    "applications": "Aplicații"
 }

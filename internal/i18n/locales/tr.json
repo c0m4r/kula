@@ -130,5 +130,6 @@
     "ai_prompt_network": "Kaç ağ arabirimini izliyoruz?",
     "ai_analyse_prompt": "{title} için bu verileri analiz edin.",
     "select_all": "Tümünü seç",
-    "deselect_all": "Tümünü kaldır"
+    "deselect_all": "Tümünü kaldır",
+    "applications": "Uygulamalar"
 }

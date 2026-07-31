@@ -130,5 +130,6 @@
     "ai_prompt_network": "Скільки мережевих інтерфейсів ми відстежуємо?",
     "ai_analyse_prompt": "Проаналізуйте ці дані для {title}.",
     "select_all": "Вибрати все",
-    "deselect_all": "Зняти вибір"
+    "deselect_all": "Зняти вибір",
+    "applications": "Застосунки"
 }

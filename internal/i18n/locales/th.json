@@ -130,5 +130,6 @@
     "ai_prompt_network": "เราตรวจสอบอินเทอร์เฟซเครือข่ายกี่อัน?",
     "ai_analyse_prompt": "วิเคราะห์ข้อมูลนี้สำหรับ {title}",
     "select_all": "เลือกทั้งหมด",
-    "deselect_all": "ยกเลิกทั้งหมด"
+    "deselect_all": "ยกเลิกทั้งหมด",
+    "applications": "แอปพลิเคชัน"
 }

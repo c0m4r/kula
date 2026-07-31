@@ -130,5 +130,6 @@
     "ai_prompt_network": "كم عدد واجهات الشبكة التي نراقبها؟",
     "ai_analyse_prompt": "حلل هذه البيانات لـ {title}.",
     "select_all": "تحديد الكل",
-    "deselect_all": "إلغاء تحديد الكل"
+    "deselect_all": "إلغاء تحديد الكل",
+    "applications": "التطبيقات"
 }

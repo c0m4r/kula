@@ -130,5 +130,6 @@
     "ai_prompt_network": "Wie viele Netzwerkschnittstellen überwachen wir?",
     "ai_analyse_prompt": "Analysiere diese Daten für {title}.",
     "select_all": "Alle auswählen",
-    "deselect_all": "Alle abwählen"
+    "deselect_all": "Alle abwählen",
+    "applications": "Anwendungen"
 }

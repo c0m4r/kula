@@ -130,5 +130,6 @@
     "ai_prompt_network": "Ile interfejsów sieciowych monitorujemy?",
     "ai_analyse_prompt": "Przeanalizuj te dane dla {title}.",
     "select_all": "Zaznacz wszystko",
-    "deselect_all": "Odznacz wszystko"
+    "deselect_all": "Odznacz wszystko",
+    "applications": "Aplikacje"
 }

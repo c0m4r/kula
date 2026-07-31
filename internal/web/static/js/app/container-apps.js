@@ -129,9 +129,8 @@ function retranslateContainerUI() {
     if (btnLabel) btnLabel.textContent = i18n.t('applications');
     const selAll = document.querySelector('#container-app-filter-panel .container-app-filter-action:first-child');
     const deselAll = document.querySelector('#container-app-filter-panel .container-app-filter-action:last-child');
-    // Prefer dedicated keys when present; fall back to English literals.
-    if (selAll) selAll.textContent = i18n.t('select_all') !== 'select_all' ? i18n.t('select_all') : 'Select all';
-    if (deselAll) deselAll.textContent = i18n.t('deselect_all') !== 'deselect_all' ? i18n.t('deselect_all') : 'Deselect all';
+    if (selAll) selAll.textContent = i18n.t('select_all');
+    if (deselAll) deselAll.textContent = i18n.t('deselect_all');
     updateFilterButtonLabel();
     renderSharedLegend();
     const panel = document.getElementById('container-app-filter-panel');
@@ -506,11 +505,11 @@ function ensureFilterUI() {
     const selAll = document.createElement('button');
     selAll.type = 'button';
     selAll.className = 'container-app-filter-action';
-    selAll.textContent = i18n.t('select_all') !== 'select_all' ? i18n.t('select_all') : 'Select all';
+    selAll.textContent = i18n.t('select_all');
     const deselAll = document.createElement('button');
     deselAll.type = 'button';
     deselAll.className = 'container-app-filter-action';
-    deselAll.textContent = i18n.t('deselect_all') !== 'deselect_all' ? i18n.t('deselect_all') : 'Deselect all';
+    deselAll.textContent = i18n.t('deselect_all');
     actions.appendChild(selAll);
     actions.appendChild(deselAll);
 
