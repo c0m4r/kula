@@ -12,6 +12,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Changed
 
 - TUI redesign
+- golang and deps updates
 
 ### Fixed
 
