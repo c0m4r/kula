@@ -66,6 +66,7 @@ export const state = {
     splitCharts: {}, // { type: { chartKey: chartInstance } }
     containerCharts: {}, // { container_<name|id>_cpu|mem|io: chartInstance }
     customCharts: {}, // { group_name: chartInstance }
+    psuCharts: {}, // { psu_<name>: chartInstance }
     customMetricsConfig: {}, // { group_name: [{name, unit, max}, ...] } from /api/config
 };
 

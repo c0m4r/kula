@@ -371,6 +371,10 @@ export function setChartTimeRange() {
     Object.values(state.customCharts || {}).forEach(entry => {
         if (entry?.chart) applyToChart(entry.chart);
     });
+    // Also apply to dynamic power-supply charts — without this they fall back
+    // to Chart.js auto-scaling and span only their own data instead of the
+    // selected window.
+    Object.values(state.psuCharts || {}).forEach(applyToChart);
 }
 
 export function updateChartLabels() {
