@@ -17,6 +17,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Fixed
 
 - battery graph out of order after exiting focus mode
+- battery/UPS metrics not being written to storage
 
 ## [0.18.8] - 2026-07-29
 
