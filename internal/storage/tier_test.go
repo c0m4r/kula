@@ -290,14 +290,24 @@ func TestUpgradePreFixWrappedNeverWipes(t *testing.T) {
 		t.Fatalf("OpenTier: %v", err)
 	}
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	const N = 3000
-	for i := 0; i < N; i++ {
-		if err := tier.Write(varSample(base.Add(time.Duration(i)*time.Second), 1+i%5)); err != nil {
-			t.Fatalf("Write(%d): %v", i, err)
+	// Write until the ring is actually in the wrapped state. With variable-size
+	// records the tail periodically catches the head, leaving the ring
+	// contiguous (wrapped=false); which write count lands in which state
+	// depends on the record layout, so keep going instead of pinning a magic
+	// count that any codec change would silently invalidate.
+	const minWrites, maxWrites = 3000, 12000
+	n := 0
+	for n < maxWrites {
+		if err := tier.Write(varSample(base.Add(time.Duration(n)*time.Second), 1+n%5)); err != nil {
+			t.Fatalf("Write(%d): %v", n, err)
+		}
+		n++
+		if n >= minWrites && tier.wrapped {
+			break
 		}
 	}
 	if !tier.wrapped {
-		t.Fatal("precondition: tier did not wrap")
+		t.Fatalf("precondition: tier did not wrap after %d writes", n)
 	}
 	wantWriteOff, wantCount := tier.writeOff, tier.count
 	if err := tier.Close(); err != nil {
@@ -320,7 +330,7 @@ func TestUpgradePreFixWrappedNeverWipes(t *testing.T) {
 			tier2.writeOff, tier2.count, wantWriteOff, wantCount)
 	}
 	// The head segment is always cleanly readable, and reads must keep working.
-	now := base.Add(time.Duration(N) * time.Second)
+	now := base.Add(time.Duration(n) * time.Second)
 	if err := tier2.Write(varSample(now, 4)); err != nil {
 		t.Fatalf("post-upgrade write: %v", err)
 	}

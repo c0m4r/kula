@@ -159,7 +159,8 @@ Each record has this structure:
 │          flagHasApps    = 1 << 3   (gate: app section)   │
 │          flagHasApache2 = 1 << 8   (gate: Apache2 block) │
 │          flagHasMysql   = 1 << 9   (gate: MySQL block)   │
-│          ... new flags: 1 << 10, 1 << 11, ...            │
+│          flagHasPSU     = 1 << 10  (gate: PSU section)   │
+│          ... new flags: 1 << 11, 1 << 12, ...            │
 ├──────────────────────────────────────────────────────────┤
 │  Fixed block (218 bytes) — CPU, memory, swap, TCP,       │
 │  process, self metrics. Always the same size.            │
@@ -180,16 +181,19 @@ Each record has this structure:
 │       e. Apache2     (1 byte version + 72/100 bytes)     │
 │       f. Custom      (2 bytes group count + variable)    │
 │                                                          │
-│       ← NEW METRIC TYPES MUST BE INSERTED HERE,          │
-│         BEFORE "Custom"                                   │
+│    8. Power supplies — battery / UPS / mains:            │
+│       1 byte version + 2 bytes count + per-supply data   │
+│                                                          │
+│       ← NEW SECTIONS ARE APPENDED HERE, AT THE END,      │
+│         gated by a new preamble flag bit                 │
 └──────────────────────────────────────────────────────────┘
 ```
 
 ### The Rule
 
-**New fixed-size application metric types MUST be appended after all existing fixed
-sections and before the trailing Custom section.** Never insert a new section between
-existing ones.
+**New sections MUST be appended after every existing section.** Never insert a new
+section between existing ones and never resize one in place. The power-supply
+section went in after Custom for exactly this reason.
 
 Each new type is gated by a dedicated preamble flag bit. The decoder checks each flag:
 if absent (old record), that section's bytes are skipped entirely and subsequent
@@ -320,12 +324,12 @@ flags |= flagHasFoo
 
 #### 7. Encode block (`internal/storage/codec.go` — `appendVariable`)
 
-**Append** the new section after MySQL and before Custom. Place it at the end of the
-fixed app sections:
+**Append** the new section at the very end of `appendVariable`, after every section
+that is already there:
 
 ```
-nginx → containers → postgres → mysql → apache2 → foo → custom
-                                                      ^^^^^
+nginx → containers → postgres → mysql → apache2 → custom → psu → foo
+                                                                 ^^^^^
 ```
 
 ```go
@@ -346,8 +350,8 @@ version-tagged decoding.
 
 #### 8. Decode block (`internal/storage/codec.go` — `decodeVariable`)
 
-Gate the new section behind the flag extracted from the preamble. **Append** after
-Apache2 and before Custom:
+Gate the new section behind the flag extracted from the preamble. **Append** it at
+the end of `decodeVariable`, in the order the encoder wrote it:
 
 ```go
 // Foo — gated by flagHasFoo so old records skip this byte.
@@ -370,7 +374,7 @@ Extract the flag in `decodeSample()` and thread it through `decodeVariable()`:
 ```go
 hasFoo := flags&flagHasFoo != 0
 // ...
-vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasFoo)
+vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasFoo)
 ```
 
 Update the `decodeVariable` signature to accept the new `hasFoo bool` parameter.
@@ -425,11 +429,12 @@ All four checks must pass: govulncheck, go vet, go test -race, golangci-lint.
 | 3   | `flagHasApps`    | Application metrics section present |
 | 8   | `flagHasApache2` | Apache2 block present |
 | 9   | `flagHasMysql`   | MySQL block present |
-| 10  | —                | Next available |
-| 11  | —                | Available |
+| 10  | `flagHasPSU`     | Power-supply (battery/UPS) section present |
+| 11  | —                | Next available |
+| 12  | —                | Available |
 | ... | —                | Available up to bit 15 |
 
-Use bit 10 for the next metric type. Bits 4–7 and 10–15 are free. Do not reuse bits.
+Use bit 11 for the next metric type. Bits 4–7 and 11–15 are free. Do not reuse bits.
 
 ---
 

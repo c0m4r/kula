@@ -22,10 +22,11 @@ package storage
 //     length-prefixed IOState string; the v3 additions cover the IO/SQL
 //     error codes and the human-readable IO thread state).
 //
-//  3. To add an entirely new application section, append it AFTER the custom
-//     metrics section and gate it behind a new preamble flag bit
-//     (like flagHasApps gates the whole apps section). Old records without
-//     the flag will not attempt to read the new section.
+//  3. To add an entirely new section, append it AFTER the custom metrics
+//     section and gate it behind a new preamble flag bit (like flagHasApps
+//     gates the whole apps section). Old records without the flag will not
+//     attempt to read the new section. See the power-supply section
+//     (flagHasPSU) for a worked example.
 //
 //  4. NEVER remove or reorder fields inside an existing version block.
 //     Deprecate by keeping the field, writing zero, and ignoring it on read.
@@ -60,13 +61,24 @@ const (
 	flagHasMin     uint16 = 1 << 0
 	flagHasMax     uint16 = 1 << 1
 	flagHasData    uint16 = 1 << 2
-	flagHasApps    uint16 = 1 << 3 // variable block includes application metrics section
-	flagHasApache2 uint16 = 1 << 8 // variable block includes Apache2 metrics
-	flagHasMysql   uint16 = 1 << 9 // variable block includes MySQL metrics
+	flagHasApps    uint16 = 1 << 3  // variable block includes application metrics section
+	flagHasApache2 uint16 = 1 << 8  // variable block includes Apache2 metrics
+	flagHasMysql   uint16 = 1 << 9  // variable block includes MySQL metrics
+	flagHasPSU     uint16 = 1 << 10 // variable block includes power-supply metrics
 )
 
 // fixedBlockSize is the size in bytes of the encoded fixed scalar block.
 const fixedBlockSize = 218
+
+// psuSectionVersion tags the trailing power-supply section. Growing a supply
+// entry means bumping this and adding a matching branch in decodeVariable —
+// entries are fixed-size, so the decoder cannot skip an unknown version.
+const psuSectionVersion = byte(1)
+
+// psuEntrySize is the scalar tail of one power-supply entry: capacity (uint8)
+// plus voltage, current, power, energy-now and energy-full (5 x float32).
+// The three length-prefixed strings that precede it are not counted here.
+const psuEntrySize = 21
 
 // recordKindBinary is the one-byte tag written as the first byte of every new
 // binary payload (after the 4-byte length prefix). Legacy JSON records start
@@ -218,6 +230,7 @@ func appendPreamble(buf []byte, a *AggregatedSample) []byte {
 	flags |= flagHasApps    // always set: variable blocks include app metrics section
 	flags |= flagHasApache2 // always set: Apache2 metrics byte follows MySQL
 	flags |= flagHasMysql   // always set: MySQL metrics byte follows Postgres
+	flags |= flagHasPSU     // always set: power-supply section follows custom metrics
 	binary.LittleEndian.PutUint16(b[16:], flags)
 	return append(buf, b[:]...)
 }
@@ -656,6 +669,49 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 		}
 	}
 
+	// ---- Power supplies (batteries, UPS, mains adapters) ----
+	//
+	// Trailing section, gated by flagHasPSU. It sits after the custom metrics
+	// section so records written before the flag existed still end exactly
+	// where their decoder expects them to.
+	//
+	// Layout: 1-byte version tag, uint16 supply count, then per supply
+	// name/type/status as length-prefixed strings followed by psuEntrySize
+	// scalar bytes.
+	buf = append(buf, psuSectionVersion)
+	psuCount := len(s.PSU)
+	if psuCount > 65535 {
+		psuCount = 65535
+	}
+	buf = appendUint16(buf, uint16(psuCount))
+	for _, ps := range s.PSU[:psuCount] {
+		if buf, err = appendStr(buf, ps.Name); err != nil {
+			return buf, fmt.Errorf("psu name: %w", err)
+		}
+		if buf, err = appendStr(buf, ps.Type); err != nil {
+			return buf, fmt.Errorf("psu type: %w", err)
+		}
+		if buf, err = appendStr(buf, ps.Status); err != nil {
+			return buf, fmt.Errorf("psu status: %w", err)
+		}
+		// Capacity is a percentage. Clamp it so a quirky driver (or a value
+		// round-tripped from a corrupt record) cannot wrap the byte cast.
+		capacity := ps.Capacity
+		if capacity < 0 {
+			capacity = 0
+		} else if capacity > 100 {
+			capacity = 100
+		}
+		var pb [psuEntrySize]byte
+		pb[0] = byte(capacity)
+		putF32(pb[1:], ps.VoltageV)
+		putF32(pb[5:], ps.CurrentA)
+		putF32(pb[9:], ps.PowerW)
+		putF32(pb[13:], ps.EnergyWhNow)
+		putF32(pb[17:], ps.EnergyWhFull)
+		buf = append(buf, pb[:]...)
+	}
+
 	return buf, nil
 }
 
@@ -675,6 +731,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 	hasApps := flags&flagHasApps != 0
 	hasApache2 := flags&flagHasApache2 != 0
 	hasMysql := flags&flagHasMysql != 0
+	hasPSU := flags&flagHasPSU != 0
 	off := 18
 
 	if flags&flagHasData != 0 {
@@ -683,7 +740,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, fmt.Errorf("decode data fixed: %w", err)
 		}
 		off += n
-		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql)
+		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU)
 		if err != nil {
 			return nil, fmt.Errorf("decode data variable: %w", err)
 		}
@@ -698,7 +755,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, fmt.Errorf("decode min fixed: %w", err)
 		}
 		off += n
-		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql)
+		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU)
 		if err != nil {
 			return nil, fmt.Errorf("decode min variable: %w", err)
 		}
@@ -713,7 +770,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, fmt.Errorf("decode max fixed: %w", err)
 		}
 		off += n
-		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql)
+		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU)
 		if err != nil {
 			return nil, fmt.Errorf("decode max variable: %w", err)
 		}
@@ -797,10 +854,11 @@ func decodeFixed(data []byte) (*collector.Sample, int, error) {
 // fixed+variable block (min/max) in multi-block aggregated records.
 // hasApache2 gates the Apache2 presence byte (flagHasApache2).
 // hasMysql gates the MySQL presence byte (flagHasMysql).
+// hasPSU gates the trailing power-supply section (flagHasPSU).
 // Records written before each type existed omit the flag, so the decoder
 // skips that section's bytes and subsequent offsets stay correct.
 // Returns the number of bytes consumed and any error.
-func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMysql bool) (int, error) {
+func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMysql, hasPSU bool) (int, error) {
 	off := 0
 
 	need := func(n int, ctx string) error {
@@ -1033,6 +1091,8 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	// aggregated records the remaining bytes after section 6 belong to the next
 	// fixed+variable block (min/max), not to app metrics.
 	if !hasApps {
+		// flagHasPSU postdates flagHasApps and appendPreamble only ever sets
+		// the two together, so a record without apps has no PSU section either.
 		return off, nil
 	}
 
@@ -1443,6 +1503,78 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 		s.Apps.Custom[groupName] = metrics
 	}
 
+	// Power supplies — gated by flagHasPSU so older records, which end after
+	// the custom metrics above, are not read past their last byte.
+	if hasPSU {
+		n, err := decodePSUSection(data[off:], s)
+		off += n
+		if err != nil {
+			return off, err
+		}
+	}
+
+	return off, nil
+}
+
+// decodePSUSection decodes the trailing power-supply section into s and returns
+// the bytes consumed. Split out to keep the already-long decodeVariable
+// readable and the section's bounds checks together in one place.
+func decodePSUSection(data []byte, s *collector.Sample) (int, error) {
+	// Version tag + supply count.
+	if len(data) < 3 {
+		return 0, fmt.Errorf("variable block truncated at psu header (need 3, have %d)", len(data))
+	}
+	if data[0] != psuSectionVersion {
+		return 1, fmt.Errorf("unsupported psu section version %d", data[0])
+	}
+	numPSU := int(binary.LittleEndian.Uint16(data[1:]))
+	off := 3
+	if numPSU == 0 {
+		return off, nil
+	}
+
+	// Cap the pre-allocation: a corrupt count must not become a multi-megabyte
+	// allocation. append grows the slice if the record really does carry that
+	// many supplies.
+	s.PSU = make([]collector.PowerSupplyStats, 0, min(numPSU, 8))
+	for i := 0; i < numPSU; i++ {
+		var ps collector.PowerSupplyStats
+		name, n, err := getStr(data[off:])
+		if err != nil {
+			return off, fmt.Errorf("psu name: %w", err)
+		}
+		off += n
+		ps.Name = name
+		psuType, tn, err := getStr(data[off:])
+		if err != nil {
+			return off, fmt.Errorf("psu type: %w", err)
+		}
+		off += tn
+		ps.Type = psuType
+		status, sn, err := getStr(data[off:])
+		if err != nil {
+			return off, fmt.Errorf("psu status: %w", err)
+		}
+		off += sn
+		ps.Status = status
+		if len(data)-off < psuEntrySize {
+			return off, fmt.Errorf("variable block truncated at psu fields (need %d, have %d)",
+				psuEntrySize, len(data)-off)
+		}
+		ps.Capacity = int(data[off])
+		off++
+		ps.VoltageV = getF32(data[off:])
+		off += 4
+		ps.CurrentA = getF32(data[off:])
+		off += 4
+		ps.PowerW = getF32(data[off:])
+		off += 4
+		ps.EnergyWhNow = getF32(data[off:])
+		off += 4
+		ps.EnergyWhFull = getF32(data[off:])
+		off += 4
+		s.PSU = append(s.PSU, ps)
+	}
 	return off, nil
 }
 

@@ -1280,3 +1280,128 @@ func TestAggBufferBoundedOnTierWriteFailure(t *testing.T) {
 		t.Error("tier 0 lost data during tier-1 failures")
 	}
 }
+
+// ---- Power-supply aggregation -----------------------------------------------
+
+// TestAggregatePSU verifies battery gauges are averaged (not just carried over
+// from the last sample) and that min/max blocks track the real extremes, so a
+// history query landing on tier 1 or 2 still shows a battery curve.
+func TestAggregatePSU(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	capacities := []int{90, 80, 70}
+	powers := []float64{10, 20, 30}
+	samples := make([]*collector.Sample, 0, len(capacities))
+	for i := range capacities {
+		s := makeSample(base.Add(time.Duration(i) * time.Second))
+		s.PSU = []collector.PowerSupplyStats{{
+			Name: "BAT0", Type: "Battery", Status: "Discharging",
+			Capacity: capacities[i], PowerW: powers[i], EnergyWhNow: float64(capacities[i]) / 2,
+		}}
+		samples = append(samples, s)
+	}
+
+	agg := store.aggregateSamples(samples, time.Minute)
+	if agg == nil || agg.Data == nil {
+		t.Fatal("aggregateSamples returned no data")
+	}
+	if len(agg.Data.PSU) != 1 {
+		t.Fatalf("aggregated PSU count = %d, want 1", len(agg.Data.PSU))
+	}
+	if got := agg.Data.PSU[0].Capacity; got != 80 {
+		t.Errorf("averaged capacity = %d, want 80", got)
+	}
+	if got := agg.Data.PSU[0].PowerW; got != 20 {
+		t.Errorf("averaged power = %v, want 20", got)
+	}
+	if agg.Data.PSU[0].Status != "Discharging" {
+		t.Errorf("status = %q, want Discharging", agg.Data.PSU[0].Status)
+	}
+	// The source samples must not be mutated by in-place averaging.
+	if samples[0].PSU[0].Capacity != 90 {
+		t.Errorf("source sample mutated: capacity = %d, want 90", samples[0].PSU[0].Capacity)
+	}
+
+	if agg.Min == nil || agg.Max == nil {
+		t.Fatal("expected min/max blocks for a multi-sample window")
+	}
+	if got := agg.Min.PSU[0].Capacity; got != 70 {
+		t.Errorf("min capacity = %d, want 70", got)
+	}
+	if got := agg.Max.PSU[0].Capacity; got != 90 {
+		t.Errorf("max capacity = %d, want 90", got)
+	}
+	if got := agg.Max.PSU[0].PowerW; got != 30 {
+		t.Errorf("max power = %v, want 30", got)
+	}
+}
+
+// TestAggregatePSUMissingSupply verifies a supply that disappears mid-window
+// (hotplugged UPS) does not drag the minimum down to a reading that never
+// happened.
+func TestAggregatePSUMissingSupply(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	withBat := makeSample(base)
+	withBat.PSU = []collector.PowerSupplyStats{{Name: "BAT0", Type: "Battery", Capacity: 55}}
+	noBat := makeSample(base.Add(time.Second))
+	noBat.PSU = []collector.PowerSupplyStats{{Name: "AC", Type: "Mains"}}
+
+	agg := store.aggregateSamples([]*collector.Sample{withBat, noBat}, time.Minute)
+	if agg == nil || agg.Min == nil {
+		t.Fatal("aggregateSamples returned no min block")
+	}
+	if len(agg.Min.PSU) != 1 || agg.Min.PSU[0].Name != "BAT0" {
+		t.Fatalf("min PSU = %+v, want a single BAT0 entry", agg.Min.PSU)
+	}
+	if got := agg.Min.PSU[0].Capacity; got != 55 {
+		t.Errorf("min capacity = %d, want 55 (absent supply must not read as 0%%)", got)
+	}
+}
+
+// TestQueryRangePreservesPSU is the end-to-end guard for the reported bug:
+// battery charts only ever showed the live tail because power-supply metrics
+// never reached disk, so every history reload (or time-preset change) came back
+// without them. Covers the direct read and the >1.5x-targetPoints downsample
+// path a wide time range takes.
+func TestQueryRangePreservesPSU(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const n = 200
+	for i := 0; i < n; i++ {
+		s := makeSample(base.Add(time.Duration(i) * time.Second))
+		s.PSU = []collector.PowerSupplyStats{{
+			Name: "BAT0", Type: "Battery", Status: "Discharging",
+			Capacity: 100 - i/4, PowerW: 12.5, VoltageV: 11.1,
+		}}
+		if err := store.WriteSample(s); err != nil {
+			t.Fatalf("WriteSample(%d): %v", i, err)
+		}
+	}
+
+	for _, points := range []int{n, 10} { // n: no downsampling; 10: downsampled
+		result, err := store.QueryRangeWithMeta(base, base.Add(n*time.Second), points)
+		if err != nil {
+			t.Fatalf("QueryRangeWithMeta(points=%d): %v", points, err)
+		}
+		if len(result.Samples) == 0 {
+			t.Fatalf("points=%d: no samples returned", points)
+		}
+		for _, agg := range result.Samples {
+			if agg.Data == nil || len(agg.Data.PSU) != 1 {
+				t.Fatalf("points=%d: sample at %s has no PSU data", points,
+					agg.Timestamp.Format(time.RFC3339))
+			}
+			ps := agg.Data.PSU[0]
+			if ps.Name != "BAT0" || ps.Capacity <= 0 || ps.PowerW <= 0 {
+				t.Fatalf("points=%d: PSU decoded as %+v", points, ps)
+			}
+		}
+	}
+}

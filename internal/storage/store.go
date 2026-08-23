@@ -585,6 +585,28 @@ func mergeSample(a, b *collector.Sample, ff func(float64, float64) float64, fu f
 			TxPPS:  ff(ifA.TxPPS, ifB.TxPPS),
 		}
 	}
+
+	if len(a.PSU) > 0 {
+		res.PSU = make([]collector.PowerSupplyStats, len(a.PSU))
+		for i := range a.PSU {
+			merged := a.PSU[i]
+			// A supply missing from b (hotplugged UPS, renamed battery) leaves
+			// a's values untouched — merging against a zero entry would report
+			// a 0% minimum the battery never reached.
+			for _, ps := range b.PSU {
+				if ps.Name == merged.Name {
+					merged.Capacity = int(ff(float64(merged.Capacity), float64(ps.Capacity)))
+					merged.VoltageV = ff(merged.VoltageV, ps.VoltageV)
+					merged.CurrentA = ff(merged.CurrentA, ps.CurrentA)
+					merged.PowerW = ff(merged.PowerW, ps.PowerW)
+					merged.EnergyWhNow = ff(merged.EnergyWhNow, ps.EnergyWhNow)
+					break
+				}
+			}
+			res.PSU[i] = merged
+		}
+	}
+
 	return &res
 }
 
@@ -640,6 +662,10 @@ func (s *Store) aggregateSamples(samples []*collector.Sample, dur time.Duration)
 	if len(last.Disks.Devices) > 0 {
 		avg.Disks.Devices = make([]collector.DiskDevice, len(last.Disks.Devices))
 		copy(avg.Disks.Devices, last.Disks.Devices)
+	}
+	if len(last.PSU) > 0 {
+		avg.PSU = make([]collector.PowerSupplyStats, len(last.PSU))
+		copy(avg.PSU, last.PSU)
 	}
 	// Deep-copy Apps to avoid sharing pointers with the original sample.
 	if last.Apps.Nginx != nil {
@@ -768,6 +794,33 @@ func (s *Store) aggregateSamples(samples []*collector.Sample, dur time.Duration)
 				avg.Disks.Devices[i].WriteBytesPS = roundF(wBpsSum / float64(count))
 				avg.Disks.Devices[i].ReadsPerSec = roundF(rIopsSum / float64(count))
 				avg.Disks.Devices[i].WritesPerSec = roundF(wIopsSum / float64(count))
+			}
+		}
+
+		// Average power-supply gauges per supply. Name/type/status stay as the
+		// last sample saw them — a status is a state, not something to average.
+		for i := range avg.PSU {
+			var capSum, voltSum, currSum, powSum, energySum float64
+			count := 0
+			for _, s := range samples {
+				for _, ps := range s.PSU {
+					if ps.Name == avg.PSU[i].Name {
+						capSum += float64(ps.Capacity)
+						voltSum += ps.VoltageV
+						currSum += ps.CurrentA
+						powSum += ps.PowerW
+						energySum += ps.EnergyWhNow
+						count++
+					}
+				}
+			}
+			if count > 0 {
+				fC := float64(count)
+				avg.PSU[i].Capacity = int(math.Round(capSum / fC))
+				avg.PSU[i].VoltageV = roundF(voltSum / fC)
+				avg.PSU[i].CurrentA = roundF(currSum / fC)
+				avg.PSU[i].PowerW = roundF(powSum / fC)
+				avg.PSU[i].EnergyWhNow = roundF(energySum / fC)
 			}
 		}
 
