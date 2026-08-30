@@ -72,6 +72,7 @@ export const state = {
     // New containers are selected by default (not listed here).
     containerExcluded: null,
     customCharts: {}, // { group_name: chartInstance }
+    psuCharts: {}, // { psu_<name>: chartInstance }
     customMetricsConfig: {}, // { group_name: [{name, unit, max}, ...] } from /api/config
 };
 

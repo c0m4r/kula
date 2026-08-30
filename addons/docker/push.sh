@@ -8,6 +8,12 @@ if ! command -v docker &>/dev/null; then
     exit 1
 fi
 
+if ! docker buildx version &>/dev/null; then
+    echo "Error: Docker Buildx is not available."
+    echo "Install or enable the Docker Buildx plugin: https://docs.docker.com/reference/cli/docker/buildx/"
+    exit 1
+fi
+
 cd "$(dirname "$0")/../.."
 
 # Read version from VERSION file

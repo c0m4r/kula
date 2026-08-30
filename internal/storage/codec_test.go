@@ -198,10 +198,11 @@ func TestDecodeOldAggregatedRecord(t *testing.T) {
 		t.Fatalf("appendVariable: %v", err)
 	}
 
-	// An empty-apps variable section has exactly 8 trailing bytes:
-	// 1 (nginx=0) + 2 (containers=0) + 1 (postgres=0) + 1 (mysql=0) + 1 (apache2=0) + 2 (custom=0).
-	const emptyAppsSize = 8
-	oldVarBuf := varBuf[:len(varBuf)-emptyAppsSize]
+	// An empty variable tail has exactly 11 trailing bytes:
+	// 1 (nginx=0) + 2 (containers=0) + 1 (postgres=0) + 1 (mysql=0) + 1 (apache2=0) +
+	// 2 (custom=0) + 3 (psu version + count=0).
+	const emptyTailSize = 11
+	oldVarBuf := varBuf[:len(varBuf)-emptyTailSize]
 
 	// Append 218 bytes of "next fixed block" — simulates a min/max block
 	// that immediately follows the variable section in aggregated records.
@@ -211,7 +212,7 @@ func TestDecodeOldAggregatedRecord(t *testing.T) {
 	// With hasApps=false, decodeVariable must consume only sections 1-6
 	// and NOT touch the trailing 218 bytes.
 	target := &collector.Sample{}
-	n, err := decodeVariable(padded, target, false, false, false)
+	n, err := decodeVariable(padded, target, false, false, false, false)
 	if err != nil {
 		t.Fatalf("decodeVariable(hasApps=false) error: %v", err)
 	}
@@ -333,7 +334,7 @@ func TestDecodePostgresV1Block(t *testing.T) {
 
 	// Decode the v1-format variable section
 	target := &collector.Sample{}
-	_, err = decodeVariable(v1Var, target, true, true, false)
+	_, err = decodeVariable(v1Var, target, true, true, false, false)
 	if err != nil {
 		t.Fatalf("decodeVariable(v1 postgres) error: %v", err)
 	}
@@ -497,7 +498,7 @@ func TestDecodeApache2V1Block(t *testing.T) {
 
 	// Decode v1 Apache2 variable section (hasMysql=true since encoder always sets it)
 	target := &collector.Sample{}
-	_, err = decodeVariable(v1Var, target, true, true, true)
+	_, err = decodeVariable(v1Var, target, true, true, true, false)
 	if err != nil {
 		t.Fatalf("decodeVariable(v1 apache2) error: %v", err)
 	}
@@ -864,7 +865,7 @@ func TestDecodePostgresV2Block(t *testing.T) {
 	v2Var = append(v2Var, varBuf[pgOff+1+121:]...)
 
 	target := &collector.Sample{}
-	if _, err := decodeVariable(v2Var, target, true, true, true); err != nil {
+	if _, err := decodeVariable(v2Var, target, true, true, true, false); err != nil {
 		t.Fatalf("decodeVariable(v2 postgres) error: %v", err)
 	}
 	got := target.Apps.Postgres
@@ -1108,7 +1109,7 @@ func TestDecodeMysqlV3Block(t *testing.T) {
 	v2Var = append(v2Var, varBuf[myOff+1+74+1+v3StateLen:]...) // append remainder
 
 	target := &collector.Sample{}
-	if _, err := decodeVariable(v2Var, target, true, true, true); err != nil {
+	if _, err := decodeVariable(v2Var, target, true, true, true, false); err != nil {
 		t.Fatalf("decodeVariable(v2 mysql) error: %v", err)
 	}
 	gotV2 := target.Apps.Mysql
@@ -1125,5 +1126,138 @@ func TestDecodeMysqlV3Block(t *testing.T) {
 	}
 	if target.System.Hostname != "test-host" {
 		t.Errorf("alignment check failed after v2 mysql under v3 decoder: %q", target.System.Hostname)
+	}
+}
+
+// ---- TestEncodeDecodePSU ----------------------------------------------------
+// Power supplies live in a trailing, flag-gated section. Before it existed the
+// collector's battery data never reached disk, so the dashboard could only ever
+// draw the live tail and every history reload wiped the series.
+
+func TestEncodeDecodePSU(t *testing.T) {
+	now := time.Now().Truncate(time.Millisecond)
+	original := makeSampleFull(now)
+	original.Data.PSU = []collector.PowerSupplyStats{
+		{
+			Name: "BAT0", Type: "Battery", Status: "Discharging",
+			Capacity: 87, VoltageV: 12.34, CurrentA: 1.25, PowerW: 15.5,
+			EnergyWhNow: 42.75, EnergyWhFull: 50.0,
+		},
+		{Name: "AC", Type: "Mains", Status: "Charging", Capacity: 0},
+	}
+
+	encoded, err := encodeSample(original)
+	if err != nil {
+		t.Fatalf("encodeSample() error: %v", err)
+	}
+	decoded, err := decodeSample(encoded)
+	if err != nil {
+		t.Fatalf("decodeSample() error: %v", err)
+	}
+	if decoded.Data == nil {
+		t.Fatal("decoded Data is nil")
+	}
+	if len(decoded.Data.PSU) != 2 {
+		t.Fatalf("PSU count = %d, want 2", len(decoded.Data.PSU))
+	}
+
+	bat := decoded.Data.PSU[0]
+	if bat.Name != "BAT0" || bat.Type != "Battery" || bat.Status != "Discharging" {
+		t.Errorf("PSU identity = %q/%q/%q, want BAT0/Battery/Discharging", bat.Name, bat.Type, bat.Status)
+	}
+	if bat.Capacity != 87 {
+		t.Errorf("Capacity = %d, want 87", bat.Capacity)
+	}
+	// float32 round-trip: allow 0.01 epsilon due to float64→float32 narrowing.
+	for _, f := range []struct {
+		name      string
+		got, want float64
+	}{
+		{"VoltageV", bat.VoltageV, 12.34},
+		{"CurrentA", bat.CurrentA, 1.25},
+		{"PowerW", bat.PowerW, 15.5},
+		{"EnergyWhNow", bat.EnergyWhNow, 42.75},
+		{"EnergyWhFull", bat.EnergyWhFull, 50.0},
+	} {
+		if diff := f.got - f.want; diff > 0.01 || diff < -0.01 {
+			t.Errorf("%s = %f, want ~%f", f.name, f.got, f.want)
+		}
+	}
+	if ac := decoded.Data.PSU[1]; ac.Name != "AC" || ac.Type != "Mains" {
+		t.Errorf("second supply = %q/%q, want AC/Mains", ac.Name, ac.Type)
+	}
+}
+
+// TestEncodePSUCapacityClamped verifies an out-of-range capacity cannot wrap
+// the byte cast into a plausible-looking percentage.
+func TestEncodePSUCapacityClamped(t *testing.T) {
+	now := time.Now().Truncate(time.Millisecond)
+	for _, tc := range []struct {
+		in, want int
+	}{{-5, 0}, {300, 100}, {100, 100}} {
+		sample := makeSampleFull(now)
+		sample.Data.PSU = []collector.PowerSupplyStats{{Name: "BAT0", Type: "Battery", Capacity: tc.in}}
+		encoded, err := encodeSample(sample)
+		if err != nil {
+			t.Fatalf("encodeSample(capacity=%d): %v", tc.in, err)
+		}
+		decoded, err := decodeSample(encoded)
+		if err != nil {
+			t.Fatalf("decodeSample(capacity=%d): %v", tc.in, err)
+		}
+		if got := decoded.Data.PSU[0].Capacity; got != tc.want {
+			t.Errorf("Capacity %d encoded/decoded as %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+// ---- TestDecodeRecordWithoutPSUSection ---------------------------------------
+// Regression test: records written before flagHasPSU end after the custom
+// metrics section. The decoder must not read supplies out of the bytes that
+// follow — in an aggregated record those belong to the next min/max block.
+
+func TestDecodeRecordWithoutPSUSection(t *testing.T) {
+	now := time.Now().Truncate(time.Millisecond)
+	sample := makeSampleFull(now)
+
+	varBuf, err := appendVariable(nil, sample.Data)
+	if err != nil {
+		t.Fatalf("appendVariable: %v", err)
+	}
+	// Strip the trailing PSU section (version byte + zero count) to get the
+	// exact bytes a pre-flagHasPSU encoder would have written.
+	const psuEmptySize = 3
+	oldVarBuf := varBuf[:len(varBuf)-psuEmptySize]
+
+	fixedBuf := appendFixed(nil, sample.Data)
+	var record []byte
+	var preamble [18]byte
+	binary.LittleEndian.PutUint64(preamble[0:], uint64(now.UnixNano()))
+	binary.LittleEndian.PutUint64(preamble[8:], uint64(time.Second))
+	binary.LittleEndian.PutUint16(preamble[16:],
+		flagHasData|flagHasMin|flagHasMax|flagHasApps|flagHasApache2|flagHasMysql)
+	record = append(record, preamble[:]...)
+	for range 3 {
+		record = append(record, fixedBuf...)
+		record = append(record, oldVarBuf...)
+	}
+
+	decoded, err := decodeSample(record)
+	if err != nil {
+		t.Fatalf("decodeSample of pre-PSU aggregated record: %v", err)
+	}
+	if decoded.Data == nil || decoded.Min == nil || decoded.Max == nil {
+		t.Fatalf("expected Data/Min/Max non-nil, got Data=%v Min=%v Max=%v",
+			decoded.Data != nil, decoded.Min != nil, decoded.Max != nil)
+	}
+	for name, block := range map[string]*collector.Sample{
+		"Data": decoded.Data, "Min": decoded.Min, "Max": decoded.Max,
+	} {
+		if block.System.Hostname != "test-host" {
+			t.Errorf("%s.Hostname = %q, want %q", name, block.System.Hostname, "test-host")
+		}
+		if len(block.PSU) != 0 {
+			t.Errorf("%s.PSU = %+v, want empty", name, block.PSU)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"html"
 	"log"
 	"net"
@@ -11,8 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"kula/internal/collector"
 	"kula/internal/config"
+	"kula/internal/storage"
 )
 
 func TestTemplateInjection(t *testing.T) {
@@ -454,6 +458,79 @@ func TestGameScoreSubmissionRequestPolicy(t *testing.T) {
 	} {
 		if !strings.Contains(string(gameJS), option) {
 			t.Errorf("game score request is missing %s", option)
+		}
+	}
+}
+
+// TestHandleHistoryIncludesPSU guards the reported battery bug end to end: the
+// dashboard rebuilds every chart from /api/history whenever the time preset
+// changes, so a power-supply series missing from that response is a battery
+// chart that resets to empty on every reload.
+func TestHandleHistoryIncludesPSU(t *testing.T) {
+	store, err := storage.NewStore(config.StorageConfig{
+		Directory: t.TempDir(),
+		Tiers: []config.TierConfig{
+			{Resolution: time.Second, MaxSize: "1MB", MaxBytes: 1024 * 1024},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	base := time.Now().Add(-10 * time.Second).Truncate(time.Second)
+	for i := 0; i < 5; i++ {
+		sample := &collector.Sample{
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			System:    collector.SystemStats{Hostname: "test-host"},
+			PSU: []collector.PowerSupplyStats{{
+				Name: "BAT0", Type: "Battery", Status: "Discharging",
+				Capacity: 91 - i, PowerW: 14.5, VoltageV: 12.1,
+			}},
+		}
+		if err := store.WriteSample(sample); err != nil {
+			t.Fatalf("WriteSample(%d): %v", i, err)
+		}
+	}
+
+	s := NewServer(config.WebConfig{}, config.GlobalConfig{}, nil, store, t.TempDir(), config.OllamaConfig{})
+
+	rec := httptest.NewRecorder()
+	from := base.Add(-time.Minute).UTC().Format(time.RFC3339)
+	to := time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
+	req := httptest.NewRequest(http.MethodGet, "/api/history?from="+from+"&to="+to, nil)
+	http.HandlerFunc(s.handleHistory).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Samples []struct {
+			Data struct {
+				PSU []collector.PowerSupplyStats `json:"psu"`
+			} `json:"data"`
+		} `json:"samples"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Samples) == 0 {
+		t.Fatalf("no samples returned: %s", rec.Body.String())
+	}
+	for i, sample := range resp.Samples {
+		if len(sample.Data.PSU) != 1 {
+			t.Fatalf("sample %d carries no psu series: %s", i, rec.Body.String())
+		}
+		ps := sample.Data.PSU[0]
+		if ps.Name != "BAT0" || ps.Type != "Battery" || ps.Status != "Discharging" {
+			t.Errorf("sample %d psu identity = %q/%q/%q", i, ps.Name, ps.Type, ps.Status)
+		}
+		if ps.Capacity < 87 || ps.Capacity > 91 {
+			t.Errorf("sample %d capacity = %d, want 87..91", i, ps.Capacity)
+		}
+		if ps.PowerW != 14.5 {
+			t.Errorf("sample %d power = %v, want 14.5", i, ps.PowerW)
 		}
 	}
 }

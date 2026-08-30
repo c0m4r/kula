@@ -27,6 +27,7 @@ FLAG_HAS_DATA = 1 << 2
 FLAG_HAS_APPS = 1 << 3
 FLAG_HAS_APACHE2 = 1 << 8
 FLAG_HAS_MYSQL = 1 << 9
+FLAG_HAS_PSU = 1 << 10
 
 FIXED_BLOCK_SIZE = 218  # must match fixedBlockSize in codec.go
 
@@ -272,6 +273,7 @@ def _decode_fixed(data: bytes, off: int) -> Tuple[Dict[str, Any], int]:
 #   6. GPU entries:         uint16 count + per-GPU entries
 #   7. Application metrics: nginx (1B+52B), containers (u16+var),
 #                           postgres (1B version + 56B or 104B), custom (u16 groups+var)
+#   8. Power supplies:      1B version + u16 count + per-supply entries
 # ---------------------------------------------------------------------------
 
 
@@ -282,6 +284,7 @@ def _decode_variable(
     has_apps: bool = False,
     has_apache2: bool = False,
     has_mysql: bool = False,
+    has_psu: bool = False,
 ) -> Tuple[Dict[str, Any], int]:
     # pylint: disable=too-many-locals, too-many-statements
     # 1. Network interfaces
@@ -420,6 +423,8 @@ def _decode_variable(
         s["gpu"] = gpus
 
     # 7. Application metrics (only present when flagHasApps is set in preamble)
+    # A record without flagHasApps predates flagHasPSU too (appendPreamble only
+    # ever sets the two together), so nothing follows section 6 there.
     if not has_apps:
         return s, off
 
@@ -753,6 +758,39 @@ def _decode_variable(
     if apps:
         s["apps"] = apps
 
+    # 8. Power supplies (batteries / UPS / mains) — gated by flagHasPSU.
+    if has_psu:
+        psu_ver, off = _get_u8(data, off)
+        if psu_ver != 1:
+            raise ValueError(f"unsupported psu section version {psu_ver}")
+        num_psu, off = _get_u16(data, off)
+        supplies = []
+        for _ in range(num_psu):
+            ps_name, off = _get_str(data, off)
+            ps_type, off = _get_str(data, off)
+            ps_status, off = _get_str(data, off)
+            capacity, off = _get_u8(data, off)
+            voltage_v, off = _get_f32(data, off)
+            current_a, off = _get_f32(data, off)
+            power_w, off = _get_f32(data, off)
+            energy_now, off = _get_f32(data, off)
+            energy_full, off = _get_f32(data, off)
+            supplies.append(
+                {
+                    "name": ps_name,
+                    "type": ps_type,
+                    "status": ps_status,
+                    "capacity": capacity,
+                    "voltage_v": voltage_v,
+                    "current_a": current_a,
+                    "power_w": power_w,
+                    "energy_wh_now": energy_now,
+                    "energy_wh_full": energy_full,
+                }
+            )
+        if supplies:
+            s["psu"] = supplies
+
     return s, off
 
 
@@ -788,12 +826,14 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
             "has_apps": bool(flags & FLAG_HAS_APPS),
             "has_apache2": bool(flags & FLAG_HAS_APACHE2),
             "has_mysql": bool(flags & FLAG_HAS_MYSQL),
+            "has_psu": bool(flags & FLAG_HAS_PSU),
         },
     }
 
     has_apps = bool(flags & FLAG_HAS_APPS)
     has_apache2 = bool(flags & FLAG_HAS_APACHE2)
     has_mysql = bool(flags & FLAG_HAS_MYSQL)
+    has_psu = bool(flags & FLAG_HAS_PSU)
     for label, flag in [
         ("data", FLAG_HAS_DATA),
         ("min", FLAG_HAS_MIN),
@@ -802,7 +842,7 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
         if flags & flag:
             block, off = _decode_fixed(payload, off)
             block, off = _decode_variable(
-                payload, off, block, has_apps, has_apache2, has_mysql
+                payload, off, block, has_apps, has_apache2, has_mysql, has_psu
             )
             result[label] = block
 

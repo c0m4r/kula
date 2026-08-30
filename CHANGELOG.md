@@ -12,11 +12,13 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Changed
 
 - TUI redesign
+- golang and deps updates
 - container metrics: one multi-series chart per metric type with app filter
 
 ### Fixed
 
 - battery graph out of order after exiting focus mode
+- battery/PSU metrics not being written to storage
 
 ## [0.18.8] - 2026-07-29
 

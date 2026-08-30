@@ -14,6 +14,14 @@ if ! command -v docker &>/dev/null; then
     exit 1
 fi
 
+if ! docker buildx version &>/dev/null; then
+    echo "Error: Docker Buildx is not available."
+    echo ""
+    echo "Install or enable the Docker Buildx plugin:"
+    echo "  https://docs.docker.com/reference/cli/docker/buildx/"
+    exit 1
+fi
+
 # Build the docker image
 # Assuming this script is run from the project root or the docker/ dir
 # If run from docker/, we need to tell docker to use the parent dir for context
