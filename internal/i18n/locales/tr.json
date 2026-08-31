@@ -128,5 +128,18 @@
     "ai_prompt_status": "Mevcut durum nedir?",
     "ai_prompt_load": "Son 5 dakikadaki sunucu yükünü kontrol edin.",
     "ai_prompt_network": "Kaç ağ arabirimini izliyoruz?",
-    "ai_analyse_prompt": "{title} için bu verileri analiz edin."
+    "ai_analyse_prompt": "{title} için bu verileri analiz edin.",
+    "select_all": "Tümünü seç",
+    "deselect_all": "Tümünü kaldır",
+    "applications": "Uygulamalar",
+    "disk_read": "Okuma",
+    "disk_write": "Yazma",
+    "containers": "Konteynerler",
+    "no_containers": "Henüz konteyner yok",
+    "apps_count": "{n} uygulama",
+    "apps_count_filtered": "{n}/{total} uygulama",
+    "container_legend": "Konteyner renk açıklaması",
+    "mem_used_limit": "Kullanılan: {used} / Sınır: {limit} ({pct}%)",
+    "mem_used_only": "Kullanılan: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  Bellek: {mem}"
 }

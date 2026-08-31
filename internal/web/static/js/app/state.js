@@ -64,7 +64,13 @@ export const state = {
     splitDiskTemp: JSON.parse(localStorage.getItem('kula_split_disktemp') || 'false'),
     splitGpu: JSON.parse(localStorage.getItem('kula_split_gpu') || 'false'),
     splitCharts: {}, // { type: { chartKey: chartInstance } }
-    containerCharts: {}, // { container_<name|id>_cpu|mem|io: chartInstance }
+    // One Chart.js instance per metric type, each with one series per container.
+    containerCharts: {}, // { cpu|mem|net_rx|net_tx|disk_r|disk_w: chartInstance }
+    // Metadata for discovered containers: { key: { key, label, color, colorIndex } }
+    containerApps: {},
+    // Explicitly deselected container keys (empty Set = all selected).
+    // New containers are selected by default (not listed here).
+    containerExcluded: null,
     customCharts: {}, // { group_name: chartInstance }
     psuCharts: {}, // { psu_<name>: chartInstance }
     customMetricsConfig: {}, // { group_name: [{name, unit, max}, ...] } from /api/config

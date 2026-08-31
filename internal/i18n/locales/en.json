@@ -129,5 +129,18 @@
     "ai_prompt_status": "What is the current status?",
     "ai_prompt_load": "Check server load over the last 5 minutes.",
     "ai_prompt_network": "How many network interfaces do we monitor?",
-    "ai_analyse_prompt": "Analyse this data for {title}."
+    "ai_analyse_prompt": "Analyse this data for {title}.",
+    "select_all": "Select all",
+    "deselect_all": "Deselect all",
+    "applications": "Applications",
+    "disk_read": "Read",
+    "disk_write": "Write",
+    "containers": "Containers",
+    "no_containers": "No containers yet",
+    "apps_count": "{n} apps",
+    "apps_count_filtered": "{n}/{total} apps",
+    "container_legend": "Container color legend",
+    "mem_used_limit": "Used: {used} / Limit: {limit} ({pct}%)",
+    "mem_used_only": "Used: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}"
 }

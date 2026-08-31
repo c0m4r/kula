@@ -128,5 +128,18 @@
     "ai_prompt_status": "מה הסטטוס הנוכחי?",
     "ai_prompt_load": "בדוק את עומס השרת ב-5 הדקות האחרונות.",
     "ai_prompt_network": "כמה ממשקי רשת אנו מנטרים?",
-    "ai_analyse_prompt": "נתח את הנתונים עבור {title}."
+    "ai_analyse_prompt": "נתח את הנתונים עבור {title}.",
+    "select_all": "בחר הכל",
+    "deselect_all": "בטל בחירה",
+    "applications": "יישומים",
+    "disk_read": "קריאה",
+    "disk_write": "כתיבה",
+    "containers": "מכולות",
+    "no_containers": "אין מכולות עדיין",
+    "apps_count": "{n} אפליקציות",
+    "apps_count_filtered": "{n}/{total} אפליקציות",
+    "container_legend": "מקרא צבעי מכולות",
+    "mem_used_limit": "בשימוש: {used} / מגבלה: {limit} ({pct}%)",
+    "mem_used_only": "בשימוש: {used}",
+    "cpu_mem_summary": "מעבד: {cpu}%  זיכרון: {mem}"
 }

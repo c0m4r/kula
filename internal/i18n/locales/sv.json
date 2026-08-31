@@ -128,5 +128,18 @@
     "ai_prompt_status": "Vad är den aktuella statusen?",
     "ai_prompt_load": "Kontrollera serverbelastningen de senaste 5 minuterna.",
     "ai_prompt_network": "Hur många nätverksgränssnitt övervakar vi?",
-    "ai_analyse_prompt": "Analysera dessa data för {title}."
+    "ai_analyse_prompt": "Analysera dessa data för {title}.",
+    "select_all": "Markera alla",
+    "deselect_all": "Avmarkera alla",
+    "applications": "Applikationer",
+    "disk_read": "Läsning",
+    "disk_write": "Skrivning",
+    "containers": "Containrar",
+    "no_containers": "Inga containrar ännu",
+    "apps_count": "{n} appar",
+    "apps_count_filtered": "{n}/{total} appar",
+    "container_legend": "Färglegend för containrar",
+    "mem_used_limit": "Använt: {used} / Gräns: {limit} ({pct}%)",
+    "mem_used_only": "Använt: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  Minne: {mem}"
 }

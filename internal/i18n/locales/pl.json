@@ -128,5 +128,18 @@
     "ai_prompt_status": "Jaki jest obecny stan?",
     "ai_prompt_load": "Sprawdź obciążenie serwera w ciągu ostatnich 5 minut.",
     "ai_prompt_network": "Ile interfejsów sieciowych monitorujemy?",
-    "ai_analyse_prompt": "Przeanalizuj te dane dla {title}."
+    "ai_analyse_prompt": "Przeanalizuj te dane dla {title}.",
+    "select_all": "Zaznacz wszystko",
+    "deselect_all": "Odznacz wszystko",
+    "applications": "Aplikacje",
+    "disk_read": "Odczyt",
+    "disk_write": "Zapis",
+    "containers": "Kontenery",
+    "no_containers": "Brak kontenerów",
+    "apps_count": "{n} aplikacji",
+    "apps_count_filtered": "{n}/{total} aplikacji",
+    "container_legend": "Legenda kolorów kontenerów",
+    "mem_used_limit": "Użyte: {used} / Limit: {limit} ({pct}%)",
+    "mem_used_only": "Użyte: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  Pam: {mem}"
 }

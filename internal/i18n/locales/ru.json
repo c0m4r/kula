@@ -128,5 +128,18 @@
     "ai_prompt_status": "Каков текущий статус?",
     "ai_prompt_load": "Проверить нагрузку сервера за последние 5 минут.",
     "ai_prompt_network": "Сколько сетевых интерфейсов мы мониторим?",
-    "ai_analyse_prompt": "Проанализируйте эти данные для {title}."
+    "ai_analyse_prompt": "Проанализируйте эти данные для {title}.",
+    "select_all": "Выбрать все",
+    "deselect_all": "Снять выбор",
+    "applications": "Приложения",
+    "disk_read": "Чтение",
+    "disk_write": "Запись",
+    "containers": "Контейнеры",
+    "no_containers": "Контейнеров пока нет",
+    "apps_count": "приложений: {n}",
+    "apps_count_filtered": "приложений: {n}/{total}",
+    "container_legend": "Цветовая легенда контейнеров",
+    "mem_used_limit": "Использовано: {used} / Лимит: {limit} ({pct}%)",
+    "mem_used_only": "Использовано: {used}",
+    "cpu_mem_summary": "ЦП: {cpu}%  Память: {mem}"
 }

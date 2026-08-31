@@ -128,5 +128,18 @@
     "ai_prompt_status": "वर्तमान स्थिति क्या है?",
     "ai_prompt_load": "पिछले 5 मिनट में सर्वर लोड जांचें।",
     "ai_prompt_network": "हम कितने नेटवर्क इंटरफेस मॉनिटर करते हैं?",
-    "ai_analyse_prompt": "{title} के लिए इस डेटा का विश्लेषण करें।"
+    "ai_analyse_prompt": "{title} के लिए इस डेटा का विश्लेषण करें।",
+    "select_all": "सभी चुनें",
+    "deselect_all": "सभी हटाएँ",
+    "applications": "अनुप्रयोग",
+    "disk_read": "पठन",
+    "disk_write": "लेखन",
+    "containers": "कंटेनर",
+    "no_containers": "अभी कोई कंटेनर नहीं",
+    "apps_count": "{n} ऐप्स",
+    "apps_count_filtered": "{n}/{total} ऐप्स",
+    "container_legend": "कंटेनर रंग संकेत",
+    "mem_used_limit": "उपयोग: {used} / सीमा: {limit} ({pct}%)",
+    "mem_used_only": "उपयोग: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  मेमोरी: {mem}"
 }

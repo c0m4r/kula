@@ -128,5 +128,18 @@
     "ai_prompt_status": "ما الحالة الحالية؟",
     "ai_prompt_load": "تحقق من حمل الخادم خلال آخر 5 دقائق.",
     "ai_prompt_network": "كم عدد واجهات الشبكة التي نراقبها؟",
-    "ai_analyse_prompt": "حلل هذه البيانات لـ {title}."
+    "ai_analyse_prompt": "حلل هذه البيانات لـ {title}.",
+    "select_all": "تحديد الكل",
+    "deselect_all": "إلغاء تحديد الكل",
+    "applications": "التطبيقات",
+    "disk_read": "قراءة",
+    "disk_write": "كتابة",
+    "containers": "الحاويات",
+    "no_containers": "لا توجد حاويات بعد",
+    "apps_count": "{n} تطبيقات",
+    "apps_count_filtered": "{n}/{total} تطبيقات",
+    "container_legend": "مفتاح ألوان الحاويات",
+    "mem_used_limit": "المستخدم: {used} / الحد: {limit} ({pct}%)",
+    "mem_used_only": "المستخدم: {used}",
+    "cpu_mem_summary": "المعالج: {cpu}%  الذاكرة: {mem}"
 }

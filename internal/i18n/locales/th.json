@@ -128,5 +128,18 @@
     "ai_prompt_status": "สถานะปัจจุบันคืออะไร?",
     "ai_prompt_load": "ตรวจสอบโหลดเซิร์ฟเวอร์ใน 5 นาทีที่ผ่านมา",
     "ai_prompt_network": "เราตรวจสอบอินเทอร์เฟซเครือข่ายกี่อัน?",
-    "ai_analyse_prompt": "วิเคราะห์ข้อมูลนี้สำหรับ {title}"
+    "ai_analyse_prompt": "วิเคราะห์ข้อมูลนี้สำหรับ {title}",
+    "select_all": "เลือกทั้งหมด",
+    "deselect_all": "ยกเลิกทั้งหมด",
+    "applications": "แอปพลิเคชัน",
+    "disk_read": "อ่าน",
+    "disk_write": "เขียน",
+    "containers": "คอนเทนเนอร์",
+    "no_containers": "ยังไม่มีคอนเทนเนอร์",
+    "apps_count": "{n} แอป",
+    "apps_count_filtered": "{n}/{total} แอป",
+    "container_legend": "คำอธิบายสีคอนเทนเนอร์",
+    "mem_used_limit": "ใช้ไป: {used} / ขีดจำกัด: {limit} ({pct}%)",
+    "mem_used_only": "ใช้ไป: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  หน่วยความจำ: {mem}"
 }

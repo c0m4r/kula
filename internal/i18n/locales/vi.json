@@ -128,5 +128,18 @@
     "ai_prompt_status": "Trạng thái hiện tại là gì?",
     "ai_prompt_load": "Kiểm tra tải máy chủ trong 5 phút qua.",
     "ai_prompt_network": "Chúng tôi theo dõi bao nhiêu giao diện mạng?",
-    "ai_analyse_prompt": "Phân tích dữ liệu này cho {title}."
+    "ai_analyse_prompt": "Phân tích dữ liệu này cho {title}.",
+    "select_all": "Chọn tất cả",
+    "deselect_all": "Bỏ chọn tất cả",
+    "applications": "Ứng dụng",
+    "disk_read": "Đọc",
+    "disk_write": "Ghi",
+    "containers": "Container",
+    "no_containers": "Chưa có container",
+    "apps_count": "{n} ứng dụng",
+    "apps_count_filtered": "{n}/{total} ứng dụng",
+    "container_legend": "Chú giải màu container",
+    "mem_used_limit": "Đã dùng: {used} / Giới hạn: {limit} ({pct}%)",
+    "mem_used_only": "Đã dùng: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  Bộ nhớ: {mem}"
 }

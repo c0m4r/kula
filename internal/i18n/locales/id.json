@@ -128,5 +128,18 @@
     "ai_prompt_status": "Apa status saat ini?",
     "ai_prompt_load": "Periksa beban server dalam 5 menit terakhir.",
     "ai_prompt_network": "Berapa banyak antarmuka jaringan yang kami pantau?",
-    "ai_analyse_prompt": "Analisis data ini untuk {title}."
+    "ai_analyse_prompt": "Analisis data ini untuk {title}.",
+    "select_all": "Pilih semua",
+    "deselect_all": "Batalkan semua",
+    "applications": "Aplikasi",
+    "disk_read": "Baca",
+    "disk_write": "Tulis",
+    "containers": "Kontainer",
+    "no_containers": "Belum ada kontainer",
+    "apps_count": "{n} aplikasi",
+    "apps_count_filtered": "{n}/{total} aplikasi",
+    "container_legend": "Legenda warna kontainer",
+    "mem_used_limit": "Terpakai: {used} / Batas: {limit} ({pct}%)",
+    "mem_used_only": "Terpakai: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}"
 }

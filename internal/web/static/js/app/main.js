@@ -16,13 +16,15 @@ import { setupHoverPause, setupChartActions } from './ui-actions.js';
 import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
 import { initSplitModule } from './split.js';
 import { initOllama } from './ollama.js';
+import { chartsGridForTitle, sectionHeadForTitle } from './section-utils.js';
 
 function filterCharts(query) {
-    // Collect all section-title + charts-grid pairs
+    // Collect all section-title + charts-grid pairs (titles may sit in .section-head)
     const sections = document.querySelectorAll('.section-title');
     sections.forEach(title => {
-        const grid = title.nextElementSibling;
-        if (!grid || !grid.classList.contains('charts-grid')) return;
+        const grid = chartsGridForTitle(title);
+        if (!grid) return;
+        const head = sectionHeadForTitle(title);
 
         const cards = grid.querySelectorAll('.chart-card');
         let anyVisible = false;
@@ -32,7 +34,10 @@ function filterCharts(query) {
             // Also match subtitle text for richer search
             const subtitle = card.querySelector('.chart-subtitle');
             const subText = (subtitle?.textContent || '').toLowerCase();
-            const match = !query || name.includes(query) || subText.includes(query);
+            // Multi-series cards (container metrics) name their series in
+            // data-search-terms, since the title only carries the metric name.
+            const terms = (card.dataset.searchTerms || '').toLowerCase();
+            const match = !query || name.includes(query) || subText.includes(query) || terms.includes(query);
             if (match) {
                 card.classList.remove('chart-search-hidden');
                 // Don't show cards that are legitimately hidden (e.g., GPU on non-GPU systems)
@@ -42,12 +47,14 @@ function filterCharts(query) {
             }
         });
 
-        // Hide the section title + grid if nothing matches
+        // Hide the section chrome + grid if nothing matches
         if (query) {
             title.classList.toggle('chart-search-hidden', !anyVisible);
+            if (head && head !== title) head.classList.toggle('chart-search-hidden', !anyVisible);
             grid.classList.toggle('chart-search-hidden', !anyVisible);
         } else {
             title.classList.remove('chart-search-hidden');
+            if (head && head !== title) head.classList.remove('chart-search-hidden');
             grid.classList.remove('chart-search-hidden');
         }
     });

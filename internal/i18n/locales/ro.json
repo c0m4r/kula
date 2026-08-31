@@ -128,5 +128,18 @@
     "ai_prompt_status": "Care este starea actuală?",
     "ai_prompt_load": "Verifică încărcarea serverului în ultimele 5 minute.",
     "ai_prompt_network": "Câte interfețe de rețea monitorizăm?",
-    "ai_analyse_prompt": "Analizează aceste date pentru {title}."
+    "ai_analyse_prompt": "Analizează aceste date pentru {title}.",
+    "select_all": "Selectează tot",
+    "deselect_all": "Deselectează tot",
+    "applications": "Aplicații",
+    "disk_read": "Citire",
+    "disk_write": "Scriere",
+    "containers": "Containere",
+    "no_containers": "Niciun container încă",
+    "apps_count": "{n} aplicații",
+    "apps_count_filtered": "{n}/{total} aplicații",
+    "container_legend": "Legendă culori containere",
+    "mem_used_limit": "Utilizat: {used} / Limită: {limit} ({pct}%)",
+    "mem_used_only": "Utilizat: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}"
 }

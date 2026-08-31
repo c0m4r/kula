@@ -128,5 +128,18 @@
     "ai_prompt_status": "Quel est l'état actuel ?",
     "ai_prompt_load": "Vérifier la charge du serveur au cours des 5 dernières minutes.",
     "ai_prompt_network": "Combien d'interfaces réseau surveillons-nous ?",
-    "ai_analyse_prompt": "Analysez ces données pour {title}."
+    "ai_analyse_prompt": "Analysez ces données pour {title}.",
+    "select_all": "Tout sélectionner",
+    "deselect_all": "Tout désélectionner",
+    "applications": "Applications",
+    "disk_read": "Lecture",
+    "disk_write": "Écriture",
+    "containers": "Conteneurs",
+    "no_containers": "Aucun conteneur pour le moment",
+    "apps_count": "{n} applis",
+    "apps_count_filtered": "{n}/{total} applis",
+    "container_legend": "Légende des couleurs des conteneurs",
+    "mem_used_limit": "Utilisé : {used} / Limite : {limit} ({pct}%)",
+    "mem_used_only": "Utilisé : {used}",
+    "cpu_mem_summary": "CPU : {cpu}%  Mém : {mem}"
 }

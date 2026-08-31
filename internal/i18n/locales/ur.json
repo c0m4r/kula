@@ -128,5 +128,18 @@
     "ai_prompt_status": "موجودہ صورتحال کیا ہے؟",
     "ai_prompt_load": "گزشتہ 5 منٹ میں سرور لوڈ چیک کریں۔",
     "ai_prompt_network": "ہم کتنے نیٹ ورک انٹرفیس مانیٹر کرتے ہیں؟",
-    "ai_analyse_prompt": "{title} کے لیے اس ڈیٹا کا تجزیہ کریں۔"
+    "ai_analyse_prompt": "{title} کے لیے اس ڈیٹا کا تجزیہ کریں۔",
+    "select_all": "سب منتخب کریں",
+    "deselect_all": "سب ہٹائیں",
+    "applications": "ایپلیکیشنز",
+    "disk_read": "پڑھنا",
+    "disk_write": "لکھنا",
+    "containers": "کنٹینرز",
+    "no_containers": "ابھی کوئی کنٹینر نہیں",
+    "apps_count": "{n} ایپس",
+    "apps_count_filtered": "{n}/{total} ایپس",
+    "container_legend": "کنٹینر رنگ کی فہرست",
+    "mem_used_limit": "استعمال شدہ: {used} / حد: {limit} ({pct}%)",
+    "mem_used_only": "استعمال شدہ: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  میموری: {mem}"
 }

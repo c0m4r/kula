@@ -128,5 +128,18 @@
     "ai_prompt_status": "Jaký je aktuální stav?",
     "ai_prompt_load": "Zkontrolujte zatížení serveru za posledních 5 minut.",
     "ai_prompt_network": "Kolik síťových rozhraní sledujeme?",
-    "ai_analyse_prompt": "Analyzujte tato data pro {title}."
+    "ai_analyse_prompt": "Analyzujte tato data pro {title}.",
+    "select_all": "Vybrat vše",
+    "deselect_all": "Zrušit výběr",
+    "applications": "Aplikace",
+    "disk_read": "Čtení",
+    "disk_write": "Zápis",
+    "containers": "Kontejnery",
+    "no_containers": "Zatím žádné kontejnery",
+    "apps_count": "{n} aplikací",
+    "apps_count_filtered": "{n}/{total} aplikací",
+    "container_legend": "Legenda barev kontejnerů",
+    "mem_used_limit": "Použito: {used} / Limit: {limit} ({pct}%)",
+    "mem_used_only": "Použito: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  Pam: {mem}"
 }

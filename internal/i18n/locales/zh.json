@@ -128,5 +128,18 @@
     "ai_prompt_status": "当前状态如何？",
     "ai_prompt_load": "查看过去5分钟的服务器负载。",
     "ai_prompt_network": "我们监控多少个网络接口？",
-    "ai_analyse_prompt": "分析{title}的数据。"
+    "ai_analyse_prompt": "分析{title}的数据。",
+    "select_all": "全选",
+    "deselect_all": "取消全选",
+    "applications": "应用程序",
+    "disk_read": "读取",
+    "disk_write": "写入",
+    "containers": "容器",
+    "no_containers": "暂无容器",
+    "apps_count": "{n} 个应用",
+    "apps_count_filtered": "{n}/{total} 个应用",
+    "container_legend": "容器颜色图例",
+    "mem_used_limit": "已用: {used} / 上限: {limit} ({pct}%)",
+    "mem_used_only": "已用: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  内存: {mem}"
 }

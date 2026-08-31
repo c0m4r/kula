@@ -13,6 +13,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 - TUI redesign
 - golang and deps updates
+- container metrics: one multi-series chart per metric type with app filter
 
 ### Fixed
 
