@@ -941,6 +941,16 @@ body.light-mode .time-input {
     font-size: 0.8rem;
 }
 
+/* Series past the 10th reuse a colour with a dash pattern; mirror that here. */
+.container-app-legend-swatch.is-dashed,
+.container-app-filter-swatch.is-dashed {
+    background-image: repeating-linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.9) 0 2px,
+        transparent 2px 5px
+    );
+}
+
 .container-app-filter-empty {
     padding: 0.75rem;
     color: var(--text-muted);
@@ -1151,6 +1161,23 @@ body.light-mode .time-input {
 
 .focus-hidden {
     display: none !important;
+}
+
+/* Focus mode moves container cards into the main grid, but the Applications
+   header carries their only colour legend — keep it pinned alongside them.
+   Higher specificity than .focus-hidden, still yielding to .hidden / search. */
+.section-head.focus-pinned:not(.hidden):not(.chart-search-hidden) {
+    display: flex !important;
+}
+
+/* The title carries focus-hidden (its own grid is empty once cards move out),
+   so pin it back regardless of which focus class it ended up with. */
+.section-head.focus-pinned .section-title:not(.hidden) {
+    display: block !important;
+}
+
+.section-head.focus-pinned .container-app-legend:not(.hidden) {
+    display: flex !important;
 }
 
 .focus-selecting .chart-card::after {

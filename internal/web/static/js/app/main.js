@@ -34,7 +34,10 @@ function filterCharts(query) {
             // Also match subtitle text for richer search
             const subtitle = card.querySelector('.chart-subtitle');
             const subText = (subtitle?.textContent || '').toLowerCase();
-            const match = !query || name.includes(query) || subText.includes(query);
+            // Multi-series cards (container metrics) name their series in
+            // data-search-terms, since the title only carries the metric name.
+            const terms = (card.dataset.searchTerms || '').toLowerCase();
+            const match = !query || name.includes(query) || subText.includes(query) || terms.includes(query);
             if (match) {
                 card.classList.remove('chart-search-hidden');
                 // Don't show cards that are legitimately hidden (e.g., GPU on non-GPU systems)

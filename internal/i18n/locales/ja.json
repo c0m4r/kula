@@ -131,5 +131,15 @@
     "ai_analyse_prompt": "{title} のデータを分析してください。",
     "select_all": "すべて選択",
     "deselect_all": "すべて解除",
-    "applications": "アプリケーション"
+    "applications": "アプリケーション",
+    "disk_read": "読み取り",
+    "disk_write": "書き込み",
+    "containers": "コンテナ",
+    "no_containers": "コンテナはまだありません",
+    "apps_count": "{n} 個のアプリ",
+    "apps_count_filtered": "{n}/{total} 個のアプリ",
+    "container_legend": "コンテナの色凡例",
+    "mem_used_limit": "使用中: {used} / 上限: {limit} ({pct}%)",
+    "mem_used_only": "使用中: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  メモリ: {mem}"
 }

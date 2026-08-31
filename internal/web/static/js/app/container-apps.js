@@ -1,17 +1,13 @@
 /* ============================================================
    container-apps.js — Multi-series container charts (one chart
    per metric type) + multi-select application filter.
-
-   Review fixes (PR #42):
-   - Filter persists as exclusions so reload keeps deselections
-   - Every sample tick appends aligned points (null backfill)
-   - Card visibility is reconciled via syncContainerMetricsUI
    ============================================================ */
 'use strict';
 import { state, colors } from './state.js';
 import { formatBytesShort } from './utils.js';
 import { createTimeSeriesChart } from './charts-init.js';
 import { i18n } from './i18n.js';
+import { pinSectionHeadForCards } from './section-utils.js';
 
 // Palette for assigning a stable color per container/app.
 const CONTAINER_COLOR_LIST = [
@@ -19,16 +15,21 @@ const CONTAINER_COLOR_LIST = [
     colors.red, colors.yellow, colors.pink, colors.teal, colors.lime,
 ];
 
+// Dash patterns disambiguate series once the palette wraps around, so the
+// 11th container is still distinguishable from the 1st.
+const CONTAINER_DASH_LIST = [[], [6, 3], [2, 2], [8, 3, 2, 3]];
+
+const CONTAINER_CARD_SELECTOR = '[data-container-metric]';
+
 // Metric chart definitions: one chart per metric type, one series per app.
-// Titles reuse the same i18n keys as System Metrics wherever possible
-// (cpu_usage, memory_usage, network_throughput, disk_io, rx/tx, read_bs/write_bs).
+// Titles reuse existing i18n keys; qualifiers are unit-free semantic keys
+// (rx/tx/disk_read/disk_write) so no locale needs suffix stripping.
 const CONTAINER_METRICS = [
     {
         key: 'cpu',
         cardId: 'card-containers-cpu',
         chartId: 'chart-containers-cpu',
         subtitleId: 'containers-cpu-subtitle',
-        // Same label as System Metrics → "CPU Usage" / "Usage CPU" / …
         i18nKeys: ['cpu_usage'],
         order: 20,
         yConfig: { beginAtZero: true, ticks: { callback: v => v + '%' } },
@@ -71,9 +72,7 @@ const CONTAINER_METRICS = [
         cardId: 'card-containers-disk-r',
         chartId: 'chart-containers-disk-r',
         subtitleId: 'containers-disk-r-subtitle',
-        // System "Disk I/O" chart series use read_bs / write_bs (B/s stripped in title).
-        i18nKeys: ['disk_io', 'read_bs'],
-        stripUnitFromQualifier: true,
+        i18nKeys: ['disk_io', 'disk_read'],
         order: 24,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'disk_r_bps',
@@ -83,31 +82,19 @@ const CONTAINER_METRICS = [
         cardId: 'card-containers-disk-w',
         chartId: 'chart-containers-disk-w',
         subtitleId: 'containers-disk-w-subtitle',
-        i18nKeys: ['disk_io', 'write_bs'],
-        stripUnitFromQualifier: true,
+        i18nKeys: ['disk_io', 'disk_write'],
         order: 25,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'disk_w_bps',
     },
 ];
 
-/** Strip unit suffixes from series labels when used as a chart-title qualifier. */
-function titleQualifier(key) {
-    // read_bs → "Read B/s" / "Lecture B/s" — B/s is for series axes, not card titles.
-    return i18n.t(key)
-        .replace(/\s*B\/s\s*$/i, '')
-        .replace(/\s*\/s\s*$/i, '')
-        .trim();
-}
-
-/** Build a chart title from one or more existing i18n keys (no new locale strings). */
+/** Build a chart title from existing i18n keys (base, or "base (qualifier)"). */
 function metricTitle(m) {
     const keys = m.i18nKeys || [];
     if (keys.length === 0) return m.key;
     if (keys.length === 1) return i18n.t(keys[0]);
-    // e.g. "Network Throughput (RX)" / "Disk I/O (Read)" — reuse system labels.
-    const qual = m.stripUnitFromQualifier ? titleQualifier(keys[1]) : i18n.t(keys[1]);
-    return `${i18n.t(keys[0])} (${qual})`;
+    return `${i18n.t(keys[0])} (${i18n.t(keys[1])})`;
 }
 
 function applyMetricCardTitle(m) {
@@ -124,17 +111,23 @@ function applyMetricCardTitle(m) {
 
 function retranslateContainerUI() {
     for (const m of CONTAINER_METRICS) applyMetricCardTitle(m);
-    // Filter chrome
     const btnLabel = document.querySelector('.container-app-filter-btn-label');
     if (btnLabel) btnLabel.textContent = i18n.t('applications');
-    const selAll = document.querySelector('#container-app-filter-panel .container-app-filter-action:first-child');
-    const deselAll = document.querySelector('#container-app-filter-panel .container-app-filter-action:last-child');
+    const panel = document.getElementById('container-app-filter-panel');
+    const selAll = panel?.querySelector('[data-action="select-all"]');
+    const deselAll = panel?.querySelector('[data-action="deselect-all"]');
     if (selAll) selAll.textContent = i18n.t('select_all');
     if (deselAll) deselAll.textContent = i18n.t('deselect_all');
+    const legend = document.getElementById('container-app-legend');
+    if (legend) legend.setAttribute('aria-label', i18n.t('container_legend'));
+    // Locale change invalidates rendered text everywhere.
+    renderState.apps = null;
+    renderState.selection = null;
     updateFilterButtonLabel();
     renderSharedLegend();
-    const panel = document.getElementById('container-app-filter-panel');
-    if (panel && !panel.classList.contains('hidden')) renderFilterList();
+    renderFilterList();
+    updateMetricSubtitles();
+    updateSearchTerms();
 }
 
 // Re-apply titles when the user switches language.
@@ -144,20 +137,38 @@ if (typeof document !== 'undefined') {
 
 const FILTER_STORAGE_KEY = 'kula_container_filter';
 
+// Signatures of the last rendered app set / selection. Re-rendering the legend
+// and the filter list is DOM-heavy, and addContainerSample runs once per sample
+// (and up to maxBufferSize times during redrawChartsFromBuffer), so both are
+// rebuilt only when their inputs actually change.
+const renderState = { apps: null, selection: null };
+
+function appsSignature() {
+    return Object.values(state.containerApps || {})
+        .map(a => `${a.key}${a.label}${a.color}${a.dashIndex}`)
+        .sort()
+        .join('');
+}
+
+function selectionSignature() {
+    ensureFilterState();
+    return [...state.containerExcluded].sort().join('');
+}
+
 // Stable chart/app key for a container sample. Prefer the human-readable name so
 // history survives recreate (Docker assigns a new ID each time). Fall back to
 // id when name is empty (cgroups-only discovery has no names).
-export function containerSeriesKey(ct) {
+function containerSeriesKey(ct) {
     const raw = (ct.name && String(ct.name).trim()) || ct.id || 'unknown';
     return 'container_' + encodeURIComponent(String(raw));
 }
 
-export function containerDisplayName(ct) {
+function containerDisplayName(ct) {
     return (ct.name && String(ct.name).trim()) || ct.id || 'unknown';
 }
 
 function hexToRgba(hex, alpha) {
-    const h = hex.replace('#', '');
+    const h = String(hex).replace('#', '');
     if (h.length !== 6) return `rgba(59, 130, 246, ${alpha})`;
     const r = parseInt(h.slice(0, 2), 16);
     const g = parseInt(h.slice(2, 4), 16);
@@ -174,22 +185,16 @@ function loadExcluded() {
         const raw = localStorage.getItem(FILTER_STORAGE_KEY);
         if (!raw) return new Set();
         const parsed = JSON.parse(raw);
-        // New format
         if (parsed && Array.isArray(parsed.excluded)) {
             return new Set(parsed.excluded);
         }
-        // Legacy format was a selected-keys array — migrate best-effort:
-        // we cannot know full universe at load time, so drop legacy and start fresh
-        // (safer than re-selecting everything after user deselected all).
+        // A bare array is the pre-release selected-keys format. The full container
+        // set is unknown at load time, so it cannot be inverted into exclusions;
+        // drop it and start with everything selected.
         if (Array.isArray(parsed)) {
-            // Treat legacy empty selection as "exclude all known later" is impossible
-            // without known keys; store as empty exclusions and let user re-filter.
-            // Prefer: if legacy was empty array, mark a sentinel so first discover
-            // deselects all? Too magic. Clear legacy key.
             localStorage.removeItem(FILTER_STORAGE_KEY);
-            return new Set();
         }
-    } catch (_) { /* ignore */ }
+    } catch (_) { /* corrupt value — fall through to "all selected" */ }
     return new Set();
 }
 
@@ -209,7 +214,7 @@ function ensureFilterState() {
     }
 }
 
-export function isContainerSelected(key) {
+function isContainerSelected(key) {
     ensureFilterState();
     return !state.containerExcluded.has(key);
 }
@@ -232,26 +237,60 @@ function deselectAllContainers() {
     saveExcluded();
 }
 
-function ensureContainerApp(key, label) {
+function ensureContainerApp(key, label, id, tsMs) {
     if (!state.containerApps) state.containerApps = {};
-    if (state.containerApps[key]) {
-        state.containerApps[key].label = label;
-        return state.containerApps[key];
+    const existing = state.containerApps[key];
+    if (existing) {
+        existing.label = label;
+        if (id) existing.id = id;
+        existing.lastSeen = tsMs;
+        return existing;
     }
-    const used = new Set(Object.values(state.containerApps).map(a => a.colorIndex));
-    let colorIndex = 0;
-    for (let i = 0; i < CONTAINER_COLOR_LIST.length; i++) {
-        if (!used.has(i)) { colorIndex = i; break; }
-        colorIndex = i % CONTAINER_COLOR_LIST.length;
-    }
-    if (used.size >= CONTAINER_COLOR_LIST.length) {
-        colorIndex = Object.keys(state.containerApps).length % CONTAINER_COLOR_LIST.length;
-    }
-    const color = CONTAINER_COLOR_LIST[colorIndex];
-    state.containerApps[key] = { key, label, color, colorIndex };
+    // First unused slot, else wrap around and vary the dash pattern so wrapped
+    // colors stay distinguishable.
+    const used = new Set(Object.values(state.containerApps).map(a => a.slot));
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    const colorIndex = slot % CONTAINER_COLOR_LIST.length;
+    const dashIndex = Math.floor(slot / CONTAINER_COLOR_LIST.length) % CONTAINER_DASH_LIST.length;
+    state.containerApps[key] = {
+        key,
+        label,
+        id: id || '',
+        slot,
+        color: CONTAINER_COLOR_LIST[colorIndex],
+        dash: CONTAINER_DASH_LIST[dashIndex],
+        dashIndex,
+        lastSeen: tsMs,
+    };
     // New apps are selected by default: do NOT add to containerExcluded.
     ensureFilterState();
     return state.containerApps[key];
+}
+
+/**
+ * Drop containers that have been gone longer than the displayed time window.
+ * Without this, every dead container keeps a dataset (fed a null point per
+ * sample) plus a legend and filter entry, forever.
+ */
+function pruneDeadContainers(liveKeys, tsMs) {
+    // A custom/unbounded range has no cutoff to prune against.
+    if (typeof state.timeRange !== 'number' || !(state.timeRange > 0)) return;
+    const cutoff = tsMs - state.timeRange * 1000;
+    const doomed = [];
+    for (const [key, app] of Object.entries(state.containerApps || {})) {
+        if (liveKeys.has(key)) continue;
+        if (typeof app.lastSeen !== 'number' || app.lastSeen < cutoff) doomed.push(key);
+    }
+    if (doomed.length === 0) return;
+
+    const dead = new Set(doomed);
+    for (const m of CONTAINER_METRICS) {
+        const chart = state.containerCharts?.[m.key];
+        if (!chart) continue;
+        chart.data.datasets = chart.data.datasets.filter(ds => !dead.has(ds.containerKey));
+    }
+    for (const key of doomed) delete state.containerApps[key];
 }
 
 // ---- Charts ----
@@ -297,28 +336,28 @@ function ensureSeriesForApp(app, ts) {
     for (const m of CONTAINER_METRICS) {
         const chart = state.containerCharts[m.key];
         if (!chart) continue;
-        let ds = chart.data.datasets.find(d => d._dsId === app.key);
+        let ds = chart.data.datasets.find(d => d.containerKey === app.key);
         if (ds) {
             ds.label = app.label;
             ds.borderColor = app.color;
             ds.backgroundColor = hexToRgba(app.color, 0.12);
+            ds.borderDash = app.dash;
             ds.hidden = !isContainerSelected(app.key);
             continue;
         }
-        ds = {
-            _dsId: app.key,
+        chart.data.datasets.push({
             containerKey: app.key,
             label: app.label,
             borderColor: app.color,
             backgroundColor: hexToRgba(app.color, 0.12),
+            borderDash: app.dash,
             fill: false,
             data: alignedNullPrefix(chart, ts),
             pointRadius: 0,
             borderWidth: 1.5,
             tension: 0.2,
             hidden: !isContainerSelected(app.key),
-        };
-        chart.data.datasets.push(ds);
+        });
     }
 }
 
@@ -326,6 +365,7 @@ function ensureSeriesForApp(app, ts) {
  * Append one tick to every known series on every metric chart.
  * Present containers get real values; others get {x:ts, y:null} so dataset
  * lengths stay aligned for Chart.js interaction.mode: 'index'.
+ * Chart redraws are left to syncContainerMetricsUI so each chart repaints once.
  */
 function appendAlignedTick(ts, liveByKey, point) {
     for (const m of CONTAINER_METRICS) {
@@ -335,14 +375,8 @@ function appendAlignedTick(ts, liveByKey, point) {
             const key = ds.containerKey;
             if (!key) continue;
             const ct = liveByKey[key];
-            if (ct) {
-                ds.data.push(point(ct[m.field] || 0));
-            } else {
-                ds.data.push({ x: ts, y: null });
-            }
-            ds.hidden = !isContainerSelected(key);
+            ds.data.push(ct ? point(ct[m.field] || 0) : { x: ts, y: null });
         }
-        if (!state.loadingHistory) chart.update('none');
     }
 }
 
@@ -371,43 +405,75 @@ function syncContainerMetricsUI(liveKeys) {
     if (filterRoot) filterRoot.classList.toggle('hidden', !hasLive);
 
     if (hasLive) {
+        updateSearchTerms();
         renderSharedLegend();
         updateFilterButtonLabel();
-        // Subtitles with live values are set by addContainerSample(liveByKey).
-        // Here only refresh the generic "N apps" summary when we lack latests.
-        if (!(state._containerLatestByKey)) updateMetricSubtitles({});
+        renderFilterList();
     } else {
-        const legend = document.getElementById('container-app-legend');
-        if (legend) legend.classList.add('hidden');
+        document.getElementById('container-app-legend')?.classList.add('hidden');
     }
 
-    const panel = document.getElementById('container-app-filter-panel');
-    if (panel && !panel.classList.contains('hidden')) renderFilterList();
+    // Focus mode moves container cards into the main grid; keep the Applications
+    // header (title + filter + legend) with them, since the shared legend is the
+    // only place series colors are labelled.
+    syncApplicationsHeaderFocus();
 }
 
-function updateMetricSubtitles(latestByKey) {
-    const selectedKeys = Object.keys(state.containerApps || {}).filter(k => isContainerSelected(k));
+/** Keep the Applications header visible while any container card is visible. */
+export function syncApplicationsHeaderFocus() {
+    pinSectionHeadForCards(document.getElementById('applications-header'), CONTAINER_CARD_SELECTOR);
+}
+
+/**
+ * Expose container names to the chart search. Card titles are metric names now
+ * ("CPU Usage"), so without this a search for a container name would hide every
+ * container chart.
+ */
+function updateSearchTerms() {
+    const apps = Object.values(state.containerApps || {}).filter(a => isContainerSelected(a.key));
+    const terms = new Set();
+    for (const app of apps) {
+        terms.add(app.label);
+        if (app.id) terms.add(app.id);
+    }
+    // Localized and ASCII generics so "container(s)" works in every locale.
+    terms.add(i18n.t('containers'));
+    terms.add(i18n.t('applications'));
+    terms.add('container');
+    terms.add('containers');
+    const joined = [...terms].join(' ').toLowerCase();
+    for (const m of CONTAINER_METRICS) {
+        const card = document.getElementById(m.cardId);
+        if (card) card.dataset.searchTerms = joined;
+    }
+}
+
+function updateMetricSubtitles() {
+    const allKeys = Object.keys(state.containerApps || {});
+    const selectedKeys = allKeys.filter(k => isContainerSelected(k));
     const n = selectedKeys.length;
-    const total = Object.keys(state.containerApps || {}).length;
-    const summary = n === total ? `${total} apps` : `${n}/${total} apps`;
-    const latest = latestByKey && typeof latestByKey === 'object' && !(latestByKey instanceof Set)
-        ? latestByKey
-        : (state._containerLatestByKey || {});
+    const total = allKeys.length;
+    const summary = n === total
+        ? i18n.t('apps_count').replace('{n}', total)
+        : i18n.t('apps_count_filtered').replace('{n}', n).replace('{total}', total);
+    const latest = state._containerLatestByKey || {};
+    const only = n === 1 ? latest[selectedKeys[0]] : null;
 
     for (const m of CONTAINER_METRICS) {
         const el = document.getElementById(m.subtitleId);
         if (!el) continue;
-        if (m.key === 'mem' && selectedKeys.length === 1 && latest[selectedKeys[0]]) {
-            const ct = latest[selectedKeys[0]];
-            const used = formatBytesShort(ct.mem_used || 0);
-            if (ct.mem_limit > 0) {
-                el.textContent = `Used: ${used} / Limit: ${formatBytesShort(ct.mem_limit)} (${(ct.mem_pct || 0).toFixed(1)}%)`;
-            } else {
-                el.textContent = `Used: ${used}`;
-            }
-        } else if (m.key === 'cpu' && selectedKeys.length === 1 && latest[selectedKeys[0]]) {
-            const ct = latest[selectedKeys[0]];
-            el.textContent = `CPU: ${(ct.cpu_pct || 0).toFixed(1)}%  Mem: ${formatBytesShort(ct.mem_used || 0)}`;
+        if (only && m.key === 'mem') {
+            const used = formatBytesShort(only.mem_used || 0);
+            el.textContent = only.mem_limit > 0
+                ? i18n.t('mem_used_limit')
+                    .replace('{used}', used)
+                    .replace('{limit}', formatBytesShort(only.mem_limit))
+                    .replace('{pct}', (only.mem_pct || 0).toFixed(1))
+                : i18n.t('mem_used_only').replace('{used}', used);
+        } else if (only && m.key === 'cpu') {
+            el.textContent = i18n.t('cpu_mem_summary')
+                .replace('{cpu}', (only.cpu_pct || 0).toFixed(1))
+                .replace('{mem}', formatBytesShort(only.mem_used || 0));
         } else {
             el.textContent = summary;
         }
@@ -424,20 +490,27 @@ function ensureSharedLegendEl() {
     legend = document.createElement('div');
     legend.id = 'container-app-legend';
     legend.className = 'container-app-legend hidden';
-    legend.setAttribute('aria-label', 'Container color legend');
+    legend.setAttribute('aria-label', i18n.t('container_legend'));
     header.appendChild(legend);
     return legend;
 }
 
+function sortedApps(selectedOnly) {
+    return Object.values(state.containerApps || {})
+        .filter(a => !selectedOnly || isContainerSelected(a.key))
+        .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+}
+
 function renderSharedLegend() {
+    const sig = `${appsSignature()}${selectionSignature()}`;
+    if (renderState.selection === sig) return;
+    renderState.selection = sig;
+
     const legend = ensureSharedLegendEl();
     if (!legend) return;
     legend.replaceChildren();
 
-    const apps = Object.values(state.containerApps || {})
-        .filter(a => isContainerSelected(a.key))
-        .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
-
+    const apps = sortedApps(true);
     if (apps.length === 0) {
         legend.classList.add('hidden');
         return;
@@ -451,7 +524,8 @@ function renderSharedLegend() {
 
         const swatch = document.createElement('span');
         swatch.className = 'container-app-legend-swatch';
-        swatch.style.background = app.color;
+        swatch.style.backgroundColor = app.color;
+        if (app.dash?.length) swatch.classList.add('is-dashed');
 
         const name = document.createElement('span');
         name.className = 'container-app-legend-name';
@@ -461,6 +535,8 @@ function renderSharedLegend() {
         item.appendChild(name);
         legend.appendChild(item);
     }
+    // Legend width changes can flip whether the header should stay pinned.
+    syncApplicationsHeaderFocus();
 }
 
 function ensureFilterUI() {
@@ -493,7 +569,16 @@ function ensureFilterUI() {
     btn.className = 'container-app-filter-btn';
     btn.setAttribute('aria-haspopup', 'true');
     btn.setAttribute('aria-expanded', 'false');
-    btn.innerHTML = `<span class="container-app-filter-btn-label">${i18n.t('applications')}</span><span class="container-app-filter-btn-count" id="container-app-filter-count"></span><span class="container-app-filter-caret">▾</span>`;
+    const btnLabel = document.createElement('span');
+    btnLabel.className = 'container-app-filter-btn-label';
+    btnLabel.textContent = i18n.t('applications');
+    const btnCount = document.createElement('span');
+    btnCount.className = 'container-app-filter-btn-count';
+    btnCount.id = 'container-app-filter-count';
+    const caret = document.createElement('span');
+    caret.className = 'container-app-filter-caret';
+    caret.textContent = '▾';
+    btn.append(btnLabel, btnCount, caret);
 
     const panel = document.createElement('div');
     panel.id = 'container-app-filter-panel';
@@ -505,22 +590,21 @@ function ensureFilterUI() {
     const selAll = document.createElement('button');
     selAll.type = 'button';
     selAll.className = 'container-app-filter-action';
+    selAll.dataset.action = 'select-all';
     selAll.textContent = i18n.t('select_all');
     const deselAll = document.createElement('button');
     deselAll.type = 'button';
     deselAll.className = 'container-app-filter-action';
+    deselAll.dataset.action = 'deselect-all';
     deselAll.textContent = i18n.t('deselect_all');
-    actions.appendChild(selAll);
-    actions.appendChild(deselAll);
+    actions.append(selAll, deselAll);
 
     const list = document.createElement('div');
     list.id = 'container-app-filter-list';
     list.className = 'container-app-filter-list';
 
-    panel.appendChild(actions);
-    panel.appendChild(list);
-    root.appendChild(btn);
-    root.appendChild(panel);
+    panel.append(actions, list);
+    root.append(btn, panel);
     titleRow.appendChild(root);
     ensureSharedLegendEl();
 
@@ -528,7 +612,6 @@ function ensureFilterUI() {
         e.stopPropagation();
         const open = panel.classList.toggle('hidden') === false;
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-        if (open) renderFilterList();
     });
 
     panel.addEventListener('click', (e) => e.stopPropagation());
@@ -540,40 +623,63 @@ function ensureFilterUI() {
         }
     });
 
+    const applySelectionChange = () => {
+        saveExcluded();
+        refreshFilterCheckboxes();
+        syncContainerMetricsUI(state._containerLiveKeys || new Set());
+        updateMetricSubtitles();
+    };
+
     selAll.addEventListener('click', (e) => {
         e.stopPropagation();
         selectAllContainers();
-        renderFilterList();
-        const live = state._containerLiveKeys || new Set(Object.keys(state.containerApps || {}));
-        syncContainerMetricsUI(live);
-        updateMetricSubtitles(state._containerLatestByKey || {});
+        applySelectionChange();
     });
 
     deselAll.addEventListener('click', (e) => {
         e.stopPropagation();
         deselectAllContainers();
-        renderFilterList();
-        // Keep last live keys so we know containers still exist; cards hide via anySelected=false
-        syncContainerMetricsUI(state._containerLiveKeys || new Set());
-        updateMetricSubtitles(state._containerLatestByKey || {});
+        applySelectionChange();
+    });
+
+    // One delegated listener survives list rebuilds.
+    list.addEventListener('change', (e) => {
+        const chk = e.target;
+        if (!(chk instanceof HTMLInputElement) || chk.type !== 'checkbox') return;
+        setContainerSelected(chk.dataset.key, chk.checked);
+        applySelectionChange();
     });
 
     return root;
 }
 
+/** Update checkbox state in place — never rebuild the list under the cursor. */
+function refreshFilterCheckboxes() {
+    const list = document.getElementById('container-app-filter-list');
+    if (!list) return;
+    for (const chk of list.querySelectorAll('input[type="checkbox"][data-key]')) {
+        chk.checked = isContainerSelected(chk.dataset.key);
+    }
+}
+
+/** Rebuild the filter rows. Membership-driven only, so open panels stay stable. */
 function renderFilterList() {
     const list = document.getElementById('container-app-filter-list');
     if (!list) return;
+
+    const sig = appsSignature();
+    if (renderState.apps === sig) {
+        refreshFilterCheckboxes();
+        return;
+    }
+    renderState.apps = sig;
     list.replaceChildren();
 
-    const apps = Object.values(state.containerApps || {}).sort((a, b) =>
-        a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
-    );
-
+    const apps = sortedApps(false);
     if (apps.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'container-app-filter-empty';
-        empty.textContent = 'No containers yet';
+        empty.textContent = i18n.t('no_containers');
         list.appendChild(empty);
         return;
     }
@@ -582,31 +688,22 @@ function renderFilterList() {
         const row = document.createElement('label');
         row.className = 'container-app-filter-item';
 
-        const swatch = document.createElement('span');
-        swatch.className = 'container-app-filter-swatch';
-        swatch.style.background = app.color;
-        swatch.title = app.color;
-
         const chk = document.createElement('input');
         chk.type = 'checkbox';
         chk.checked = isContainerSelected(app.key);
         chk.dataset.key = app.key;
 
+        const swatch = document.createElement('span');
+        swatch.className = 'container-app-filter-swatch';
+        swatch.style.backgroundColor = app.color;
+        if (app.dash?.length) swatch.classList.add('is-dashed');
+
         const name = document.createElement('span');
         name.className = 'container-app-filter-name';
         name.textContent = app.label;
+        name.title = app.label;
 
-        chk.addEventListener('change', () => {
-            setContainerSelected(app.key, chk.checked);
-            saveExcluded();
-            const live = state._containerLiveKeys || new Set(Object.keys(state.containerApps || {}));
-            syncContainerMetricsUI(live);
-            updateMetricSubtitles(state._containerLatestByKey || {});
-        });
-
-        row.appendChild(chk);
-        row.appendChild(swatch);
-        row.appendChild(name);
+        row.append(chk, swatch, name);
         list.appendChild(row);
     }
 }
@@ -619,7 +716,7 @@ function updateFilterButtonLabel() {
         countEl.textContent = '';
         return;
     }
-    const n = Object.keys(state.containerApps || {}).filter(k => isContainerSelected(k)).length;
+    const n = Object.keys(state.containerApps).filter(k => isContainerSelected(k)).length;
     countEl.textContent = n === total ? `(${total})` : `(${n}/${total})`;
 }
 
@@ -636,16 +733,20 @@ export function addContainerSample(containers, ts, point, createAppChartCard) {
     ensureFilterUI();
 
     const list = containers || [];
+    const tsMs = ts instanceof Date ? ts.getTime() : Number(ts);
     const liveKeys = new Set();
     const liveByKey = {};
 
     if (list.length === 0) {
         state._containerLiveKeys = liveKeys;
-        // Still append null ticks so series stay aligned if charts already exist
+        state._containerLatestByKey = {};
+        // Keep series time-aligned even while nothing is reporting.
         if (Object.keys(state.containerCharts || {}).length > 0) {
             appendAlignedTick(ts, liveByKey, point);
         }
+        pruneDeadContainers(liveKeys, tsMs);
         syncContainerMetricsUI(liveKeys);
+        updateMetricSubtitles();
         return false;
     }
 
@@ -653,8 +754,7 @@ export function addContainerSample(containers, ts, point, createAppChartCard) {
 
     for (const ct of list) {
         const key = containerSeriesKey(ct);
-        const label = containerDisplayName(ct);
-        const app = ensureContainerApp(key, label);
+        const app = ensureContainerApp(key, containerDisplayName(ct), ct.id, tsMs);
         ensureSeriesForApp(app, ts);
         liveKeys.add(key);
         liveByKey[key] = ct;
@@ -662,39 +762,16 @@ export function addContainerSample(containers, ts, point, createAppChartCard) {
 
     // One aligned tick for ALL known series (present → value, absent → null)
     appendAlignedTick(ts, liveByKey, point);
+    pruneDeadContainers(liveKeys, tsMs);
 
     state._containerLiveKeys = liveKeys;
     state._containerLatestByKey = liveByKey;
     syncContainerMetricsUI(liveKeys);
-    updateMetricSubtitles(liveByKey);
+    updateMetricSubtitles();
     return true;
 }
 
 /** Hide container metric UI when no containers in this sample (nginx may still show). */
 export function markContainersAbsent(ts, point) {
     return addContainerSample([], ts, point, () => null);
-}
-
-export function destroyContainerMetricCharts() {
-    for (const m of CONTAINER_METRICS) {
-        const chart = state.containerCharts?.[m.key];
-        if (chart) chart.destroy();
-        document.getElementById(m.cardId)?.remove();
-    }
-    ['card-containers-net', 'card-containers-diskio'].forEach(id => {
-        document.getElementById(id)?.remove();
-    });
-    if (state.containerCharts) {
-        for (const m of CONTAINER_METRICS) delete state.containerCharts[m.key];
-        delete state.containerCharts.net;
-        delete state.containerCharts.diskio;
-    }
-}
-
-export function showContainerFilter(show) {
-    // Compatibility shim: visibility is owned by syncContainerMetricsUI.
-    const filter = document.getElementById('container-app-filter');
-    if (filter && !show) filter.classList.add('hidden');
-    const legend = document.getElementById('container-app-legend');
-    if (legend && !show) legend.classList.add('hidden');
 }

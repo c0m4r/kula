@@ -10,6 +10,59 @@ import {
     setSectionFocusChrome,
     clearAllSectionFocusChrome,
 } from './section-utils.js';
+// The Applications header carries the shared container colour legend, which is
+// the only labelling for the multi-series container charts.
+import { syncApplicationsHeaderFocus } from './container-apps.js';
+
+// Container metrics moved from "one card per container × metric" to a fixed set
+// of multi-series cards. Focus selections are persisted, so stored ids from the
+// old layout must be mapped forward or the dashboard restores empty.
+const LEGACY_CONTAINER_CARD_RE = /^card-container_.+_(cpu|mem|io)$/;
+const LEGACY_CONTAINER_CARD_MAP = {
+    cpu: ['card-containers-cpu'],
+    mem: ['card-containers-mem'],
+    // The combined I/O card became four direction-specific cards.
+    io: [
+        'card-containers-net-rx', 'card-containers-net-tx',
+        'card-containers-disk-r', 'card-containers-disk-w',
+    ],
+};
+
+/**
+ * Rewrite persisted focus ids from the pre-aggregation container layout.
+ * Unrelated ids keep their order; expanded ids are deduplicated.
+ */
+function migrateLegacyFocusIds() {
+    const stored = state.focusVisible;
+    if (!Array.isArray(stored) || stored.length === 0) return;
+
+    const out = [];
+    const seen = new Set();
+    const push = (id) => {
+        if (seen.has(id)) return;
+        seen.add(id);
+        out.push(id);
+    };
+
+    let changed = false;
+    for (const id of stored) {
+        const match = LEGACY_CONTAINER_CARD_RE.exec(id);
+        if (!match) {
+            push(id);
+            continue;
+        }
+        changed = true;
+        LEGACY_CONTAINER_CARD_MAP[match[1]].forEach(push);
+    }
+    // Deduplication alone is also worth persisting.
+    if (!changed && out.length === stored.length) return;
+
+    state.focusVisible = out;
+    localStorage.setItem('kula_focus_visible', JSON.stringify(out));
+}
+
+// Run before any consumer reads state.focusVisible.
+migrateLegacyFocusIds();
 
 export const chartCardIds = [
     'card-cpu', 'card-loadavg', 'card-memory', 'card-swap',
@@ -400,6 +453,8 @@ export function combineGrids() {
     _getDynamicSystemCards().forEach(card => mainGrid.appendChild(card));
     // Move app cards (nginx, containers, postgres, custom) into the main grid
     _getAppCards().forEach(card => mainGrid.appendChild(card));
+    // Container cards just left the Applications grid; keep their legend with them.
+    syncApplicationsHeaderFocus();
 }
 
 export function restoreGrids() {
@@ -450,4 +505,5 @@ export function restoreGrids() {
     if (appsGrid) {
         _getAppCards().forEach(card => appsGrid.appendChild(card));
     }
+    syncApplicationsHeaderFocus();
 }

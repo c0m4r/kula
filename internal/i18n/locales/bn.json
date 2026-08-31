@@ -131,5 +131,15 @@
     "ai_analyse_prompt": "{title} এর জন্য এই ডেটা বিশ্লেষণ করুন।",
     "select_all": "সব নির্বাচন",
     "deselect_all": "সব বাদ",
-    "applications": "অ্যাপ্লিকেশন"
+    "applications": "অ্যাপ্লিকেশন",
+    "disk_read": "পঠন",
+    "disk_write": "লেখন",
+    "containers": "কন্টেইনার",
+    "no_containers": "এখনও কোনো কন্টেইনার নেই",
+    "apps_count": "{n} অ্যাপ",
+    "apps_count_filtered": "{n}/{total} অ্যাপ",
+    "container_legend": "কন্টেইনার রঙের নির্দেশিকা",
+    "mem_used_limit": "ব্যবহৃত: {used} / সীমা: {limit} ({pct}%)",
+    "mem_used_only": "ব্যবহৃত: {used}",
+    "cpu_mem_summary": "CPU: {cpu}%  মেমরি: {mem}"
 }
