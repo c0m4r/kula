@@ -768,6 +768,25 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				"gpu":        s.cfg.Graphs.Split.Gpu,
 			},
 		},
+		// Server-side defaults for the customization menu. The browser layers
+		// its own localStorage overrides on top of these, so a visitor who
+		// never opened the menu follows whatever the operator configured.
+		"appearance": map[string]interface{}{
+			"sticky_topbar": s.cfg.Appearance.StickyTopbar,
+			"gauges":        s.cfg.Appearance.Gauges,
+		},
+		"accessibility": map[string]interface{}{
+			"high_contrast":   s.cfg.Accessibility.HighContrast,
+			"reduce_motion":   s.cfg.Accessibility.ReduceMotion,
+			"text_size":       s.cfg.Accessibility.TextSize,
+			"underline_links": s.cfg.Accessibility.UnderlineLinks,
+			"focus_outline":   s.cfg.Accessibility.FocusOutline,
+			"text_size_range": map[string]interface{}{
+				"min":  config.MinTextSize,
+				"max":  config.MaxTextSize,
+				"step": config.TextSizeStep,
+			},
+		},
 		"lang": map[string]interface{}{
 			"default": s.cfg.Lang.Default,
 			"force":   s.cfg.Lang.Force,

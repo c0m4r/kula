@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -73,6 +74,73 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.TUI.RefreshRate != time.Second {
 		t.Errorf("TUI.RefreshRate = %v, want 1s", cfg.TUI.RefreshRate)
+	}
+	if !cfg.Web.Appearance.StickyTopbar {
+		t.Error("Web.Appearance.StickyTopbar should be true by default")
+	}
+	if !cfg.Web.Appearance.Gauges {
+		t.Error("Web.Appearance.Gauges should be true by default")
+	}
+	if cfg.Web.Accessibility != (AccessibilityConfig{TextSize: DefaultTextSize}) {
+		t.Errorf("Web.Accessibility = %+v, want every option off and text size %d by default",
+			cfg.Web.Accessibility, DefaultTextSize)
+	}
+}
+
+// The appearance settings default to true, so an explicit `false` in the
+// config file only survives because Load unmarshals over DefaultConfig().
+func TestLoadAppearanceAndAccessibility(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	yaml := `
+storage:
+  directory: ` + dir + `
+web:
+  appearance:
+    sticky_topbar: false
+    gauges: false
+  accessibility:
+    high_contrast: true
+    text_size: 120
+`
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Web.Appearance.StickyTopbar {
+		t.Error("Web.Appearance.StickyTopbar = true, want false")
+	}
+	if cfg.Web.Appearance.Gauges {
+		t.Error("Web.Appearance.Gauges = true, want false")
+	}
+	if !cfg.Web.Accessibility.HighContrast {
+		t.Error("Web.Accessibility.HighContrast = false, want true")
+	}
+	if cfg.Web.Accessibility.TextSize != 120 {
+		t.Errorf("Web.Accessibility.TextSize = %d, want 120", cfg.Web.Accessibility.TextSize)
+	}
+	// Options absent from the file keep their (false) defaults.
+	if cfg.Web.Accessibility.ReduceMotion || cfg.Web.Accessibility.UnderlineLinks || cfg.Web.Accessibility.FocusOutline {
+		t.Errorf("unset accessibility options changed: %+v", cfg.Web.Accessibility)
+	}
+}
+
+func TestLoadTextSizeOutOfRange(t *testing.T) {
+	for _, size := range []int{0, MinTextSize - 1, MaxTextSize + 1} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		yaml := fmt.Sprintf("storage:\n  directory: %s\nweb:\n  accessibility:\n    text_size: %d\n", dir, size)
+		if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Errorf("Load() with text_size %d should return an error", size)
+		}
 	}
 }
 

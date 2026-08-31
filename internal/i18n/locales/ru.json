@@ -141,5 +141,20 @@
     "container_legend": "Цветовая легенда контейнеров",
     "mem_used_limit": "Использовано: {used} / Лимит: {limit} ({pct}%)",
     "mem_used_only": "Использовано: {used}",
-    "cpu_mem_summary": "ЦП: {cpu}%  Память: {mem}"
+    "cpu_mem_summary": "ЦП: {cpu}%  Память: {mem}",
+    "split_by_device": "Разделить по устройствам",
+    "customization": "Настройка",
+    "appearance": "Внешний вид",
+    "accessibility": "Доступность",
+    "sticky_topbar": "Закреплённая верхняя панель",
+    "show_gauges": "Показывать индикаторы",
+    "high_contrast": "Высокая контрастность",
+    "text_size": "Размер текста",
+    "text_smaller": "Мельче текст",
+    "text_bigger": "Крупнее текст",
+    "text_reset": "Сбросить размер текста",
+    "reduce_motion": "Уменьшить анимацию",
+    "underline_links": "Подчёркивать ссылки",
+    "focus_outline": "Заметная рамка фокуса",
+    "reset_defaults": "Сбросить к значениям по умолчанию"
 }

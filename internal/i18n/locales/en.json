@@ -142,5 +142,19 @@
     "container_legend": "Container color legend",
     "mem_used_limit": "Used: {used} / Limit: {limit} ({pct}%)",
     "mem_used_only": "Used: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}",
+    "customization": "Customization",
+    "appearance": "Appearance",
+    "accessibility": "Accessibility",
+    "sticky_topbar": "Sticky top bar",
+    "show_gauges": "Show gauges",
+    "high_contrast": "High contrast",
+    "text_size": "Text size",
+    "text_smaller": "Smaller text",
+    "text_bigger": "Bigger text",
+    "text_reset": "Reset text size",
+    "reduce_motion": "Reduce motion",
+    "underline_links": "Underline links",
+    "focus_outline": "Strong focus outline",
+    "reset_defaults": "Reset to defaults"
 }

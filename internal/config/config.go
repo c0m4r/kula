@@ -84,28 +84,30 @@ type BackupConfig struct {
 }
 
 type WebConfig struct {
-	Enabled                bool           `yaml:"enabled"`
-	UI                     bool           `yaml:"ui"`
-	Listen                 string         `yaml:"listen"`
-	Port                   int            `yaml:"port"`
-	UnixSocket             string         `yaml:"unix_socket"`      // if set, listen on this Unix socket and do not bind TCP
-	UnixSocketMode         string         `yaml:"unix_socket_mode"` // octal permissions for the socket file (default "0660")
-	Auth                   AuthConfig     `yaml:"auth"`
-	PrometheusMetrics      MetricsConfig  `yaml:"prometheus_metrics"`
-	JoinMetrics            bool           `yaml:"join_metrics"`
-	DefaultAggregation     string         `yaml:"default_aggregation"`
-	Logging                LogConfig      `yaml:"logging"`
-	TrustProxy             bool           `yaml:"trust_proxy"`
-	EnableCompression      bool           `yaml:"enable_compression"`
-	Graphs                 GraphConfig    `yaml:"graphs"`
-	Lang                   LangConfig     `yaml:"lang"`
-	Version                string         `yaml:"-"` // injected at runtime, not from config file
-	OS                     string         `yaml:"-"`
-	Kernel                 string         `yaml:"-"`
-	Arch                   string         `yaml:"-"`
-	MaxWebsocketConns      int            `yaml:"max_websocket_conns"`
-	MaxWebsocketConnsPerIP int            `yaml:"max_websocket_conns_per_ip"`
-	Security               SecurityConfig `yaml:"security"`
+	Enabled                bool                `yaml:"enabled"`
+	UI                     bool                `yaml:"ui"`
+	Listen                 string              `yaml:"listen"`
+	Port                   int                 `yaml:"port"`
+	UnixSocket             string              `yaml:"unix_socket"`      // if set, listen on this Unix socket and do not bind TCP
+	UnixSocketMode         string              `yaml:"unix_socket_mode"` // octal permissions for the socket file (default "0660")
+	Auth                   AuthConfig          `yaml:"auth"`
+	PrometheusMetrics      MetricsConfig       `yaml:"prometheus_metrics"`
+	JoinMetrics            bool                `yaml:"join_metrics"`
+	DefaultAggregation     string              `yaml:"default_aggregation"`
+	Logging                LogConfig           `yaml:"logging"`
+	TrustProxy             bool                `yaml:"trust_proxy"`
+	EnableCompression      bool                `yaml:"enable_compression"`
+	Graphs                 GraphConfig         `yaml:"graphs"`
+	Appearance             AppearanceConfig    `yaml:"appearance"`
+	Accessibility          AccessibilityConfig `yaml:"accessibility"`
+	Lang                   LangConfig          `yaml:"lang"`
+	Version                string              `yaml:"-"` // injected at runtime, not from config file
+	OS                     string              `yaml:"-"`
+	Kernel                 string              `yaml:"-"`
+	Arch                   string              `yaml:"-"`
+	MaxWebsocketConns      int                 `yaml:"max_websocket_conns"`
+	MaxWebsocketConnsPerIP int                 `yaml:"max_websocket_conns_per_ip"`
+	Security               SecurityConfig      `yaml:"security"`
 	// BasePath mounts every HTTP route (UI, API, WebSocket, /metrics, /health)
 	// under this URL sub-path, e.g. "/kula". Empty (default) serves at the
 	// root unchanged. Normalized at load time: leading slash enforced, trailing
@@ -141,6 +143,55 @@ type SecurityConfig struct {
 type MetricsConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Token   string `yaml:"token"`
+}
+
+// AppearanceConfig holds the server-side defaults for the web dashboard's
+// layout chrome. Every value is only a default: visitors can override it for
+// their own browser from the customization menu in the header, and their
+// choice is kept in localStorage. Clearing an override falls back to these
+// values, so changing them here moves everyone who never opted out.
+type AppearanceConfig struct {
+	// StickyTopbar keeps the header and the time/aggregation controls pinned
+	// to the top of the viewport while scrolling. Default true.
+	StickyTopbar bool `yaml:"sticky_topbar"`
+	// Gauges shows the CPU/RAM/SWAP/load/network gauge row above the charts.
+	// Default true.
+	Gauges bool `yaml:"gauges"`
+}
+
+// Bounds for AccessibilityConfig.TextSize, in percent of the default root
+// font size. The dashboard's customization menu steps between them by
+// TextSizeStep and clamps to the same range.
+const (
+	MinTextSize     = 50
+	MaxTextSize     = 300
+	DefaultTextSize = 100
+	TextSizeStep    = 10
+)
+
+// AccessibilityConfig holds the server-side defaults for the web dashboard's
+// accessibility options. Like AppearanceConfig these are defaults only and are
+// overridable per browser from the customization menu. All default to false:
+// each one trades some visual density for legibility, so they are opt-in --
+// except reduced motion, which is also applied whenever the browser reports
+// prefers-reduced-motion regardless of this setting.
+type AccessibilityConfig struct {
+	// HighContrast raises text, border and chart-grid contrast in both the
+	// dark and the light theme. Default false.
+	HighContrast bool `yaml:"high_contrast"`
+	// ReduceMotion disables transitions, animations and smooth scrolling.
+	// Default false.
+	ReduceMotion bool `yaml:"reduce_motion"`
+	// TextSize scales the root font size, and with it the whole rem-based
+	// layout, as a percentage of the default. 100 leaves it unchanged.
+	// Values outside MinTextSize..MaxTextSize are rejected at load time.
+	TextSize int `yaml:"text_size"`
+	// UnderlineLinks underlines links so they are distinguishable without
+	// relying on color alone. Default false.
+	UnderlineLinks bool `yaml:"underline_links"`
+	// FocusOutline draws a thick, high-visibility outline around the focused
+	// element for keyboard navigation. Default false.
+	FocusOutline bool `yaml:"focus_outline"`
 }
 
 type GraphConfig struct {
@@ -355,6 +406,17 @@ func DefaultConfig() *Config {
 				GPUTemp:  GraphMaxConfig{MaxMode: "off", MaxValue: 100},
 				Network:  GraphMaxConfig{MaxMode: "off", MaxValue: 1000}, // 1000 Mbps
 			},
+			Appearance: AppearanceConfig{
+				StickyTopbar: true,
+				Gauges:       true,
+			},
+			Accessibility: AccessibilityConfig{
+				HighContrast:   false,
+				ReduceMotion:   false,
+				TextSize:       DefaultTextSize,
+				UnderlineLinks: false,
+				FocusOutline:   false,
+			},
 			Lang: LangConfig{
 				Default: "en",
 				Force:   false,
@@ -505,6 +567,10 @@ func load(path string, mustExist bool) (*Config, error) {
 	}
 
 	if err := cfg.validateBackup(); err != nil {
+		return nil, err
+	}
+
+	if err := cfg.validateTextSize(); err != nil {
 		return nil, err
 	}
 
@@ -747,6 +813,17 @@ func (c *Config) validateBackup() error {
 		return fmt.Errorf("backup.retention: %w", err)
 	}
 	c.Backup.RetentionDur = dur
+	return nil
+}
+
+// validateTextSize checks web.accessibility.text_size. An omitted key keeps
+// the DefaultConfig value, so only an explicit out-of-range number fails here.
+func (c *Config) validateTextSize() error {
+	size := c.Web.Accessibility.TextSize
+	if size < MinTextSize || size > MaxTextSize {
+		return fmt.Errorf("web.accessibility.text_size must be between %d and %d, got %d",
+			MinTextSize, MaxTextSize, size)
+	}
 	return nil
 }
 

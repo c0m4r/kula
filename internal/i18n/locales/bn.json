@@ -141,5 +141,20 @@
     "container_legend": "কন্টেইনার রঙের নির্দেশিকা",
     "mem_used_limit": "ব্যবহৃত: {used} / সীমা: {limit} ({pct}%)",
     "mem_used_only": "ব্যবহৃত: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  মেমরি: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  মেমরি: {mem}",
+    "split_by_device": "ডিভাইস অনুযায়ী ভাগ করুন",
+    "customization": "কাস্টমাইজেশন",
+    "appearance": "চেহারা",
+    "accessibility": "অ্যাক্সেসিবিলিটি",
+    "sticky_topbar": "স্টিকি টপ বার",
+    "show_gauges": "গেজ দেখান",
+    "high_contrast": "উচ্চ কনট্রাস্ট",
+    "text_size": "লেখার আকার",
+    "text_smaller": "ছোট লেখা",
+    "text_bigger": "বড় লেখা",
+    "text_reset": "লেখার আকার রিসেট করুন",
+    "reduce_motion": "গতি কমান",
+    "underline_links": "লিঙ্ক আন্ডারলাইন করুন",
+    "focus_outline": "স্পষ্ট ফোকাস আউটলাইন",
+    "reset_defaults": "ডিফল্টে ফিরে যান"
 }

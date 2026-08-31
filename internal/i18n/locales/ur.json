@@ -141,5 +141,20 @@
     "container_legend": "کنٹینر رنگ کی فہرست",
     "mem_used_limit": "استعمال شدہ: {used} / حد: {limit} ({pct}%)",
     "mem_used_only": "استعمال شدہ: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  میموری: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  میموری: {mem}",
+    "split_by_device": "ڈیوائس کے مطابق تقسیم کریں",
+    "customization": "تخصیص",
+    "appearance": "ظاہری شکل",
+    "accessibility": "قابلِ رسائی",
+    "sticky_topbar": "مستقل بالائی بار",
+    "show_gauges": "گیجز دکھائیں",
+    "high_contrast": "زیادہ تضاد",
+    "text_size": "متن کا سائز",
+    "text_smaller": "چھوٹا متن",
+    "text_bigger": "بڑا متن",
+    "text_reset": "متن کا سائز بحال کریں",
+    "reduce_motion": "حرکت کم کریں",
+    "underline_links": "لنکس کے نیچے لکیر",
+    "focus_outline": "نمایاں فوکس خاکہ",
+    "reset_defaults": "طے شدہ پر بحال کریں"
 }

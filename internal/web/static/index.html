@@ -36,6 +36,7 @@
     <link rel="modulepreload" href="js/app/controls.js" integrity="{{sri `js/app/controls.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/auth.js" integrity="{{sri `js/app/auth.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/theme.js" integrity="{{sri `js/app/theme.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/settings.js" integrity="{{sri `js/app/settings.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/ui-actions.js" integrity="{{sri `js/app/ui-actions.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/focus-mode.js" integrity="{{sri `js/app/focus-mode.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/split.js" integrity="{{sri `js/app/split.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
@@ -145,6 +146,61 @@
                     title="Switch to list layout">⊞</button>
                 <button id="btn-logout" class="btn-icon hidden" data-i18n-title="logout" title="Logout">🔒</button>
                 <span id="clock" class="clock"></span>
+                <!-- Customization / settings -->
+                <div class="header-settings" id="settings-container">
+                    <button id="btn-settings" class="btn-icon" data-i18n-title="customization" title="Customization"
+                        aria-haspopup="true" aria-expanded="false" aria-controls="settings-menu">⚙️</button>
+                    <div id="settings-menu" class="settings-menu hidden" role="group" aria-labelledby="settings-menu-title">
+                        <div class="settings-menu-header" id="settings-menu-title" data-i18n="customization">Customization</div>
+                        <div class="settings-group">
+                            <div class="settings-group-title" data-i18n="appearance">Appearance</div>
+                            <label class="settings-row">
+                                <input type="checkbox" id="set-sticky-topbar">
+                                <span data-i18n="sticky_topbar">Sticky top bar</span>
+                            </label>
+                            <label class="settings-row">
+                                <input type="checkbox" id="set-gauges">
+                                <span data-i18n="show_gauges">Show gauges</span>
+                            </label>
+                        </div>
+                        <div class="settings-group">
+                            <div class="settings-group-title" data-i18n="accessibility">Accessibility</div>
+                            <label class="settings-row">
+                                <input type="checkbox" id="set-high-contrast">
+                                <span data-i18n="high_contrast">High contrast</span>
+                            </label>
+                            <div class="settings-row settings-row-stepper">
+                                <span data-i18n="text_size">Text size</span>
+                                <div class="settings-stepper">
+                                    <button type="button" id="set-text-smaller" class="settings-stepper-btn"
+                                        data-i18n-title="text_smaller" title="Smaller text"
+                                        aria-label="Smaller text">&minus;</button>
+                                    <button type="button" id="set-text-reset" class="settings-stepper-value"
+                                        data-i18n-title="text_reset" title="Reset text size">100%</button>
+                                    <button type="button" id="set-text-bigger" class="settings-stepper-btn"
+                                        data-i18n-title="text_bigger" title="Bigger text"
+                                        aria-label="Bigger text">+</button>
+                                </div>
+                            </div>
+                            <label class="settings-row">
+                                <input type="checkbox" id="set-reduce-motion">
+                                <span data-i18n="reduce_motion">Reduce motion</span>
+                            </label>
+                            <label class="settings-row">
+                                <input type="checkbox" id="set-underline-links">
+                                <span data-i18n="underline_links">Underline links</span>
+                            </label>
+                            <label class="settings-row">
+                                <input type="checkbox" id="set-focus-outline">
+                                <span data-i18n="focus_outline">Strong focus outline</span>
+                            </label>
+                        </div>
+                        <div class="settings-menu-footer">
+                            <button type="button" id="btn-settings-reset" class="settings-reset"
+                                data-i18n="reset_defaults">Reset to defaults</button>
+                        </div>
+                    </div>
+                </div>
                 {{if not .LangForce}}
                 <!-- Language toggle -->
                 <div class="header-lang">

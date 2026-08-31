@@ -141,5 +141,20 @@
     "container_legend": "Legenda colori container",
     "mem_used_limit": "Usato: {used} / Limite: {limit} ({pct}%)",
     "mem_used_only": "Usato: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}",
+    "split_by_device": "Dividi per dispositivo",
+    "customization": "Personalizzazione",
+    "appearance": "Aspetto",
+    "accessibility": "Accessibilità",
+    "sticky_topbar": "Barra superiore fissa",
+    "show_gauges": "Mostra indicatori",
+    "high_contrast": "Contrasto elevato",
+    "text_size": "Dimensione del testo",
+    "text_smaller": "Testo più piccolo",
+    "text_bigger": "Testo più grande",
+    "text_reset": "Reimposta dimensione del testo",
+    "reduce_motion": "Riduci animazioni",
+    "underline_links": "Sottolinea i link",
+    "focus_outline": "Contorno di focus marcato",
+    "reset_defaults": "Ripristina predefiniti"
 }

@@ -5,6 +5,7 @@
 'use strict';
 import { colors } from './state.js';
 import { formatMbps } from './utils.js';
+import { getSetting } from './settings.js';
 
 // ---- Sparkline History (network gauges only) ----
 const SPARKLINE_MAX_POINTS = 60;
@@ -119,6 +120,10 @@ export function drawBarGauge(containerId, value, max, color) {
 }
 
 export function updateGauges(sample) {
+    // The row is display:none when gauges are turned off, and every bar and
+    // sparkline below would be drawn into it on each sample. Bail out instead.
+    if (!getSetting('gauges')) return;
+
     const cpuPct = sample.cpu?.total?.usage || 0;
     const ramPct = sample.mem?.used_pct || 0;
     const swapPct = sample.swap?.used_pct || 0;

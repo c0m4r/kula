@@ -141,5 +141,20 @@
     "container_legend": "कंटेनर रंग संकेत",
     "mem_used_limit": "उपयोग: {used} / सीमा: {limit} ({pct}%)",
     "mem_used_only": "उपयोग: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  मेमोरी: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  मेमोरी: {mem}",
+    "split_by_device": "डिवाइस के अनुसार विभाजित करें",
+    "customization": "अनुकूलन",
+    "appearance": "दिखावट",
+    "accessibility": "सुगम्यता",
+    "sticky_topbar": "स्थिर शीर्ष पट्टी",
+    "show_gauges": "गेज दिखाएँ",
+    "high_contrast": "उच्च कंट्रास्ट",
+    "text_size": "टेक्स्ट का आकार",
+    "text_smaller": "छोटा टेक्स्ट",
+    "text_bigger": "बड़ा टेक्स्ट",
+    "text_reset": "टेक्स्ट आकार रीसेट करें",
+    "reduce_motion": "गति कम करें",
+    "underline_links": "लिंक रेखांकित करें",
+    "focus_outline": "स्पष्ट फ़ोकस रूपरेखा",
+    "reset_defaults": "डिफ़ॉल्ट पर रीसेट करें"
 }

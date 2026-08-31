@@ -141,5 +141,20 @@
     "container_legend": "Кольорова легенда контейнерів",
     "mem_used_limit": "Використано: {used} / Ліміт: {limit} ({pct}%)",
     "mem_used_only": "Використано: {used}",
-    "cpu_mem_summary": "ЦП: {cpu}%  Пам’ять: {mem}"
+    "cpu_mem_summary": "ЦП: {cpu}%  Пам’ять: {mem}",
+    "split_by_device": "Розділити за пристроєм",
+    "customization": "Налаштування вигляду",
+    "appearance": "Вигляд",
+    "accessibility": "Доступність",
+    "sticky_topbar": "Закріплена верхня панель",
+    "show_gauges": "Показувати індикатори",
+    "high_contrast": "Висока контрастність",
+    "text_size": "Розмір тексту",
+    "text_smaller": "Менший текст",
+    "text_bigger": "Більший текст",
+    "text_reset": "Скинути розмір тексту",
+    "reduce_motion": "Зменшити анімацію",
+    "underline_links": "Підкреслювати посилання",
+    "focus_outline": "Помітна рамка фокуса",
+    "reset_defaults": "Скинути до типових"
 }

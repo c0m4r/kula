@@ -141,5 +141,20 @@
     "container_legend": "คำอธิบายสีคอนเทนเนอร์",
     "mem_used_limit": "ใช้ไป: {used} / ขีดจำกัด: {limit} ({pct}%)",
     "mem_used_only": "ใช้ไป: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  หน่วยความจำ: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  หน่วยความจำ: {mem}",
+    "split_by_device": "แยกตามอุปกรณ์",
+    "customization": "การปรับแต่ง",
+    "appearance": "รูปลักษณ์",
+    "accessibility": "การเข้าถึง",
+    "sticky_topbar": "ตรึงแถบด้านบน",
+    "show_gauges": "แสดงเกจ",
+    "high_contrast": "คอนทราสต์สูง",
+    "text_size": "ขนาดตัวอักษร",
+    "text_smaller": "ตัวอักษรเล็กลง",
+    "text_bigger": "ตัวอักษรใหญ่ขึ้น",
+    "text_reset": "รีเซ็ตขนาดตัวอักษร",
+    "reduce_motion": "ลดการเคลื่อนไหว",
+    "underline_links": "ขีดเส้นใต้ลิงก์",
+    "focus_outline": "เส้นขอบโฟกัสชัดเจน",
+    "reset_defaults": "รีเซ็ตเป็นค่าเริ่มต้น"
 }

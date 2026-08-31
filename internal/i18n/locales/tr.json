@@ -141,5 +141,20 @@
     "container_legend": "Konteyner renk açıklaması",
     "mem_used_limit": "Kullanılan: {used} / Sınır: {limit} ({pct}%)",
     "mem_used_only": "Kullanılan: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Bellek: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Bellek: {mem}",
+    "split_by_device": "Aygıta göre ayır",
+    "customization": "Özelleştirme",
+    "appearance": "Görünüm",
+    "accessibility": "Erişilebilirlik",
+    "sticky_topbar": "Sabit üst çubuk",
+    "show_gauges": "Göstergeleri göster",
+    "high_contrast": "Yüksek kontrast",
+    "text_size": "Metin boyutu",
+    "text_smaller": "Daha küçük metin",
+    "text_bigger": "Daha büyük metin",
+    "text_reset": "Metin boyutunu sıfırla",
+    "reduce_motion": "Hareketi azalt",
+    "underline_links": "Bağlantıların altını çiz",
+    "focus_outline": "Belirgin odak çerçevesi",
+    "reset_defaults": "Varsayılanlara sıfırla"
 }

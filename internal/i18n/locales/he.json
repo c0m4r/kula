@@ -141,5 +141,20 @@
     "container_legend": "מקרא צבעי מכולות",
     "mem_used_limit": "בשימוש: {used} / מגבלה: {limit} ({pct}%)",
     "mem_used_only": "בשימוש: {used}",
-    "cpu_mem_summary": "מעבד: {cpu}%  זיכרון: {mem}"
+    "cpu_mem_summary": "מעבד: {cpu}%  זיכרון: {mem}",
+    "split_by_device": "פיצול לפי התקן",
+    "customization": "התאמה אישית",
+    "appearance": "מראה",
+    "accessibility": "נגישות",
+    "sticky_topbar": "סרגל עליון קבוע",
+    "show_gauges": "הצג מדדים",
+    "high_contrast": "ניגודיות גבוהה",
+    "text_size": "גודל הטקסט",
+    "text_smaller": "טקסט קטן יותר",
+    "text_bigger": "טקסט גדול יותר",
+    "text_reset": "איפוס גודל הטקסט",
+    "reduce_motion": "הפחתת תנועה",
+    "underline_links": "קו תחתון לקישורים",
+    "focus_outline": "מסגרת מיקוד בולטת",
+    "reset_defaults": "איפוס לברירת המחדל"
 }

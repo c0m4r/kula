@@ -141,5 +141,20 @@
     "container_legend": "Chú giải màu container",
     "mem_used_limit": "Đã dùng: {used} / Giới hạn: {limit} ({pct}%)",
     "mem_used_only": "Đã dùng: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Bộ nhớ: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Bộ nhớ: {mem}",
+    "split_by_device": "Tách theo thiết bị",
+    "customization": "Tùy chỉnh",
+    "appearance": "Giao diện",
+    "accessibility": "Trợ năng",
+    "sticky_topbar": "Cố định thanh trên cùng",
+    "show_gauges": "Hiển thị đồng hồ đo",
+    "high_contrast": "Độ tương phản cao",
+    "text_size": "Cỡ chữ",
+    "text_smaller": "Chữ nhỏ hơn",
+    "text_bigger": "Chữ lớn hơn",
+    "text_reset": "Đặt lại cỡ chữ",
+    "reduce_motion": "Giảm chuyển động",
+    "underline_links": "Gạch chân liên kết",
+    "focus_outline": "Viền tiêu điểm rõ",
+    "reset_defaults": "Đặt lại mặc định"
 }

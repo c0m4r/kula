@@ -141,5 +141,20 @@
     "container_legend": "Legendă culori containere",
     "mem_used_limit": "Utilizat: {used} / Limită: {limit} ({pct}%)",
     "mem_used_only": "Utilizat: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}",
+    "split_by_device": "Împarte pe dispozitiv",
+    "customization": "Personalizare",
+    "appearance": "Aspect",
+    "accessibility": "Accesibilitate",
+    "sticky_topbar": "Bară superioară fixă",
+    "show_gauges": "Afișează indicatoarele",
+    "high_contrast": "Contrast ridicat",
+    "text_size": "Dimensiunea textului",
+    "text_smaller": "Text mai mic",
+    "text_bigger": "Text mai mare",
+    "text_reset": "Resetează dimensiunea textului",
+    "reduce_motion": "Reduce animațiile",
+    "underline_links": "Subliniază linkurile",
+    "focus_outline": "Contur de focalizare accentuat",
+    "reset_defaults": "Resetare la valori implicite"
 }

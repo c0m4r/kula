@@ -9,16 +9,23 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ## [0.19.0] - TBA
 
+### Added
+
+- customization menu for appearance and accessibility preferences
+
 ### Changed
 
 - TUI redesign
 - golang and deps updates
 - container metrics: one multi-series chart per metric type with app filter
+- dark theme readability (#45)
 
 ### Fixed
 
 - battery graph out of order after exiting focus mode
 - battery/PSU metrics not being written to storage
+- missing `split_by_device` translation
+- frosted top bar
 
 ## [0.18.8] - 2026-07-29
 

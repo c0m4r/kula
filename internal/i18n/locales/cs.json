@@ -141,5 +141,20 @@
     "container_legend": "Legenda barev kontejnerů",
     "mem_used_limit": "Použito: {used} / Limit: {limit} ({pct}%)",
     "mem_used_only": "Použito: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Pam: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Pam: {mem}",
+    "split_by_device": "Rozdělit podle zařízení",
+    "customization": "Přizpůsobení",
+    "appearance": "Vzhled",
+    "accessibility": "Přístupnost",
+    "sticky_topbar": "Připnutá horní lišta",
+    "show_gauges": "Zobrazit ukazatele",
+    "high_contrast": "Vysoký kontrast",
+    "text_size": "Velikost textu",
+    "text_smaller": "Menší text",
+    "text_bigger": "Větší text",
+    "text_reset": "Obnovit velikost textu",
+    "reduce_motion": "Omezit animace",
+    "underline_links": "Podtrhávat odkazy",
+    "focus_outline": "Výrazný obrys zaměření",
+    "reset_defaults": "Obnovit výchozí"
 }

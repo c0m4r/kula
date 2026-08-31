@@ -10,6 +10,10 @@
     font-display: swap;
 }
 
+/* Dark palette. The text ramp is kept at or above a 7:1 contrast ratio
+   against --bg-primary (WCAG AAA for body text) — the dashboard renders a lot
+   of small 0.75rem mono labels, and the previous slate tones sat around 4:1,
+   which read as grey-on-black. */
 :root {
     --bg-primary: #0a0e17;
     --bg-secondary: #111827;
@@ -18,8 +22,8 @@
     --border-color: rgba(55, 65, 81, 0.5);
     --border-glow: rgba(59, 130, 246, 0.3);
     --text-primary: #f1f5f9;
-    --text-secondary: #94a3b8;
-    --text-muted: #64748b;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
     --accent-blue: #3b82f6;
     --accent-cyan: #06b6d4;
     --accent-green: #10b981;
@@ -32,11 +36,18 @@
     --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.4);
     --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.1);
     --radius: 12px;
+    --radius-md: 10px;
     --radius-sm: 8px;
+    --bg-hover: rgba(148, 163, 184, 0.14);
     --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
     --chart-grid: rgba(55, 65, 81, 0.2);
-    --chart-text: #94a3b8;
+    --chart-text: #a9b8cd;
+    /* Read by theme.js and copied into the Chart.js defaults — the canvas
+       cannot resolve custom properties on its own. */
+    --chart-tooltip-bg: rgba(17, 24, 39, 0.9);
+    --chart-tooltip-text: #f1f5f9;
+    --chart-tooltip-border: rgba(55, 65, 81, 0.5);
 }
 
 body.light-mode {
@@ -48,12 +59,16 @@ body.light-mode {
     --border-glow: rgba(59, 130, 246, 0.2);
     --text-primary: #1e293b;
     --text-secondary: #475569;
-    --text-muted: #64748b;
+    --text-muted: #526078;
     --gauge-bg: rgba(226, 232, 240, 0.8);
+    --bg-hover: rgba(15, 23, 42, 0.07);
     --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.05);
     --shadow-glow: 0 0 15px rgba(59, 130, 246, 0.05);
     --chart-grid: rgba(203, 213, 225, 0.4);
-    --chart-text: #64748b;
+    --chart-text: #4b5768;
+    --chart-tooltip-bg: rgba(255, 255, 255, 0.95);
+    --chart-tooltip-text: #1e293b;
+    --chart-tooltip-border: rgba(203, 213, 225, 0.8);
 }
 
 body.light-mode .hostname,
@@ -207,8 +222,11 @@ body {
     position: sticky;
     top: 0;
     z-index: 100;
-    /* Opaque enough that chart content does not show through while stuck */
-    background: var(--bg-primary);
+    /* Deliberately unpainted: .header and .time-controls are translucent and
+       carry their own backdrop-filter, so scrolled content frosts through
+       them. An opaque background here would sit between the two and flatten
+       the glass into a solid slab. */
+    background: transparent;
 }
 
 /* ---- Header ---- */
@@ -737,7 +755,7 @@ body.light-mode .time-input {
 
 .chart-search-input::placeholder {
     color: var(--text-muted);
-    opacity: 0.7;
+    opacity: 0.85;
 }
 
 .chart-search-hidden {
@@ -1473,7 +1491,7 @@ body.light-mode .focus-selecting .chart-card::after {
     display: flex;
     align-items: center;
     gap: 0.35rem;
-    color: #c6c6c6;
+    color: var(--text-secondary);
     transition: opacity 0.2s;
 }
 
@@ -1491,7 +1509,7 @@ body.light-mode .focus-selecting .chart-card::after {
     font-weight: 700;
     font-family: var(--font-mono);
     color: var(--text-secondary);
-    opacity: 0.8;
+    opacity: 0.9;
 }
 
 .lang-menu {
@@ -1548,6 +1566,185 @@ body.light-mode .focus-selecting .chart-card::after {
     .header-lang {
         order: 10;
         margin: 0;
+    }
+}
+
+/* ---- Customization Menu ---- */
+.header-settings {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.settings-menu {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    /* In rem, not px: the menu holds the text-size stepper, so it has to grow
+       with the setting it controls instead of clipping its own contents. */
+    width: 18.5rem;
+    max-width: calc(100vw - 2rem);
+    max-height: 70vh;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    text-align: left;
+    animation: fadeInUp 0.15s ease-out;
+}
+
+.settings-menu-header {
+    padding: 0.6rem 1rem;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.settings-group {
+    padding: 0.4rem 0 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.settings-group-title {
+    padding: 0.35rem 1rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.settings-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 1rem;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.settings-row:hover {
+    background: var(--bg-hover);
+}
+
+.settings-row-stepper {
+    justify-content: space-between;
+    cursor: default;
+}
+
+.settings-row-stepper:hover {
+    background: none;
+}
+
+.settings-stepper {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    flex-shrink: 0;
+}
+
+.settings-stepper-btn,
+.settings-stepper-value {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 1rem;
+    line-height: 1;
+    /* Sized as a comfortable pointer and touch target: these are the controls
+       someone reaches for precisely when the text is too small to read. */
+    min-height: 2.1rem;
+    padding: 0.45rem 0;
+    width: 2.4rem;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.settings-stepper-btn:first-child {
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.settings-stepper-btn:last-child {
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    border-left: none;
+}
+
+.settings-stepper-value {
+    /* Wide enough for the four-character "300%" without reflowing the row. */
+    width: 4rem;
+    font-family: var(--font-mono);
+    border-left: none;
+    border-right: none;
+    color: var(--text-primary);
+}
+
+.settings-stepper-btn:hover:not(:disabled),
+.settings-stepper-value:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.settings-stepper-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+[dir="rtl"] .settings-stepper-btn:first-child {
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+[dir="rtl"] .settings-stepper-btn:last-child {
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    border-left: 1px solid var(--border-color);
+    border-right: none;
+}
+
+.settings-row input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    accent-color: var(--accent-blue);
+    cursor: pointer;
+}
+
+.settings-menu-footer {
+    padding: 0.6rem 1rem;
+}
+
+.settings-reset {
+    width: 100%;
+    padding: 0.4rem 0.6rem;
+    font-family: inherit;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.settings-reset:hover {
+    color: var(--text-primary);
+    border-color: var(--border-glow);
+    background: var(--bg-hover);
+}
+
+[dir="rtl"] .settings-menu {
+    right: auto;
+    left: 0;
+    text-align: right;
+}
+
+@media (max-width: 640px) {
+    .header-settings {
+        order: 9;
     }
 }
 
@@ -2043,4 +2240,146 @@ body.light-mode .ai-input {
         border-radius: var(--radius) var(--radius) 0 0;
         max-height: 80vh;
     }
+}
+
+/* ============================================================
+   Customization settings (customization menu + web.appearance /
+   web.accessibility config defaults).
+
+   Every class lives on <html>, not <body>: anchoring the palette overrides one
+   level above `body.light-mode` lets them win in both themes without depending
+   on where they sit in this file. Text size is not a class -- settings.js sets
+   the root font-size inline, and the rem-based layout scales with it.
+   ============================================================ */
+
+/* ---- Appearance ---- */
+/* Both appearance settings default to on, so the class is only ever present
+   when the visitor (or the config) turned the feature off. */
+html.no-sticky-topbar .sticky-topbar {
+    position: static;
+}
+
+html.no-gauges .gauges-row {
+    display: none !important;
+}
+
+/* ---- Accessibility: high contrast ---- */
+html.a11y-contrast body:not(.light-mode) {
+    --bg-primary: #000000;
+    --bg-secondary: #0b1220;
+    --bg-card: rgba(6, 10, 20, 0.96);
+    --bg-card-hover: rgba(12, 18, 32, 0.98);
+    --border-color: rgba(148, 163, 184, 0.9);
+    --border-glow: rgba(96, 165, 250, 0.8);
+    --text-primary: #ffffff;
+    --text-secondary: #e2e8f0;
+    --text-muted: #cbd5e1;
+    --accent-blue: #60a5fa;
+    --accent-cyan: #22d3ee;
+    --accent-green: #34d399;
+    --accent-yellow: #fbbf24;
+    --accent-orange: #fb923c;
+    --accent-red: #f87171;
+    --accent-purple: #a78bfa;
+    --accent-pink: #f472b6;
+    --gauge-bg: rgba(51, 65, 85, 0.8);
+    --bg-hover: rgba(226, 232, 240, 0.2);
+    --chart-grid: rgba(148, 163, 184, 0.45);
+    --chart-text: #e2e8f0;
+    --chart-tooltip-bg: rgba(0, 0, 0, 0.98);
+    --chart-tooltip-text: #ffffff;
+    --chart-tooltip-border: rgba(226, 232, 240, 0.9);
+}
+
+html.a11y-contrast body.light-mode {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f1f5f9;
+    --bg-card: rgba(255, 255, 255, 0.98);
+    --bg-card-hover: #ffffff;
+    --border-color: rgba(51, 65, 85, 0.85);
+    --border-glow: rgba(29, 78, 216, 0.7);
+    --text-primary: #000000;
+    --text-secondary: #1e293b;
+    --text-muted: #334155;
+    --accent-blue: #1d4ed8;
+    --accent-cyan: #0e7490;
+    --accent-green: #047857;
+    --accent-yellow: #a16207;
+    --accent-orange: #c2410c;
+    --accent-red: #b91c1c;
+    --accent-purple: #6d28d9;
+    --accent-pink: #be185d;
+    --gauge-bg: rgba(203, 213, 225, 0.9);
+    --bg-hover: rgba(15, 23, 42, 0.12);
+    --chart-grid: rgba(51, 65, 85, 0.35);
+    --chart-text: #1e293b;
+    --chart-tooltip-bg: #ffffff;
+    --chart-tooltip-text: #000000;
+    --chart-tooltip-border: rgba(15, 23, 42, 0.9);
+}
+
+/* The decorative radial gradients tint the flat background; drop them. */
+html.a11y-contrast body {
+    background-image: none;
+}
+
+/* A lot of chrome is dimmed to 0.5-0.75 opacity by default. Restore it. */
+html.a11y-contrast .btn-icon,
+html.a11y-contrast .btn-expand-chart,
+html.a11y-contrast .btn-ai-chart,
+html.a11y-contrast .btn-alert.no-alerts,
+html.a11y-contrast .container-app-filter-caret,
+html.a11y-contrast .lang-code,
+html.a11y-contrast .chart-search-input::placeholder,
+html.a11y-contrast .ai-input::placeholder {
+    opacity: 1;
+}
+
+/* ---- Accessibility: reduced motion ---- */
+/* Near-zero durations rather than `animation: none` so animationend still
+   fires for anything that waits on it. */
+html.a11y-reduce-motion {
+    scroll-behavior: auto;
+}
+
+html.a11y-reduce-motion *,
+html.a11y-reduce-motion *::before,
+html.a11y-reduce-motion *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+}
+
+/* Honour the OS-level preference too, whatever the setting says. */
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ---- Accessibility: underlined links ---- */
+/* Icon buttons are anchors too (the game link); underlining them looks broken
+   and adds nothing, since they are not prose links. */
+html.a11y-underline-links a:not(.btn-icon) {
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+
+/* ---- Accessibility: strong focus outline ---- */
+/* Inputs and selects across the dashboard set `outline: none`, which leaves
+   keyboard users with no focus indicator at all; !important is what it takes
+   to put one back. */
+html.a11y-focus-outline :focus-visible {
+    outline: 3px solid var(--accent-yellow) !important;
+    outline-offset: 2px;
 }

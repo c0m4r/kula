@@ -141,5 +141,20 @@
     "container_legend": "Legenda kolorów kontenerów",
     "mem_used_limit": "Użyte: {used} / Limit: {limit} ({pct}%)",
     "mem_used_only": "Użyte: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Pam: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Pam: {mem}",
+    "split_by_device": "Podziel według urządzenia",
+    "customization": "Personalizacja",
+    "appearance": "Wygląd",
+    "accessibility": "Dostępność",
+    "sticky_topbar": "Przypięty górny pasek",
+    "show_gauges": "Pokaż wskaźniki",
+    "high_contrast": "Wysoki kontrast",
+    "text_size": "Rozmiar tekstu",
+    "text_smaller": "Mniejszy tekst",
+    "text_bigger": "Większy tekst",
+    "text_reset": "Przywróć rozmiar tekstu",
+    "reduce_motion": "Ogranicz animacje",
+    "underline_links": "Podkreślaj odnośniki",
+    "focus_outline": "Wyraźny obrys fokusu",
+    "reset_defaults": "Przywróć domyślne"
 }

@@ -17,6 +17,8 @@ import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
 import { initSplitModule } from './split.js';
 import { initOllama } from './ollama.js';
 import { chartsGridForTitle, sectionHeadForTitle } from './section-utils.js';
+import { applySettings, applyServerSettings, initSettingsMenu } from './settings.js';
+import { updateGauges } from './gauges.js';
 
 function filterCharts(query) {
     // Collect all section-title + charts-grid pairs (titles may sit in .section-head)
@@ -71,6 +73,10 @@ async function init() {
     // Apply stored layout
     applyLayout();
 
+    // Apply the customization settings before the theme: high contrast swaps
+    // the CSS custom properties applyTheme() copies into the Chart.js defaults.
+    applySettings();
+
     // Apply stored theme
     applyTheme();
 
@@ -101,6 +107,7 @@ async function init() {
         state.aggDropdownOpen = list.classList.contains('open');
     });
     document.getElementById('btn-focus').addEventListener('click', toggleFocusMode);
+    initSettingsMenu();
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
     document.getElementById('btn-logout')?.addEventListener('click', handleLogout);
     document.getElementById('btn-custom-range').addEventListener('click', toggleCustomTimePicker);
@@ -166,6 +173,8 @@ async function init() {
     // We hook into the kula-config-ready event dispatched by auth.js.
     document.addEventListener('kula-config-ready', (e) => {
         initOllama(e.detail || {});
+        // Server-side appearance/accessibility defaults; stored overrides win.
+        applyServerSettings(e.detail || {});
     });
 
     // Close dropdowns when clicking outside
@@ -199,6 +208,13 @@ async function init() {
             filterCharts(query);
         });
     }
+
+    // Re-enabling the gauge row leaves it holding whatever was last painted
+    // before it was hidden; repaint it from the latest sample right away
+    // instead of waiting for the next one to arrive.
+    document.addEventListener('kula-settings-changed', () => {
+        if (state.lastSample) updateGauges(state.lastSample);
+    });
 
     document.addEventListener('kula-sync-pause', syncPauseState);
     document.addEventListener('kula-i18n-changed', updateAllCharts);

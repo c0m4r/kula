@@ -141,5 +141,20 @@
     "container_legend": "Kleurlegenda containers",
     "mem_used_limit": "Gebruikt: {used} / Limiet: {limit} ({pct}%)",
     "mem_used_only": "Gebruikt: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Geh: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Geh: {mem}",
+    "split_by_device": "Splitsen per apparaat",
+    "customization": "Aanpassing",
+    "appearance": "Weergave",
+    "accessibility": "Toegankelijkheid",
+    "sticky_topbar": "Vaste bovenbalk",
+    "show_gauges": "Meters tonen",
+    "high_contrast": "Hoog contrast",
+    "text_size": "Tekstgrootte",
+    "text_smaller": "Kleinere tekst",
+    "text_bigger": "Grotere tekst",
+    "text_reset": "Tekstgrootte herstellen",
+    "reduce_motion": "Beweging beperken",
+    "underline_links": "Links onderstrepen",
+    "focus_outline": "Duidelijke focusrand",
+    "reset_defaults": "Standaardwaarden herstellen"
 }

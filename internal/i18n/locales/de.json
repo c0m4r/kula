@@ -141,5 +141,20 @@
     "container_legend": "Farblegende der Container",
     "mem_used_limit": "Belegt: {used} / Limit: {limit} ({pct}%)",
     "mem_used_only": "Belegt: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  RAM: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  RAM: {mem}",
+    "split_by_device": "Nach Gerät aufteilen",
+    "customization": "Anpassung",
+    "appearance": "Darstellung",
+    "accessibility": "Barrierefreiheit",
+    "sticky_topbar": "Fixierte Kopfleiste",
+    "show_gauges": "Anzeigen einblenden",
+    "high_contrast": "Hoher Kontrast",
+    "text_size": "Textgröße",
+    "text_smaller": "Kleinerer Text",
+    "text_bigger": "Größerer Text",
+    "text_reset": "Textgröße zurücksetzen",
+    "reduce_motion": "Bewegung reduzieren",
+    "underline_links": "Links unterstreichen",
+    "focus_outline": "Starker Fokusrahmen",
+    "reset_defaults": "Auf Standard zurücksetzen"
 }

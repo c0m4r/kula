@@ -141,5 +141,20 @@
     "container_legend": "Färglegend för containrar",
     "mem_used_limit": "Använt: {used} / Gräns: {limit} ({pct}%)",
     "mem_used_only": "Använt: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Minne: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Minne: {mem}",
+    "split_by_device": "Dela upp per enhet",
+    "customization": "Anpassning",
+    "appearance": "Utseende",
+    "accessibility": "Tillgänglighet",
+    "sticky_topbar": "Fast överkant",
+    "show_gauges": "Visa mätare",
+    "high_contrast": "Hög kontrast",
+    "text_size": "Textstorlek",
+    "text_smaller": "Mindre text",
+    "text_bigger": "Större text",
+    "text_reset": "Återställ textstorlek",
+    "reduce_motion": "Minska rörelse",
+    "underline_links": "Understryk länkar",
+    "focus_outline": "Tydlig fokusram",
+    "reset_defaults": "Återställ till standard"
 }

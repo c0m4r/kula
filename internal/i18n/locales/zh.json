@@ -141,5 +141,20 @@
     "container_legend": "容器颜色图例",
     "mem_used_limit": "已用: {used} / 上限: {limit} ({pct}%)",
     "mem_used_only": "已用: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  内存: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  内存: {mem}",
+    "split_by_device": "按设备拆分",
+    "customization": "个性化",
+    "appearance": "外观",
+    "accessibility": "无障碍",
+    "sticky_topbar": "固定顶栏",
+    "show_gauges": "显示仪表",
+    "high_contrast": "高对比度",
+    "text_size": "文字大小",
+    "text_smaller": "缩小文字",
+    "text_bigger": "放大文字",
+    "text_reset": "重置文字大小",
+    "reduce_motion": "减少动效",
+    "underline_links": "链接加下划线",
+    "focus_outline": "明显焦点轮廓",
+    "reset_defaults": "恢复默认"
 }

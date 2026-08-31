@@ -141,5 +141,20 @@
     "container_legend": "مفتاح ألوان الحاويات",
     "mem_used_limit": "المستخدم: {used} / الحد: {limit} ({pct}%)",
     "mem_used_only": "المستخدم: {used}",
-    "cpu_mem_summary": "المعالج: {cpu}%  الذاكرة: {mem}"
+    "cpu_mem_summary": "المعالج: {cpu}%  الذاكرة: {mem}",
+    "split_by_device": "تقسيم حسب الجهاز",
+    "customization": "تخصيص",
+    "appearance": "المظهر",
+    "accessibility": "إمكانية الوصول",
+    "sticky_topbar": "شريط علوي ثابت",
+    "show_gauges": "إظهار المقاييس",
+    "high_contrast": "تباين عالٍ",
+    "text_size": "حجم النص",
+    "text_smaller": "نص أصغر",
+    "text_bigger": "نص أكبر",
+    "text_reset": "إعادة تعيين حجم النص",
+    "reduce_motion": "تقليل الحركة",
+    "underline_links": "تسطير الروابط",
+    "focus_outline": "إطار تركيز واضح",
+    "reset_defaults": "إعادة التعيين إلى الافتراضي"
 }

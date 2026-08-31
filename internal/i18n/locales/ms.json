@@ -141,5 +141,20 @@
     "container_legend": "Legenda warna kontena",
     "mem_used_limit": "Digunakan: {used} / Had: {limit} ({pct}%)",
     "mem_used_only": "Digunakan: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}",
+    "split_by_device": "Pisahkan mengikut peranti",
+    "customization": "Penyesuaian",
+    "appearance": "Penampilan",
+    "accessibility": "Kebolehcapaian",
+    "sticky_topbar": "Bar atas melekat",
+    "show_gauges": "Tunjukkan tolok",
+    "high_contrast": "Kontras tinggi",
+    "text_size": "Saiz teks",
+    "text_smaller": "Teks lebih kecil",
+    "text_bigger": "Teks lebih besar",
+    "text_reset": "Set semula saiz teks",
+    "reduce_motion": "Kurangkan gerakan",
+    "underline_links": "Garis bawah pautan",
+    "focus_outline": "Garis fokus tebal",
+    "reset_defaults": "Set semula kepada lalai"
 }

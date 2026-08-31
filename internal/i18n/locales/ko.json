@@ -141,5 +141,20 @@
     "container_legend": "컨테이너 색상 범례",
     "mem_used_limit": "사용: {used} / 한도: {limit} ({pct}%)",
     "mem_used_only": "사용: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  메모리: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  메모리: {mem}",
+    "split_by_device": "장치별로 분할",
+    "customization": "사용자 지정",
+    "appearance": "모양",
+    "accessibility": "접근성",
+    "sticky_topbar": "상단 바 고정",
+    "show_gauges": "게이지 표시",
+    "high_contrast": "고대비",
+    "text_size": "텍스트 크기",
+    "text_smaller": "작은 텍스트",
+    "text_bigger": "큰 텍스트",
+    "text_reset": "텍스트 크기 초기화",
+    "reduce_motion": "모션 줄이기",
+    "underline_links": "링크 밑줄",
+    "focus_outline": "강한 포커스 윤곽선",
+    "reset_defaults": "기본값으로 초기화"
 }

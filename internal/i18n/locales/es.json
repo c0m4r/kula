@@ -141,5 +141,20 @@
     "container_legend": "Leyenda de colores de contenedores",
     "mem_used_limit": "Usado: {used} / Límite: {limit} ({pct}%)",
     "mem_used_only": "Usado: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}",
+    "split_by_device": "Dividir por dispositivo",
+    "customization": "Personalización",
+    "appearance": "Apariencia",
+    "accessibility": "Accesibilidad",
+    "sticky_topbar": "Barra superior fija",
+    "show_gauges": "Mostrar indicadores",
+    "high_contrast": "Alto contraste",
+    "text_size": "Tamaño del texto",
+    "text_smaller": "Texto más pequeño",
+    "text_bigger": "Texto más grande",
+    "text_reset": "Restablecer tamaño del texto",
+    "reduce_motion": "Reducir movimiento",
+    "underline_links": "Subrayar enlaces",
+    "focus_outline": "Contorno de foco marcado",
+    "reset_defaults": "Restablecer valores predeterminados"
 }

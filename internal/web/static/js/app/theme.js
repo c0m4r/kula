@@ -11,16 +11,25 @@ function resolveTheme() {
     return state.theme;
 }
 
+// Chart.js paints on a canvas, so it can't use CSS custom properties directly.
+// Reading them here keeps the canvas in step with the stylesheet — including
+// the high-contrast overrides from the customization menu — instead of
+// duplicating the palette in JS.
+function cssVar(name, fallback) {
+    const value = getComputedStyle(document.body).getPropertyValue(name).trim();
+    return value || fallback;
+}
+
 export function applyTheme() {
     const isLight = resolveTheme() === 'light';
     document.body.classList.toggle('light-mode', isLight);
 
     // Update Chart.js defaults for future charts (if any re-init)
-    const gridColor = isLight ? 'rgba(203, 213, 225, 0.4)' : 'rgba(55, 65, 81, 0.2)';
-    const textColor = isLight ? '#64748b' : '#94a3b8';
-    const tooltipBg = isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(17, 24, 39, 0.9)';
-    const tooltipText = isLight ? '#1e293b' : '#f1f5f9';
-    const tooltipBorder = isLight ? 'rgba(203, 213, 225, 0.8)' : 'rgba(55, 65, 81, 0.5)';
+    const gridColor = cssVar('--chart-grid', isLight ? 'rgba(203, 213, 225, 0.4)' : 'rgba(55, 65, 81, 0.2)');
+    const textColor = cssVar('--chart-text', isLight ? '#64748b' : '#94a3b8');
+    const tooltipBg = cssVar('--chart-tooltip-bg', isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(17, 24, 39, 0.9)');
+    const tooltipText = cssVar('--chart-tooltip-text', isLight ? '#1e293b' : '#f1f5f9');
+    const tooltipBorder = cssVar('--chart-tooltip-border', isLight ? 'rgba(203, 213, 225, 0.8)' : 'rgba(55, 65, 81, 0.5)');
 
     Chart.defaults.color = textColor;
     Chart.defaults.borderColor = gridColor;

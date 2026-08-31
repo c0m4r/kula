@@ -144,6 +144,37 @@ web:
   # Default aggregation for historical data: avg, min, or max (default: max)
   default_aggregation: max
  
+  # Default look of the web dashboard.
+  # These are defaults only: each visitor can override them for their own
+  # browser from the customization menu (gear icon) in the dashboard header,
+  # and the choice is remembered in that browser. Changing a value here moves
+  # everyone who has not overridden it.
+  appearance:
+    # Keep the header and the time/aggregation controls pinned to the top of
+    # the window while scrolling (default: true)
+    sticky_topbar: true
+    # Show the CPU/RAM/SWAP/load/network gauge row above the charts
+    # (default: true)
+    gauges: true
+
+  # Default accessibility options for the web dashboard.
+  # Also overridable per browser from the customization menu.
+  accessibility:
+    # Raise text, border and chart-grid contrast in both themes (default: false)
+    high_contrast: false
+    # Disable transitions, animations and smooth scrolling (default: false).
+    # Applied regardless of this setting when the browser reports
+    # prefers-reduced-motion.
+    reduce_motion: false
+    # Root font size as a percentage of the default, scaling the whole layout.
+    # Allowed range 50-300; the customization menu steps by 10 (default: 100)
+    text_size: 100
+    # Underline links so they do not rely on color alone (default: false)
+    underline_links: false
+    # Draw a thick outline around the focused element for keyboard navigation
+    # (default: false)
+    focus_outline: false
+
   # Language settings for the web dashboard
   lang:
     # Default language ISO code (default: en)

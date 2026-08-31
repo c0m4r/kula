@@ -141,5 +141,20 @@
     "container_legend": "コンテナの色凡例",
     "mem_used_limit": "使用中: {used} / 上限: {limit} ({pct}%)",
     "mem_used_only": "使用中: {used}",
-    "cpu_mem_summary": "CPU: {cpu}%  メモリ: {mem}"
+    "cpu_mem_summary": "CPU: {cpu}%  メモリ: {mem}",
+    "split_by_device": "デバイスごとに分割",
+    "customization": "カスタマイズ",
+    "appearance": "外観",
+    "accessibility": "アクセシビリティ",
+    "sticky_topbar": "上部バーを固定",
+    "show_gauges": "ゲージを表示",
+    "high_contrast": "ハイコントラスト",
+    "text_size": "文字サイズ",
+    "text_smaller": "文字を小さく",
+    "text_bigger": "文字を大きく",
+    "text_reset": "文字サイズをリセット",
+    "reduce_motion": "動きを減らす",
+    "underline_links": "リンクに下線",
+    "focus_outline": "フォーカス枠を強調",
+    "reset_defaults": "既定値に戻す"
 }

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -375,6 +376,66 @@ func TestWebContentAccessLogDisabled(t *testing.T) {
 
 	if strings.Contains(buf.String(), "[WEB]") {
 		t.Errorf("expected no access log when logging disabled, got: %q", buf.String())
+	}
+}
+
+// The customization menu reads its server-side defaults from /api/config, so
+// the appearance and accessibility sections must survive the round trip --
+// including the `false` values, which are the ones that turn a feature off.
+func TestHandleConfigExposesUISettings(t *testing.T) {
+	cfg := config.WebConfig{
+		Appearance: config.AppearanceConfig{StickyTopbar: false, Gauges: true},
+		Accessibility: config.AccessibilityConfig{
+			HighContrast: true,
+			TextSize:     120,
+		},
+	}
+	c := collector.New(config.GlobalConfig{}, config.CollectionConfig{}, config.ApplicationsConfig{}, t.TempDir())
+	s := NewServer(cfg, config.GlobalConfig{}, c, nil, t.TempDir(), config.OllamaConfig{})
+
+	rec := httptest.NewRecorder()
+	http.HandlerFunc(s.handleConfig).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	var got struct {
+		Appearance    map[string]bool `json:"appearance"`
+		Accessibility struct {
+			HighContrast   bool `json:"high_contrast"`
+			ReduceMotion   bool `json:"reduce_motion"`
+			UnderlineLinks bool `json:"underline_links"`
+			FocusOutline   bool `json:"focus_outline"`
+			TextSize       int  `json:"text_size"`
+			TextSizeRange  struct {
+				Min  int `json:"min"`
+				Max  int `json:"max"`
+				Step int `json:"step"`
+			} `json:"text_size_range"`
+		} `json:"accessibility"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding /api/config: %v", err)
+	}
+
+	wantAppearance := map[string]bool{"sticky_topbar": false, "gauges": true}
+	if !reflect.DeepEqual(got.Appearance, wantAppearance) {
+		t.Errorf("appearance = %v, want %v", got.Appearance, wantAppearance)
+	}
+	a := got.Accessibility
+	if !a.HighContrast || a.ReduceMotion || a.UnderlineLinks || a.FocusOutline {
+		t.Errorf("accessibility toggles = %+v, want only high_contrast on", a)
+	}
+	if a.TextSize != 120 {
+		t.Errorf("text_size = %d, want 120", a.TextSize)
+	}
+	// The menu's stepper clamps to the range the loader enforces, so the two
+	// must be served from the same constants.
+	if a.TextSizeRange.Min != config.MinTextSize || a.TextSizeRange.Max != config.MaxTextSize ||
+		a.TextSizeRange.Step != config.TextSizeStep {
+		t.Errorf("text_size_range = %+v, want %d..%d step %d", a.TextSizeRange,
+			config.MinTextSize, config.MaxTextSize, config.TextSizeStep)
 	}
 }
 
