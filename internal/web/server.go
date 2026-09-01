@@ -996,11 +996,29 @@ func (h *wsHub) run() {
 		select {
 		case client := <-h.regCh:
 			h.mu.Lock()
-			h.clients[client] = true
+			// Never resurrect a client that has already been unregistered.
+			// regCh and unregCh are distinct buffered channels and select
+			// picks at random among ready cases, so an unregister can be
+			// processed before the matching register. Re-adding a client whose
+			// sendCh is closed would hand broadcast a closed channel to send on.
+			if !client.closed {
+				h.clients[client] = true
+			}
 			h.mu.Unlock()
 		case client := <-h.unregCh:
 			h.mu.Lock()
+			// The hub owns sendCh's lifetime. Closing it here, under the same
+			// lock that removes the client from the map, guarantees no
+			// broadcast can be mid-iteration holding a reference to it.
+			// Closing it on the connection goroutine instead raced broadcast's
+			// `client.sendCh <- data` and panicked with "send on closed
+			// channel" — a send on a closed channel panics, it does not fall
+			// through to the select's default branch.
 			delete(h.clients, client)
+			if !client.closed {
+				client.closed = true
+				close(client.sendCh)
+			}
 			h.mu.Unlock()
 		}
 	}

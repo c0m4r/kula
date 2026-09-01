@@ -41,6 +41,11 @@ configuration.
 
 **`internal/web/websocket.go:132` → `internal/web/server.go:1027`**
 
+> **Status: fixed in the working tree.** `sendCh`'s lifetime moved into `wsHub.run`, per
+> the recommendation below. Guarded by `TestHubUnregisterDoesNotRaceBroadcast`, which was
+> confirmed to reproduce this exact panic against the pre-fix code by driving real
+> connections through `handleWebSocket`.
+
 When a WebSocket client goes away, `unregister()` pushes the client onto `hub.unregCh` —
 a *buffered* channel drained asynchronously by `hub.run()` — and then immediately closes
 `client.sendCh`. It does not wait for the hub to actually remove the client from the map.

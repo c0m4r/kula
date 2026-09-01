@@ -17,6 +17,12 @@ type wsClient struct {
 	sendCh chan []byte
 	paused bool
 	mu     sync.Mutex
+
+	// closed reports whether sendCh has been closed. It is guarded by the
+	// hub's mutex, not by mu: the hub owns sendCh's lifetime so that the close
+	// and the removal from the clients map happen under one lock, out of reach
+	// of a concurrent broadcast. See wsHub.run.
+	closed bool
 }
 
 // newUpgrader builds a websocket.Upgrader whose CheckOrigin closure reads
@@ -128,8 +134,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				delete(s.wsIPCounts, ip)
 			}
 			s.wsMu.Unlock()
+			// Hand the client to the hub and let it close sendCh; closing it
+			// here would race a broadcast that is still iterating the clients
+			// map. The write pump below still learns of the close through the
+			// `!ok` receive, just via the hub.
 			s.hub.unregCh <- client
-			close(client.sendCh)
 		})
 	}
 
