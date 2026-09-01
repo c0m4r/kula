@@ -281,7 +281,15 @@ func (cc *containerCollector) collectViaSocket(elapsed float64) []ContainerStats
 			continue
 		}
 
-		name := c.ID[:12]
+		// The socket may be a proxy or shim rather than a real daemon, so the
+		// ID length is not guaranteed to be the usual 64 hex characters.
+		if c.ID == "" {
+			continue
+		}
+		name := c.ID
+		if len(name) > 12 {
+			name = name[:12]
+		}
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}

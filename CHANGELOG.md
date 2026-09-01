@@ -12,6 +12,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Fixed
 
 - WebSocket disconnect races the metric broadcast and panics the process
+- Container ID shorter than 12 bytes panics the collector goroutine
 
 ## [0.19.0] - 2026-08-31
 

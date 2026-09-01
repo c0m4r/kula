@@ -312,3 +312,49 @@ func TestCollectViaCgroupsDiscoversQuadlets(t *testing.T) {
 		t.Errorf("got %d containers, want 3: %+v", len(stats), stats)
 	}
 }
+
+// A socket proxy or shim can return IDs that are not the usual 64 hex
+// characters; short or empty ones must not panic the collector goroutine.
+func TestCollectViaSocketShortContainerID(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "short_id.sock")
+
+	listener, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("Failed to listen on unix socket: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/containers/json", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `[`+
+				`{"Id":"abc","Names":[],"State":"running"},`+
+				`{"Id":"","Names":[],"State":"running"}`+
+				`]`)
+		})
+		server := http.Server{Handler: mux}
+		_ = server.Serve(listener)
+	}()
+
+	cc := newContainerCollector(ContainersCollectorConfig{Enabled: true, SocketPath: sockPath})
+	cc.socket = sockPath
+	cc.mode = containerModeSocket
+
+	var stats []ContainerStats
+	for i := 0; i < 10; i++ {
+		cc.collect() // must not panic
+		stats = cc.Latest()
+		if len(stats) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if len(stats) != 1 {
+		t.Fatalf("got %d stats, want 1 (the empty ID must be skipped)", len(stats))
+	}
+	if stats[0].Name != "abc" {
+		t.Errorf("Name = %q, want %q", stats[0].Name, "abc")
+	}
+}
