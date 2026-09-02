@@ -64,6 +64,17 @@ func makeSampleWithCPU(ts time.Time, usage float64) *collector.Sample {
 	return s
 }
 
+func writeTierSample(t *testing.T, tier *Tier, ts time.Time, dur time.Duration, usage float64) {
+	t.Helper()
+	if err := tier.Write(&AggregatedSample{
+		Timestamp: ts,
+		Duration:  dur,
+		Data:      makeSampleWithCPU(ts, usage),
+	}); err != nil {
+		t.Fatalf("Tier.Write(%s): %v", ts.Format(time.RFC3339), err)
+	}
+}
+
 // ---- Basic CRUD -------------------------------------------------------------
 
 func TestNewStore(t *testing.T) {
@@ -539,9 +550,11 @@ func TestQueryRangeWithMetaEmptyStore(t *testing.T) {
 	store := newTestStore(t)
 	defer func() { _ = store.Close() }()
 
+	from := time.Now().Add(-time.Minute)
+	to := time.Now()
 	result, err := store.QueryRangeWithMeta(
-		time.Now().Add(-time.Minute),
-		time.Now(),
+		from,
+		to,
 		450,
 	)
 	if err != nil {
@@ -549,6 +562,193 @@ func TestQueryRangeWithMetaEmptyStore(t *testing.T) {
 	}
 	if len(result.Samples) != 0 {
 		t.Errorf("expected 0 samples, got %d", len(result.Samples))
+	}
+	if result.Complete {
+		t.Error("empty result must not report complete coverage")
+	}
+	if result.ActualFrom != nil || result.ActualTo != nil {
+		t.Errorf("empty result has actual bounds: from=%v to=%v", result.ActualFrom, result.ActualTo)
+	}
+	if !result.RequestedFrom.Equal(from) || !result.RequestedTo.Equal(to) {
+		t.Errorf("empty result lost requested bounds: from=%s to=%s", result.RequestedFrom, result.RequestedTo)
+	}
+}
+
+func TestQueryRangeWithMetaFallsBackToFullyCoveringTier(t *testing.T) {
+	store := newMultiTierStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	from := base
+	to := base.Add(10 * time.Minute)
+
+	// The raw tier overlaps only the newest half of the requested window.
+	writeTierSample(t, store.tiers[0], base.Add(5*time.Minute), time.Second, 50)
+	writeTierSample(t, store.tiers[0], to, time.Second, 100)
+
+	// The minute tier covers the complete window. Its first timestamp is one
+	// bucket after from because aggregate timestamps mark the bucket end.
+	for i := 1; i <= 10; i++ {
+		ts := base.Add(time.Duration(i) * time.Minute)
+		writeTierSample(t, store.tiers[1], ts, time.Minute, float64(i))
+	}
+
+	result, err := store.QueryRangeWithMeta(from, to, 1000)
+	if err != nil {
+		t.Fatalf("QueryRangeWithMeta: %v", err)
+	}
+	if result.Tier != 1 {
+		t.Fatalf("Tier = %d, want 1 (tier 0 only partially covers the range)", result.Tier)
+	}
+	if !result.Complete {
+		t.Fatal("Complete = false, want true for the fully covering minute tier")
+	}
+	if len(result.Samples) != 10 {
+		t.Fatalf("samples = %d, want 10 from the fully covering minute tier", len(result.Samples))
+	}
+	if !result.RequestedFrom.Equal(from) || !result.RequestedTo.Equal(to) {
+		t.Fatalf("requested bounds = [%s, %s], want [%s, %s]",
+			result.RequestedFrom, result.RequestedTo, from, to)
+	}
+	if result.ActualFrom == nil || !result.ActualFrom.Equal(from) {
+		t.Fatalf("ActualFrom = %v, want %s", result.ActualFrom, from)
+	}
+	if result.ActualTo == nil || !result.ActualTo.Equal(to) {
+		t.Fatalf("ActualTo = %v, want %s", result.ActualTo, to)
+	}
+}
+
+func TestQueryRangeWithMetaReportsPartialCoverage(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	from := base
+	to := base.Add(10 * time.Minute)
+	firstSample := base.Add(5 * time.Minute)
+	writeTierSample(t, store.tiers[0], firstSample, time.Second, 50)
+	writeTierSample(t, store.tiers[0], to, time.Second, 100)
+
+	result, err := store.QueryRangeWithMeta(from, to, 1000)
+	if err != nil {
+		t.Fatalf("QueryRangeWithMeta: %v", err)
+	}
+	if result.Complete {
+		t.Fatal("Complete = true for a tier missing the first half of the range")
+	}
+	if len(result.Samples) != 2 {
+		t.Fatalf("samples = %d, want the two retained partial samples", len(result.Samples))
+	}
+	if result.ActualFrom == nil || !result.ActualFrom.Equal(firstSample.Add(-time.Second)) {
+		t.Fatalf("ActualFrom = %v, want %s", result.ActualFrom, firstSample.Add(-time.Second))
+	}
+	if result.ActualTo == nil || !result.ActualTo.Equal(to) {
+		t.Fatalf("ActualTo = %v, want %s", result.ActualTo, to)
+	}
+}
+
+func TestQueryRangeWithMetaAllowsCoarseLiveEdgeLag(t *testing.T) {
+	store := newMultiTierStore(t)
+	defer func() { _ = store.Close() }()
+
+	to := time.Date(2026, 1, 1, 6, 0, 0, 0, time.UTC)
+	from := to.Add(-6 * time.Hour)
+
+	// The raw tier has only the newest ten minutes, so it cannot serve the full
+	// request even though it reaches the live edge.
+	writeTierSample(t, store.tiers[0], to.Add(-10*time.Minute), time.Second, 50)
+	writeTierSample(t, store.tiers[0], to, time.Second, 100)
+
+	// The minute tier covers the retention edge, while its most recent completed
+	// rollup is 65 seconds behind the requested live edge. This is normal after
+	// restart or from accumulated collection jitter and must fit the two-bucket
+	// right-edge tolerance.
+	for i := 1; i <= 358; i++ {
+		ts := from.Add(time.Duration(i) * time.Minute)
+		writeTierSample(t, store.tiers[1], ts, time.Minute, float64(i))
+	}
+	writeTierSample(t, store.tiers[1], to.Add(-65*time.Second), time.Minute, 359)
+
+	result, err := store.QueryRangeWithMeta(from, to, 450)
+	if err != nil {
+		t.Fatalf("QueryRangeWithMeta: %v", err)
+	}
+	if result.Tier != 1 {
+		t.Fatalf("Tier = %d, want 1", result.Tier)
+	}
+	if !result.Complete {
+		t.Fatal("Complete = false for an expected 65-second minute-tier live-edge lag")
+	}
+}
+
+func TestQueryRangeWithMetaStrictPointBound(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const total = 201
+	for i := 0; i < total; i++ {
+		if err := store.WriteSample(makeSampleWithCPU(
+			base.Add(time.Duration(i)*time.Second),
+			float64(i),
+		)); err != nil {
+			t.Fatalf("WriteSample(%d): %v", i, err)
+		}
+	}
+
+	const target = 100
+	for _, sourceCount := range []int{target, target + 1, 150, 151, 199, 200, total} {
+		result, err := store.QueryRangeWithMeta(
+			base,
+			base.Add(time.Duration(sourceCount-1)*time.Second),
+			target,
+		)
+		if err != nil {
+			t.Fatalf("sourceCount=%d: QueryRangeWithMeta: %v", sourceCount, err)
+		}
+		got := len(result.Samples)
+		if got == 0 {
+			t.Fatalf("sourceCount=%d: query returned no samples", sourceCount)
+		}
+		if got > target {
+			t.Errorf("sourceCount=%d: returned %d samples, want at most %d", sourceCount, got, target)
+		}
+		if sourceCount <= target && got != sourceCount {
+			t.Errorf("sourceCount=%d: returned %d samples without requiring downsampling", sourceCount, got)
+		}
+		wantLast := base.Add(time.Duration(sourceCount-1) * time.Second)
+		if last := result.Samples[got-1].Timestamp; !last.Equal(wantLast) {
+			t.Errorf("sourceCount=%d: last timestamp = %s, want %s", sourceCount, last, wantLast)
+		}
+	}
+}
+
+func TestQueryRangeWithMetaDataLessDownsampleIsEmpty(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		if err := store.tiers[0].Write(&AggregatedSample{
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			Duration:  time.Second,
+		}); err != nil {
+			t.Fatalf("Tier.Write(%d): %v", i, err)
+		}
+	}
+
+	result, err := store.QueryRangeWithMeta(base, base.Add(2*time.Second), 1)
+	if err != nil {
+		t.Fatalf("QueryRangeWithMeta: %v", err)
+	}
+	if len(result.Samples) != 0 {
+		t.Fatalf("samples = %d, want 0 for Data-less records", len(result.Samples))
+	}
+	if result.ActualFrom != nil || result.ActualTo != nil {
+		t.Fatalf("Data-less result has actual bounds: from=%v to=%v", result.ActualFrom, result.ActualTo)
+	}
+	if result.Complete {
+		t.Fatal("Data-less result must not report complete coverage")
 	}
 }
 
@@ -916,12 +1116,12 @@ func BenchmarkAggregateSamples(b *testing.B) {
 }
 
 // BenchmarkDownsampling benchmarks the inline downsampler in QueryRangeWithMeta
-// that kicks in when a query returns >800 samples.
+// that runs whenever a query returns more than its requested point budget.
 func BenchmarkDownsampling(b *testing.B) {
 	store := newBenchStore(b, "100MB", 100*1024*1024)
 	defer func() { _ = store.Close() }()
 
-	// Seed with 3600 samples (1 hour at 1s res) — downsampling kicks in at >800.
+	// Seed with 3600 samples (1 hour at 1s res) for a 450-point query.
 	n := 3600
 	base := seedStore(b, store, n)
 	from := base
@@ -985,6 +1185,53 @@ func TestQueryCacheHit(t *testing.T) {
 	store.queryCacheMu.Unlock()
 	if cacheSize == 0 {
 		t.Error("queryCache is empty after two identical queries — cache not populated")
+	}
+}
+
+func TestQueryCacheCopiesActualBounds(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+	store.queryCacheTTL = time.Minute
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		if err := store.WriteSample(makeSample(base.Add(time.Duration(i) * time.Second))); err != nil {
+			t.Fatalf("WriteSample(%d): %v", i, err)
+		}
+	}
+
+	from := base.Add(-time.Second)
+	to := base.Add(10 * time.Second)
+	first, err := store.QueryRangeWithMeta(from, to, 100)
+	if err != nil {
+		t.Fatalf("first QueryRangeWithMeta: %v", err)
+	}
+	if first.ActualFrom == nil || first.ActualTo == nil {
+		t.Fatalf("first result has nil bounds: from=%v to=%v", first.ActualFrom, first.ActualTo)
+	}
+	originalFrom := *first.ActualFrom
+	originalTo := *first.ActualTo
+	*first.ActualFrom = first.ActualFrom.Add(time.Hour)
+	*first.ActualTo = first.ActualTo.Add(time.Hour)
+
+	second, err := store.QueryRangeWithMeta(from, to, 100)
+	if err != nil {
+		t.Fatalf("second QueryRangeWithMeta: %v", err)
+	}
+	if second.ActualFrom == nil || !second.ActualFrom.Equal(originalFrom) {
+		t.Fatalf("cached ActualFrom = %v after caller mutation, want %s", second.ActualFrom, originalFrom)
+	}
+	if second.ActualTo == nil || !second.ActualTo.Equal(originalTo) {
+		t.Fatalf("cached ActualTo = %v after caller mutation, want %s", second.ActualTo, originalTo)
+	}
+
+	*second.ActualFrom = second.ActualFrom.Add(time.Hour)
+	third, err := store.QueryRangeWithMeta(from, to, 100)
+	if err != nil {
+		t.Fatalf("third QueryRangeWithMeta: %v", err)
+	}
+	if third.ActualFrom == nil || !third.ActualFrom.Equal(originalFrom) {
+		t.Fatalf("cache hits share ActualFrom: third=%v want=%s", third.ActualFrom, originalFrom)
 	}
 }
 
@@ -1366,8 +1613,8 @@ func TestAggregatePSUMissingSupply(t *testing.T) {
 // TestQueryRangePreservesPSU is the end-to-end guard for the reported bug:
 // battery charts only ever showed the live tail because power-supply metrics
 // never reached disk, so every history reload (or time-preset change) came back
-// without them. Covers the direct read and the >1.5x-targetPoints downsample
-// path a wide time range takes.
+// without them. Covers the direct read and strict point-budget downsample path
+// a wide time range takes.
 func TestQueryRangePreservesPSU(t *testing.T) {
 	store := newTestStore(t)
 	defer func() { _ = store.Close() }()

@@ -75,17 +75,21 @@ On startup the store:
 
 `QueryRange(from, to, points)` / `QueryRangeWithMeta(...)`:
 
-1. Pick the **coarsest tier whose resolution still satisfies the requested point density** for
-   the window — small windows read Tier 1, large windows read Tier 2/3.
-2. Read the records in that range chronologically (handling buffer wrap).
-3. **Downsample** to at most `points` results (the API caps `points` at 5000 and the window at
+1. Classify retained tiers by whether they cover both requested edges. The retention-edge
+   tolerance is one tier resolution; the live-edge tolerance is two resolutions to account for
+   bucket-end timestamps, rollup delay, and normal collection jitter.
+2. Prefer a fully covering tier that satisfies the source-density budget. If no tier covers the
+   full window, return the tier with the greatest overlap and mark the result `complete: false`.
+3. Read the records in that range chronologically (handling buffer wrap).
+4. **Downsample** to at most `points` results (the API caps `points` at 5000 and the window at
    31 days).
-4. Serve from an in-memory **query cache** when possible.
+5. Serve from an in-memory **query cache** when possible.
 
 `QueryLatest()` returns the cached most-recent sample.
 
-`QueryRangeWithMeta` also returns which `Tier` and `Resolution` served the request — surfaced
-in the `[API History]` perf log line.
+`QueryRangeWithMeta` also returns the selected `Tier` and `Resolution`, the requested and actual
+bounds, and whether coverage is complete. Tier metadata is surfaced in the `[API History]` perf
+log line.
 
 ## Migration
 

@@ -75,9 +75,12 @@ Returns the latest `Sample` as JSON. `503 no data yet` before the first sample.
 - `from`, `to` — RFC 3339 timestamps. Defaults: `to = now`, `from = to − 5m`.
 - `points` — desired data points, default `450`, **capped at 5000** (min 1).
 - Window **capped at 31 days**; inverted ranges → `400`.
-- Returns `{ samples, tier, resolution }` — the store picks the appropriate tier and
-  downsamples. At `perf`/`debug` log level the chosen tier, resolution, sample count, and load
-  time are logged.
+- Returns `{ samples, tier, resolution, requested_from, requested_to, actual_from, actual_to,
+  complete }`. The store prefers a tier covering the full request and downsamples to no more
+  than `points`. `complete` is false when only part of the requested range is retained;
+  `actual_from` and `actual_to` describe the returned bucket coverage (which can extend by one
+  bucket at the left edge) and are omitted when no data exists. At `perf`/`debug` log level the
+  chosen tier, resolution, sample count, and load time are logged.
 
 ### `GET /api/config`
 

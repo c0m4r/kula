@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -292,9 +293,47 @@ func (s *Store) sweepQueryCacheLocked(now time.Time, liveEdgeNano int64) {
 
 // HistoryResult wraps query results with tier metadata for the API.
 type HistoryResult struct {
-	Samples    []*AggregatedSample `json:"samples"`
-	Tier       int                 `json:"tier"`
-	Resolution string              `json:"resolution"`
+	Samples       []*AggregatedSample `json:"samples"`
+	Tier          int                 `json:"tier"`
+	Resolution    string              `json:"resolution"`
+	RequestedFrom time.Time           `json:"requested_from"`
+	RequestedTo   time.Time           `json:"requested_to"`
+	ActualFrom    *time.Time          `json:"actual_from,omitempty"`
+	ActualTo      *time.Time          `json:"actual_to,omitempty"`
+	Complete      bool                `json:"complete"`
+}
+
+type queryTierCandidate struct {
+	index      int
+	resolution time.Duration
+	overlap    time.Duration
+	complete   bool
+}
+
+// tierCoverageTolerances allow for bucket-end timestamps and normal collection
+// lag without hiding meaningful retention loss. The oldest record may sit one
+// resolution after the effective start of its bucket. At the live edge, a
+// completed rollup can be almost one full resolution old before collection and
+// scheduling delay are counted, so allow two resolutions.
+func tierCoverageTolerances(resolution time.Duration) (left, right time.Duration) {
+	return resolution, 2 * resolution
+}
+
+func cloneHistoryResult(result *HistoryResult) *HistoryResult {
+	if result == nil {
+		return nil
+	}
+	cp := *result
+	cp.Samples = append([]*AggregatedSample(nil), result.Samples...)
+	if result.ActualFrom != nil {
+		actualFrom := *result.ActualFrom
+		cp.ActualFrom = &actualFrom
+	}
+	if result.ActualTo != nil {
+		actualTo := *result.ActualTo
+		cp.ActualTo = &actualTo
+	}
+	return &cp
 }
 
 // QueryRange returns samples for a time range, choosing the best tier.
@@ -306,9 +345,11 @@ func (s *Store) QueryRange(from, to time.Time) ([]*AggregatedSample, error) {
 	return result.Samples, nil
 }
 
-// QueryRangeWithMeta returns samples with tier metadata.
-// It returns the finest-resolution tier that (a) has data covering the window
-// and (b) would not produce more than targetPoints*2 samples before downsampling.
+// QueryRangeWithMeta returns samples with tier and coverage metadata.
+// It prefers a fully covering tier whose source density is reasonable. A tier
+// is complete when both requested edges are within its collection-lag
+// tolerance. If no tier is complete, the tier with the greatest overlap is
+// returned with Complete=false rather than silently presenting it as complete.
 // Results are cached for the duration of one tier-0 resolve cycle to serve
 // concurrent or repeated API calls without extra disk I/O.
 func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*HistoryResult, error) {
@@ -316,7 +357,7 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 	defer s.mu.RUnlock()
 
 	if len(s.tiers) == 0 {
-		return &HistoryResult{}, nil
+		return &HistoryResult{RequestedFrom: from, RequestedTo: to}, nil
 	}
 
 	const maxSamples = 3600
@@ -337,13 +378,12 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 	s.queryCacheMu.Lock()
 	if entry, ok := s.queryCache[cacheKey]; ok {
 		if time.Now().Before(entry.expiresAt) {
-			cached := entry.result
+			cp := cloneHistoryResult(entry.result)
+			// Cache keys intentionally coalesce sub-second request differences.
+			// Preserve the exact bounds supplied by this caller in the metadata.
+			cp.RequestedFrom = from
+			cp.RequestedTo = to
 			s.queryCacheMu.Unlock()
-			cp := &HistoryResult{
-				Samples:    append([]*AggregatedSample(nil), cached.Samples...),
-				Tier:       cached.Tier,
-				Resolution: cached.Resolution,
-			}
 			return cp, nil
 		}
 		// Expired — drop it and fall through to recompute.
@@ -359,36 +399,84 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 	}
 
 	duration := to.Sub(from)
+	var fullCandidates, partialCandidates []queryTierCandidate
 
-	// Try each tier from finest (0) to coarsest.
+	// Classify every overlapping tier before applying the source-density
+	// preference. This prevents a partial fine tier from winning merely because
+	// it appears first, and prevents a complete fine tier from being skipped for
+	// a coarser tier that does not cover the request either.
 	for tierIdx := 0; tierIdx < len(s.tiers); tierIdx++ {
 		tier := s.tiers[tierIdx]
-
-		// Skip entirely if this tier has no data for the window.
 		if tier.Count() == 0 {
 			continue
 		}
+
 		oldest := tier.OldestTimestamp()
 		newest := tier.NewestTimestamp()
-		// Tier doesn't cover any part of [from, to]
 		if oldest.After(to) || newest.Before(from) {
 			continue
 		}
 
-		// Estimate sample count for this tier.
 		resDur := resDurations[tierIdx]
-		estimatedSamples := int(duration / resDur)
+		leftTolerance, rightTolerance := tierCoverageTolerances(resDur)
+		complete := !oldest.After(from.Add(leftTolerance)) &&
+			!newest.Before(to.Add(-rightTolerance))
 
-		// If the estimated count is far beyond what the screen needs AND there
-		// is a coarser tier available, prefer the coarser tier to avoid
-		// reading and downsampling a large slice in-process.
-		maxAllowed := maxSamples
-		if targetPoints > maxAllowed {
-			maxAllowed = targetPoints
+		overlapFrom := from
+		if oldest.After(overlapFrom) {
+			overlapFrom = oldest
 		}
-		if estimatedSamples > maxAllowed*2 && tierIdx < len(s.tiers)-1 {
-			continue
+		overlapTo := to
+		if newest.Before(overlapTo) {
+			overlapTo = newest
 		}
+
+		candidate := queryTierCandidate{
+			index:      tierIdx,
+			resolution: resDur,
+			overlap:    overlapTo.Sub(overlapFrom),
+			complete:   complete,
+		}
+		if complete {
+			fullCandidates = append(fullCandidates, candidate)
+		} else {
+			partialCandidates = append(partialCandidates, candidate)
+		}
+	}
+
+	// Partial results prefer the tier covering the largest fraction of the
+	// requested range. Stable sorting retains the finer tier when overlap ties.
+	sort.SliceStable(partialCandidates, func(i, j int) bool {
+		return partialCandidates[i].overlap > partialCandidates[j].overlap
+	})
+
+	// Preserve the existing read-budget preference, but only skip a dense tier
+	// when another fully covering tier is available. If the preferred tier is
+	// unexpectedly unreadable, progressively try the remaining candidates.
+	maxAllowed := maxSamples
+	if targetPoints > maxAllowed {
+		maxAllowed = targetPoints
+	}
+	firstFull := 0
+	for firstFull < len(fullCandidates)-1 {
+		candidate := fullCandidates[firstFull]
+		estimatedSamples := int(duration / candidate.resolution)
+		if estimatedSamples <= maxAllowed*2 {
+			break
+		}
+		firstFull++
+	}
+
+	candidates := make([]queryTierCandidate, 0, len(fullCandidates)+len(partialCandidates))
+	if len(fullCandidates) > 0 {
+		candidates = append(candidates, fullCandidates[firstFull:]...)
+		candidates = append(candidates, fullCandidates[:firstFull]...)
+	}
+	candidates = append(candidates, partialCandidates...)
+
+	for _, candidate := range candidates {
+		tierIdx := candidate.index
+		tier := s.tiers[tierIdx]
 
 		samples, err := tier.ReadRange(from, to)
 		if err != nil {
@@ -400,37 +488,55 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 
 		res := resolutions[tierIdx]
 
-		if len(samples) > int(float64(targetPoints)*1.5) {
-			groupSize := len(samples) / targetPoints
-			if groupSize > 1 {
-				downsampled := make([]*AggregatedSample, 0, (len(samples)/groupSize)+1)
-				for i := 0; i < len(samples); i += groupSize {
-					end := i + groupSize
-					if end > len(samples) {
-						end = len(samples)
-					}
-					group := samples[i:end]
-
-					var totalDur time.Duration
-					for _, s := range group {
-						totalDur += s.Duration
-					}
-
-					agg := s.aggregateAggregated(group, totalDur)
-					if agg != nil {
-						downsampled = append(downsampled, agg)
-					}
+		if len(samples) > targetPoints {
+			// Ceiling division guarantees ceil(len/groupSize) <= targetPoints.
+			groupSize := (len(samples) + targetPoints - 1) / targetPoints
+			downsampled := make([]*AggregatedSample, 0, (len(samples)+groupSize-1)/groupSize)
+			for i := 0; i < len(samples); i += groupSize {
+				end := i + groupSize
+				if end > len(samples) {
+					end = len(samples)
 				}
-				samples = downsampled
-				resDur := resDurations[tierIdx]
-				res = fmtRes(resDur * time.Duration(groupSize))
+				group := samples[i:end]
+
+				var totalDur time.Duration
+				for _, sample := range group {
+					totalDur += sample.Duration
+				}
+
+				agg := s.aggregateAggregated(group, totalDur)
+				if agg != nil {
+					downsampled = append(downsampled, agg)
+				}
 			}
+			samples = downsampled
+			res = fmtRes(resDurations[tierIdx] * time.Duration(groupSize))
 		}
 
+		// Legacy or malformed records may decode without a Data block. If every
+		// group is empty, aggregateAggregated returns nil for each one.
+		if len(samples) == 0 {
+			continue
+		}
+
+		if len(samples) > targetPoints {
+			return nil, fmt.Errorf("downsampling tier %d returned %d samples for target %d", tierIdx, len(samples), targetPoints)
+		}
+
+		actualFrom := samples[0].Timestamp
+		if samples[0].Duration > 0 {
+			actualFrom = actualFrom.Add(-samples[0].Duration)
+		}
+		actualTo := samples[len(samples)-1].Timestamp
 		result := &HistoryResult{
-			Samples:    samples,
-			Tier:       tierIdx,
-			Resolution: res,
+			Samples:       samples,
+			Tier:          tierIdx,
+			Resolution:    res,
+			RequestedFrom: from,
+			RequestedTo:   to,
+			ActualFrom:    &actualFrom,
+			ActualTo:      &actualTo,
+			Complete:      candidate.complete,
 		}
 
 		// Cache with a TTL of one tier-0 resolution. The cap is a safety bound:
@@ -442,7 +548,7 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 		}
 		if len(s.queryCache) < maxQueryCacheEntries {
 			s.queryCache[cacheKey] = queryCacheEntry{
-				result:    result,
+				result:    cloneHistoryResult(result),
 				expiresAt: time.Now().Add(s.queryCacheTTL),
 			}
 		}
@@ -453,7 +559,12 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 
 	// No data found in any tier
 	res := resolutions[0]
-	return &HistoryResult{Tier: 0, Resolution: res}, nil
+	return &HistoryResult{
+		Tier:          0,
+		Resolution:    res,
+		RequestedFrom: from,
+		RequestedTo:   to,
+	}, nil
 }
 
 // QueryLatest returns the latest sample from tier 1.

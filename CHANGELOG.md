@@ -11,6 +11,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Fixed
 
+- History queries can choose an overlapping fine-grained tier that does not cover the full
+  requested range; responses now expose requested and actual coverage with an explicit
+  completeness flag
+- History downsampling can return more points than requested
 - WebSocket disconnect races the metric broadcast and panics the process
 - Container ID shorter than 12 bytes panics the collector goroutine
 - Login rate limiter allows targeted account lockout and global login denial
