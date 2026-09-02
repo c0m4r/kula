@@ -16,8 +16,6 @@ Lightweight, self-contained Linux® server monitoring tool
 ### Top-Level Directory
 ```
 /home/c0m4r/ai/kula/
-├── .ansible/            # Ansible deployment automation
-├── .claude/             # Claude AI configuration
 ├── .github/             # GitHub: issue templates, contributing guide, funding, PR template
 ├── addons/              # Build, check, packaging, benchmark scripts, docker, init files
 ├── cmd/
