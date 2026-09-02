@@ -51,6 +51,9 @@ storage:
     # Tier 3: 5-minute aggregation (must be > tier2)
     - resolution: 5m
       max_size: 50MB
+    # Note: Raising max_size later grows the tier in place on the next start
+    # and keeps existing history; lowering it is NOT applied in place (it would
+    # strand records already written) — move the tier file aside to shrink it.
     # Note: Changing default resolutions may result in unexpected behavior
     # Too high tier 2 and 3 resolutions could also cause high memory usage
     # and data loss on shutdown due to samples buffering

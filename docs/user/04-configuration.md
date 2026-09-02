@@ -86,6 +86,15 @@ Tier rules enforced at startup:
 - The ratio between adjacent tiers is capped (max 300:1) to bound memory used by aggregation
   buffers.
 
+Changing `max_size` on a tier that already has data:
+
+- **Raising it** is applied on the next start. The ring is grown in place, keeping the history
+  already on disk, and the extra room fills as new samples arrive.
+- **Lowering it** is not applied. Records already written live throughout the existing ring, so
+  shrinking it in place would strand them. The tier keeps running at the size it was created
+  with and logs a line saying so at startup. To actually shrink a tier, stop Kula and move its
+  file (`<storage.directory>/tier_N.dat`) aside — that discards the tier's history.
+
 Changing the default resolutions can cause unexpected behavior, and very coarse Tier 2/3
 resolutions raise memory use and risk losing buffered samples on shutdown. See
 [Storage Engine](../dev/05-storage-engine.md) for internals.

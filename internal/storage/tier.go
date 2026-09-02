@@ -94,6 +94,13 @@ func OpenTier(path string, maxSize int64) (*Tier, error) {
 			return nil, fmt.Errorf("tier %s: corrupt or unreadable header: %w; "+
 				"refusing to open so existing data is not destroyed — move the file aside to start fresh", path, err)
 		}
+		// readHeader replaced maxData with the geometry the file was actually
+		// created with. Reconcile it with what the operator configured, so
+		// changing storage.tiers[].max_size is not a silent no-op.
+		if err := t.applyConfiguredSize(maxData); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
 	} else {
 		t.writeOff = 0
 		t.count = 0
@@ -213,6 +220,70 @@ func (t *Tier) readHeader() error {
 	}
 
 	return nil
+}
+
+// applyConfiguredSize reconciles the ring geometry persisted in the file header
+// with the size the operator configured. The header value is authoritative for
+// reading — it is the geometry the existing records were laid out with, and
+// reinterpreting them under a different one would corrupt the wrap arithmetic —
+// so the two can only be reconciled by moving the end of the ring.
+//
+// Growing is safe in place, wrapped or not: the bytes the ring gains lie past
+// the end of the file, so nothing reads them before the writer fills them. A
+// wrapped old segment still terminates at the end-of-segment sentinel written
+// at the previous wrap, and where that wrap left too few bytes for a sentinel
+// the scan runs into EOF at the same place instead. Either way the new room is
+// reached only by the writer, which fills it in record order like any other.
+//
+// Shrinking is not applied: writeOff and oldestOff would fall outside the new
+// ring, stranding every record beyond it. The tier keeps running at its on-disk
+// size and says so, loudly enough that the setting does not appear to have
+// taken effect when it has not.
+func (t *Tier) applyConfiguredSize(configured int64) error {
+	switch {
+	case configured == t.maxData:
+		return nil
+
+	case configured > t.maxData:
+		previous := t.maxData
+		t.maxData = configured
+		if err := t.writeHeader(); err != nil {
+			t.maxData = previous
+			return fmt.Errorf("tier %s: growing ring from %s to %s: %w",
+				t.path, formatTierSize(previous+headerSize), formatTierSize(configured+headerSize), err)
+		}
+		fmt.Printf("Storage: tier %s grown in place from %s to %s to match max_size; existing history kept.\n",
+			filepath.Base(t.path), formatTierSize(previous+headerSize), formatTierSize(configured+headerSize))
+
+	default:
+		fmt.Printf("Storage: tier %s was created at max_size %s and keeps running at that size; "+
+			"the configured %s is smaller and shrinking in place would strand records already written. "+
+			"To apply it, stop Kula and move %s aside — that discards the tier's history.\n",
+			filepath.Base(t.path), formatTierSize(t.maxData+headerSize),
+			formatTierSize(configured+headerSize), t.path)
+	}
+
+	return nil
+}
+
+// formatTierSize renders a byte count the way max_size is written in the
+// config, so the numbers in these messages can be matched against the YAML.
+func formatTierSize(b int64) string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+		gb = 1024 * mb
+	)
+	switch {
+	case b >= gb:
+		return fmt.Sprintf("%.1fGB", float64(b)/gb)
+	case b >= mb:
+		return fmt.Sprintf("%.1fMB", float64(b)/mb)
+	case b >= kb:
+		return fmt.Sprintf("%.1fKB", float64(b)/kb)
+	default:
+		return fmt.Sprintf("%dB", b)
+	}
 }
 
 func (t *Tier) writeHeader() error {

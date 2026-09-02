@@ -583,3 +583,183 @@ func TestTierWriteNilReturnsError(t *testing.T) {
 		t.Error("Write(nil) returned nil; expected an error (and no panic)")
 	}
 }
+
+// readHeaderMaxData returns the ring geometry recorded in the file header,
+// which is what a later OpenTier will read back.
+func readHeaderMaxData(t *testing.T, path string) int64 {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open for header read: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	hdr := make([]byte, headerSize)
+	if _, err := f.ReadAt(hdr, 0); err != nil {
+		t.Fatalf("read header: %v", err)
+	}
+	return int64(binary.LittleEndian.Uint64(hdr[16:24]))
+}
+
+// TestGrowMaxSizeKeepsHistoryAndRetainsMore is the regression test for the
+// "raising max_size silently does nothing" report. An operator who enlarges a
+// tier to keep more history must actually get more history — and must not lose
+// the history already on disk to get it.
+func TestGrowMaxSizeKeepsHistoryAndRetainsMore(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/tier_0.dat"
+	const small = 64 * 1024
+	const large = 4 * small
+
+	tier, err := OpenTier(path, small)
+	if err != nil {
+		t.Fatalf("OpenTier: %v", err)
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const N = 3000
+	for i := 0; i < N; i++ {
+		if err := tier.Write(varSample(base.Add(time.Duration(i)*time.Second), 1+i%6)); err != nil {
+			t.Fatalf("Write(%d): %v", i, err)
+		}
+	}
+	if !tier.wrapped {
+		t.Fatal("precondition: tier did not wrap")
+	}
+	newest := base.Add(time.Duration(N-1) * time.Second)
+	smallSteady := fullReadChecked(t, tier, base, newest)
+	if err := tier.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// The operator raises max_size and restarts.
+	grown, err := OpenTier(path, large)
+	if err != nil {
+		t.Fatalf("reopen at larger max_size: %v", err)
+	}
+	if grown.maxData != large-headerSize {
+		t.Fatalf("maxData = %d after growing, want %d — max_size was ignored",
+			grown.maxData, int64(large-headerSize))
+	}
+	if got := fullReadChecked(t, grown, base, newest); got != smallSteady {
+		t.Errorf("history changed across the grow: %d records, want %d", got, smallSteady)
+	}
+
+	// The extra room must actually be used: keep writing and the tier should
+	// now retain substantially more than the old ring ever could.
+	for i := N; i < 4*N; i++ {
+		if err := grown.Write(varSample(base.Add(time.Duration(i)*time.Second), 1+i%6)); err != nil {
+			t.Fatalf("Write(%d) after grow: %v", i, err)
+		}
+	}
+	newest = base.Add(time.Duration(4*N-1) * time.Second)
+	grownSteady := fullReadChecked(t, grown, base, newest)
+	if grownSteady <= 2*smallSteady {
+		t.Errorf("grown tier retains %d records, small one retained %d — the extra room is not being used",
+			grownSteady, smallSteady)
+	}
+	if err := grown.Close(); err != nil {
+		t.Fatalf("Close after grow: %v", err)
+	}
+
+	// The new geometry is persisted, so a restart does not undo it.
+	if got := readHeaderMaxData(t, path); got != large-headerSize {
+		t.Errorf("header maxData = %d, want %d — the grow was not persisted", got, int64(large-headerSize))
+	}
+	tier3, err := OpenTier(path, large)
+	if err != nil {
+		t.Fatalf("second reopen: %v", err)
+	}
+	defer func() { _ = tier3.Close() }()
+	if got := fullReadChecked(t, tier3, base, newest); got != grownSteady {
+		t.Errorf("history changed across restart: %d records, want %d", got, grownSteady)
+	}
+}
+
+// TestGrowMaxSizeBeforeFirstWrap covers the same change on a tier that is still
+// filling its first pass, where the ring simply gains room ahead of writeOff.
+func TestGrowMaxSizeBeforeFirstWrap(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/tier_0.dat"
+
+	tier, err := OpenTier(path, 64*1024)
+	if err != nil {
+		t.Fatalf("OpenTier: %v", err)
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const N = 50
+	for i := 0; i < N; i++ {
+		if err := tier.Write(varSample(base.Add(time.Duration(i)*time.Second), 2)); err != nil {
+			t.Fatalf("Write(%d): %v", i, err)
+		}
+	}
+	if tier.wrapped {
+		t.Fatal("precondition: tier wrapped too early")
+	}
+	if err := tier.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	grown, err := OpenTier(path, 256*1024)
+	if err != nil {
+		t.Fatalf("reopen at larger max_size: %v", err)
+	}
+	defer func() { _ = grown.Close() }()
+	if grown.maxData != 256*1024-headerSize {
+		t.Fatalf("maxData = %d, want %d", grown.maxData, int64(256*1024-headerSize))
+	}
+	for i := N; i < 2*N; i++ {
+		if err := grown.Write(varSample(base.Add(time.Duration(i)*time.Second), 2)); err != nil {
+			t.Fatalf("Write(%d) after grow: %v", i, err)
+		}
+	}
+	newest := base.Add(time.Duration(2*N-1) * time.Second)
+	if got := fullReadChecked(t, grown, base, newest); got != 2*N {
+		t.Errorf("read %d records, want %d", got, 2*N)
+	}
+}
+
+// TestShrinkMaxSizeKeepsOnDiskGeometry verifies that a smaller max_size is NOT
+// applied in place: writeOff and oldestOff live inside the existing ring, and
+// truncating it under them would strand records. The tier must keep running at
+// its on-disk size with its history intact.
+func TestShrinkMaxSizeKeepsOnDiskGeometry(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/tier_0.dat"
+	const large = 128 * 1024
+
+	tier, err := OpenTier(path, large)
+	if err != nil {
+		t.Fatalf("OpenTier: %v", err)
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const N = 3000
+	for i := 0; i < N; i++ {
+		if err := tier.Write(varSample(base.Add(time.Duration(i)*time.Second), 1+i%6)); err != nil {
+			t.Fatalf("Write(%d): %v", i, err)
+		}
+	}
+	if !tier.wrapped {
+		t.Fatal("precondition: tier did not wrap")
+	}
+	newest := base.Add(time.Duration(N-1) * time.Second)
+	want := fullReadChecked(t, tier, base, newest)
+	if err := tier.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	shrunk, err := OpenTier(path, large/4)
+	if err != nil {
+		t.Fatalf("reopen at smaller max_size: %v", err)
+	}
+	defer func() { _ = shrunk.Close() }()
+
+	if shrunk.maxData != large-headerSize {
+		t.Errorf("maxData = %d after a smaller max_size, want the on-disk %d — shrinking in place strands records",
+			shrunk.maxData, int64(large-headerSize))
+	}
+	if got := fullReadChecked(t, shrunk, base, newest); got != want {
+		t.Errorf("history changed: %d records, want %d", got, want)
+	}
+	if got := readHeaderMaxData(t, path); got != large-headerSize {
+		t.Errorf("header maxData = %d, want %d", got, int64(large-headerSize))
+	}
+}

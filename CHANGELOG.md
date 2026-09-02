@@ -16,6 +16,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Login rate limiter allows targeted account lockout and global login denial
 - Sessions renew forever; no absolute lifetime
 - WebSocket read unexpected error on logout
+- Changing `storage.tiers[].max_size` silently does nothing to existing tiers
 
 ## [0.19.0] - 2026-08-31
 

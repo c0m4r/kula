@@ -230,7 +230,7 @@ configurable; a reasonable interim is to cap at a fixed multiple of `session_tim
 
 ---
 
-### K-05 · MEDIUM — Changing `storage.tiers[].max_size` silently does nothing to existing tiers
+### K-05 · MEDIUM · FIXED — Changing `storage.tiers[].max_size` silently does nothing to existing tiers
 
 **`internal/storage/tier.go:135`**
 
