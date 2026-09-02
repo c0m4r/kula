@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -15,6 +16,30 @@ import (
 	"kula/internal/collector"
 	"kula/internal/config"
 )
+
+func TestUnexpectedWebSocketClose(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		unexpected bool
+	}{
+		{name: "normal closure", err: &websocket.CloseError{Code: websocket.CloseNormalClosure}},
+		{name: "going away", err: &websocket.CloseError{Code: websocket.CloseGoingAway}},
+		{name: "no status", err: &websocket.CloseError{Code: websocket.CloseNoStatusReceived}},
+		{name: "abnormal closure", err: &websocket.CloseError{Code: websocket.CloseAbnormalClosure}},
+		{name: "policy violation", err: &websocket.CloseError{Code: websocket.ClosePolicyViolation}},
+		{name: "protocol error", err: &websocket.CloseError{Code: websocket.CloseProtocolError}, unexpected: true},
+		{name: "non-close error", err: errors.New("read failed")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isUnexpectedWebSocketClose(tt.err); got != tt.unexpected {
+				t.Fatalf("isUnexpectedWebSocketClose() = %v, want %v", got, tt.unexpected)
+			}
+		})
+	}
+}
 
 func TestWebSocketConnectionLimits(t *testing.T) {
 	cfg := config.WebConfig{

@@ -188,7 +188,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			err := conn.ReadJSON(&cmd)
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				if isUnexpectedWebSocketClose(err) {
 					log.Printf("WebSocket read unexpected error: %v", err)
 				}
 				unregister()
@@ -249,4 +249,22 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// isUnexpectedWebSocketClose distinguishes application failures from the
+// ordinary ways a browser or this server can end a connection. In particular,
+// calling WebSocket.close() without a code produces CloseNoStatusReceived
+// (1005), while session expiry echoes the server's ClosePolicyViolation (1008).
+//
+// Non-close read failures intentionally remain quiet: malformed commands,
+// transport resets, and read timeouts already disconnect the client and are
+// peer-controlled, so logging them would provide a trivial log-flood path.
+func isUnexpectedWebSocketClose(err error) bool {
+	return websocket.IsUnexpectedCloseError(err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseNoStatusReceived,
+		websocket.CloseAbnormalClosure,
+		websocket.ClosePolicyViolation,
+	)
 }

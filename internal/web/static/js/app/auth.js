@@ -5,7 +5,7 @@
 import { state } from './state.js';
 import { initCharts } from './charts-init.js';
 import { updateAllCharts, clearAllChartData } from './charts-data.js';
-import { connectWS, updateConnectionStatus } from './websocket.js';
+import { connectWS, disconnectWS } from './websocket.js';
 import { applyTheme } from './theme.js';
 import { applySplitFromConfig } from './split.js';
 import { apiUrl } from './api.js';
@@ -163,9 +163,7 @@ export function handleLogout() {
         headers: headers
     })
         .then(() => {
-            if (state.ws) {
-                state.ws.close();
-            }
+            disconnectWS();
             document.getElementById('btn-logout')?.classList.add('hidden');
             document.getElementById('login-overlay')?.classList.remove('hidden');
             document.getElementById('dashboard').style.filter = 'blur(8px)';
@@ -180,7 +178,6 @@ export function handleLogout() {
             state.liveQueue = [];
             clearAllChartData();
             updateAllCharts();
-            updateConnectionStatus(false);
         })
         .catch(err => console.error('Logout error:', err));
 }
