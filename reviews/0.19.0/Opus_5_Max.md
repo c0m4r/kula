@@ -37,7 +37,7 @@ exploitability I say so rather than inflating the rating.
 Remotely reachable, crashes the process, no authentication required in the default
 configuration.
 
-### K-01 · HIGH · VERIFIED — WebSocket disconnect races the metric broadcast and panics the process
+### K-01 · HIGH · FIXED — WebSocket disconnect races the metric broadcast and panics the process
 
 **`internal/web/websocket.go:132` → `internal/web/server.go:1027`**
 
@@ -120,7 +120,7 @@ and does not protect the collection goroutine — fix the ownership.
 Availability, session-lifetime and configuration-integrity issues. None grants access on
 its own.
 
-### K-02 · MEDIUM · VERIFIED — Container ID shorter than 12 bytes panics the collector goroutine
+### K-02 · MEDIUM · FIXED — Container ID shorter than 12 bytes panics the collector goroutine
 
 **`internal/collector/containers.go:284`**
 
@@ -164,7 +164,7 @@ While you are there, treat the rest of that response as untrusted too — see
 
 ---
 
-### K-03 · MEDIUM — Login rate limiter allows targeted account lockout and global login denial
+### K-03 · MEDIUM · FIXED — Login rate limiter allows targeted account lockout and global login denial
 
 **`internal/web/server.go:850`, `internal/web/auth.go:119`**
 

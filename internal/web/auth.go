@@ -37,20 +37,52 @@ type AuthManager struct {
 type RateLimiter struct {
 	mu       sync.Mutex
 	attempts map[string][]time.Time
+	// limit is how many attempts one key may make within loginRateWindow.
+	limit int
+	// failOpen decides what happens when the key map is saturated and a purge
+	// frees nothing. A fail-closed limiter (the IP limiter) refuses the untracked
+	// key, since the key identifies the caller and refusing only hurts them. A
+	// fail-open limiter (the per-user limiter) admits it: its keys are partly
+	// attacker-chosen, so failing closed would turn map pressure into a login
+	// outage for everyone. The IP limiter still bounds any single caller.
+	failOpen bool
 }
 
-// maxRateLimiterKeys bounds how many distinct keys (client IPs or usernames) a
-// rate limiter tracks at once. It sits far above any legitimate concurrent client
-// count for a self-hosted monitor but caps memory if an attacker sprays requests
-// from many source addresses. On reaching the cap the limiter purges stale entries
-// and, if still saturated with fresh ones, refuses new keys (fail-closed).
+// maxRateLimiterKeys bounds how many distinct keys (client IPs, or username+IP
+// pairs) a rate limiter tracks at once. It sits far above any legitimate concurrent
+// client count for a self-hosted monitor but caps memory if an attacker sprays
+// requests from many source addresses. On reaching the cap the limiter purges stale
+// entries and, if still saturated with fresh ones, either refuses the new key or
+// admits it depending on the limiter's failOpen setting.
 const maxRateLimiterKeys = 16384
+
+// Login rate limiting runs two counters over the same window, and their relative
+// thresholds are what make both of them do work.
+const (
+	loginRateWindow = 5 * time.Minute
+
+	// loginUserAttemptLimit caps attempts against ONE account from ONE source
+	// address. This is the anti-guessing limit: it is the rate an attacker gets
+	// against the password they are actually trying to guess, and it is sized for
+	// how many times a legitimate operator may fumble their own password.
+	loginUserAttemptLimit = 5
+
+	// loginIPAttemptLimit caps ALL attempts from one source address, whatever
+	// account names they carry. It MUST stay above loginUserAttemptLimit: the IP
+	// counter is a superset of every username+IP counter for that address, so an
+	// equal (or lower) threshold trips first on every request and makes the
+	// per-account limiter unreachable. The headroom also keeps one shared address
+	// — NAT, or a reverse proxy with trust_proxy off, where every user looks like
+	// one IP — from locking everybody out over one person's typo.
+	loginIPAttemptLimit = 15
+)
 
 // reserveRateLimiterKey reports whether key may be tracked in m without growing it
 // past maxRateLimiterKeys. Already-tracked keys are always admitted. A new key is
 // admitted while there is headroom; once the map is full, purge is run to reclaim
-// stale entries and the key is admitted only if that frees space. The caller must
-// hold the limiter's lock, and purge must operate under that same held lock.
+// stale entries and the key is reservable only if that frees space. The caller must
+// hold the limiter's lock, and purge must operate under that same held lock. What a
+// failed reservation means for the request is the caller's decision — see failOpen.
 func reserveRateLimiterKey(m map[string][]time.Time, key string, purge func()) bool {
 	if _, tracked := m[key]; tracked {
 		return true
@@ -89,9 +121,12 @@ func NewAuthManager(cfg config.AuthConfig, storageDir string, trustProxy bool, s
 		sessions:   make(map[string]*session),
 		Limiter: &RateLimiter{
 			attempts: make(map[string][]time.Time),
+			limit:    loginIPAttemptLimit,
 		},
 		UserLimiter: &RateLimiter{
 			attempts: make(map[string][]time.Time),
+			limit:    loginUserAttemptLimit,
+			failOpen: true,
 		},
 		trustProxy: trustProxy,
 		security:   security,
@@ -115,16 +150,42 @@ func (rl *RateLimiter) purge(cutoff time.Time) {
 	}
 }
 
-// Allow checks if the given key has exceeded 5 login attempts in the last 5 minutes.
+// maxLimiterUsernameLen bounds how much of a submitted username goes into a
+// per-user rate limiter key. Usernames are attacker-chosen and bounded only by the
+// request body limit, so the key is truncated to keep per-entry memory predictable.
+// Longer names that share a prefix collide onto one key, which only means failed
+// logins from the same address share a counter.
+const maxLimiterUsernameLen = 64
+
+// userLimiterKey builds the per-user login limiter key from the submitted username
+// and the client address.
+//
+// The key deliberately includes the IP. A username-only key identifies the *victim*,
+// not the caller: anyone who knows an account name could spend five bad passwords
+// every five minutes from any address and keep that operator permanently locked out.
+// Keying on the pair means an attacker throttles only themselves, while the counter
+// still catches password spraying against one account from one source faster than the
+// IP limiter alone would. The IP comes first so the attacker-controlled half cannot
+// forge another caller's prefix.
+func userLimiterKey(username, ip string) string {
+	username = strings.ToLower(username)
+	if len(username) > maxLimiterUsernameLen {
+		username = username[:maxLimiterUsernameLen]
+	}
+	return ip + "\x00" + username
+}
+
+// Allow checks if the given key has exceeded rl.limit login attempts within
+// loginRateWindow.
 func (rl *RateLimiter) Allow(ip string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	now := time.Now()
-	cutoff := now.Add(-5 * time.Minute)
+	cutoff := now.Add(-loginRateWindow)
 
 	if !reserveRateLimiterKey(rl.attempts, ip, func() { rl.purge(cutoff) }) {
-		return false
+		return rl.failOpen
 	}
 
 	var recent []time.Time
@@ -134,7 +195,7 @@ func (rl *RateLimiter) Allow(ip string) bool {
 		}
 	}
 
-	if len(recent) >= 5 {
+	if len(recent) >= rl.limit {
 		return false
 	}
 
@@ -320,7 +381,7 @@ func (a *AuthManager) CleanupSessions() {
 	}
 
 	// Purge stale rate limiter entries
-	cutoff := now.Add(-5 * time.Minute)
+	cutoff := now.Add(-loginRateWindow)
 	a.Limiter.mu.Lock()
 	a.Limiter.purge(cutoff)
 	a.Limiter.mu.Unlock()

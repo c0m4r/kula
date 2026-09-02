@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -546,7 +547,7 @@ func TestCSRFMiddleware(t *testing.T) {
 }
 
 func TestRateLimiterCapsDistinctKeys(t *testing.T) {
-	rl := &RateLimiter{attempts: make(map[string][]time.Time)}
+	rl := &RateLimiter{attempts: make(map[string][]time.Time), limit: loginIPAttemptLimit}
 
 	// Fill the limiter to capacity with distinct, fresh keys.
 	for i := 0; i < maxRateLimiterKeys; i++ {
@@ -571,7 +572,7 @@ func TestRateLimiterCapsDistinctKeys(t *testing.T) {
 }
 
 func TestRateLimiterReclaimsStaleKeys(t *testing.T) {
-	rl := &RateLimiter{attempts: make(map[string][]time.Time)}
+	rl := &RateLimiter{attempts: make(map[string][]time.Time), limit: loginIPAttemptLimit}
 
 	// Saturate the map with entries that are already outside the 5-minute window.
 	stale := time.Now().Add(-10 * time.Minute)
@@ -585,5 +586,59 @@ func TestRateLimiterReclaimsStaleKeys(t *testing.T) {
 	}
 	if len(rl.attempts) > maxRateLimiterKeys {
 		t.Fatalf("map grew past cap after purge: got %d keys", len(rl.attempts))
+	}
+}
+
+// TestUserLimiterKeyedPerIP asserts that exhausting the per-user login limiter from
+// one address does not lock the same account out from another one (K-03).
+func TestUserLimiterKeyedPerIP(t *testing.T) {
+	rl := &RateLimiter{attempts: make(map[string][]time.Time), limit: loginUserAttemptLimit, failOpen: true}
+
+	// Attacker burns the whole window against a known account name.
+	for i := 0; i < loginUserAttemptLimit; i++ {
+		if !rl.Allow(userLimiterKey("Admin", "10.0.0.9")) {
+			t.Fatalf("attempt %d from the attacker should be allowed", i)
+		}
+	}
+	if rl.Allow(userLimiterKey("admin", "10.0.0.9")) {
+		t.Fatalf("attacker should be throttled after %d attempts (username is case-folded)", loginUserAttemptLimit)
+	}
+
+	// The real operator, on a different address, is unaffected.
+	if !rl.Allow(userLimiterKey("admin", "192.168.1.5")) {
+		t.Fatal("same username from a different IP must not be locked out")
+	}
+}
+
+// TestUserLimiterFailsOpenWhenSaturated asserts that filling the per-user limiter
+// with attacker-chosen usernames degrades to "no per-user throttle" rather than to
+// a login outage; the IP limiter still fails closed (K-03).
+func TestUserLimiterFailsOpenWhenSaturated(t *testing.T) {
+	rl := &RateLimiter{attempts: make(map[string][]time.Time), limit: loginUserAttemptLimit, failOpen: true}
+
+	for i := 0; i < maxRateLimiterKeys; i++ {
+		if !rl.Allow(userLimiterKey("user-"+strconv.Itoa(i), "10.0.0.9")) {
+			t.Fatalf("key %d should be allowed while under the cap", i)
+		}
+	}
+
+	if !rl.Allow(userLimiterKey("operator", "192.168.1.5")) {
+		t.Fatal("saturated per-user limiter must fail open, not deny every new login")
+	}
+	if len(rl.attempts) > maxRateLimiterKeys {
+		t.Fatalf("map grew past cap: got %d keys, want <= %d", len(rl.attempts), maxRateLimiterKeys)
+	}
+}
+
+// TestUserLimiterKeyBoundsUsername asserts the attacker-controlled half of the key
+// is truncated and cannot forge another caller's IP prefix.
+func TestUserLimiterKeyBoundsUsername(t *testing.T) {
+	long := strings.Repeat("a", maxLimiterUsernameLen*4)
+	key := userLimiterKey(long, "10.0.0.9")
+	if want := len("10.0.0.9") + 1 + maxLimiterUsernameLen; len(key) != want {
+		t.Fatalf("key length = %d, want %d", len(key), want)
+	}
+	if got, want := userLimiterKey("10.0.0.9\x00admin", "1.2.3.4"), "1.2.3.4\x0010.0.0.9\x00admin"; got != want {
+		t.Fatalf("key = %q, want %q (IP prefix must stay unforgeable)", got, want)
 	}
 }

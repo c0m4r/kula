@@ -847,7 +847,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.auth.UserLimiter.Allow(strings.ToLower(creds.Username)) {
+	if !s.auth.UserLimiter.Allow(userLimiterKey(creds.Username, ip)) {
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}

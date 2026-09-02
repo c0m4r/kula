@@ -453,3 +453,54 @@ func statusOf(resp *http.Response) string {
 	}
 	return fmt.Sprintf("%d", resp.StatusCode)
 }
+
+// TestLoginLimitersBothReachable drives the real /api/login handler to prove the
+// two login limiters are independently reachable. Every request here comes from
+// one address (the httptest client), so if the IP threshold were <= the per-account
+// threshold the IP counter — a superset of every username+IP counter for that
+// address — would always trip first and the per-account limiter would be dead code.
+func TestLoginLimitersBothReachable(t *testing.T) {
+	_, ts := newSecuredTestServer(t, nil)
+
+	attempts := 0
+	bad := func(username string) loginResult {
+		t.Helper()
+		attempts++
+		return login(t, ts, username, "wrong password")
+	}
+
+	// Spend the per-account budget against the admin account.
+	for i := 0; i < loginUserAttemptLimit; i++ {
+		if res := bad(secUser); res.status != http.StatusUnauthorized {
+			t.Fatalf("attempt %d on %q: status = %d, want 401", i+1, secUser, res.status)
+		}
+	}
+
+	// The next attempt on that account is throttled, well before the IP budget
+	// is spent — this is the per-account limiter firing.
+	if res := bad(secUser); res.status != http.StatusTooManyRequests {
+		t.Fatalf("attempt %d on %q: status = %d, want 429 from the per-account limiter", attempts, secUser, res.status)
+	}
+	if attempts >= loginIPAttemptLimit {
+		t.Fatalf("per-account limiter fired only after %d attempts, at/past the IP budget of %d", attempts, loginIPAttemptLimit)
+	}
+
+	// A different account name from the same address is still served, so the 429
+	// above was keyed on the account and not on the caller.
+	if res := bad("someone-else"); res.status != http.StatusUnauthorized {
+		t.Fatalf("different username from the same IP: status = %d, want 401", res.status)
+	}
+
+	// Spend the rest of the IP budget across distinct account names, so no
+	// per-account counter ever reaches its own threshold.
+	for i := attempts; i < loginIPAttemptLimit; i++ {
+		if res := bad(fmt.Sprintf("user-%d", i)); res.status != http.StatusUnauthorized {
+			t.Fatalf("attempt %d on a fresh username: status = %d, want 401", attempts, res.status)
+		}
+	}
+
+	// Now the caller itself is cut off, whatever name it presents.
+	if res := bad("yet-another-name"); res.status != http.StatusTooManyRequests {
+		t.Fatalf("attempt %d after the IP budget: status = %d, want 429 from the IP limiter", attempts, res.status)
+	}
+}
