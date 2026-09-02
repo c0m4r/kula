@@ -2,9 +2,13 @@
 # https://github.com/c0m4r/kula
 
 # Note: some settings can be overridden by environment variables
+# - KULA_DIRECTORY overrides storage.directory
 # - KULA_LOGLEVEL overrides logging.level
 # - KULA_LISTEN overrides web.listen
 # - KULA_PORT overrides web.port
+# - KULA_UNIX_SOCKET overrides web.unix_socket
+# - KULA_MOUNTS_DETECTION overrides collection.mounts_detection
+# - KULA_BASE_PATH overrides web.base_path
 
 # Global settings
 global:
@@ -16,10 +20,18 @@ global:
   show_version: {{kula_show_version}}
   # Default theme for the web UI: light, dark, or auto (default: auto)
   default_theme: auto
+  # Show the Space Invaders easter egg button in the web UI (default: true)
+  easter_egg: true
 
 # Data collection settings
 collection:
+  # Allowed values: 1s, 2s, 5s, 10s, 15s, 30s
   interval: 1s
+  # Control how mount points are detected. (default: auto)
+  # - auto: merges host and container mounts (detects namespaces)
+  # - host: reads only /proc/1/mounts (host-level visibility)
+  # - self: reads only /proc/self/mounts (container-level visibility)
+  mounts_detection: auto
   # You can override the auto-detected list of disks and network interfaces by uncommenting and populating these lists:
   # devices: ["sda", "nvme0n1"]
   # mountpoints: ["/", "/mnt/data"]
@@ -31,15 +43,38 @@ storage:
   directory: /var/lib/kula
   tiers:
     # Tier 1 (raw): must match collection.interval
-    # Allowed values: 1s, 2s, 5s, 10s, 15s, 30s
     - resolution: 1s
       max_size: 250MB
-    # Tier 2: 1-minute aggregation
+    # Tier 2: 1-minute aggregation (must be > tier 1 && < tier3)
     - resolution: 1m
       max_size: 150MB
-    # Tier 3: 5-minute aggregation
+    # Tier 3: 5-minute aggregation (must be > tier2)
     - resolution: 5m
       max_size: 50MB
+    # Note: Raising max_size later grows the tier in place on the next start
+    # and keeps existing history; lowering it is NOT applied in place (it would
+    # strand records already written) — move the tier file aside to shrink it.
+    # Note: Changing default resolutions may result in unexpected behavior
+    # Too high tier 2 and 3 resolutions could also cause high memory usage
+    # and data loss on shutdown due to samples buffering
+
+# Backup settings (snapshots of the storage tier files)
+# Backups are written under <storage.directory>/backup, one timestamped
+# sub-directory per run (e.g. /var/lib/kula/backup/20060102-150405/).
+backup:
+  # Master switch for scheduled backups (default: false)
+  enabled: false
+  # When to run, as a standard 5-field crontab expression
+  # (minute hour day-of-month month day-of-week). Default: midnight.
+  cron: "0 0 * * *"
+  # How many tiers to back up, counting from the raw tier (default: 3).
+  # 1 = tier_0.dat only, 2 = tier_0 + tier_1, 3 = all three.
+  maxtier: 3
+  # How long to keep backups before pruning. Supports s, m, h, d.
+  # Empty disables pruning. Default: 1d.
+  retention: 1d
+  # Gzip each backed-up tier file to tier_N.dat.gz (default: true).
+  compress: true
 
 # Web UI settings
 web:
@@ -54,6 +89,20 @@ web:
   listen: "" # use [] brackets for IPv6 addresses, e.g. "[::1]"
   port: {{kula_port}}
 
+  # Mount Kula under a URL sub-path. Empty (default) serves at the root,
+  # preserving existing behavior. When set (e.g. "/kula"), every HTTP
+  # route — UI, API, WebSocket, /metrics, /health — is served under that
+  # prefix. Use this when hosting Kula behind a reverse proxy that forwards
+  # requests with the prefix intact (does NOT strip it).
+  # Can also be set via the KULA_BASE_PATH env var.
+  base_path: ""
+
+  # Listen on a Unix domain socket instead of a TCP port. When set, the TCP
+  # listener is NOT opened — useful behind a local reverse proxy (nginx).
+  # Must be an absolute path.
+  # unix_socket: /run/kula/kula.sock
+  # unix_socket_mode: "0660"  # octal permissions for the socket file (default: 0660)
+
   # Compress HTTP responses and WebSockets (default: true)
   enable_compression: true
 
@@ -66,13 +115,69 @@ web:
   # Trust X-Forwarded-Proto headers from reverse proxies for the Secure cookie flag
   trust_proxy: false
 
+  # HTTP security features. Defaults preserve the original strict behavior.
+  # Relax these to embed Kula in an <iframe> or access it from another origin.
+  security:
+    # Emit security response headers (CSP, X-Content-Type-Options,
+    # Referrer-Policy, Permissions-Policy, Strict-Transport-Security).
+    headers: true
+    # Prevent rendering Kula inside an <iframe>. When true: sends
+    # X-Frame-Options: DENY and the CSP frame-ancestors 'none' directive.
+    # Set to false to allow iframe embedding.
+    frame_protection: true
+    # Reject state-changing HTTP requests and WebSocket upgrades whose
+    # Origin/Referer does not match the request Host. Listed origins in
+    # allowed_origins are also accepted. Disable only if you protect the
+    # API some other way (e.g. CSRF tokens + token-auth headers).
+    origin_validation: true
+    # Allow cross-origin browser access from these exact origins.
+    # When non-empty:
+    #   - CORS response headers are sent for matching origins
+    #   - listed origins also pass origin_validation
+    #   - session cookies switch to SameSite=None;Secure (requires HTTPS
+    #     or trust_proxy + X-Forwarded-Proto: https)
+    # allowed_origins:
+    #   - https://app.example.com
+    #   - https://dashboard.example.com
+
   # Join data points across gaps in the graphs (default: false)
   # When false, gaps between measurements are displayed as empty space
   join_metrics: false
 
-  # Default aggregation for historical data: avg, min, or max (default: avg)
-  default_aggregation: avg
+  # Default aggregation for historical data: avg, min, or max (default: max)
+  default_aggregation: max
  
+  # Default look of the web dashboard.
+  # These are defaults only: each visitor can override them for their own
+  # browser from the customization menu (gear icon) in the dashboard header,
+  # and the choice is remembered in that browser. Changing a value here moves
+  # everyone who has not overridden it.
+  appearance:
+    # Keep the header and the time/aggregation controls pinned to the top of
+    # the window while scrolling (default: true)
+    sticky_topbar: true
+    # Show the CPU/RAM/SWAP/load/network gauge row above the charts
+    # (default: true)
+    gauges: true
+
+  # Default accessibility options for the web dashboard.
+  # Also overridable per browser from the customization menu.
+  accessibility:
+    # Raise text, border and chart-grid contrast in both themes (default: false)
+    high_contrast: false
+    # Disable transitions, animations and smooth scrolling (default: false).
+    # Applied regardless of this setting when the browser reports
+    # prefers-reduced-motion.
+    reduce_motion: false
+    # Root font size as a percentage of the default, scaling the whole layout.
+    # Allowed range 50-300; the customization menu steps by 10 (default: 100)
+    text_size: 100
+    # Underline links so they do not rely on color alone (default: false)
+    underline_links: false
+    # Draw a thick outline around the focused element for keyboard navigation
+    # (default: false)
+    focus_outline: false
+
   # Language settings for the web dashboard
   lang:
     # Default language ISO code (default: en)
@@ -83,7 +188,7 @@ web:
  
   # Optional bounds limits for dynamic charts. "max_mode" can be:
   # "off": Unrestricted, Chart.js auto-scales Y-axis by stream data peaks.
-  # "on": Imposes a hard Y-axis maximum matching "max_value". 
+  # "on": Imposes a hard Y-axis maximum matching "max_value".
   # "auto": Tries to securely detect hardware constraints (e.g CPU TjMax or Net link speed). If failed, falls back to "max_value".
   graphs:
     cpu_temp:
@@ -95,8 +200,18 @@ web:
     network:
       max_mode: "off"
       max_value: 1000 # Mbps (1 Gb/s)
+    # Split graphs into individual charts per device/interface (default: false).
+    # Can also be toggled per-chart from the dashboard using the split button (⊟).
+    split:
+      network: false   # one chart per network interface
+      disk_io: false   # one chart per disk device
+      disk_space: false # one chart per mount point
+      disk_temp: false  # one chart per disk device (thermals section)
+      gpu: false        # one chart per GPU
 
-  # API Access and Performance Logging
+  # Access and Performance Logging
+  # Access lines are tagged [API] for JSON/WebSocket endpoints and [WEB]
+  # for served UI content (HTML, JS, CSS, fonts, icons).
   logging:
     enabled: true
     # "access" (request details)
@@ -121,11 +236,156 @@ web:
     password_hash: ""
     password_salt: ""
     session_timeout: 24h
+    # Absolute cap on a session's life, measured from login. session_timeout only
+    # bounds idle time and slides forward on every request, so without this a token
+    # used once a day never expires. 0 disables the cap.
+    session_max_lifetime: 168h # 7 days
     argon2:
       time: 3
       memory: 32768 # double the OWASP minimum
       threads: 4
+    # Additional users (optional). Each user uses the same argon2 parameters above.
+    # users:
+    #   - username: user1
+    #     password_hash: ""
+    #     password_salt: ""
+    #   - username: user2
+    #     password_hash: ""
+    #     password_salt: ""
+
+# Application monitoring
+# These modules appear under the "Applications" section in the dashboard.
+# Each module is independently enabled/disabled.
+applications:
+  # Nginx monitoring via the stub_status module
+  # Requires: nginx compiled with --with-http_stub_status_module
+  # Add to your nginx config:
+  #   location /status { stub_status; allow 127.0.0.1; deny all; }
+  nginx:
+    enabled: false
+    status_url: "http://localhost/status"
+
+  # Apache2 monitoring via the mod_status module
+  # Requires: a2enmod status + httpd.conf:
+  #   <Location /server-status>
+  #     SetHandler server-status
+  #     Require local
+  #   </Location>
+  # ExtendedStatus On is recommended for full scoreboard detail.
+  apache2:
+    enabled: false
+    status_url: "http://localhost/server-status?auto"
+
+  # Container monitoring (Docker / Podman)
+  # Discovery modes (logged at startup):
+  #   - "socket": uses the runtime API for discovery and resolves cgroups v2 via PID
+  #     (supports Podman Quadlets, including rootless services)
+  #   - "cgroups": scans Docker, Podman, and Quadlet cgroups when no socket is
+  #     available (no container name mapping)
+  # The socket_path is auto-detected by default; set it explicitly if using a
+  # non-standard location or rootless Podman.
+  containers:
+    enabled: true
+    # socket_path: "/var/run/docker.sock"
+    # Filter by container name or ID prefix. Empty = monitor all running containers.
+    # containers: ["my-app", "postgres-db"]
+
+  # Custom metrics via Unix socket
+  # Define chart groups with metric names, units, and Y-axis maxima.
+  # Kula creates a Unix socket at <storage_dir>/kula.sock to receive data.
+  #
+  # Send data from any script or program:
+  #   echo '{"custom":{"cpu_fans":[{"fan1":4423},{"fan2":8512}]}}' | socat - UNIX-CONNECT:/var/lib/kula/kula.sock
+  #
+  # Each group becomes a chart card. Each metric in the group becomes a line.
+  # custom:
+  #   cpu_fans:
+  #     - name: fan1
+  #       unit: RPM
+  #       max: 5000
+  #     - name: fan2
+  #       unit: RPM
+  #       max: 10000
+  #   room_temp:
+  #     - name: ambient
+  #       unit: °C
+  #       max: 50
+  #
+  # How long a group keeps reporting its last values after its producer stops
+  # pushing. Once exceeded the feed is dropped so the chart shows a gap instead
+  # of a frozen line. Omit (or 0) to derive from collection.interval.
+  # custom_stale_after: 10s
+
+  # PostgreSQL monitoring
+  # Connects via lib/pq. Supports TCP and Unix socket.
+  # For Unix socket: set host to socket directory, port to 0.
+  #
+  # Quick setup — create a read-only monitoring user:
+  #   sudo -u postgres psql
+  #   CREATE ROLE kula_monitor WITH LOGIN PASSWORD 'changeme';
+  #   GRANT pg_monitor TO kula_monitor;
+  #   -- pg_monitor grants read access to pg_stat_*, pg_database_size, etc.
+  #   -- No table-level permissions needed.
+  #
+  # pg_hba.conf — add before any "reject" rules:
+  #   host    postgres    kula_monitor    127.0.0.1/32    scram-sha-256
+  #
+  # Then reload: sudo systemctl reload postgresql
+  postgres:
+    enabled: false
+    host: "localhost"
+    port: 5432
+    user: "kula_monitor"
+    password: ""
+    dbname: "postgres"
+    sslmode: "disable"
+
+  # MySQL / MariaDB monitoring
+  # Connects via go-sql-driver/mysql. Supports TCP and Unix socket.
+  # For Unix socket: set host to the socket path (e.g. /var/run/mysqld/mysqld.sock), port to 0.
+  #
+  # Quick setup — create a read-only monitoring user:
+  #   sudo mysql
+  #   CREATE USER 'kula_monitor'@'127.0.0.1' IDENTIFIED BY 'changeme';
+  #   GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'kula_monitor'@'127.0.0.1';
+  #   FLUSH PRIVILEGES;
+  #
+  # For full replication monitoring on MariaDB  MySQL the
+  # privileges above are not enough — grant in addition:
+  #   GRANT SLAVE MONITOR, BINLOG MONITOR, REPLICATION MASTER ADMIN
+  #     ON *.* TO 'kula_monitor'@'127.0.0.1';
+  # SLAVE MONITOR is required for SHOW REPLICA STATUS (kula picks up
+  # io/sql thread state, seconds-behind, last errno, IO state from this).
+  # REPLICATION MASTER ADMIN is required for SHOW SLAVE HOSTS / SHOW REPLICAS
+  # (used for the "replicas connected" gauge). Without these grants the
+  # replication metrics quietly degrade to zero / sentinel values rather
+  # than failing the rest of the collector.
+  #
+  # Caveat on Seconds_Behind_Source: this is the SQL thread's view of how far
+  # behind it is on what it currently sees, NOT the true lag from the primary.
+
+  mysql:
+    enabled: false
+    host: "127.0.0.1"
+    port: 3306
+    user: "kula_monitor"
+    password: ""
+    # Database to connect to. Leave empty — SHOW GLOBAL STATUS and
+    # @@max_connections are server-wide and don't require a database.
+    dbname: ""
 
 # TUI settings
 tui:
+  # Live sampling/redraw interval. Values below 100ms are capped to protect
+  # terminal responsiveness.
   refresh_rate: 1s
+
+# Ollama AI analysis (optional)
+# Requires Ollama running locally
+# The AI button (🤖) appears in the web UI header when enabled.
+ollama:
+  enabled: false
+  url: "http://localhost:11434"
+  model: "gemma4:e4b"
+  # Maximum time to wait for the model to finish streaming (default: 300s)
+  timeout: "300s"
