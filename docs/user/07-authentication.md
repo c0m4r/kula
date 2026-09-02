@@ -29,6 +29,7 @@ web:
     password_hash: "<paste hash>"
     password_salt: "<paste salt>"
     session_timeout: 24h
+    session_max_lifetime: 168h
     argon2:
       time: 3
       memory: 32768
@@ -70,6 +71,16 @@ Generate each user's hash with `./kula hash-password`.
 - Sessions are validated by **token expiry/validity only** — they are *not* bound to client
   IP or User-Agent, so they survive roaming and proxies.
 - **Sliding expiration**: each successful request extends the session by `session_timeout`.
+- **Absolute lifetime**: a session is refused and deleted once it is older than
+  `session_max_lifetime` (default `168h`, 7 days), however recently it was used. Without
+  this ceiling, sliding expiration would renew a token forever — an open dashboard tab
+  refreshes the session by itself over the WebSocket, so a token copied out of a browser
+  profile, a proxy log or a backup of the storage directory would never stop working. Set
+  it to `0` to disable the cap and go back to indefinitely renewable sessions.
+- **Live connections are re-checked**: the dashboard WebSocket revalidates its session
+  every 30 seconds and hangs up once it is gone, so an open tab cannot keep streaming past
+  the absolute lifetime (or past a logout). An open dashboard counts as activity for the
+  sliding timeout, exactly like any other request.
 - A cleanup goroutine purges expired sessions every 5 minutes.
 
 ### Cookie flags

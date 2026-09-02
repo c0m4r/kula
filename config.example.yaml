@@ -233,6 +233,10 @@ web:
     password_hash: ""
     password_salt: ""
     session_timeout: 24h
+    # Absolute cap on a session's life, measured from login. session_timeout only
+    # bounds idle time and slides forward on every request, so without this a token
+    # used once a day never expires. 0 disables the cap.
+    session_max_lifetime: 168h # 7 days
     argon2:
       time: 3
       memory: 32768 # double the OWASP minimum

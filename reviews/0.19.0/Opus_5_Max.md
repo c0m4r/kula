@@ -198,7 +198,7 @@ IP limiter still covers you) rather than converting memory pressure into a login
 
 ---
 
-### K-04 · MEDIUM — Sessions renew forever; no absolute lifetime
+### K-04 · MEDIUM · FIXED — Sessions renew forever; no absolute lifetime
 
 **`internal/web/auth.go:256`**
 

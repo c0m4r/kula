@@ -371,6 +371,150 @@ func TestLoadSessionsLegacyFingerprintFields(t *testing.T) {
 	}
 }
 
+// TestSessionAbsoluteLifetime pins the ceiling that stops sliding expiration from
+// renewing a session forever: past created_at+session_max_lifetime the token is
+// rejected and dropped even though it has been used continuously.
+func TestSessionAbsoluteLifetime(t *testing.T) {
+	am := NewAuthManager(config.AuthConfig{
+		Enabled:            true,
+		SessionTimeout:     time.Hour,
+		SessionMaxLifetime: time.Hour,
+	}, "", false, config.SecurityConfig{OriginValidation: true})
+
+	token, _ := am.CreateSession("admin")
+	if !am.ValidateSession(token) {
+		t.Fatal("fresh session should validate")
+	}
+
+	// Age the login rather than sleeping through it: the ceiling is measured from
+	// createdAt, so backdating reproduces the condition exactly without racing the
+	// scheduler. That first ValidateSession already slid expiresAt to the deadline,
+	// which the backdating leaves in the future — so the session is not idle-expired
+	// and only the absolute ceiling can reject it.
+	am.mu.Lock()
+	am.sessions[hashToken(token)].createdAt = time.Now().Add(-2 * time.Hour)
+	am.mu.Unlock()
+
+	if am.ValidateSession(token) {
+		t.Error("session outlived session_max_lifetime despite continuous use")
+	}
+	am.mu.RLock()
+	_, still := am.sessions[hashToken(token)]
+	am.mu.RUnlock()
+	if still {
+		t.Error("session past its absolute lifetime was not deleted")
+	}
+}
+
+// TestSessionSlidingClampedToLifetime checks the sliding extension never writes an
+// expiresAt beyond the absolute deadline, so what CleanupSessions and sessions.json
+// see matches what ValidateSession will honour.
+func TestSessionSlidingClampedToLifetime(t *testing.T) {
+	am := NewAuthManager(config.AuthConfig{
+		Enabled:            true,
+		SessionTimeout:     time.Hour,
+		SessionMaxLifetime: time.Minute,
+	}, "", false, config.SecurityConfig{OriginValidation: true})
+
+	token, _ := am.CreateSession("admin")
+	if !am.ValidateSession(token) {
+		t.Fatal("fresh session should validate")
+	}
+
+	am.mu.RLock()
+	sess := am.sessions[hashToken(token)]
+	expires, created := sess.expiresAt, sess.createdAt
+	am.mu.RUnlock()
+
+	if want := created.Add(time.Minute); expires.After(want) {
+		t.Errorf("expiresAt = %v, want no later than the absolute deadline %v", expires, want)
+	}
+}
+
+// TestSessionMaxLifetimeDisabled documents the opt-out: a zero session_max_lifetime
+// keeps the old indefinitely renewable behaviour.
+func TestSessionMaxLifetimeDisabled(t *testing.T) {
+	am := NewAuthManager(config.AuthConfig{
+		Enabled:            true,
+		SessionTimeout:     time.Hour,
+		SessionMaxLifetime: 0,
+	}, "", false, config.SecurityConfig{OriginValidation: true})
+
+	token, _ := am.CreateSession("admin")
+	am.mu.Lock()
+	am.sessions[hashToken(token)].createdAt = time.Now().Add(-365 * 24 * time.Hour)
+	am.mu.Unlock()
+
+	if !am.ValidateSession(token) {
+		t.Error("with session_max_lifetime disabled, an old but active session should still validate")
+	}
+}
+
+// TestCleanupSessionsAbsoluteLifetime covers the background sweeper: a session that
+// is idle but past its absolute lifetime must not survive until someone tries it.
+func TestCleanupSessionsAbsoluteLifetime(t *testing.T) {
+	am := NewAuthManager(config.AuthConfig{
+		Enabled:            true,
+		SessionTimeout:     time.Hour,
+		SessionMaxLifetime: time.Minute,
+	}, "", false, config.SecurityConfig{OriginValidation: true})
+
+	token, _ := am.CreateSession("admin")
+	am.mu.Lock()
+	am.sessions[hashToken(token)].createdAt = time.Now().Add(-2 * time.Minute)
+	am.mu.Unlock()
+
+	am.CleanupSessions()
+
+	am.mu.RLock()
+	_, still := am.sessions[hashToken(token)]
+	am.mu.RUnlock()
+	if still {
+		t.Error("CleanupSessions kept a session past its absolute lifetime")
+	}
+}
+
+// TestLoadSessionsEnforcesAbsoluteLifetime makes sure a restart is not a way to
+// launder an over-age session: sessions.json carries expires_at, but created_at is
+// what decides whether the session may come back at all.
+func TestLoadSessionsEnforcesAbsoluteLifetime(t *testing.T) {
+	tmpDir := t.TempDir()
+	old := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	saved := `[` +
+		`{"token":"aged","username":"admin","created_at":"` + old + `","expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"undated","username":"admin","expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"fresh","username":"admin","created_at":"` + time.Now().UTC().Format(time.RFC3339) + `","expires_at":"2999-01-01T00:00:00Z"}` +
+		`]`
+	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), []byte(saved), 0600); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	am := NewAuthManager(config.AuthConfig{
+		Enabled:            true,
+		SessionTimeout:     time.Hour,
+		SessionMaxLifetime: 7 * 24 * time.Hour,
+	}, tmpDir, false, config.SecurityConfig{OriginValidation: true})
+	if err := am.LoadSessions(); err != nil {
+		t.Fatalf("LoadSessions error: %v", err)
+	}
+
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	if _, ok := am.sessions["aged"]; ok {
+		t.Error("session older than session_max_lifetime was restored from disk")
+	}
+	if _, ok := am.sessions["undated"]; ok {
+		t.Error("session with no created_at was restored; its lifetime cannot be enforced")
+	}
+	sess, ok := am.sessions["fresh"]
+	if !ok {
+		t.Fatal("session within its absolute lifetime was not restored")
+	}
+	if want := sess.createdAt.Add(7 * 24 * time.Hour); sess.expiresAt.After(want) {
+		t.Errorf("restored expiresAt = %v, want no later than %v", sess.expiresAt, want)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || (len(s) > len(substr) && stringContains(s, substr)))
 }

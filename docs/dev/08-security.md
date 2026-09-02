@@ -26,6 +26,12 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
 - **SHA-256 token hashing at rest** — plaintext token only on the wire; only its hash is stored
   in `sessions.json` (mode `0600`).
 - **Sliding expiration** — a successful request extends the session by `session_timeout`.
+- **Absolute lifetime** — a session is rejected and deleted once `now - created_at` exceeds
+  `session_max_lifetime` (default 7 days), enforced in `ValidateSession`, `CleanupSessions`
+  and on load from disk; the sliding extension is clamped to that deadline. `0` disables it.
+- **Live WebSocket re-validation** — auth is enforced at the `/ws` upgrade *and* every 30 s
+  for the life of the connection (`wsSessionRecheckInterval`), so an established socket
+  cannot outlive its session.
 - **Bearer token** accepted in the `Authorization` header.
 - A **cleanup goroutine** purges expired sessions every 5 minutes.
 - **Cookie flags:** `HttpOnly`, `SameSite=Strict`, and `Secure` (conditional on TLS or trusted

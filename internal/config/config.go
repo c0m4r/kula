@@ -231,8 +231,15 @@ type AuthConfig struct {
 	PasswordHash   string        `yaml:"password_hash"`
 	PasswordSalt   string        `yaml:"password_salt"`
 	SessionTimeout time.Duration `yaml:"session_timeout"`
-	Argon2         Argon2Config  `yaml:"argon2"`
-	Users          []UserConfig  `yaml:"users"`
+	// SessionMaxLifetime is the absolute ceiling on a session's life, measured
+	// from login. SessionTimeout only bounds *idle* time and slides forward on
+	// every validated request, so without this ceiling a token that is used once
+	// per timeout window — which an open dashboard tab does by itself over the
+	// WebSocket — never expires. Zero or negative opts out and restores the old
+	// indefinitely renewable behaviour.
+	SessionMaxLifetime time.Duration `yaml:"session_max_lifetime"`
+	Argon2             Argon2Config  `yaml:"argon2"`
+	Users              []UserConfig  `yaml:"users"`
 }
 
 type UserConfig struct {
@@ -388,7 +395,8 @@ func DefaultConfig() *Config {
 			JoinMetrics:        false,
 			DefaultAggregation: "max",
 			Auth: AuthConfig{
-				SessionTimeout: 24 * time.Hour,
+				SessionTimeout:     24 * time.Hour,
+				SessionMaxLifetime: 7 * 24 * time.Hour,
 				Argon2: Argon2Config{
 					Time:    3,
 					Memory:  32 * 1024,

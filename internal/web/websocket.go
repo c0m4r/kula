@@ -12,6 +12,14 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// wsSessionRecheckInterval is how often an established WebSocket re-validates
+// the session that opened it. Authentication is otherwise checked exactly once,
+// at the upgrade, so without this a socket opened moments before a session's
+// absolute deadline would keep streaming metrics for as long as it stayed
+// connected — the connection would outlive the very ceiling
+// session_max_lifetime advertises. It is a var so tests can shorten it.
+var wsSessionRecheckInterval = 30 * time.Second
+
 type wsClient struct {
 	conn   *websocket.Conn
 	sendCh chan []byte
@@ -73,6 +81,15 @@ func (s *Server) newUpgrader() websocket.Upgrader {
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	ip := getClientIP(r, s.cfg.TrustProxy)
+
+	// Remember which session authorized this upgrade. AuthMiddleware has already
+	// validated it; we keep the token so the write pump can keep checking it for
+	// as long as the socket lives. An empty token when auth is enabled cannot
+	// happen through the middleware, and would fail the first re-check anyway.
+	var sessionToken string
+	if s.cfg.Auth.Enabled {
+		sessionToken = s.auth.authenticatedSessionToken(r)
+	}
 
 	s.wsMu.Lock()
 	if s.wsCount >= s.cfg.MaxWebsocketConns {
@@ -193,6 +210,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(50 * time.Second) // Must be less than read deadline
 	defer ticker.Stop()
 
+	// A nil channel blocks forever, so with auth disabled the session case below
+	// simply never fires.
+	var sessionCheck <-chan time.Time
+	if s.cfg.Auth.Enabled {
+		sessionTicker := time.NewTicker(wsSessionRecheckInterval)
+		defer sessionTicker.Stop()
+		sessionCheck = sessionTicker.C
+	}
+
 	for {
 		select {
 		case data, ok := <-client.sendCh:
@@ -210,6 +236,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		case <-sessionCheck:
+			// Expired, revoked, or past its absolute lifetime: stop streaming and
+			// hang up. Returning runs the deferred unregister and Close.
+			if !s.auth.ValidateSession(sessionToken) {
+				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				_ = conn.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "session expired"))
 				return
 			}
 		}

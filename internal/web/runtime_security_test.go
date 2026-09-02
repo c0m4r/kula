@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -36,6 +37,10 @@ const (
 	secPass  = "correct horse battery staple"
 	secSalt  = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 	secToken = "metrics-bearer-secret"
+	// secSessionMaxLifetime is the absolute session ceiling these servers run
+	// with. Long enough never to fire on its own during a test run; tests that
+	// care about it backdate a session's createdAt past it.
+	secSessionMaxLifetime = time.Hour
 )
 
 // newSecuredTestServer builds a Server with authentication, origin validation,
@@ -59,12 +64,13 @@ func newSecuredTestServer(t *testing.T, store *storage.Store) (*Server, *httptes
 			OriginValidation: true,
 		},
 		Auth: config.AuthConfig{
-			Enabled:        true,
-			Username:       secUser,
-			PasswordHash:   HashPassword(secPass, secSalt, params),
-			PasswordSalt:   secSalt,
-			SessionTimeout: time.Hour,
-			Argon2:         params,
+			Enabled:            true,
+			Username:           secUser,
+			PasswordHash:       HashPassword(secPass, secSalt, params),
+			PasswordSalt:       secSalt,
+			SessionTimeout:     time.Hour,
+			SessionMaxLifetime: secSessionMaxLifetime,
+			Argon2:             params,
 		},
 		PrometheusMetrics: config.MetricsConfig{Enabled: true, Token: secToken},
 	}
@@ -444,6 +450,51 @@ func TestRuntimeWebSocketGates(t *testing.T) {
 		t.Error("cross-origin WebSocket upgrade succeeded, want rejection")
 	} else if resp == nil || resp.StatusCode != http.StatusForbidden {
 		t.Errorf("cross-origin WS status = %v, want 403", statusOf(resp))
+	}
+}
+
+// TestRuntimeWebSocketClosesAtSessionDeadline proves the absolute session lifetime
+// reaches connections that are already established. Auth is checked once, at the
+// upgrade; a socket opened just before the deadline would otherwise keep streaming
+// live metrics indefinitely, right past the ceiling session_max_lifetime promises.
+func TestRuntimeWebSocketClosesAtSessionDeadline(t *testing.T) {
+	prev := wsSessionRecheckInterval
+	wsSessionRecheckInterval = 20 * time.Millisecond
+	t.Cleanup(func() { wsSessionRecheckInterval = prev })
+
+	s, ts := newSecuredTestServer(t, nil)
+	res := login(t, ts, secUser, secPass)
+	if res.session == "" {
+		t.Fatal("setup login failed")
+	}
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
+	hdr := http.Header{}
+	hdr.Set("Cookie", "kula_session="+res.session)
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL+"/ws", hdr)
+	if err != nil {
+		t.Fatalf("authenticated WebSocket upgrade failed: %v (%s)", err, statusOf(resp))
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Age the login past the ceiling. The upgrade slid expiresAt forward, so the
+	// session is not idle-expired: only the absolute lifetime can end this socket.
+	s.auth.mu.Lock()
+	s.auth.sessions[hashToken(res.session)].createdAt = time.Now().Add(-2 * secSessionMaxLifetime)
+	s.auth.mu.Unlock()
+
+	// The read must fail because the server hung up — either the close frame it
+	// sends or the abrupt EOF that follows it. A *timeout* here means the socket
+	// was still happily open, which is the bug this test exists to catch, so it
+	// is asserted against explicitly rather than counted as "some error".
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, err = conn.ReadMessage()
+	if err == nil {
+		t.Fatal("WebSocket kept streaming after the session passed its absolute lifetime")
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		t.Fatalf("WebSocket stayed open past the session's absolute lifetime: read timed out (%v)", err)
 	}
 }
 

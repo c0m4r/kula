@@ -13,6 +13,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 - WebSocket disconnect races the metric broadcast and panics the process
 - Container ID shorter than 12 bytes panics the collector goroutine
+- Login rate limiter allows targeted account lockout and global login denial
+- Sessions renew forever; no absolute lifetime
 
 ## [0.19.0] - 2026-08-31
 

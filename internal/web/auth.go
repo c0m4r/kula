@@ -103,6 +103,24 @@ type session struct {
 	expiresAt time.Time
 }
 
+// sessionDeadline returns the moment sess stops being valid however recently it
+// was used, and whether such a ceiling applies at all.
+//
+// expiresAt alone only bounds *idle* time: ValidateSession slides it forward by
+// the full session_timeout on every successful check, and an open dashboard tab
+// performs that check by itself over the WebSocket. Without an absolute ceiling
+// a token lifted from a browser profile, a proxy log or a backup of the storage
+// directory therefore keeps working indefinitely, and sessions survive restarts
+// by design so nothing else resets it. session_max_lifetime, measured from
+// createdAt, is that ceiling; zero or negative is the explicit opt-out back into
+// indefinitely renewable sessions.
+func (a *AuthManager) sessionDeadline(sess *session) (time.Time, bool) {
+	if a.cfg.SessionMaxLifetime <= 0 {
+		return time.Time{}, false
+	}
+	return sess.createdAt.Add(a.cfg.SessionMaxLifetime), true
+}
+
 // sessionData is used for JSON serialization of sessions.
 type sessionData struct {
 	Token     string    `json:"token"`
@@ -308,13 +326,25 @@ func (a *AuthManager) ValidateSession(token string) bool {
 		return false
 	}
 
-	if time.Now().After(sess.expiresAt) {
+	now := time.Now()
+	if now.After(sess.expiresAt) {
 		delete(a.sessions, hashedToken)
 		return false
 	}
 
-	// Sliding expiration
-	sess.expiresAt = time.Now().Add(a.cfg.SessionTimeout)
+	deadline, capped := a.sessionDeadline(sess)
+	if capped && now.After(deadline) {
+		delete(a.sessions, hashedToken)
+		return false
+	}
+
+	// Sliding expiration, clamped to the absolute deadline so the expiresAt we
+	// hand to CleanupSessions and persist to sessions.json never promises more
+	// life than the session actually has.
+	sess.expiresAt = now.Add(a.cfg.SessionTimeout)
+	if capped && sess.expiresAt.After(deadline) {
+		sess.expiresAt = deadline
+	}
 
 	return true
 }
@@ -339,29 +369,36 @@ func (a *AuthManager) RevokeSession(token string) {
 	delete(a.sessions, hashedToken)
 }
 
+// authenticatedSessionToken returns the session token that authenticates r, or
+// "" if none does. The cookie is tried first and the Authorization bearer token
+// second, so a stale cookie alongside a valid header still authenticates.
+//
+// Callers that outlive the request — the WebSocket pump — keep the returned
+// token so they can re-check the session later. Validating here has the same
+// side effect it has anywhere else: a successful check slides the session's idle
+// expiry forward, bounded by session_max_lifetime.
+func (a *AuthManager) authenticatedSessionToken(r *http.Request) string {
+	if cookie, err := r.Cookie("kula_session"); err == nil && a.ValidateSession(cookie.Value) {
+		return cookie.Value
+	}
+
+	const bearer = "Bearer "
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, bearer) {
+		if token := authHeader[len(bearer):]; token != "" && a.ValidateSession(token) {
+			return token
+		}
+	}
+
+	return ""
+}
+
 // AuthMiddleware protects routes when auth is enabled.
 func (a *AuthManager) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !a.cfg.Enabled {
+		if !a.cfg.Enabled || a.authenticatedSessionToken(r) != "" {
 			next.ServeHTTP(w, r)
 			return
-		}
-
-		// Check cookie
-		cookie, err := r.Cookie("kula_session")
-		if err == nil && a.ValidateSession(cookie.Value) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Check Authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "" && len(authHeader) > 7 && authHeader[:7] == "Bearer " {
-			token := authHeader[7:]
-			if a.ValidateSession(token) {
-				next.ServeHTTP(w, r)
-				return
-			}
 		}
 
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -376,6 +413,10 @@ func (a *AuthManager) CleanupSessions() {
 	now := time.Now()
 	for token, sess := range a.sessions {
 		if now.After(sess.expiresAt) {
+			delete(a.sessions, token)
+			continue
+		}
+		if deadline, capped := a.sessionDeadline(sess); capped && now.After(deadline) {
 			delete(a.sessions, token)
 		}
 	}
@@ -411,15 +452,32 @@ func (a *AuthManager) LoadSessions() error {
 
 	now := time.Now()
 	for _, sd := range saved {
-		if now.Before(sd.ExpiresAt) {
-			// In hashed version, sd.Token is actually the hash
-			a.sessions[sd.Token] = &session{
-				username:  sd.Username,
-				csrfToken: sd.CSRFToken,
-				createdAt: sd.CreatedAt,
-				expiresAt: sd.ExpiresAt,
+		if !now.Before(sd.ExpiresAt) {
+			continue
+		}
+		sess := &session{
+			username:  sd.Username,
+			csrfToken: sd.CSRFToken,
+			createdAt: sd.CreatedAt,
+			expiresAt: sd.ExpiresAt,
+		}
+		// A session with no recorded login time has no enforceable absolute
+		// lifetime, so it is dropped rather than restored as one that can never
+		// age out. The cost is a single re-login for a truncated or hand-edited
+		// sessions.json; SaveSessions always writes created_at.
+		if a.cfg.SessionMaxLifetime > 0 && sd.CreatedAt.IsZero() {
+			continue
+		}
+		if deadline, capped := a.sessionDeadline(sess); capped {
+			if now.After(deadline) {
+				continue
+			}
+			if sess.expiresAt.After(deadline) {
+				sess.expiresAt = deadline
 			}
 		}
+		// In hashed version, sd.Token is actually the hash
+		a.sessions[sd.Token] = sess
 	}
 
 	return nil

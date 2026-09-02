@@ -217,6 +217,7 @@ See [Authentication](07-authentication.md).
     password_hash: ""   # from: ./kula hash-password
     password_salt: ""
     session_timeout: 24h
+    session_max_lifetime: 168h  # absolute cap from login; 0 disables
     argon2:
       time: 3
       memory: 32768     # KiB (double the OWASP minimum)
