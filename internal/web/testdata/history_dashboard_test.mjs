@@ -3,19 +3,13 @@
 // frontend modules, a controlled metrics API, and accelerated browser time.
 import http from 'node:http';
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert/strict';
+import { delay, findChromium, launchChromium } from './chromium_test_helper.mjs';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const browserPath = process.env.KULA_CHROMIUM || [
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-].find(candidate => fs.existsSync(candidate));
+const browserPath = findChromium();
 if (!browserPath) throw new Error('Chromium/Chrome not found; set KULA_CHROMIUM');
 if (typeof WebSocket !== 'function') throw new Error('Node.js 22+ is required');
 function source(_variant, file) { return fs.readFileSync(path.join(root, file)); }
@@ -89,18 +83,15 @@ await new Promise((resolve, reject) => {
 });
 const port = server.address().port;
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'kula-dashboard-test-'));
-const browser = spawn(browserPath, ['--headless=new', '--no-sandbox', '--disable-gpu',
-    '--disable-dev-shm-usage', '--disable-background-networking', '--no-first-run',
-    '--remote-debugging-port=0', `--user-data-dir=${scratch}/chrome`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
-const browserClosed = new Promise(resolve => browser.once('close', resolve));
-let stderr = '';
-browser.on('error', error => { stderr += error.message; });
-browser.stderr.on('data', chunk => { stderr += chunk; });
-let socket;
+const userDataDir = `${scratch}/chrome`;
+let browser, browserClosed, socket;
 try {
-    for (let i = 0; i < 100 && !stderr.includes('DevTools listening on'); i++) await delay(50);
-    const endpoint = stderr.match(/DevTools listening on (ws:\/\/[^\s]+)/)?.[1];
-    if (!endpoint) throw new Error(stderr);
+    let endpoint;
+    ({ browser, browserClosed, endpoint } = await launchChromium(browserPath, [
+        '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+        '--disable-background-networking', '--no-first-run', '--remote-debugging-port=0',
+        `--user-data-dir=${userDataDir}`, 'about:blank',
+    ], userDataDir));
     socket = new WebSocket(endpoint);
     await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
     let id = 0; const pending = new Map();
@@ -139,8 +130,8 @@ try {
     console.log(JSON.stringify(result));
 } finally {
     socket?.close();
-    if (browser.exitCode === null && browser.signalCode === null) browser.kill('SIGTERM');
+    if (browser?.exitCode === null && browser.signalCode === null) browser.kill('SIGTERM');
     await new Promise(resolve => server.close(resolve));
-    await browserClosed;
+    if (browserClosed) await browserClosed;
     fs.rmSync(scratch, {recursive: true, force: true});
 }
