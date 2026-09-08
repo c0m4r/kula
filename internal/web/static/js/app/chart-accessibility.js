@@ -52,19 +52,45 @@ function formatTimestamp(options, value) {
     }
 }
 
-function formatValue(chart, dataset, value) {
+function metricNumber(options, value) {
+    if (!finiteNumber(value)) return '—';
+    try {
+        const formatted = options?.formatNumber?.(value);
+        if (formatted != null && formatted !== '') return String(formatted);
+    } catch (_) { /* use the built-in stable fallback */ }
+
+    const absolute = Math.abs(value);
+    const precision = value !== 0 && absolute < 0.01
+        ? Math.min(15, Math.max(2, Math.ceil(-Math.log10(absolute)) + 2))
+        : 2;
+    return value.toLocaleString('en-US', {
+        useGrouping: false,
+        maximumFractionDigits: precision,
+    });
+}
+
+function replaceExponentNumbers(options, value) {
+    return String(value).replace(
+        /[-+]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+/g,
+        match => metricNumber(options, Number(match)),
+    );
+}
+
+function formatValue(chart, dataset, value, options) {
     if (!finiteNumber(value)) return '—';
     const scale = chart?.scales?.[dataset?.yAxisID || 'y'];
     const callback = scale?.options?.ticks?.callback;
     if (typeof callback === 'function') {
         try {
-            const formatted = callback.call(scale, value);
-            if (formatted != null) return String(formatted);
+            // Some axis callbacks concatenate their argument directly. Give
+            // them a rounded value so data tables and cursor announcements do
+            // not expose float32/float64 representation noise.
+            const rounded = Number(metricNumber(options, value));
+            const formatted = callback.call(scale, rounded);
+            if (formatted != null) return replaceExponentNumbers(options, formatted);
         } catch (_) { /* use the stable numeric fallback */ }
     }
-    return Number.isInteger(value)
-        ? String(value)
-        : value.toLocaleString(undefined, { maximumFractionDigits: 3 });
+    return metricNumber(options, value);
 }
 
 function lowerBound(values, target) {
@@ -280,7 +306,7 @@ export function chartCSV(chart, options = {}) {
     model.rows.forEach(row => {
         const fields = [formatTimestamp(options, row.timestamp)];
         row.cells.forEach(cell => {
-            fields.push(cell.value);
+            fields.push(finiteNumber(cell.value) ? metricNumber(options, cell.value) : '');
         });
         lines.push(fields.map(csvCell).join(','));
     });
@@ -316,7 +342,7 @@ export function chartCursorText(chart, timestamp, options = {}) {
     visibleDatasets(chart).forEach(({ dataset }) => {
         const point = nearestPoint(dataset.data, value);
         if (pointTimestamp(point) === value && finiteNumber(point?.y)) {
-            entries.push(`${dataset.label}: ${formatValue(chart, dataset, point.y)}`);
+            entries.push(`${dataset.label}: ${formatValue(chart, dataset, point.y, options)}`);
         }
     });
     const maxSeries = 12;
@@ -369,7 +395,7 @@ function renderTable(chart) {
         tr.appendChild(timeCell);
         row.cells.forEach((cell, index) => {
             const td = document.createElement('td');
-            td.textContent = formatValue(chart, model.columns[index].dataset, cell.value);
+            td.textContent = formatValue(chart, model.columns[index].dataset, cell.value, options);
             tr.appendChild(td);
         });
             body.appendChild(tr);

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,7 +33,7 @@ func newTestStoreWithSample(t *testing.T) *storage.Store {
 	sample := &collector.Sample{
 		Timestamp: ts,
 		CPU: collector.CPUStats{
-			Total:    collector.CPUCoreStats{Usage: 12.5, User: 8.0, System: 3.0},
+			Total:    collector.CPUCoreStats{Usage: 1.4199999570846558, User: 8.0, System: 3.0},
 			NumCores: 4,
 		},
 		LoadAvg: collector.LoadAvg{Load1: 0.5, Load5: 0.4, Load15: 0.3, Running: 1, Total: 80},
@@ -199,6 +200,48 @@ func TestHandleMetrics(t *testing.T) {
 	// host label should be the hostname.
 	if !strings.Contains(body, `host="testhost"`) {
 		t.Errorf("host label not found in /metrics output")
+	}
+	for line := range strings.SplitSeq(body, "\n") {
+		if !strings.HasPrefix(line, "kula_") {
+			continue
+		}
+		value := line[strings.LastIndexByte(line, ' ')+1:]
+		if strings.ContainsAny(value, "eE") {
+			t.Errorf("metric value uses exponent notation: %s", line)
+		}
+	}
+	for _, want := range []string{
+		`kula_cpu_usage_percent{host="testhost"} 1.42`,
+		`kula_memory_total_bytes{host="testhost"} 8589934592`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rounded metric %q not found in /metrics output", want)
+		}
+	}
+}
+
+func TestFormatPrometheusValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		value float64
+		want  string
+	}{
+		{name: "floating point noise", value: 1.4199999570846558, want: "1.42"},
+		{name: "whole bytes", value: 29261729792, want: "29261729792"},
+		{name: "ordinary decimal", value: 12.3456, want: "12.35"},
+		{name: "small rate", value: 0.00123456, want: "0.00123"},
+		{name: "very small rate", value: 0.0000001, want: "0.0000001"},
+		{name: "negative zero", value: math.Copysign(0, -1), want: "0"},
+		{name: "positive infinity", value: math.Inf(1), want: "+Inf"},
+		{name: "negative infinity", value: math.Inf(-1), want: "-Inf"},
+		{name: "not a number", value: math.NaN(), want: "NaN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatPrometheusValue(tt.value); got != tt.want {
+				t.Errorf("formatPrometheusValue(%v) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -3,7 +3,9 @@ package web
 import (
 	"crypto/subtle"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"kula/internal/collector"
@@ -51,17 +53,17 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	gauge := func(name, help, labels string, value float64) {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s gauge\n", name, help, name)
 		if labels != "" {
-			fmt.Fprintf(&b, "%s{%s} %g\n", name, labels, value)
+			fmt.Fprintf(&b, "%s{%s} %s\n", name, labels, formatPrometheusValue(value))
 		} else {
-			fmt.Fprintf(&b, "%s %g\n", name, value)
+			fmt.Fprintf(&b, "%s %s\n", name, formatPrometheusValue(value))
 		}
 	}
 	counter := func(name, help, labels string, value float64) {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s counter\n", name, help, name)
 		if labels != "" {
-			fmt.Fprintf(&b, "%s{%s} %g\n", name, labels, value)
+			fmt.Fprintf(&b, "%s{%s} %s\n", name, labels, formatPrometheusValue(value))
 		} else {
-			fmt.Fprintf(&b, "%s %g\n", name, value)
+			fmt.Fprintf(&b, "%s %s\n", name, formatPrometheusValue(value))
 		}
 	}
 
@@ -677,6 +679,40 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Serves Prometheus text/plain metrics (label values are escaped via escapeLabel); not text/html, so the XSS rule doesn't apply.
 	// nosemgrep: no-direct-write-to-responsewriter
 	_, _ = w.Write([]byte(b.String()))
+}
+
+// formatPrometheusValue keeps exposition output human-readable and stable.
+// Whole values (notably byte sizes and counters) stay exact, ordinary
+// measurements use at most two decimal places, and very small non-zero rates
+// receive enough extra decimal places to avoid being rounded away. Fixed-point
+// formatting deliberately prevents strconv from switching to exponent notation.
+func formatPrometheusValue(value float64) string {
+	switch {
+	case math.IsNaN(value):
+		return "NaN"
+	case math.IsInf(value, 1):
+		return "+Inf"
+	case math.IsInf(value, -1):
+		return "-Inf"
+	case value == 0:
+		return "0"
+	case math.Trunc(value) == value:
+		return strconv.FormatFloat(value, 'f', 0, 64)
+	}
+
+	precision := 2
+	if absolute := math.Abs(value); absolute < 0.01 {
+		// Retain roughly three significant digits for sub-hundredth rates. The
+		// cap is ample for monitoring data while keeping a corrupt/subnormal
+		// value from producing hundreds of output characters.
+		precision = min(15, max(2, int(math.Ceil(-math.Log10(absolute)))+2))
+	}
+	formatted := strconv.FormatFloat(value, 'f', precision, 64)
+	formatted = strings.TrimRight(strings.TrimRight(formatted, "0"), ".")
+	if formatted == "-0" || formatted == "" {
+		return "0"
+	}
+	return formatted
 }
 
 // escapeLabel escapes backslashes, double-quotes, and newlines in Prometheus label values.

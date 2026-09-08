@@ -7,7 +7,7 @@
 import { state, colors, getChartMaxBound } from './state.js';
 import { diskKey, diskMember, diskLabel, diskTitle, diskDOMKey } from './disk-identity.js';
 import { createTimeSeriesChart } from './charts-init.js';
-import { formatBytesShort, formatPPS } from './format.js';
+import { formatBytesShort, formatMetricNumber, formatPPS } from './format.js';
 import { i18n } from './i18n.js';
 import { queueChartUpdate } from './chart-controller.js';
 import { appendEnvelopeGap, appendEnvelopePoint, clearEnvelopeData, ensureSensorDatasets, hasEnvelopeData } from './chart-envelope.js';
@@ -862,7 +862,7 @@ function _buildSplitChartsForType(type, options) {
             charts[`gpuload_${gpu}`] = createTimeSeriesChart(`canvas-${loadCardId}`, [
                 { label: i18n.t('load_pct'), borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
                 { label: i18n.t('power_w'), borderColor: colors.orange, data: [], fill: false, yAxisID: 'y1' },
-            ], { max: 100, ticks: { callback: v => v + '%' } });
+            ], { max: 100, ticks: { callback: v => formatMetricNumber(v) + '%' } });
             const loadCh = charts[`gpuload_${gpu}`];
             if (loadCh) {
                 loadCh.options.scales.y1 = { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { callback: v => v.toFixed(1) + ' W' } };

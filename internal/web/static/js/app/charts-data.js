@@ -5,7 +5,7 @@
 'use strict';
 import { state, colors } from './state.js';
 import { diskKey, diskMember, diskLabel, diskTitle, migrateDiskSelection } from './disk-identity.js';
-import { formatBytesShort, formatRangeTimestamp } from './format.js';
+import { formatBytesShort, formatMetricNumber, formatRangeTimestamp } from './format.js';
 import { createTimeSeriesChart, setChartTimeRange, updateChartLabels } from './charts-init.js';
 import { updateHeader, updateSubtitles } from './header.js';
 import { updateGauges } from './gauges.js';
@@ -545,7 +545,7 @@ export function addSampleToCharts(item, ts, {
                     state.psuCharts[psuKey] = createTimeSeriesChart(`chart-${psuKey}`, [
                         { label: 'Capacity %', borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
                         { label: 'Power W', borderColor: colors.orange, data: [], fill: false },
-                    ], { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } });
+                    ], { beginAtZero: true, max: 100, ticks: { callback: v => formatMetricNumber(v) + '%' } });
 
                     // Add second y-axis for power
                     if (state.psuCharts[psuKey]) {
@@ -576,7 +576,7 @@ export function addSampleToCharts(item, ts, {
 
             const sub = document.getElementById(`${psuKey}-subtitle`);
             if (sub) {
-                const parts = [`${ps.capacity}%`];
+                const parts = [`${formatMetricNumber(ps.capacity)}%`];
                 if (ps.status) parts.push(ps.status);
                 if (ps.power_w > 0) parts.push(`${ps.power_w.toFixed(1)} W`);
                 if (ps.voltage_v > 0) parts.push(`${ps.voltage_v.toFixed(2)} V`);
@@ -1047,7 +1047,7 @@ export function addSampleToCharts(item, ts, {
 
                 const sub = document.getElementById(`custom-${group}-subtitle`);
                 if (sub) {
-                    sub.textContent = metrics.map(m => `${m.name}: ${m.value}`).join('  ');
+                    sub.textContent = metrics.map(m => `${m.name}: ${formatMetricNumber(m.value)}`).join('  ');
                 }
             }
             seenCustom.add(group);

@@ -47,6 +47,7 @@ const {
     formatChartTick,
     formatDateTimeInput,
     formatFullTimestamp,
+    formatMetricNumber,
     historyTooltipLines,
     normalizeTimeZone,
     parseDateTimeInput,
@@ -316,6 +317,16 @@ test('timezone helpers keep UTC inputs exact and produce explicit history contex
     assert.ok(lines.includes('range_band: bucket_minimum–bucket_maximum'));
 });
 
+test('metric numbers are rounded without exponent notation', () => {
+    assert.equal(formatMetricNumber(1.4199999570846558), '1.42');
+    assert.equal(formatMetricNumber(29261729792), '29261729792');
+    assert.equal(formatMetricNumber(12.3456), '12.35');
+    assert.equal(formatMetricNumber(0.00123456), '0.00123');
+    assert.equal(formatMetricNumber(0.0000001), '0.0000001');
+    assert.equal(formatMetricNumber(1e21), '1000000000000000000000');
+    assert.equal(formatMetricNumber(Number.NaN), '—');
+});
+
 test('chart envelope storage stays aligned through raw points, gaps, trimming, and clearing', () => {
     const dataset = { data: [] };
     appendEnvelopePoint(dataset, new Date(1000), 5, null, null);
@@ -422,7 +433,7 @@ test('chart accessibility exposes bounded tables and complete formula-safe CSV',
         label: '=CPU',
         yAxisID: 'y',
         data: [
-            { x: 1000, y: 10 },
+            { x: 1000, y: 1.4199999570846558 },
             { x: 2000, y: 20 },
             { x: 3000, y: 30 },
         ],
@@ -445,6 +456,7 @@ test('chart accessibility exposes bounded tables and complete formula-safe CSV',
     const options = {
         translate: key => key,
         formatTimestamp: value => `t${value}`,
+        formatNumber: formatMetricNumber,
     };
 
     assert.deepEqual(chartTimestamps(chart), [1000, 2000, 3000]);
@@ -466,6 +478,10 @@ test('chart accessibility exposes bounded tables and complete formula-safe CSV',
     const csv = chartCSV(chart, options);
     assert.equal(csv.split('\r\n').filter(Boolean).length, 4, 'CSV contains every timestamp');
     assert.match(csv, /"'=CPU"/, 'spreadsheet formulas are neutralized');
+    assert.match(csv, /"1\.42"/, 'CSV rounds binary floating-point noise');
+    assert.doesNotMatch(csv, /\d[eE][+-]\d/, 'CSV avoids exponent notation');
+    assert.match(chartCursorText(chart, 1000, options), /=CPU: 1\.42%/,
+        'table/cursor value formatting rounds before applying axis units');
 });
 
 test('keyboard chart exploration snaps to plotted observations and announces values', () => {

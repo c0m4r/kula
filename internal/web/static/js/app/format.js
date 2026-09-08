@@ -4,6 +4,39 @@
    ============================================================ */
 'use strict';
 
+function expandExponent(text) {
+    const match = /^(-?)(\d+)(?:\.(\d*))?[eE]([+-]?\d+)$/.exec(text);
+    if (!match) return text;
+    const [, sign, whole, fraction = '', exponentText] = match;
+    const digits = whole + fraction;
+    const decimalAt = whole.length + Number(exponentText);
+    if (decimalAt <= 0) return `${sign}0.${'0'.repeat(-decimalAt)}${digits}`;
+    if (decimalAt >= digits.length) return `${sign}${digits}${'0'.repeat(decimalAt - digits.length)}`;
+    return `${sign}${digits.slice(0, decimalAt)}.${digits.slice(decimalAt)}`;
+}
+
+/**
+ * Format a metric without leaking binary floating-point noise or exponent
+ * notation. Ordinary values use at most two decimals; sub-hundredth non-zero
+ * rates retain roughly three significant digits, up to fifteen decimals.
+ */
+export function formatMetricNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '—';
+    if (number === 0) return '0';
+
+    let precision = 2;
+    const absolute = Math.abs(number);
+    if (absolute < 0.01) {
+        precision = Math.min(15, Math.max(2, Math.ceil(-Math.log10(absolute)) + 2));
+    }
+    let formatted = expandExponent(number.toFixed(precision));
+    if (formatted.includes('.')) {
+        formatted = formatted.replace(/0+$/, '').replace(/\.$/, '');
+    }
+    return formatted === '-0' ? '0' : formatted;
+}
+
 export function formatBytesShort(bytes) {
     if (bytes === 0 || bytes === undefined || bytes === null || isNaN(bytes)) return '0 B';
     if (Math.abs(bytes) < 1) return '0 B';

@@ -4,7 +4,7 @@
    ============================================================ */
 'use strict';
 import { state, colors } from './state.js';
-import { formatBytesShort } from './format.js';
+import { formatBytesShort, formatMetricNumber } from './format.js';
 import { createTimeSeriesChart } from './charts-init.js';
 import { i18n } from './i18n.js';
 import { pinSectionHeadForCards } from './section-utils.js';
@@ -34,7 +34,7 @@ const CONTAINER_METRICS = [
         subtitleId: 'containers-cpu-subtitle',
         i18nKeys: ['cpu_usage'],
         order: 20,
-        yConfig: { beginAtZero: true, ticks: { callback: v => v + '%' } },
+        yConfig: { beginAtZero: true, ticks: { callback: v => formatMetricNumber(v) + '%' } },
         field: 'cpu_pct',
     },
     {

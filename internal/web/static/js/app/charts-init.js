@@ -8,6 +8,7 @@ import {
     formatBytesShort,
     formatChartTick,
     formatFullTimestamp,
+    formatMetricNumber,
     formatPPS,
     historyTooltipLines,
 } from './format.js';
@@ -117,6 +118,11 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
                     caretSize: 0,
                     ...tooltipExtras,
                     callbacks: {
+                        label: context => {
+                            const label = context.dataset?.label;
+                            const value = formatMetricNumber(context.parsed?.y);
+                            return label ? `${label}: ${value}` : value;
+                        },
                         ...tooltipCallbacks,
                         title: items => formatFullTimestamp(
                             tooltipTimestamp(items),
@@ -183,6 +189,7 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
     const detachAccessibility = attachChartAccessibility(chart, {
         translate: key => i18n.t(key),
         formatTimestamp: value => formatFullTimestamp(value, state.timeZone, i18n.currentLang),
+        formatNumber: formatMetricNumber,
         getPinnedTimestamp: () => sharedCrosshair.pinned,
         getDataControlsEnabled: () => getSetting('chart_data_controls'),
     });
@@ -264,7 +271,7 @@ export function initCharts() {
         { label: i18n.t('iowait'), borderColor: colors.yellow, backgroundColor: colors.yellowAlpha, fill: true, data: [] },
         { label: i18n.t('steal'), borderColor: colors.purple, backgroundColor: colors.purpleAlpha, fill: true, data: [] },
         { label: i18n.t('total'), borderColor: colors.cyan, data: [], fill: false, borderWidth: 2 },
-    ], { max: 100, ticks: { callback: v => v + '%' } });
+    ], { max: 100, ticks: { callback: v => formatMetricNumber(v) + '%' } });
 
     state.cpuTempSensorNames = [];
     let cpuTempYConfig = { ticks: { callback: v => v.toFixed(1) + '°C' } };
@@ -399,7 +406,7 @@ export function initCharts() {
     state.charts.gpuload = createTimeSeriesChart('chart-gpu-load', [
         { label: i18n.t('load_pct'), borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
         { label: i18n.t('power_w'), borderColor: colors.orange, data: [], fill: false, yAxisID: 'y1' },
-    ], { max: 100, ticks: { callback: v => v + '%' } });
+    ], { max: 100, ticks: { callback: v => formatMetricNumber(v) + '%' } });
     if (state.charts.gpuload) {
         state.charts.gpuload.options.scales.y1 = {
             position: 'right',
