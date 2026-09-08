@@ -3,9 +3,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -38,12 +42,15 @@ Commands:
   serve          Start the monitoring daemon with web UI (default)
   tui            Launch the terminal UI dashboard
   hash-password  Generate an Argon2 password hash for config
-  inspect        Display information about storage tier files
+  inspect        Display storage tier resolution, coverage, and file information
   disks          List available disks and partitions with persistent IDs
 
 Flags:
   -config string  Path to configuration file (default "config.yaml")
   -h, --help      Show this help message
+
+Inspect flags:
+  --verbose       Include the latest recorded metrics from each tier
 
 `, version)
 }
@@ -143,7 +150,13 @@ func main() {
 	case "tui":
 		runTUI(cfg, osName, kernelVersion, cpuArch)
 	case "inspect":
-		runInspectTier(cfg)
+		if err := runInspectTier(cfg, flag.Args()[1:], os.Stdout, os.Stderr); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "kula inspect: %v\n", err)
+			os.Exit(2)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: kula [serve|tui|hash-password|inspect|disks]\n", cmd)
 		os.Exit(1)
@@ -310,21 +323,42 @@ func readPasswordWithAsterisks() string {
 	return string(password)
 }
 
-func runInspectTier(cfg *config.Config) {
+func runInspectTier(cfg *config.Config, args []string, stdout, stderr io.Writer) error {
+	inspectFlags := flag.NewFlagSet("kula inspect", flag.ContinueOnError)
+	inspectFlags.SetOutput(stderr)
+	verbose := inspectFlags.Bool("verbose", false, "include the latest recorded metrics from each tier")
+	inspectFlags.Usage = func() {
+		fmt.Fprintln(stderr, "Usage: kula [global flags] inspect [--verbose]")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Flags:")
+		inspectFlags.PrintDefaults()
+	}
+	if err := inspectFlags.Parse(args); err != nil {
+		return err
+	}
+	if inspectFlags.NArg() != 0 {
+		return fmt.Errorf("unexpected argument %q", inspectFlags.Arg(0))
+	}
+
 	for i := range cfg.Storage.Tiers {
+		tierCfg := cfg.Storage.Tiers[i]
 		path := filepath.Join(cfg.Storage.Directory, fmt.Sprintf("tier_%d.dat", i))
 		info, err := storage.InspectTierFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Printf("File: %s (not found)\n\n", path)
+				fmt.Fprintf(stdout, "File: %s (not found)\n", path)
+				fmt.Fprintf(stdout, "Resolution: %s\n", tierCfg.Resolution)
+				fmt.Fprintln(stdout, "Coverage ETA: unavailable (tier file not found)")
+				fmt.Fprintln(stdout)
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "Error inspecting tier file %s: %v\n\n", path, err)
+			fmt.Fprintf(stderr, "Error inspecting tier file %s: %v\n\n", path, err)
 			continue
 		}
 
-		fmt.Printf("File: %s\n", path)
-		fmt.Printf("Version: %d\n", info.Version)
+		fmt.Fprintf(stdout, "File: %s\n", path)
+		fmt.Fprintf(stdout, "Resolution: %s\n", tierCfg.Resolution)
+		fmt.Fprintf(stdout, "Version: %d\n", info.Version)
 
 		currentData := info.WriteOff
 		if info.Wrapped {
@@ -334,28 +368,125 @@ func runInspectTier(cfg *config.Config) {
 		if info.MaxData > 0 {
 			pct = float64(currentData) / float64(info.MaxData) * 100
 		}
-		fmt.Printf("Data Size: %d / %d bytes (%.2f%%)\n", currentData, info.MaxData, pct)
+		fmt.Fprintf(stdout, "Data Size: %d / %d bytes (%.2f%%)\n", currentData, info.MaxData, pct)
 
-		fmt.Printf("Write Offset: %d\n", info.WriteOff)
-		fmt.Printf("Total Records: %d\n", info.Count)
+		fmt.Fprintf(stdout, "Write Offset: %d\n", info.WriteOff)
+		fmt.Fprintf(stdout, "Total Records: %d\n", info.Count)
 
 		if !info.OldestTS.IsZero() {
-			fmt.Printf("Oldest Timestamp: %s\n", info.OldestTS.Format(time.RFC3339))
+			fmt.Fprintf(stdout, "Oldest Timestamp: %s\n", info.OldestTS.Format(time.RFC3339))
 		} else {
-			fmt.Printf("Oldest Timestamp: (none)\n")
+			fmt.Fprintln(stdout, "Oldest Timestamp: (none)")
 		}
 
 		if !info.NewestTS.IsZero() {
-			fmt.Printf("Newest Timestamp: %s\n", info.NewestTS.Format(time.RFC3339))
+			fmt.Fprintf(stdout, "Newest Timestamp: %s\n", info.NewestTS.Format(time.RFC3339))
 		} else {
-			fmt.Printf("Newest Timestamp: (none)\n")
+			fmt.Fprintln(stdout, "Newest Timestamp: (none)")
 		}
 
-		fmt.Printf("Wrapped: %v\n", info.Wrapped)
+		fmt.Fprintf(stdout, "Wrapped: %v\n", info.Wrapped)
 
 		if !info.OldestTS.IsZero() && !info.NewestTS.IsZero() {
-			fmt.Printf("Time Range Covered: %s\n", info.NewestTS.Sub(info.OldestTS))
+			fmt.Fprintf(stdout, "Time Range Covered: %s\n", info.NewestTS.Sub(info.OldestTS))
 		}
-		fmt.Println()
+		writeCoverageEstimate(stdout, info, tierCfg.Resolution)
+
+		if *verbose {
+			latest, latestErr := storage.InspectLatestTierSample(path)
+			if latestErr != nil {
+				fmt.Fprintf(stderr, "Error reading latest record from %s: %v\n", path, latestErr)
+				fmt.Fprintln(stdout, "Latest Recorded Metrics: unavailable")
+			} else if latest == nil {
+				fmt.Fprintln(stdout, "Latest Recorded Metrics: (none)")
+			} else if err := writeLatestMetrics(stdout, latest); err != nil {
+				fmt.Fprintf(stderr, "Error formatting latest record from %s: %v\n", path, err)
+				fmt.Fprintln(stdout, "Latest Recorded Metrics: unavailable")
+			}
+		}
+		fmt.Fprintln(stdout)
 	}
+	return nil
+}
+
+func writeCoverageEstimate(w io.Writer, info *storage.TierInfo, resolution time.Duration) {
+	if info.Wrapped {
+		fmt.Fprintln(w, "Coverage ETA: reached (tier has wrapped)")
+		return
+	}
+	if info.Count == 0 || info.WriteOff <= 0 || info.MaxData <= 0 || resolution <= 0 {
+		fmt.Fprintln(w, "Estimated Full Coverage: unavailable (no records yet)")
+		fmt.Fprintln(w, "Coverage ETA: unavailable (no records yet)")
+		return
+	}
+
+	averageRecordBytes := float64(info.WriteOff) / float64(info.Count)
+	maxRecords := float64(info.MaxData) / averageRecordBytes
+	remainingRecords := maxRecords - float64(info.Count)
+	if remainingRecords < 0 {
+		remainingRecords = 0
+	}
+	fmt.Fprintf(w, "Estimated Full Coverage: ~%s\n",
+		formatInspectSeconds(maxRecords*resolution.Seconds()))
+	fmt.Fprintf(w, "Coverage ETA: ~%s (assuming continuous collection)\n",
+		formatInspectSeconds(remainingRecords*resolution.Seconds()))
+}
+
+func formatInspectSeconds(seconds float64) string {
+	if math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < 0 {
+		return "unavailable"
+	}
+	seconds = math.Round(seconds)
+	if seconds < 60 {
+		return fmt.Sprintf("%.0fs", seconds)
+	}
+
+	const (
+		minute = 60.0
+		hour   = 60 * minute
+		day    = 24 * hour
+	)
+	var major, minor float64
+	var majorUnit, minorUnit string
+	switch {
+	case seconds >= day:
+		major = math.Floor(seconds / day)
+		minor = math.Floor(math.Mod(seconds, day) / hour)
+		majorUnit, minorUnit = "d", "h"
+	case seconds >= hour:
+		major = math.Floor(seconds / hour)
+		minor = math.Floor(math.Mod(seconds, hour) / minute)
+		majorUnit, minorUnit = "h", "m"
+	default:
+		major = math.Floor(seconds / minute)
+		minor = math.Mod(seconds, minute)
+		majorUnit, minorUnit = "m", "s"
+	}
+	if minor == 0 {
+		return fmt.Sprintf("%.0f%s", major, majorUnit)
+	}
+	return fmt.Sprintf("%.0f%s %.0f%s", major, majorUnit, minor, minorUnit)
+}
+
+func writeLatestMetrics(w io.Writer, latest *storage.AggregatedSample) error {
+	record := struct {
+		Timestamp time.Time         `json:"timestamp"`
+		Duration  string            `json:"duration"`
+		Data      *collector.Sample `json:"data,omitempty"`
+		Min       *collector.Sample `json:"min,omitempty"`
+		Max       *collector.Sample `json:"max,omitempty"`
+	}{
+		Timestamp: latest.Timestamp,
+		Duration:  latest.Duration.String(),
+		Data:      latest.Data,
+		Min:       latest.Min,
+		Max:       latest.Max,
+	}
+	payload, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(w, "Latest Recorded Metrics:")
+	_, err = fmt.Fprintln(w, string(payload))
+	return err
 }

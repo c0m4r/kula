@@ -32,6 +32,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Fresh installs default to Avg with straight, unfilled lines and one principal Min–Max band
 - Grid/list changes preserve chart data and legend selections
 - Tier naming unification
+- Inspect feature improvements
 
 ### Fixed
 

@@ -275,6 +275,12 @@ health, and short-term trends visible in a standard terminal.
 ./kula inspect
 ```
 
+The report includes each tier's configured resolution, current recorded range,
+estimated maximum coverage, and ETA until the tier first fills. Estimates assume
+continuous collection and use the average encoded record size observed so far.
+Use `./kula inspect --verbose` to also decode and print the latest recorded
+metrics from every tier.
+
 ### List disks
 
 ```bash

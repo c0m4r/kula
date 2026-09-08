@@ -1166,3 +1166,37 @@ func InspectTierFile(path string) (*TierInfo, error) {
 
 	return info, nil
 }
+
+// InspectLatestTierSample opens a tier read-only and decodes its newest record.
+// It is intended for diagnostics: unlike InspectTierFile, it scans record
+// boundaries in the data region and is therefore only called for verbose
+// inspection.
+func InspectLatestTierSample(path string) (*AggregatedSample, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	t := &Tier{file: f, path: path}
+	if err := t.readHeader(); err != nil {
+		return nil, fmt.Errorf("reading header: %w", err)
+	}
+	if t.count == 0 {
+		return nil, nil
+	}
+
+	// The newest record is always in the active [0, writeOff) segment, even
+	// after the ring has wrapped. Avoid scanning the older tail segment merely
+	// to display one diagnostic record.
+	t.wrapped = false
+	t.oldestOff = 0
+	samples, err := t.ReadLatest(1)
+	if err != nil {
+		return nil, err
+	}
+	if len(samples) == 0 {
+		return nil, fmt.Errorf("latest record could not be decoded")
+	}
+	return samples[0], nil
+}

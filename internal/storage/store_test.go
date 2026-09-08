@@ -445,6 +445,48 @@ func TestInspectTierFile(t *testing.T) {
 	}
 }
 
+func TestInspectLatestTierSample(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now().Truncate(time.Millisecond)
+	if err := store.WriteSample(makeSampleWithCPU(now, 42)); err != nil {
+		t.Fatalf("WriteSample() error: %v", err)
+	}
+	path := store.tiers[0].path
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	latest, err := InspectLatestTierSample(path)
+	if err != nil {
+		t.Fatalf("InspectLatestTierSample() error: %v", err)
+	}
+	if latest == nil || latest.Data == nil {
+		t.Fatal("InspectLatestTierSample() returned no metric data")
+	}
+	if !latest.Timestamp.Equal(now) {
+		t.Errorf("latest timestamp = %v, want %v", latest.Timestamp, now)
+	}
+	if latest.Data.CPU.Total.Usage != 42 {
+		t.Errorf("latest CPU usage = %v, want 42", latest.Data.CPU.Total.Usage)
+	}
+}
+
+func TestInspectLatestTierSampleEmpty(t *testing.T) {
+	store := newTestStore(t)
+	path := store.tiers[0].path
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	latest, err := InspectLatestTierSample(path)
+	if err != nil {
+		t.Fatalf("InspectLatestTierSample() error: %v", err)
+	}
+	if latest != nil {
+		t.Fatalf("InspectLatestTierSample() = %#v, want nil", latest)
+	}
+}
+
 // TestInspectTierFileWrapped verifies wrap detection after the ring buffer
 // has cycled. Reproduces issue #24 where a full tier reported a tiny
 // fullness percentage and Wrapped=false. The old heuristic compared the
@@ -483,6 +525,14 @@ func TestInspectTierFileWrapped(t *testing.T) {
 	}
 	if !info.Wrapped {
 		t.Errorf("InspectTierFile() Wrapped = false; want true for a tier that has cycled")
+	}
+	latest, err := InspectLatestTierSample(path)
+	if err != nil {
+		t.Fatalf("InspectLatestTierSample() on wrapped tier: %v", err)
+	}
+	wantLatest := base.Add(299 * time.Second)
+	if latest == nil || !latest.Timestamp.Equal(wantLatest) {
+		t.Fatalf("latest wrapped-tier timestamp = %v, want %v", latest, wantLatest)
 	}
 
 	// Re-open the store and confirm the runtime path (readHeader) also
