@@ -180,6 +180,8 @@ state.customFrom = new Date('2026-09-05T08:00:00Z');
 state.customTo = new Date('2026-09-05T10:00:00Z');
 await data.fetchCustomHistory(state.customFrom, state.customTo);
 check(state.currentTier === 0 && state.currentDownsampled, 'Tier-0 downsampling metadata was lost');
+check(document.getElementById('sampling-info').textContent.includes('Tier 0'),
+    'Tier 0 was displayed with a different file index');
 check(!document.getElementById('btn-agg-menu').classList.contains('hidden'),
     'Tier-0 downsampling hid valid aggregation controls');
 updateUrl(state);
@@ -268,7 +270,7 @@ tooltipDetails.dispatchEvent(new Event('change', { bubbles: true }));
 
 // Exercise the picker through its UI, including validation before requests.
 check(cpu.scales.x.labelRotation === 0, 'Time-axis labels are rotated');
-check(document.getElementById('sampling-info').textContent.includes('Tier 2'), 'Sampling info lost its tier after loading');
+check(document.getElementById('sampling-info').textContent.includes('Tier 1'), 'Sampling info lost its tier after loading');
 const picker = document.getElementById('time-custom');
 // Twelve-hour labels including seconds must retain a readable gap on a
 // screenshot-sized card, not merely avoid literal character overlap.
@@ -620,7 +622,7 @@ await data.fetchHistory(86400, { background: true });
 check(state.historyStatus === 'failed', 'Failed refresh was reported complete');
 check(state.dataBuffer === successfulBuffer && state.historyViewEnd === successfulEnd, 'Failed refresh discarded history');
 check(document.getElementById('sampling-info').textContent.includes(i18n.t('history_failed')), 'Failed refresh is not visible');
-check(document.getElementById('sampling-info').textContent.includes('Tier 2'), 'Failed refresh removed the visible tier');
+check(document.getElementById('sampling-info').textContent.includes('Tier 1'), 'Failed refresh removed the visible tier');
 window.fetch = nativeFetch;
 window.Date = NativeDate;
 

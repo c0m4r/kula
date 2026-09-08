@@ -42,20 +42,20 @@ storage:
   # Insufficient permissions fallbacks to ~/.kula
   directory: /var/lib/kula
   tiers:
-    # Tier 1 (raw): must match collection.interval
+    # Tier 0 (raw): must match collection.interval
     - resolution: 1s
       max_size: 250MB
-    # Tier 2: 1-minute aggregation (must be > tier 1 && < tier3)
+    # Tier 1: 1-minute aggregation (must be > tier 0 && < tier 2)
     - resolution: 1m
       max_size: 150MB
-    # Tier 3: 5-minute aggregation (must be > tier2)
+    # Tier 2: 5-minute aggregation (must be > tier 1)
     - resolution: 5m
       max_size: 50MB
     # Note: Raising max_size later grows the tier in place on the next start
     # and keeps existing history; lowering it is NOT applied in place (it would
     # strand records already written) — move the tier file aside to shrink it.
     # Note: Changing default resolutions may result in unexpected behavior
-    # Too high tier 2 and 3 resolutions could also cause high memory usage
+    # Too high tier 1 and 2 resolutions could also cause high memory usage
     # and data loss on shutdown due to samples buffering
 
 # Backup settings (snapshots of the storage tier files)

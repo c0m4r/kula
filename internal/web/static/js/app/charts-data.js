@@ -1942,7 +1942,7 @@ export function renderSamplingInfo(status = state.historyStatus) {
     const el = document.getElementById('sampling-info');
     if (!el) return;
     const tier = Number.isInteger(state.currentTier) && state.currentTier >= 0
-        ? `${i18n.t('tier')} ${state.currentTier + 1}` : '';
+        ? `${i18n.t('tier')} ${state.currentTier}` : '';
     const label = { failed: 'history_failed', partial: 'partial_range', empty: 'history_empty' }[status];
     el.textContent = [state.currentResolution, tier, label ? i18n.t(label) : ''].filter(Boolean).join(' · ');
 }
@@ -1971,7 +1971,7 @@ export function updateSamplingInfo(
 
     const el = document.getElementById('sampling-info');
     if (!el) return;
-    const name = Number.isInteger(tier) && tier >= 0 ? `${i18n.t('tier')} ${tier + 1}` : '';
+    const name = Number.isInteger(tier) && tier >= 0 ? `${i18n.t('tier')} ${tier}` : '';
     renderSamplingInfo(complete === false ? 'partial' : 'complete');
     const source = state.currentDownsampled
         ? `${i18n.t('source')}: ${state.currentSourceResolution}`

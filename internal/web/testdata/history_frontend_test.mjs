@@ -308,7 +308,7 @@ test('timezone helpers keep UTC inputs exact and produce explicit history contex
     }, { mode: 'utc', locale: 'en-GB', aggregation: 'avg' });
     assert.ok(lines.some(line => line.startsWith('bucket_start:') && line.includes('UTC')));
     assert.ok(lines.some(line => line.startsWith('bucket_end:') && line.includes('UTC')));
-    assert.ok(lines.includes('source: tier 2 · 1s'));
+    assert.ok(lines.includes('source: tier 1 · 1s'));
     assert.ok(lines.includes('output_resolution: 1m'));
     assert.ok(lines.includes('contributors: 42 source_records'));
     assert.ok(lines.includes('coverage: 87.5% · partial_range'));

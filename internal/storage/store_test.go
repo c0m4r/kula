@@ -1141,7 +1141,7 @@ func TestMultiTierAggregation(t *testing.T) {
 	store := newMultiTierStore(t)
 	defer func() { _ = store.Close() }()
 
-	// Write 60 consecutive 1-second samples — enough to trigger one tier-2 aggregation.
+	// Write 60 consecutive 1-second samples — enough to trigger one tier-1 aggregation.
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 60; i++ {
 		ts := base.Add(time.Duration(i) * time.Second)
@@ -1150,19 +1150,19 @@ func TestMultiTierAggregation(t *testing.T) {
 		}
 	}
 
-	// Tier 2 should have exactly 1 aggregated sample after 60 tier-1 writes.
-	tier2 := store.tiers[1]
-	if tier2.Count() != 1 {
-		t.Errorf("Tier 2 count = %d, want 1 after 60 tier-1 writes", tier2.Count())
+	// Tier 1 should have exactly 1 aggregated sample after 60 tier-0 writes.
+	tier1 := store.tiers[1]
+	if tier1.Count() != 1 {
+		t.Errorf("Tier 1 count = %d, want 1 after 60 tier-0 writes", tier1.Count())
 	}
 
 	// The aggregated CPU should be the average of 0..59 = 29.5.
-	samples, err := tier2.ReadRange(base, base.Add(time.Minute))
+	samples, err := tier1.ReadRange(base, base.Add(time.Minute))
 	if err != nil {
-		t.Fatalf("Tier 2 ReadRange: %v", err)
+		t.Fatalf("Tier 1 ReadRange: %v", err)
 	}
 	if len(samples) != 1 {
-		t.Fatalf("Tier 2 returned %d samples, want 1", len(samples))
+		t.Fatalf("Tier 1 returned %d samples, want 1", len(samples))
 	}
 	got := samples[0].Data.CPU.Total.Usage
 	want := 29.5
@@ -1190,10 +1190,10 @@ func TestMultiTierPeakPreservation(t *testing.T) {
 
 	samples, err := store.tiers[1].ReadRange(base, base.Add(time.Minute))
 	if err != nil {
-		t.Fatalf("Tier 2 ReadRange: %v", err)
+		t.Fatalf("Tier 1 ReadRange: %v", err)
 	}
 	if len(samples) == 0 {
-		t.Fatal("No samples in tier 2")
+		t.Fatal("No samples in tier 1")
 	}
 	agg := samples[0]
 	if agg.Max == nil {

@@ -616,7 +616,7 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 	}, nil
 }
 
-// QueryLatest returns the latest sample from tier 1.
+// QueryLatest returns the latest sample from tier 0.
 // After the first WriteSample call the result comes from the in-memory
 // latestCache and requires no disk I/O at all.
 func (s *Store) QueryLatest() (*AggregatedSample, error) {

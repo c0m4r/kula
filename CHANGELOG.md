@@ -31,6 +31,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Zoom-in stops at 12 data points, excluding gaps, with a sampling-aware minimum duration
 - Fresh installs default to Avg with straight, unfilled lines and one principal Min–Max band
 - Grid/list changes preserve chart data and legend selections
+- Tier naming unification
 
 ### Fixed
 
@@ -724,7 +725,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Fixed
 
-- Fixed: Archive tier 1 wrap bug
+- Fixed: Archive tier 0 wrap bug
 
 ## [0.2.0] - 2026-02-28
 

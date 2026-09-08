@@ -67,7 +67,7 @@ read directly from sysfs and usually work out of the box.
 
 ## High memory usage
 
-Very coarse Tier 2/Tier 3 resolutions force Kula to buffer many samples in memory before each
+Very coarse Tier 1/Tier 2 resolutions force Kula to buffer many samples in memory before each
 aggregation flush. Stick close to the default tier resolutions (`1s` / `1m` / `5m`). The tier
 validator caps the ratio between adjacent tiers (300:1) for this reason.
 

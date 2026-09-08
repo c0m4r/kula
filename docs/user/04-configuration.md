@@ -55,7 +55,7 @@ collection:
   # interfaces: ["eth0", "wlan0"]    # override auto-detected NICs
 ```
 
-- **`interval`** must be one of the allowed values and **must match Tier 1's resolution**.
+- **`interval`** must be one of the allowed values and **must match Tier 0's resolution**.
 - **`mounts_detection`** controls how mount points are discovered:
   - `auto` — merges host and container mounts (detects namespaces).
   - `host` — reads only `/proc/1/mounts` (host-level visibility).
@@ -71,17 +71,17 @@ collection:
 storage:
   directory: /var/lib/kula   # falls back to ~/.kula on permission failure
   tiers:
-    - resolution: 1s         # Tier 1 (raw) — must equal collection.interval
+    - resolution: 1s         # Tier 0 (raw) — must equal collection.interval
       max_size: 250MB
-    - resolution: 1m         # Tier 2 — 1-minute aggregation
+    - resolution: 1m         # Tier 1 — 1-minute aggregation
       max_size: 150MB
-    - resolution: 5m         # Tier 3 — 5-minute aggregation
+    - resolution: 5m         # Tier 2 — 5-minute aggregation
       max_size: 50MB
 ```
 
 Tier rules enforced at startup:
 
-- Resolutions must be **strictly ascending** (Tier 1 < Tier 2 < Tier 3).
+- Resolutions must be **strictly ascending** (Tier 0 < Tier 1 < Tier 2).
 - Each higher tier's resolution must be **divisible** by the lower one.
 - The ratio between adjacent tiers is capped (max 300:1) to bound memory used by aggregation
   buffers.
@@ -95,7 +95,7 @@ Changing `max_size` on a tier that already has data:
   with and logs a line saying so at startup. To actually shrink a tier, stop Kula and move its
   file (`<storage.directory>/tier_N.dat`) aside — that discards the tier's history.
 
-Changing the default resolutions can cause unexpected behavior, and very coarse Tier 2/3
+Changing the default resolutions can cause unexpected behavior, and very coarse Tier 1/2
 resolutions raise memory use and risk losing buffered samples on shutdown. See
 [Storage Engine](../dev/05-storage-engine.md) for internals.
 

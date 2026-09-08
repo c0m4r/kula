@@ -62,7 +62,7 @@ Kula reads metrics every second (configurable) and tracks:
     │                       ╰──(HTTP/WS)─► │   Dashboard   │
     ▼                                      ╰───────────────╯
 ╭──────────┬──────────┬──────────╮
-│  Tier 1  │  Tier 2  │  Tier 3  │
+│  Tier 0  │  Tier 1  │  Tier 2  │
 │    1s    │    1m    │    5m    │
 │  250 MB  │  150 MB  │  50 MB   │
 ╰──────────┴──────────┴──────────╯
@@ -73,7 +73,7 @@ Each second the **collectors** produce a single `Sample` containing every metric
 is simultaneously:
 
 1. **Written to the storage engine** — a tiered ring-buffer that keeps raw 1-second data in
-   Tier 1, and progressively downsamples to 1-minute (Tier 2) and 5-minute (Tier 3)
+   Tier 0, and progressively downsamples to 1-minute (Tier 1) and 5-minute (Tier 2)
    aggregates as data ages. Each tier is a fixed-size binary file that wraps around and
    overwrites its oldest entries.
 2. **Broadcast to connected web clients** over WebSocket for live charts.

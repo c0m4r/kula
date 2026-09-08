@@ -25,30 +25,30 @@ Three tiers by default, each progressively coarser and smaller:
 
 | Tier | Resolution | Default size | Content |
 |------|-----------|--------------|---------|
-| Tier 1 (`tier_0.dat`) | 1s | 250 MB | Raw samples (must equal `collection.interval`) |
-| Tier 2 (`tier_1.dat`) | 1m | 150 MB | 1-minute metric rollups |
-| Tier 3 (`tier_2.dat`) | 5m | 50 MB | 5-minute metric rollups |
+| Tier 0 (`tier_0.dat`) | 1s | 250 MB | Raw samples (must equal `collection.interval`) |
+| Tier 1 (`tier_1.dat`) | 1m | 150 MB | 1-minute metric rollups |
+| Tier 2 (`tier_2.dat`) | 5m | 50 MB | 5-minute metric rollups |
 
 ### Tier validation
 
 At startup ([config](../../internal/config/config.go)) the tier hierarchy is validated:
 
-- Resolutions strictly ascending (T1 < T2 < T3).
+- Resolutions strictly ascending (T0 < T1 < T2).
 - Each higher resolution divisible by the lower one.
 - Ratio between adjacent tiers capped (max **300:1**) to bound aggregation-buffer memory.
-- Tier 1's resolution must equal `collection.interval`.
+- Tier 0's resolution must equal `collection.interval`.
 
 ## Write path
 
 ```
 WriteSample(sample)
    │
-   ├─► append-encode into Tier 1 ring buffer (raw)
+   ├─► append-encode into Tier 0 ring buffer (raw)
    │
-   └─► feed the aggregation buffer for Tier 2
-          when a 1-minute window closes → write a rollup envelope to Tier 2,
-          and feed that into the Tier 3 (5-minute) aggregation buffer
-                 when a 5-minute window closes → write to Tier 3
+   └─► feed the aggregation buffer for Tier 1
+          when a 1-minute window closes → write a rollup envelope to Tier 1,
+          and feed that into the Tier 2 (5-minute) aggregation buffer
+                 when a 5-minute window closes → write to Tier 2
 ```
 
 Each tier keeps an in-memory aggregation buffer accumulating the samples for its current

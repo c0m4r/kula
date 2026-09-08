@@ -73,7 +73,7 @@ Note: Monitoring NVIDIA GPUs might require additional setup. Check [GPU monitori
     │                       ╰──(HTTP/WS)─► |   Dashboard   |
     ▼                                      ╰───────────────╯
 ╭──────────┬──────────┬──────────╮
-│  Tier 1  │  Tier 2  │  Tier 3  │
+│  Tier 0  │  Tier 1  │  Tier 2  │
 │    1s    │    1m    │    5m    │
 │  250 MB  │  150 MB  │  50 MB   │
 ╰──────────┴──────────┴──────────╯
@@ -87,9 +87,9 @@ Kula is powered by a custom-built, high-performance **ring-buffer** storage syst
 
 To maximize efficiency, Kula employs a multi-tiered architecture that intelligently downsamples older data:
 
-- **Tier 1** — Raw 1-second samples (default 250 MB)
-- **Tier 2** — 1-minute metric rollups (default 150 MB)
-- **Tier 3** — 5-minute metric rollups (default 50 MB)
+- **Tier 0** — Raw 1-second samples (default 250 MB)
+- **Tier 1** — 1-minute metric rollups (default 150 MB)
+- **Tier 2** — 5-minute metric rollups (default 50 MB)
 
 Rollups use explicit per-field policies: sampled gauges and rates are duration-weighted,
 monotonic counters and metadata retain their latest value, and Min/Max are per-series extrema.

@@ -158,7 +158,7 @@ export function historyTooltipLines(context, {
 
     const source = context.source;
     if (source && (source.tier !== null || source.sourceResolution || source.resolution)) {
-        const tier = source.tier === null ? '' : `${translate('tier')} ${source.tier + 1}`;
+        const tier = source.tier === null ? '' : `${translate('tier')} ${source.tier}`;
         const sourceResolution = source.sourceResolution || source.resolution;
         lines.push(`${translate('source')}: ${[tier, sourceResolution].filter(Boolean).join(' · ')}`);
         if (source.resolution && source.resolution !== sourceResolution) {
