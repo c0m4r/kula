@@ -4,10 +4,12 @@
    ============================================================ */
 'use strict';
 import { state, colors } from './state.js';
-import { formatBytesShort } from './utils.js';
+import { formatBytesShort } from './format.js';
 import { createTimeSeriesChart } from './charts-init.js';
 import { i18n } from './i18n.js';
 import { pinSectionHeadForCards } from './section-utils.js';
+import { queueChartUpdate } from './chart-controller.js';
+import { appendEnvelopePoint, hasEnvelopeData } from './chart-envelope.js';
 
 // Palette for assigning a stable color per container/app.
 const CONTAINER_COLOR_LIST = [
@@ -355,7 +357,7 @@ function ensureSeriesForApp(app, ts) {
             data: alignedNullPrefix(chart, ts),
             pointRadius: 0,
             borderWidth: 1.5,
-            tension: 0.2,
+            tension: 0,
             hidden: !isContainerSelected(app.key),
         });
     }
@@ -367,7 +369,7 @@ function ensureSeriesForApp(app, ts) {
  * lengths stay aligned for Chart.js interaction.mode: 'index'.
  * Chart redraws are left to syncContainerMetricsUI so each chart repaints once.
  */
-function appendAlignedTick(ts, liveByKey, point) {
+function appendAlignedTick(ts, liveByKey, minByKey, maxByKey, hasEnvelope) {
     for (const m of CONTAINER_METRICS) {
         const chart = state.containerCharts?.[m.key];
         if (!chart) continue;
@@ -375,7 +377,13 @@ function appendAlignedTick(ts, liveByKey, point) {
             const key = ds.containerKey;
             if (!key) continue;
             const ct = liveByKey[key];
-            ds.data.push(ct ? point(ct[m.field] || 0) : { x: ts, y: null });
+            appendEnvelopePoint(
+                ds,
+                ts,
+                ct ? (ct[m.field] || 0) : null,
+                hasEnvelope ? minByKey[key]?.[m.field] : null,
+                hasEnvelope ? maxByKey[key]?.[m.field] : null,
+            );
         }
     }
 }
@@ -386,8 +394,10 @@ function appendAlignedTick(ts, liveByKey, point) {
  */
 function syncContainerMetricsUI(liveKeys) {
     const hasLive = liveKeys && liveKeys.size > 0;
+    const hasHistory = Object.values(state.containerCharts || {}).some(chart =>
+        chart?.data?.datasets?.some(hasEnvelopeData));
     const anySelected = Object.keys(state.containerApps || {}).some(k => isContainerSelected(k));
-    const showCards = hasLive && anySelected;
+    const showCards = (hasLive || hasHistory) && anySelected;
 
     for (const m of CONTAINER_METRICS) {
         const chart = state.containerCharts?.[m.key];
@@ -396,7 +406,7 @@ function syncContainerMetricsUI(liveKeys) {
             for (const ds of chart.data.datasets) {
                 if (ds.containerKey) ds.hidden = !isContainerSelected(ds.containerKey);
             }
-            if (!state.loadingHistory) chart.update('none');
+            if (!state.loadingHistory) queueChartUpdate(chart);
         }
         if (card) card.classList.toggle('hidden', !showCards);
     }
@@ -724,11 +734,13 @@ function updateFilterButtonLabel() {
  * Process one sample's container list.
  * @param {object[]} containers
  * @param {number|Date} ts sample timestamp
- * @param {function} point (v) => ({x: ts, y: v})
  * @param {function} createAppChartCard
+ * @param {object[]} minContainers trustworthy minimum envelope members
+ * @param {object[]} maxContainers trustworthy maximum envelope members
+ * @param {boolean} hasEnvelope whether the response validates both extrema
  * @returns {boolean} true if any containers were present
  */
-export function addContainerSample(containers, ts, point, createAppChartCard) {
+export function addContainerSample(containers, ts, createAppChartCard, minContainers = [], maxContainers = [], hasEnvelope = false) {
     ensureFilterState();
     ensureFilterUI();
 
@@ -742,7 +754,7 @@ export function addContainerSample(containers, ts, point, createAppChartCard) {
         state._containerLatestByKey = {};
         // Keep series time-aligned even while nothing is reporting.
         if (Object.keys(state.containerCharts || {}).length > 0) {
-            appendAlignedTick(ts, liveByKey, point);
+            appendAlignedTick(ts, liveByKey, {}, {}, false);
         }
         pruneDeadContainers(liveKeys, tsMs);
         syncContainerMetricsUI(liveKeys);
@@ -751,6 +763,13 @@ export function addContainerSample(containers, ts, point, createAppChartCard) {
     }
 
     ensureMetricCharts(createAppChartCard);
+
+    const minByKey = {};
+    const maxByKey = {};
+    if (hasEnvelope) {
+        for (const ct of minContainers || []) minByKey[containerSeriesKey(ct)] = ct;
+        for (const ct of maxContainers || []) maxByKey[containerSeriesKey(ct)] = ct;
+    }
 
     for (const ct of list) {
         const key = containerSeriesKey(ct);
@@ -761,7 +780,7 @@ export function addContainerSample(containers, ts, point, createAppChartCard) {
     }
 
     // One aligned tick for ALL known series (present → value, absent → null)
-    appendAlignedTick(ts, liveByKey, point);
+    appendAlignedTick(ts, liveByKey, minByKey, maxByKey, hasEnvelope);
     pruneDeadContainers(liveKeys, tsMs);
 
     state._containerLiveKeys = liveKeys;
@@ -772,6 +791,6 @@ export function addContainerSample(containers, ts, point, createAppChartCard) {
 }
 
 /** Hide container metric UI when no containers in this sample (nginx may still show). */
-export function markContainersAbsent(ts, point) {
-    return addContainerSample([], ts, point, () => null);
+export function markContainersAbsent(ts) {
+    return addContainerSample([], ts, () => null);
 }

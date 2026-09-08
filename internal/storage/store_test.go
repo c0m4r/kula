@@ -544,6 +544,9 @@ func TestQueryRangeWithMetaReturnsTierInfo(t *testing.T) {
 	if len(result.Samples) == 0 {
 		t.Error("Samples is empty, expected at least one")
 	}
+	if len(result.ValidAggregations) != 1 || result.ValidAggregations[0] != "data" {
+		t.Errorf("ValidAggregations = %v, want [data] for an unbucketed raw sample", result.ValidAggregations)
+	}
 }
 
 func TestQueryRangeWithMetaEmptyStore(t *testing.T) {
@@ -571,6 +574,9 @@ func TestQueryRangeWithMetaEmptyStore(t *testing.T) {
 	}
 	if !result.RequestedFrom.Equal(from) || !result.RequestedTo.Equal(to) {
 		t.Errorf("empty result lost requested bounds: from=%s to=%s", result.RequestedFrom, result.RequestedTo)
+	}
+	if len(result.ValidAggregations) != 1 || result.ValidAggregations[0] != "data" {
+		t.Errorf("empty result ValidAggregations = %v, want [data]", result.ValidAggregations)
 	}
 }
 
@@ -602,6 +608,9 @@ func TestQueryRangeWithMetaFallsBackToFullyCoveringTier(t *testing.T) {
 	}
 	if !result.Complete {
 		t.Fatal("Complete = false, want true for the fully covering minute tier")
+	}
+	if !result.ExactComplete {
+		t.Fatal("ExactComplete = false, want true for exact source bounds")
 	}
 	if len(result.Samples) != 10 {
 		t.Fatalf("samples = %d, want 10 from the fully covering minute tier", len(result.Samples))
@@ -635,6 +644,9 @@ func TestQueryRangeWithMetaReportsPartialCoverage(t *testing.T) {
 	}
 	if result.Complete {
 		t.Fatal("Complete = true for a tier missing the first half of the range")
+	}
+	if result.ExactComplete {
+		t.Fatal("ExactComplete = true for a tier missing the first half of the range")
 	}
 	if len(result.Samples) != 2 {
 		t.Fatalf("samples = %d, want the two retained partial samples", len(result.Samples))
@@ -679,6 +691,9 @@ func TestQueryRangeWithMetaAllowsCoarseLiveEdgeLag(t *testing.T) {
 	if !result.Complete {
 		t.Fatal("Complete = false for an expected 65-second minute-tier live-edge lag")
 	}
+	if result.ExactComplete {
+		t.Fatal("ExactComplete = true despite a 65-second live-edge lag")
+	}
 }
 
 func TestQueryRangeWithMetaStrictPointBound(t *testing.T) {
@@ -720,6 +735,356 @@ func TestQueryRangeWithMetaStrictPointBound(t *testing.T) {
 		if last := result.Samples[got-1].Timestamp; !last.Equal(wantLast) {
 			t.Errorf("sourceCount=%d: last timestamp = %s, want %s", sourceCount, last, wantLast)
 		}
+	}
+}
+
+func TestQueryRangeWithMetaDescribesPresentationBuckets(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 4; i++ {
+		if err := store.WriteSample(makeSampleWithCPU(
+			base.Add(time.Duration(i)*time.Second),
+			float64(i),
+		)); err != nil {
+			t.Fatalf("WriteSample(%d): %v", i, err)
+		}
+	}
+
+	result, err := store.QueryRangeWithMeta(base, base.Add(3*time.Second), 2)
+	if err != nil {
+		t.Fatalf("QueryRangeWithMeta: %v", err)
+	}
+	if result.Resolution != "2s" || result.SourceResolution != "1s" || len(result.Samples) != 2 {
+		t.Fatalf("resolution/source/samples = %s/%s/%d, want 2s/1s/2",
+			result.Resolution, result.SourceResolution, len(result.Samples))
+	}
+	if !result.Downsampled {
+		t.Fatal("Downsampled = false for 2s output from a 1s source")
+	}
+	for i, sample := range result.Samples {
+		wantStart := base.Add(time.Duration(i*2) * time.Second)
+		wantEnd := wantStart.Add(2 * time.Second)
+		if !sample.BucketStart.Equal(wantStart) || !sample.BucketEnd.Equal(wantEnd) {
+			t.Errorf("bucket %d = [%s, %s), want [%s, %s)", i,
+				sample.BucketStart, sample.BucketEnd, wantStart, wantEnd)
+		}
+		wantCount := 2
+		wantCoverage := 1.0
+		if i == 1 {
+			wantCount = 1
+			wantCoverage = 0.5
+		}
+		if sample.SampleCount != wantCount {
+			t.Errorf("bucket %d sample_count = %d, want %d source records", i, sample.SampleCount, wantCount)
+		}
+		if sample.Coverage != wantCoverage {
+			t.Errorf("bucket %d coverage = %v, want %v", i, sample.Coverage, wantCoverage)
+		}
+	}
+
+	passThrough, err := store.QueryRangeWithMeta(base, base.Add(3*time.Second), 4)
+	if err != nil {
+		t.Fatalf("pass-through QueryRangeWithMeta: %v", err)
+	}
+	if passThrough.Resolution != "1s" || len(passThrough.Samples) != 4 {
+		t.Fatalf("pass-through resolution/samples = %s/%d, want 1s/4",
+			passThrough.Resolution, len(passThrough.Samples))
+	}
+	if passThrough.Downsampled {
+		t.Fatal("Downsampled = true for pass-through source records")
+	}
+	for i, sample := range passThrough.Samples {
+		wantEnd := base.Add(time.Duration(i) * time.Second)
+		if sample.SampleCount != 1 || sample.Coverage != 1 ||
+			!sample.BucketStart.Equal(wantEnd.Add(-time.Second)) || !sample.BucketEnd.Equal(wantEnd) {
+			t.Errorf("pass-through bucket %d metadata = %+v", i, sample)
+		}
+	}
+}
+
+func TestQueryRangeWithMetaReportsPartialBucketCoverage(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	writeTierSample(t, store.tiers[0], base, time.Second, 10)
+	writeTierSample(t, store.tiers[0], base.Add(4*time.Second), time.Second, 20)
+
+	result, err := store.QueryRangeWithMeta(base, base.Add(4*time.Second), 1)
+	if err != nil {
+		t.Fatalf("QueryRangeWithMeta: %v", err)
+	}
+	if len(result.Samples) != 1 {
+		t.Fatalf("samples = %d, want 1", len(result.Samples))
+	}
+	sample := result.Samples[0]
+	if sample.SampleCount != 1 {
+		t.Errorf("sample_count = %d, want 1", sample.SampleCount)
+	}
+	if sample.Coverage != 0.2 {
+		t.Errorf("coverage = %v, want 0.2", sample.Coverage)
+	}
+}
+
+func TestQueryRangeCacheKeepsExactSubsecondBounds(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	writeTierSample(t, store.tiers[0], base.Add(100*time.Millisecond), time.Second, 10)
+
+	first, err := store.QueryRangeWithMeta(
+		base.Add(50*time.Millisecond), base.Add(150*time.Millisecond), 100,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Samples) != 1 {
+		t.Fatalf("first query = %d samples; want one sample", len(first.Samples))
+	}
+
+	secondFrom := base.Add(250 * time.Millisecond)
+	secondTo := base.Add(350 * time.Millisecond)
+	second, err := store.QueryRangeWithMeta(secondFrom, secondTo, 100)
+	if err != nil {
+		t.Fatalf("second query: %v", err)
+	}
+	if len(second.Samples) != 0 {
+		t.Fatalf("second exact query reused cached samples: got %d, want 0", len(second.Samples))
+	}
+}
+
+func TestRetainedRangesUseAllNonemptyTierHeaders(t *testing.T) {
+	store := newMultiTierStore(t)
+	defer func() { _ = store.Close() }()
+	ranges, interval := store.RetainedRanges()
+	if ranges == nil || len(ranges) != 0 || interval != time.Second {
+		t.Fatalf("empty ranges/interval = %v/%s", ranges, interval)
+	}
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	writeTierSample(t, store.tiers[0], base, time.Second, 10)
+	writeTierSample(t, store.tiers[0], base.Add(time.Second), time.Second, 20)
+	older := base.Add(-7 * 24 * time.Hour)
+	writeTierSample(t, store.tiers[2], older, 5*time.Minute, 5)
+	ranges, _ = store.RetainedRanges()
+	if len(ranges) != 2 || !ranges[0].From.Equal(base.Add(-time.Second)) ||
+		!ranges[0].To.Equal(base.Add(time.Second)) ||
+		!ranges[1].From.Equal(older.Add(-5*time.Minute)) || !ranges[1].To.Equal(older) {
+		t.Fatalf("retained ranges = %+v", ranges)
+	}
+}
+
+func TestDownsampleUsesEndTimestampedSourceIntervals(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	writeTierSample(t, store.tiers[0], base, time.Second, 10)
+	writeTierSample(t, store.tiers[0], base.Add(time.Second), time.Second, 20)
+
+	result, err := store.QueryRangeWithMeta(base, base.Add(2*time.Second), 1)
+	if err != nil {
+		t.Fatalf("QueryRangeWithMeta: %v", err)
+	}
+	if len(result.Samples) != 1 {
+		t.Fatalf("samples = %d, want 1", len(result.Samples))
+	}
+	sample := result.Samples[0]
+	if !sample.BucketStart.Equal(base) || !sample.BucketEnd.Equal(base.Add(2*time.Second)) {
+		t.Fatalf("bucket = %s..%s, want %s..%s", sample.BucketStart, sample.BucketEnd, base, base.Add(2*time.Second))
+	}
+	if sample.SampleCount != 1 || sample.Coverage != 0.5 {
+		t.Fatalf("sample_count/coverage = %d/%v, want 1/0.5", sample.SampleCount, sample.Coverage)
+	}
+	if result.ActualFrom == nil || !result.ActualFrom.Equal(base) ||
+		result.ActualTo == nil || !result.ActualTo.Equal(base.Add(time.Second)) {
+		t.Fatalf("actual range = %v..%v, want %s..%s", result.ActualFrom, result.ActualTo, base, base.Add(time.Second))
+	}
+}
+
+func TestQueryRangeMarksNativeStepReductionAsDownsampled(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	for _, offset := range []time.Duration{0, 200 * time.Millisecond, 800 * time.Millisecond} {
+		if err := store.WriteSample(makeSample(base.Add(offset))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := store.QueryRangeWithMeta(base, base.Add(time.Second), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Downsampled || result.Resolution != result.SourceResolution {
+		t.Fatalf("native-step reduction metadata = downsampled:%v output:%s source:%s",
+			result.Downsampled, result.Resolution, result.SourceResolution)
+	}
+}
+
+func TestDownsampleSplitsJitteredSourceWeightsAcrossBoundaries(t *testing.T) {
+	store := &Store{}
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	samples := []*AggregatedSample{
+		{
+			Timestamp: base.Add(1500 * time.Millisecond),
+			Duration:  time.Second,
+			Data:      makeSampleWithCPU(base.Add(1500*time.Millisecond), 10),
+		},
+		{
+			Timestamp: base.Add(2500 * time.Millisecond),
+			Duration:  time.Second,
+			Data:      makeSampleWithCPU(base.Add(2500*time.Millisecond), 30),
+		},
+	}
+
+	result, step := store.downsampleHistory(
+		samples, base, base.Add(4*time.Second), 2, time.Second, true,
+	)
+	if step != 2*time.Second || len(result) != 2 {
+		t.Fatalf("step/samples = %s/%d, want 2s/2", step, len(result))
+	}
+	if result[0].SampleCount != 2 || result[0].Coverage != 0.75 {
+		t.Fatalf("first count/coverage = %d/%v, want 2/0.75",
+			result[0].SampleCount, result[0].Coverage)
+	}
+	if got := result[0].Data.CPU.Total.Usage; got < 16.666 || got > 16.667 {
+		t.Fatalf("first weighted mean = %v, want 16.6667", got)
+	}
+	if result[1].SampleCount != 1 || result[1].Coverage != 0.25 ||
+		result[1].Data.CPU.Total.Usage != 30 {
+		t.Fatalf("second bucket = %+v, want one quarter-covered 30%% sample", result[1])
+	}
+
+	fragment := historyFragment(&AggregatedSample{
+		Duration: time.Second,
+		MeanStats: map[string]meanAccumulator{
+			"metric": {Sum: 100, Weight: 2},
+		},
+	}, base, 0.25)
+	if fragment.Duration != 250*time.Millisecond ||
+		fragment.MeanStats["metric"].Sum != 25 ||
+		fragment.MeanStats["metric"].Weight != 0.5 {
+		t.Fatalf("scaled fragment = %+v / %+v", fragment.Duration, fragment.MeanStats)
+	}
+}
+
+func TestDownsampleOverlappingSourceIntervalsKeepUniqueOrderedBuckets(t *testing.T) {
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	samples := []*AggregatedSample{
+		{Timestamp: base.Add(2100 * time.Millisecond), Duration: time.Second,
+			Data: makeSampleWithCPU(base.Add(2100*time.Millisecond), 10)},
+		{Timestamp: base.Add(2200 * time.Millisecond), Duration: time.Second,
+			Data: makeSampleWithCPU(base.Add(2200*time.Millisecond), 30)},
+	}
+	result, step := (&Store{}).downsampleHistory(samples, base, base.Add(4*time.Second), 2, time.Second, false)
+	if step != 2*time.Second || len(result) != 2 {
+		t.Fatalf("step/buckets = %s/%d, want 2s/2", step, len(result))
+	}
+	var duration time.Duration
+	for i, bucket := range result {
+		if !bucket.BucketStart.Equal(base.Add(time.Duration(i)*step)) || bucket.SampleCount != 2 {
+			t.Fatalf("bucket %d has unexpected start/count: %s/%d", i, bucket.BucketStart, bucket.SampleCount)
+		}
+		duration += bucket.Duration
+	}
+	if duration != 2*time.Second {
+		t.Fatalf("contributing duration = %s, want 2s", duration)
+	}
+}
+
+func TestDownsampleRawJitterUsesObservedDurations(t *testing.T) {
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	samples := []*AggregatedSample{
+		{Timestamp: base.Add(2100 * time.Millisecond), Duration: 1100 * time.Millisecond,
+			Data: makeSampleWithCPU(base.Add(2100*time.Millisecond), 10)},
+		{Timestamp: base.Add(3 * time.Second), Duration: 900 * time.Millisecond,
+			Data: makeSampleWithCPU(base.Add(3*time.Second), 30)},
+	}
+	result, _ := (&Store{}).downsampleHistory(samples, base, base.Add(4*time.Second), 2, time.Second, true)
+	if len(result) != 2 || result[0].Coverage != 0.5 || result[1].Coverage != 0.5 {
+		t.Fatalf("raw jitter should cover one second in each bucket: %+v", result)
+	}
+	if got := result[1].Data.CPU.Total.Usage; got < 27.999 || got > 28.001 {
+		t.Fatalf("second bucket mean = %v, want 28", got)
+	}
+	from, to := observedHistoryBounds(samples, base, base.Add(4*time.Second), time.Second, true)
+	if from == nil || to == nil || !from.Equal(base.Add(time.Second)) || !to.Equal(base.Add(3*time.Second)) {
+		t.Fatalf("raw bounds = %v/%v, want 1s/3s", from, to)
+	}
+}
+
+func TestQueryPlannerKeepsSourceTierIndependentOfPointBudget(t *testing.T) {
+	store := newMultiTierStore(t)
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const rawCount = 7400
+	for i := 0; i < rawCount; i++ {
+		writeTierSample(t, store.tiers[0], base.Add(time.Duration(i)*time.Second), time.Second, float64(i))
+	}
+	for i := 1; i <= 124; i++ {
+		writeTierSample(t, store.tiers[1], base.Add(time.Duration(i)*time.Minute), time.Minute, float64(i))
+	}
+
+	from := base
+	to := base.Add((rawCount - 1) * time.Second)
+	wants := []struct {
+		points     int
+		resolution string
+	}{
+		{points: 800, resolution: "10s"},
+		{points: 2000, resolution: "5s"},
+		{points: 5000, resolution: "2s"},
+	}
+	for _, want := range wants {
+		result, err := store.QueryRangeWithMeta(from, to, want.points)
+		if err != nil {
+			t.Fatalf("points=%d: QueryRangeWithMeta: %v", want.points, err)
+		}
+		if result.Tier != 0 {
+			t.Errorf("points=%d: tier=%d, want raw tier 0", want.points, result.Tier)
+		}
+		if result.Resolution != want.resolution {
+			t.Errorf("points=%d: resolution=%q, want %q", want.points, result.Resolution, want.resolution)
+		}
+		if result.SourceResolution != "1s" {
+			t.Errorf("points=%d: source_resolution=%q, want 1s", want.points, result.SourceResolution)
+		}
+		if len(result.Samples) > want.points {
+			t.Errorf("points=%d: returned %d samples", want.points, len(result.Samples))
+		}
+	}
+}
+
+func TestChooseHistoryStepStableAcrossAdjacentRanges(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, seconds := range []int{7200, 7260, 7380} {
+		to := base.Add(time.Duration(seconds-1) * time.Second)
+		if got := chooseHistoryStep(base, to, 800, time.Second); got != 10*time.Second {
+			t.Errorf("window=%ds: step=%s, want 10s", seconds, got)
+		}
+	}
+}
+
+func TestEpochBucketStartUsesUnixBoundary(t *testing.T) {
+	timestamp := time.Date(1969, 12, 29, 12, 0, 0, 0, time.UTC)
+	start := epochBucketStart(timestamp, 5*24*time.Hour)
+	if remainder := start.Unix() % int64((5 * 24 * time.Hour).Seconds()); remainder != 0 {
+		t.Fatalf("bucket start %s is not aligned to a Unix epoch boundary", start)
+	}
+	if start.After(timestamp) || !start.Add(5*24*time.Hour).After(timestamp) {
+		t.Fatalf("timestamp %s is outside bucket [%s, %s)", timestamp, start, start.Add(5*24*time.Hour))
+	}
+}
+
+func TestChooseHistoryStepExtremeRangeStaysPositive(t *testing.T) {
+	from := time.Unix(0, -1<<63)
+	to := time.Unix(0, 1<<63-1)
+	got := chooseHistoryStep(from, to, 1, time.Second)
+	if got != time.Duration(1<<63-1) {
+		t.Fatalf("extreme history step = %s (%d), want maximum positive duration", got, got)
 	}
 }
 
@@ -1140,6 +1505,36 @@ func BenchmarkDownsampling(b *testing.B) {
 	}
 }
 
+// BenchmarkQueryRange_SourceBudget measures a cold query at the fixed planner
+// read budget. Cache entries are cleared outside the timed region so the
+// benchmark includes tier decoding and policy reduction on every iteration.
+func BenchmarkQueryRange_SourceBudget(b *testing.B) {
+	store := newBenchStore(b, "200MB", 200*1024*1024)
+	defer func() { _ = store.Close() }()
+
+	base := seedStore(b, store, maxHistorySourceRecords)
+	from := base
+	to := base.Add((maxHistorySourceRecords - 1) * time.Second)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		store.queryCacheMu.Lock()
+		store.queryCache = make(map[queryCacheKey]queryCacheEntry)
+		store.queryCacheMu.Unlock()
+		b.StartTimer()
+
+		result, err := store.QueryRangeWithMeta(from, to, 800)
+		if err != nil {
+			b.Fatalf("QueryRangeWithMeta: %v", err)
+		}
+		if len(result.Samples) == 0 || len(result.Samples) > 800 {
+			b.Fatalf("samples=%d, want 1..800", len(result.Samples))
+		}
+	}
+}
+
 // ============================================================================
 // New feature tests
 // ============================================================================
@@ -1213,6 +1608,7 @@ func TestQueryCacheCopiesActualBounds(t *testing.T) {
 	originalTo := *first.ActualTo
 	*first.ActualFrom = first.ActualFrom.Add(time.Hour)
 	*first.ActualTo = first.ActualTo.Add(time.Hour)
+	first.ValidAggregations[0] = "max"
 
 	second, err := store.QueryRangeWithMeta(from, to, 100)
 	if err != nil {
@@ -1224,14 +1620,21 @@ func TestQueryCacheCopiesActualBounds(t *testing.T) {
 	if second.ActualTo == nil || !second.ActualTo.Equal(originalTo) {
 		t.Fatalf("cached ActualTo = %v after caller mutation, want %s", second.ActualTo, originalTo)
 	}
+	if len(second.ValidAggregations) != 1 || second.ValidAggregations[0] != "data" {
+		t.Fatalf("cached ValidAggregations = %v after caller mutation, want [data]", second.ValidAggregations)
+	}
 
 	*second.ActualFrom = second.ActualFrom.Add(time.Hour)
+	second.ValidAggregations[0] = "min"
 	third, err := store.QueryRangeWithMeta(from, to, 100)
 	if err != nil {
 		t.Fatalf("third QueryRangeWithMeta: %v", err)
 	}
 	if third.ActualFrom == nil || !third.ActualFrom.Equal(originalFrom) {
 		t.Fatalf("cache hits share ActualFrom: third=%v want=%s", third.ActualFrom, originalFrom)
+	}
+	if len(third.ValidAggregations) != 1 || third.ValidAggregations[0] != "data" {
+		t.Fatalf("cache hits share ValidAggregations: third=%v want=[data]", third.ValidAggregations)
 	}
 }
 
@@ -1602,8 +2005,8 @@ func TestAggregatePSUMissingSupply(t *testing.T) {
 	if agg == nil || agg.Min == nil {
 		t.Fatal("aggregateSamples returned no min block")
 	}
-	if len(agg.Min.PSU) != 1 || agg.Min.PSU[0].Name != "BAT0" {
-		t.Fatalf("min PSU = %+v, want a single BAT0 entry", agg.Min.PSU)
+	if len(agg.Min.PSU) != 2 || agg.Min.PSU[0].Name != "BAT0" || agg.Min.PSU[1].Name != "AC" {
+		t.Fatalf("min PSU = %+v, want the BAT0/AC identity union", agg.Min.PSU)
 	}
 	if got := agg.Min.PSU[0].Capacity; got != 55 {
 		t.Errorf("min capacity = %d, want 55 (absent supply must not read as 0%%)", got)

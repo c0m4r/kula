@@ -196,14 +196,9 @@ export function addExpandButton(card) {
     actions.appendChild(btn);
 }
 
-// Attach all interactions needed by a card created after page initialization.
-export function attachDynamicChartCardActions(card, resetZoom) {
+// Attach card-local interactions needed after page initialization. Chart
+// double-click reset is owned by main.js's single delegated document handler.
+export function attachDynamicChartCardActions(card) {
     addExpandButton(card);
     attachHoverPauseToCard(card);
-
-    const canvas = card?.querySelector('canvas');
-    if (canvas && resetZoom && canvas.dataset.zoomReset !== '1') {
-        canvas.dataset.zoomReset = '1';
-        canvas.addEventListener('dblclick', resetZoom);
-    }
 }

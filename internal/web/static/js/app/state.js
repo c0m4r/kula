@@ -15,14 +15,33 @@ export const state = {
     connected: false,
     charts: {},
     timeRange: 300, // seconds, null when custom range
+    lastPresetRange: 300,
     customFrom: null,
     customTo: null,
     dataBuffer: [],
-    maxBufferSize: 3600, // 1 hour of 1s data
+    // Missing collection intervals are shared by every chart and rendered as
+    // neutral background bands. Keeping one array avoids per-chart copies.
+    historyGaps: [],
+    // The API caps observations at 5,000. Each adjacent pair can also need
+    // one gap marker; those markers must never evict observations.
+    maxBufferSize: 10000,
+    historyPointLimit: 5000,
+    historyViewEnd: null, // last successful rolling snapshot, when refreshed in buckets
+    historyRefreshAttempt: 0,
+    liveSampleIntervalMs: null,
+    collectionIntervalMs: 1000,
+    retainedRanges: null,
+    liveSampleIntervals: [],
+    lastLiveSampleTs: null,
     reconnectDelay: 1000,
     reconnectTimer: null,
     historyLoaded: false,
     loadingHistory: false,
+    queueLiveDuringHistory: false,
+    historyStatus: 'idle', // idle, loading, failed, empty, partial, complete
+    historyError: null,
+    historyCoverage: null,
+    historyRequestGeneration: 0,
     alerts: [],
     alertDropdownOpen: false,
     infoDropdownOpen: false,
@@ -35,13 +54,20 @@ export const state = {
     focusSelecting: false,
     focusVisible: JSON.parse(localStorage.getItem('kula_focus_visible') || 'null'),
     currentResolution: '1s', // resolution of data currently loaded in charts
+    currentSourceResolution: '1s',
+    currentDownsampled: false,
     currentTier: 0,           // tier index of data currently loaded in charts
-    liveQueue: [],        // samples buffered while history is loading
+    liveQueue: [],        // samples buffered while a foreground history load replaces the view
     theme: localStorage.getItem('kula_theme') || 'auto',
     diskSpaceMountNames: [], // Not used as datasets anymore, but kept for compatibility
     cpuTempSensorNames: [],
     diskTempSensorNames: [],
     currentAggregation: localStorage.getItem('kula_aggregation') || 'avg',
+    validAggregations: ['data'], // response-advertised fields safe for every metric
+    timeZone: localStorage.getItem('kula_time_zone') === 'utc' ? 'utc' : 'local',
+    // One compact provenance record per timestamp. Tooltips look up this map
+    // instead of copying bucket metadata onto every series in every chart.
+    historyPointContexts: new Map(),
     aggFromUrl: false, // true when aggregation was set from the URL (takes precedence over server config)
     defaultAggregation: null, // server's web.default_aggregation, from /api/config; null until loaded
     netOptions: [],

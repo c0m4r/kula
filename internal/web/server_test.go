@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -401,7 +402,11 @@ func TestHandleConfigExposesUISettings(t *testing.T) {
 	}
 
 	var got struct {
-		Appearance    map[string]bool `json:"appearance"`
+		Appearance map[string]bool `json:"appearance"`
+		History    struct {
+			CollectionIntervalMS float64                 `json:"collection_interval_ms"`
+			Ranges               []storage.RetainedRange `json:"ranges"`
+		} `json:"history"`
 		Accessibility struct {
 			HighContrast   bool `json:"high_contrast"`
 			ReduceMotion   bool `json:"reduce_motion"`
@@ -420,6 +425,9 @@ func TestHandleConfigExposesUISettings(t *testing.T) {
 	}
 
 	wantAppearance := map[string]bool{"sticky_topbar": false, "gauges": true}
+	if got.History.CollectionIntervalMS != 1000 || got.History.Ranges == nil || len(got.History.Ranges) != 0 {
+		t.Fatalf("empty history metadata = %+v", got.History)
+	}
 	if !reflect.DeepEqual(got.Appearance, wantAppearance) {
 		t.Errorf("appearance = %v, want %v", got.Appearance, wantAppearance)
 	}
@@ -523,10 +531,353 @@ func TestGameScoreSubmissionRequestPolicy(t *testing.T) {
 	}
 }
 
+func TestHistoryFrontendRegressions(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping frontend module tests")
+	}
+
+	cmd := exec.Command(node, "testdata/history_frontend_test.mjs")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("history frontend tests failed: %v\n%s", err, output)
+	}
+}
+
+func TestHistoryFrontendUsesSharedLifecycleAndCanonicalItems(t *testing.T) {
+	chartsData, err := staticFS.ReadFile("static/js/app/charts-data.js")
+	if err != nil {
+		t.Fatalf("ReadFile(charts-data.js): %v", err)
+	}
+	source := string(chartsData)
+
+	if got := strings.Count(source, "return requestHistory("); got != 3 {
+		t.Fatalf("history loaders using the shared controller = %d, want 3", got)
+	}
+	for _, obsolete := range []string{
+		"if (state.loadingHistory) return;",
+		"state.dataBuffer.push(sample);",
+		"addSampleToCharts(item.data || item",
+		"state.liveTail",
+	} {
+		if strings.Contains(source, obsolete) {
+			t.Errorf("history data path still contains obsolete pattern %q", obsolete)
+		}
+	}
+	for _, required := range []string{
+		"new HistoryRequestController()",
+		"data.map(normalizeHistoryItem)",
+		"visible.forEach(renderHistoryItem)",
+		"validAggregations.includes(selectedField)",
+		"historyPointBudget()",
+		"queueAllChartUpdates()",
+		"state.timeRange === null && state.customFrom && state.customTo",
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("history data path is missing canonical pattern %q", required)
+		}
+	}
+	if strings.Contains(source, "window.innerWidth || 1000") {
+		t.Error("history point budget still uses browser width instead of actual plot width")
+	}
+	if strings.Contains(source, ".update('none')") {
+		t.Error("charts-data bypasses the animation-frame chart controller")
+	}
+
+	mainJS, err := staticFS.ReadFile("static/js/app/main.js")
+	if err != nil {
+		t.Fatalf("ReadFile(main.js): %v", err)
+	}
+	if !strings.Contains(string(mainJS), "redrawChartsFromBuffer();") {
+		t.Error("aggregation changes do not use the envelope-preserving redraw path")
+	}
+
+	indexHTML, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("ReadFile(index.html): %v", err)
+	}
+	for _, hiddenControl := range []string{
+		`id="btn-agg-menu" class="btn-icon btn-time-menu hidden"`,
+		`id="agg-presets-list" class="time-presets-list hidden"`,
+	} {
+		if !strings.Contains(string(indexHTML), hiddenControl) {
+			t.Errorf("aggregation controls are exposed before validity metadata: missing %q", hiddenControl)
+		}
+	}
+	for _, interaction := range []string{
+		`id="btn-live"`,
+		`id="btn-history-back"`,
+		`id="btn-history-forward"`,
+		`id="btn-zoom-out"`,
+		`id="pinned-time"`,
+		`id="pinned-time-announcement"`,
+		`id="history-status-announcement"`,
+		`data-i18n-aria-label="historical_navigation"`,
+		`data-i18n-title="history_back"`,
+		`data-i18n-title="history_forward"`,
+		`data-i18n-title="zoom_out"`,
+		`data-time-zone="local"`,
+		`data-time-zone="utc"`,
+		`js/app/chart-controller.js`,
+		`js/app/chart-interactions.js`,
+		`js/app/chart-envelope.js`,
+		`js/app/chart-accessibility.js`,
+		`js/app/format.js`,
+		`js/app/history-data.js`,
+		`js/app/history-navigation.js`,
+	} {
+		if !strings.Contains(string(indexHTML), interaction) {
+			t.Errorf("history interaction UI is missing %q", interaction)
+		}
+	}
+	if count := strings.Count(string(indexHTML), `aria-live="polite"`); count != 2 {
+		t.Errorf("ARIA polite live regions = %d, want pin and history-status announcements", count)
+	}
+}
+
+func TestHistoricalTooltipsUseBucketContextAndExplicitTimeZone(t *testing.T) {
+	checks := map[string][]string{
+		"static/js/app/charts-init.js": {
+			"formatFullTimestamp(",
+			"historyTooltipLines(",
+			"state.historyPointContexts.get(",
+			"formatChartTick(",
+		},
+		"static/js/app/charts-data.js": {
+			"annotateHistoryItems(samples, response)",
+			"rebuildHistoryPointContexts()",
+		},
+		"static/js/app/controls.js": {
+			"formatDateTimeInput(date, state.timeZone, true",
+			"parseDateTimeInput(fromVal, state.timeZone)",
+		},
+		"static/js/app/main.js": {
+			"localStorage.setItem('kula_time_zone', state.timeZone)",
+			"syncTimeZoneControls()",
+		},
+	}
+	for path, required := range checks {
+		source, err := staticFS.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", path, err)
+		}
+		for _, fragment := range required {
+			if !strings.Contains(string(source), fragment) {
+				t.Errorf("%s is missing %q", path, fragment)
+			}
+		}
+	}
+}
+
+func TestAuthenticatedFrontendReloadsTranslationsBeforeWebSocket(t *testing.T) {
+	authJS, err := staticFS.ReadFile("static/js/app/auth.js")
+	if err != nil {
+		t.Fatalf("ReadFile(auth.js): %v", err)
+	}
+	source := string(authJS)
+	configAt := strings.Index(source, "const config = await fetchConfig();")
+	refreshAt := strings.Index(source, "await i18n.refreshAfterAuth(config);")
+	connectAt := -1
+	if refreshAt >= 0 {
+		if offset := strings.Index(source[refreshAt:], "connectWS();"); offset >= 0 {
+			connectAt = refreshAt + offset
+		}
+	}
+	if configAt < 0 || refreshAt <= configAt || connectAt <= refreshAt {
+		t.Error("successful login does not restore translations before opening the WebSocket")
+	}
+
+	i18nJS, err := staticFS.ReadFile("static/js/app/i18n.js")
+	if err != nil {
+		t.Fatalf("ReadFile(i18n.js): %v", err)
+	}
+	for _, required := range []string{
+		"async refreshAfterAuth(config = {})",
+		"this.applyTranslations();",
+		"new Event('kula-i18n-changed')",
+	} {
+		if !strings.Contains(string(i18nJS), required) {
+			t.Errorf("authenticated translation refresh is missing %q", required)
+		}
+	}
+}
+
+func TestHistoricalChartsUseCompactTrustworthyEnvelopes(t *testing.T) {
+	chartsData, err := staticFS.ReadFile("static/js/app/charts-data.js")
+	if err != nil {
+		t.Fatalf("ReadFile(charts-data.js): %v", err)
+	}
+	source := string(chartsData)
+	for _, required := range []string{
+		"validAggregations.includes('min')",
+		"validAggregations.includes('max')",
+		"appendEnvelopePoint(",
+		"trimEnvelopeData(",
+		"clearEnvelopeData(",
+		"appendEnvelopeGap(",
+		"state.historyGaps",
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("history envelope lifecycle is missing %q", required)
+		}
+	}
+
+	chartsInit, err := staticFS.ReadFile("static/js/app/charts-init.js")
+	if err != nil {
+		t.Fatalf("ReadFile(charts-init.js): %v", err)
+	}
+	initSource := string(chartsInit)
+	for _, required := range []string{
+		"Chart.register(envelopePlugin, chartAccessibilityPlugin, crosshairPlugin, tooltipGesturePlugin)",
+		"dataset.fill = false;",
+		"dataset.tension = 0;",
+		"line: { tension: 0",
+		"gaps: () => state.historyGaps",
+	} {
+		if !strings.Contains(initSource, required) {
+			t.Errorf("historical chart presentation is missing %q", required)
+		}
+	}
+
+	envelopeJS, err := staticFS.ReadFile("static/js/app/chart-envelope.js")
+	if err != nil {
+		t.Fatalf("ReadFile(chart-envelope.js): %v", err)
+	}
+	for _, required := range []string{
+		"export function measurementGapRects(",
+		"drawMeasurementGaps(chart, xScale, options)",
+		"chart.ctx.fillRect(",
+	} {
+		if !strings.Contains(string(envelopeJS), required) {
+			t.Errorf("measurement-gap shading is missing %q", required)
+		}
+	}
+}
+
+func TestHistoricalChartsExposeAccessibleAlternatives(t *testing.T) {
+	checks := map[string][]string{
+		"static/js/app/chart-accessibility.js": {
+			"export function chartSummaryText(",
+			"export function keyboardCursorTimestamp(",
+			"export function chartTableModel(",
+			"export function chartCSV(",
+			"canvas.setAttribute('aria-labelledby'",
+			"canvas.setAttribute('aria-describedby'",
+			"canvas.setAttribute('aria-keyshortcuts'",
+			"TABLE_ROW_LIMIT = 50",
+		},
+		"static/js/app/charts-data.js": {
+			"document.getElementById('history-status-announcement')",
+			"updateChartAccessibility(chart)",
+		},
+		"static/js/app/charts-init.js": {
+			"attachChartAccessibility(chart",
+			"chartAccessibilityPlugin",
+		},
+	}
+	for path, required := range checks {
+		source, err := staticFS.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", path, err)
+		}
+		for _, fragment := range required {
+			if !strings.Contains(string(source), fragment) {
+				t.Errorf("%s is missing %q", path, fragment)
+			}
+		}
+	}
+}
+
+func TestFocusModeEmptySelectionRestoresFullHistory(t *testing.T) {
+	focusJS, err := staticFS.ReadFile("static/js/app/focus-mode.js")
+	if err != nil {
+		t.Fatalf("ReadFile(focus-mode.js): %v", err)
+	}
+	source := string(focusJS)
+	start := strings.Index(source, "if (selected.length === 0)")
+	if start < 0 {
+		t.Fatal("Focus Mode empty-selection exit branch is missing")
+	}
+	branch := source[start:]
+	end := strings.Index(branch, "state.focusVisible = selected;")
+	if end < 0 {
+		t.Fatal("could not isolate Focus Mode empty-selection exit branch")
+	}
+	branch = branch[:end]
+	for _, required := range []string{
+		"state.focusMode = false;",
+		"state.focusVisible = null;",
+		"localStorage.removeItem('kula_focus_visible');",
+		"kula-history-sections-changed",
+	} {
+		if !strings.Contains(branch, required) {
+			t.Errorf("empty-selection exit does not restore full history: missing %q", required)
+		}
+	}
+}
+
+func TestChartsUseOneDelegatedDoubleClickReset(t *testing.T) {
+	for _, path := range []string{
+		"static/js/app/split.js",
+		"static/js/app/chart-card-actions.js",
+	} {
+		source, err := staticFS.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", path, err)
+		}
+		if strings.Contains(string(source), "addEventListener('dblclick'") {
+			t.Errorf("%s still installs a second direct double-click reset handler", path)
+		}
+	}
+
+	mainJS, err := staticFS.ReadFile("static/js/app/main.js")
+	if err != nil {
+		t.Fatalf("ReadFile(main.js): %v", err)
+	}
+	if !strings.Contains(string(mainJS), "event.target?.matches?.('.chart-body canvas')") {
+		t.Fatal("global delegated chart double-click reset handler is missing")
+	}
+}
+
 // TestHandleHistoryIncludesPSU guards the reported battery bug end to end: the
 // dashboard rebuilds every chart from /api/history whenever the time preset
 // changes, so a power-supply series missing from that response is a battery
 // chart that resets to empty on every reload.
+func TestHandleHistoryThirtyDays(t *testing.T) {
+	store, err := storage.NewStore(config.StorageConfig{
+		Directory: t.TempDir(),
+		Tiers:     []config.TierConfig{{Resolution: 5 * time.Minute, MaxBytes: 10 * 1024 * 1024}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 8640 {
+		if err := store.WriteSample(&collector.Sample{Timestamp: base.Add(time.Duration(i+1) * 5 * time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Server{store: store}
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/history?from="+base.Format(time.RFC3339)+"&to="+base.Add(30*24*time.Hour).Format(time.RFC3339), nil)
+	s.handleHistory(rec, request)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result storage.HistoryResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	contributors := 0
+	for _, sample := range result.Samples {
+		contributors += sample.SampleCount
+	}
+	if !result.ExactComplete || len(result.Samples) > 450 || contributors != 8640 {
+		t.Fatalf("incomplete 30d response: exact=%v points=%d contributors=%d", result.ExactComplete, len(result.Samples), contributors)
+	}
+}
+
 func TestHandleHistoryIncludesPSU(t *testing.T) {
 	store, err := storage.NewStore(config.StorageConfig{
 		Directory: t.TempDir(),
@@ -559,7 +910,7 @@ func TestHandleHistoryIncludesPSU(t *testing.T) {
 	rec := httptest.NewRecorder()
 	from := base.Add(-time.Minute).UTC().Format(time.RFC3339)
 	to := time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
-	req := httptest.NewRequest(http.MethodGet, "/api/history?from="+from+"&to="+to, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/history?from="+from+"&to="+to+"&points=2", nil)
 	http.HandlerFunc(s.handleHistory).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -567,7 +918,8 @@ func TestHandleHistoryIncludesPSU(t *testing.T) {
 	}
 
 	var resp struct {
-		Samples []struct {
+		ValidAggregations []string `json:"valid_aggregations"`
+		Samples           []struct {
 			Data struct {
 				PSU []collector.PowerSupplyStats `json:"psu"`
 			} `json:"data"`
@@ -578,6 +930,9 @@ func TestHandleHistoryIncludesPSU(t *testing.T) {
 	}
 	if len(resp.Samples) == 0 {
 		t.Fatalf("no samples returned: %s", rec.Body.String())
+	}
+	if !reflect.DeepEqual(resp.ValidAggregations, []string{"data", "min", "max"}) {
+		t.Errorf("valid_aggregations = %v, want [data min max]", resp.ValidAggregations)
 	}
 	for i, sample := range resp.Samples {
 		if len(sample.Data.PSU) != 1 {
@@ -593,5 +948,132 @@ func TestHandleHistoryIncludesPSU(t *testing.T) {
 		if ps.PowerW != 14.5 {
 			t.Errorf("sample %d power = %v, want 14.5", i, ps.PowerW)
 		}
+	}
+}
+
+func TestHandleHistorySelectsRequestedSections(t *testing.T) {
+	store, err := storage.NewStore(config.StorageConfig{
+		Directory: t.TempDir(),
+		Tiers: []config.TierConfig{
+			{Resolution: time.Second, MaxSize: "1MB", MaxBytes: 1024 * 1024},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	sample := &collector.Sample{
+		Timestamp: base,
+		CPU:       collector.CPUStats{Total: collector.CPUCoreStats{Usage: 42}},
+		Memory:    collector.MemoryStats{Total: 1024, Used: 512},
+		Disks: collector.DiskStats{Devices: []collector.DiskDevice{{
+			Name: "sda", ReadBytesPS: 1234,
+		}}},
+		Apps: collector.ApplicationsStats{Custom: map[string][]collector.CustomMetricValue{
+			"large": {{Name: "work", Value: 99}},
+		}},
+	}
+	if err := store.WriteSample(sample); err != nil {
+		t.Fatalf("WriteSample: %v", err)
+	}
+
+	srv := NewServer(config.WebConfig{}, config.GlobalConfig{}, nil, store, t.TempDir(), config.OllamaConfig{})
+	query := "?from=" + base.Add(-time.Second).Format(time.RFC3339) +
+		"&to=" + base.Add(time.Second).Format(time.RFC3339) + "&sections=mem,cpu"
+	rec := httptest.NewRecorder()
+	http.HandlerFunc(srv.handleHistory).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/history"+query, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		Sections         []string `json:"sections"`
+		SourceResolution string   `json:"source_resolution"`
+		Samples          []struct {
+			Data        map[string]json.RawMessage `json:"data"`
+			BucketStart time.Time                  `json:"bucket_start"`
+			BucketEnd   time.Time                  `json:"bucket_end"`
+			SampleCount int                        `json:"sample_count"`
+			Coverage    float64                    `json:"coverage"`
+		} `json:"samples"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !reflect.DeepEqual(response.Sections, []string{"cpu", "mem"}) {
+		t.Fatalf("sections=%v, want [cpu mem]", response.Sections)
+	}
+	if response.SourceResolution != "1s" {
+		t.Fatalf("source_resolution=%q, want 1s", response.SourceResolution)
+	}
+	if len(response.Samples) != 1 {
+		t.Fatalf("samples=%d, want 1", len(response.Samples))
+	}
+	if got := response.Samples[0]; got.SampleCount != 1 || got.Coverage != 1 ||
+		!got.BucketStart.Equal(base.Add(-time.Second)) || !got.BucketEnd.Equal(base) {
+		t.Errorf("sectioned history lost bucket metadata: %+v", got)
+	}
+	for _, key := range []string{"ts", "cpu", "mem"} {
+		if _, ok := response.Samples[0].Data[key]; !ok {
+			t.Errorf("selected response missing %q", key)
+		}
+	}
+	for _, key := range []string{"disk", "apps", "gpu", "psu"} {
+		if _, ok := response.Samples[0].Data[key]; ok {
+			t.Errorf("selected response unexpectedly includes %q", key)
+		}
+	}
+
+	bad := httptest.NewRecorder()
+	http.HandlerFunc(srv.handleHistory).ServeHTTP(bad,
+		httptest.NewRequest(http.MethodGet, "/api/history?sections=cpu,secrets", nil))
+	if bad.Code != http.StatusBadRequest {
+		t.Errorf("unknown section status=%d, want 400", bad.Code)
+	}
+}
+
+func TestHandleHistoryRejectsWideRangeEvenWithinRetention(t *testing.T) {
+	store, err := storage.NewStore(config.StorageConfig{
+		Directory: t.TempDir(),
+		Tiers: []config.TierConfig{
+			{Resolution: 24 * time.Hour, MaxSize: "1MB", MaxBytes: 1024 * 1024},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, ts := range []time.Time{base, base.Add(40 * 24 * time.Hour)} {
+		if err := store.WriteSample(&collector.Sample{Timestamp: ts}); err != nil {
+			t.Fatalf("WriteSample(%v): %v", ts, err)
+		}
+	}
+	srv := NewServer(config.WebConfig{}, config.GlobalConfig{}, nil, store, t.TempDir(), config.OllamaConfig{})
+
+	query := func(from, to time.Time) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		url := "/api/history?from=" + from.Format(time.RFC3339) +
+			"&to=" + to.Format(time.RFC3339) + "&points=10"
+		http.HandlerFunc(srv.handleHistory).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		return rec
+	}
+
+	inside := query(base, base.Add(40*24*time.Hour))
+	if inside.Code != http.StatusBadRequest {
+		t.Fatalf("retained 40-day range status=%d body=%s", inside.Code, inside.Body.String())
+	}
+
+	outside := query(base.Add(-2*24*time.Hour), base.Add(40*24*time.Hour))
+	if outside.Code != http.StatusBadRequest {
+		t.Errorf("range before retained coverage status=%d, want 400", outside.Code)
+	}
+
+	future := query(base, base.Add(43*24*time.Hour))
+	if future.Code != http.StatusBadRequest {
+		t.Errorf("range after retained coverage status=%d, want 400", future.Code)
 	}
 }

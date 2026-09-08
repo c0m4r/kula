@@ -1,9 +1,9 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -40,17 +40,18 @@ type Store struct {
 
 	// Aggregation state
 	tier1Count int
-	tier1Buf   []*collector.Sample
+	tier1Buf   []*AggregatedSample
 	tier2Count int
 	tier2Buf   []*AggregatedSample
 
 	// latestCache holds the most recently written sample in memory.
-	// This makes QueryLatest O(1) (a guarded pointer read) instead of
-	// O(n) (a full disk scan of the tier file).
+	// QueryLatest copies one sample rather than scanning the tier file.
 	latestCache *AggregatedSample
+	// Changes after every successful raw write, including failed rollup writes.
+	writeGeneration uint64
 
 	// queryCache is a short-lived in-process cache for QueryRangeWithMeta.
-	// It deduplicates identical or concurrent API calls. Entries carry a TTL of
+	// It reuses completed results of identical API calls. Entries carry a TTL of
 	// one tier-0 resolution; WriteSample evicts expired and live-edge entries
 	// instead of rebuilding the whole map, so cached past-window results survive
 	// across collection ticks without a per-second allocation.
@@ -71,7 +72,7 @@ const maxQueryCacheEntries = 256
 // (the raw samples remain safe in tier 0).
 const maxAggBufferFactor = 4
 
-// queryCacheKey identifies a unique query rounded to tier resolution.
+// queryCacheKey identifies a query with its exact bounds and point budget.
 type queryCacheKey struct {
 	fromNano     int64
 	toNano       int64
@@ -170,11 +171,11 @@ func (s *Store) reconstructAggregationState() {
 	t1Newest := s.tiers[1].NewestTimestamp()
 	t0Samples, err := s.tiers[0].ReadLatest(s.ratio1)
 	if err == nil {
-		var pending []*collector.Sample
+		var pending []*AggregatedSample
 		for _, as := range t0Samples {
 			if as.Timestamp.After(t1Newest) {
 				if as.Data != nil {
-					pending = append(pending, as.Data)
+					pending = append(pending, as)
 				}
 			}
 		}
@@ -201,6 +202,10 @@ func (s *Store) reconstructAggregationState() {
 
 // WriteSample writes a raw sample to tier 0 and triggers aggregation.
 func (s *Store) WriteSample(sample *collector.Sample) error {
+	// Own the complete sample graph once this call returns. Callers must not
+	// mutate their input concurrently with the call itself.
+	owned := cloneAggregatedSample(&AggregatedSample{Data: sample})
+	sample = owned.Data
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -209,15 +214,19 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 	dur := fallbackDur
 	if s.latestCache != nil {
 		dur = sample.Timestamp.Sub(s.latestCache.Timestamp)
-		if dur <= 0 {
+		// A long collection gap is missing coverage, not evidence that the
+		// next observation represented the entire outage. Keep normal ticker
+		// jitter, but do not let a restart or suspend dominate weighted means.
+		if dur <= 0 || dur > 2*fallbackDur {
 			dur = fallbackDur
 		}
 	}
 
 	as := &AggregatedSample{
-		Timestamp: sample.Timestamp,
-		Duration:  dur,
-		Data:      sample,
+		Timestamp:          sample.Timestamp,
+		Duration:           dur,
+		Data:               sample,
+		AggregationVersion: currentAggregationVersion,
 	}
 
 	if len(s.tiers) > 0 {
@@ -226,66 +235,94 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 		}
 		// Update the in-memory cache so QueryLatest never needs a disk scan.
 		s.latestCache = as
+		s.writeGeneration++
+		// Invalidate immediately: a later rollup failure must not leave stale
+		// live history cached after the raw write succeeded.
+		s.queryCacheMu.Lock()
+		s.sweepQueryCacheLocked(time.Now(), sample.Timestamp.UnixNano())
+		s.queryCacheMu.Unlock()
 	}
 
 	// Aggregate for tier 1 (every ratio1 samples)
 	if s.ratio1 > 0 && len(s.tiers) > 1 {
-		s.tier1Buf = append(s.tier1Buf, sample)
+		s.tier1Buf = append(s.tier1Buf, as)
 		s.tier1Count++
 		// Bound the buffer in case tier-1 writes keep failing (a stuck/full
 		// disk): without this the buffer would grow every tick forever. Drops
 		// the oldest excess; those intervals stay available as raw tier-0 data.
 		if cap1 := s.ratio1 * maxAggBufferFactor; len(s.tier1Buf) > cap1 {
-			s.tier1Buf = append([]*collector.Sample(nil), s.tier1Buf[len(s.tier1Buf)-cap1:]...)
+			s.tier1Buf = append([]*AggregatedSample(nil), s.tier1Buf[len(s.tier1Buf)-cap1:]...)
 			s.tier1Count = len(s.tier1Buf)
 		}
 
 		if s.tier1Count >= s.ratio1 {
-			agg := s.aggregateSamples(s.tier1Buf, s.configs[1].Resolution)
-			if err := s.tiers[1].Write(agg); err != nil {
-				return fmt.Errorf("writing tier 1: %w", err)
-			}
-			s.tier1Buf = nil
-			s.tier1Count = 0
-
-			if s.ratio2 > 0 && len(s.tiers) > 2 {
-				s.tier2Buf = append(s.tier2Buf, agg)
-				s.tier2Count++
-				if cap2 := s.ratio2 * maxAggBufferFactor; len(s.tier2Buf) > cap2 {
-					s.tier2Buf = append([]*AggregatedSample(nil), s.tier2Buf[len(s.tier2Buf)-cap2:]...)
-					s.tier2Count = len(s.tier2Buf)
-				}
-
-				if s.tier2Count >= s.ratio2 {
-					agg3 := s.aggregateAggregated(s.tier2Buf, s.configs[2].Resolution)
-					if err := s.tiers[2].Write(agg3); err != nil {
-						return fmt.Errorf("writing tier 2: %w", err)
-					}
-					s.tier2Buf = nil
-					s.tier2Count = 0
-				}
-			}
+			return s.flushRollup(1)
 		}
 	}
-
-	// Evict stale query-cache entries instead of rebuilding the whole map each
-	// tick: drop anything expired plus any window reaching the live edge (which
-	// must now reflect this new sample). Immutable past-window results stay cached.
-	s.queryCacheMu.Lock()
-	s.sweepQueryCacheLocked(time.Now(), sample.Timestamp.Truncate(time.Second).UnixNano())
-	s.queryCacheMu.Unlock()
 
 	return nil
 }
 
+// flushRollup preserves each contiguous run as its own record. A count-based
+// window can straddle suspend/restart or a missed collection interval; averaging
+// the entire buffer would relocate pre-outage measurements to its final minute.
+// Partial records retain their observed Duration in the existing codec.
+func (s *Store) flushRollup(tier int) error {
+	buffer, count := &s.tier1Buf, &s.tier1Count
+	if tier == 2 {
+		buffer, count = &s.tier2Buf, &s.tier2Count
+	}
+	for len(*buffer) > 0 {
+		end := 1
+		for end < len(*buffer) {
+			previous, next := (*buffer)[end-1], (*buffer)[end]
+			width := next.Duration
+			if width <= 0 {
+				width = s.configs[tier-1].Resolution
+			}
+			if !next.Timestamp.After(previous.Timestamp) || next.Timestamp.Add(-width).After(previous.Timestamp) {
+				break
+			}
+			end++
+		}
+		agg := s.aggregateAggregated((*buffer)[:end], s.configs[tier].Resolution)
+		if err := s.tiers[tier].Write(agg); err != nil {
+			return fmt.Errorf("writing tier %d: %w", tier, err)
+		}
+		*buffer = (*buffer)[end:]
+		*count = len(*buffer)
+		if *count == 0 {
+			*buffer = nil
+		}
+		if tier == 1 && s.ratio2 > 0 && len(s.tiers) > 2 {
+			s.tier2Buf = append(s.tier2Buf, agg)
+			s.tier2Count++
+			if cap2 := s.ratio2 * maxAggBufferFactor; len(s.tier2Buf) > cap2 {
+				s.tier2Buf = append([]*AggregatedSample(nil), s.tier2Buf[len(s.tier2Buf)-cap2:]...)
+				s.tier2Count = len(s.tier2Buf)
+			}
+			if s.tier2Count >= s.ratio2 {
+				if err := s.flushRollup(2); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // sweepQueryCacheLocked drops expired query-cache entries. When liveEdgeNano > 0
-// it also drops any entry whose window reaches that timestamp, since a sample
-// newly written at the live edge makes those results stale. Past-window entries
-// (toNano < liveEdgeNano) are immutable and kept until their TTL lapses. The
-// caller must hold s.queryCacheMu.
+// it also drops entries overlapping a newly written source interval. A rollup
+// ending after a query's end can now contribute to that query, including when
+// it replaces a partial result from another tier. The caller must hold s.mu
+// and s.queryCacheMu.
 func (s *Store) sweepQueryCacheLocked(now time.Time, liveEdgeNano int64) {
+	var lookback time.Duration
+	for i, tc := range s.configs {
+		lookback = max(lookback, historyMaxSourceWidth(tc.Resolution, i == 0))
+	}
 	for k, e := range s.queryCache {
-		if !now.Before(e.expiresAt) || (liveEdgeNano > 0 && k.toNano >= liveEdgeNano) {
+		if !now.Before(e.expiresAt) || (liveEdgeNano > 0 && k.toNano >= liveEdgeNano-int64(lookback)) {
 			delete(s.queryCache, k)
 		}
 	}
@@ -293,14 +330,38 @@ func (s *Store) sweepQueryCacheLocked(now time.Time, liveEdgeNano int64) {
 
 // HistoryResult wraps query results with tier metadata for the API.
 type HistoryResult struct {
-	Samples       []*AggregatedSample `json:"samples"`
-	Tier          int                 `json:"tier"`
-	Resolution    string              `json:"resolution"`
-	RequestedFrom time.Time           `json:"requested_from"`
-	RequestedTo   time.Time           `json:"requested_to"`
-	ActualFrom    *time.Time          `json:"actual_from,omitempty"`
-	ActualTo      *time.Time          `json:"actual_to,omitempty"`
-	Complete      bool                `json:"complete"`
+	Samples          []*AggregatedSample `json:"samples"`
+	Tier             int                 `json:"tier"`
+	Resolution       string              `json:"resolution"`
+	SourceResolution string              `json:"source_resolution"`
+	Downsampled      bool                `json:"downsampled"`
+	RequestedFrom    time.Time           `json:"requested_from"`
+	RequestedTo      time.Time           `json:"requested_to"`
+	ActualFrom       *time.Time          `json:"actual_from,omitempty"`
+	ActualTo         *time.Time          `json:"actual_to,omitempty"`
+	// Complete is the retention-selection result and tolerates normal live
+	// collection/rollup lag. ExactComplete describes the literal requested
+	// edges and is the value exact/custom views should present to users.
+	Complete          bool     `json:"complete"`
+	ExactComplete     bool     `json:"exact_complete"`
+	ValidAggregations []string `json:"valid_aggregations"`
+}
+
+// validHistoryAggregations exposes extrema only when every returned bucket was
+// produced by the exhaustive policy reducer. Old tier files remain readable,
+// but their incomplete legacy envelopes stay hidden until retention replaces
+// them (or a query recomputes buckets directly from raw observations).
+func validHistoryAggregations(samples []*AggregatedSample) []string {
+	for _, sample := range samples {
+		if sample == nil || sample.Min == nil || sample.Max == nil ||
+			sample.AggregationVersion < currentAggregationVersion {
+			return []string{"data"}
+		}
+	}
+	if len(samples) == 0 {
+		return []string{"data"}
+	}
+	return []string{"data", "min", "max"}
 }
 
 type queryTierCandidate struct {
@@ -324,7 +385,11 @@ func cloneHistoryResult(result *HistoryResult) *HistoryResult {
 		return nil
 	}
 	cp := *result
-	cp.Samples = append([]*AggregatedSample(nil), result.Samples...)
+	cp.Samples = make([]*AggregatedSample, len(result.Samples))
+	for i, sample := range result.Samples {
+		cp.Samples[i] = cloneAggregatedSample(sample)
+	}
+	cp.ValidAggregations = append([]string(nil), result.ValidAggregations...)
 	if result.ActualFrom != nil {
 		actualFrom := *result.ActualFrom
 		cp.ActualFrom = &actualFrom
@@ -354,13 +419,24 @@ func (s *Store) QueryRange(from, to time.Time) ([]*AggregatedSample, error) {
 // concurrent or repeated API calls without extra disk I/O.
 func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*HistoryResult, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	locked := true
+	unlock := func() {
+		if locked {
+			s.mu.RUnlock()
+			locked = false
+		}
+	}
+	defer unlock()
+	generation := s.writeGeneration
 
 	if len(s.tiers) == 0 {
-		return &HistoryResult{RequestedFrom: from, RequestedTo: to}, nil
+		return &HistoryResult{
+			RequestedFrom:     from,
+			RequestedTo:       to,
+			ValidAggregations: validHistoryAggregations(nil),
+		}, nil
 	}
 
-	const maxSamples = 3600
 	const maxScreenPoints = 7200
 	if targetPoints <= 0 {
 		targetPoints = 450
@@ -368,23 +444,22 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 		targetPoints = maxScreenPoints
 	}
 
-	// --- Query cache lookup (lock-free read under store RLock) ---
-	// Round from/to down to nearest second to unify slightly-different wall-clock calls.
+	// --- Query cache lookup ---
+	// Exact bounds are part of the result: coalescing sub-second requests can
+	// return samples outside the caller's interval even when their display
+	// buckets happen to be identical.
 	cacheKey := queryCacheKey{
-		fromNano:     from.Truncate(time.Second).UnixNano(),
-		toNano:       to.Truncate(time.Second).UnixNano(),
+		fromNano:     from.UnixNano(),
+		toNano:       to.UnixNano(),
 		targetPoints: targetPoints,
 	}
 	s.queryCacheMu.Lock()
 	if entry, ok := s.queryCache[cacheKey]; ok {
 		if time.Now().Before(entry.expiresAt) {
-			cp := cloneHistoryResult(entry.result)
-			// Cache keys intentionally coalesce sub-second request differences.
-			// Preserve the exact bounds supplied by this caller in the metadata.
-			cp.RequestedFrom = from
-			cp.RequestedTo = to
 			s.queryCacheMu.Unlock()
-			return cp, nil
+			unlock()
+			// Cache entries are immutable. Copy without serializing other hits.
+			return cloneHistoryResult(entry.result), nil
 		}
 		// Expired — drop it and fall through to recompute.
 		delete(s.queryCache, cacheKey)
@@ -413,18 +488,21 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 
 		oldest := tier.OldestTimestamp()
 		newest := tier.NewestTimestamp()
-		if oldest.After(to) || newest.Before(from) {
+		resDur := resDurations[tierIdx]
+		// Candidate overlap uses interval starts, not only record endpoints.
+		// Raw widths are checked precisely after decoding the bounded lookahead.
+		oldestStart := oldest.Add(-historyMaxSourceWidth(resDur, tierIdx == 0))
+		if oldestStart.After(to) || newest.Before(from) {
 			continue
 		}
 
-		resDur := resDurations[tierIdx]
 		leftTolerance, rightTolerance := tierCoverageTolerances(resDur)
 		complete := !oldest.After(from.Add(leftTolerance)) &&
 			!newest.Before(to.Add(-rightTolerance))
 
 		overlapFrom := from
-		if oldest.After(overlapFrom) {
-			overlapFrom = oldest
+		if oldestStart.After(overlapFrom) {
+			overlapFrom = oldestStart
 		}
 		overlapTo := to
 		if newest.Before(overlapTo) {
@@ -450,18 +528,13 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 		return partialCandidates[i].overlap > partialCandidates[j].overlap
 	})
 
-	// Preserve the existing read-budget preference, but only skip a dense tier
-	// when another fully covering tier is available. If the preferred tier is
-	// unexpectedly unreadable, progressively try the remaining candidates.
-	maxAllowed := maxSamples
-	if targetPoints > maxAllowed {
-		maxAllowed = targetPoints
-	}
+	// Source quality is independent of display density: requested point count
+	// must never unlock a finer tier. Skip a dense tier only at the fixed read
+	// budget and only when another fully covering tier is available.
 	firstFull := 0
 	for firstFull < len(fullCandidates)-1 {
 		candidate := fullCandidates[firstFull]
-		estimatedSamples := int(duration / candidate.resolution)
-		if estimatedSamples <= maxAllowed*2 {
+		if estimatedSourceRecords(duration, candidate.resolution) <= maxHistorySourceRecords {
 			break
 		}
 		firstFull++
@@ -474,81 +547,60 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 	}
 	candidates = append(candidates, partialCandidates...)
 
+	// Tier handles are immutable after construction. Each scanner protects
+	// its own snapshot and releases the tier lock between reduction batches.
+	unlock()
 	for _, candidate := range candidates {
 		tierIdx := candidate.index
 		tier := s.tiers[tierIdx]
 
-		samples, err := tier.ReadRange(from, to)
+		result, err := s.readHistory(tier, from, to, targetPoints, resDurations[tierIdx], tierIdx == 0)
+		if errors.Is(err, errHistorySnapshotExpired) {
+			// Retention advanced across unread bytes. Restart from the current
+			// snapshot once, without ever publishing the abandoned partial data.
+			result, err = s.readHistory(tier, from, to, targetPoints, resDurations[tierIdx], tierIdx == 0)
+			candidate.complete = false
+		}
 		if err != nil {
 			return nil, fmt.Errorf("reading tier %d: %w", tierIdx, err)
 		}
-		if len(samples) == 0 {
+		// A fully retained raw interval with no observations is an outage.
+		// Falling back to a legacy coarse rollup can invent coverage there.
+		if len(result.Samples) == 0 && (tierIdx != 0 || !candidate.complete) {
 			continue
 		}
 
-		res := resolutions[tierIdx]
-
-		if len(samples) > targetPoints {
-			// Ceiling division guarantees ceil(len/groupSize) <= targetPoints.
-			groupSize := (len(samples) + targetPoints - 1) / targetPoints
-			downsampled := make([]*AggregatedSample, 0, (len(samples)+groupSize-1)/groupSize)
-			for i := 0; i < len(samples); i += groupSize {
-				end := i + groupSize
-				if end > len(samples) {
-					end = len(samples)
-				}
-				group := samples[i:end]
-
-				var totalDur time.Duration
-				for _, sample := range group {
-					totalDur += sample.Duration
-				}
-
-				agg := s.aggregateAggregated(group, totalDur)
-				if agg != nil {
-					downsampled = append(downsampled, agg)
-				}
-			}
-			samples = downsampled
-			res = fmtRes(resDurations[tierIdx] * time.Duration(groupSize))
+		if len(result.Samples) > targetPoints {
+			return nil, fmt.Errorf("downsampling tier %d returned %d samples for target %d", tierIdx, len(result.Samples), targetPoints)
 		}
 
-		// Legacy or malformed records may decode without a Data block. If every
-		// group is empty, aggregateAggregated returns nil for each one.
-		if len(samples) == 0 {
-			continue
-		}
-
-		if len(samples) > targetPoints {
-			return nil, fmt.Errorf("downsampling tier %d returned %d samples for target %d", tierIdx, len(samples), targetPoints)
-		}
-
-		actualFrom := samples[0].Timestamp
-		if samples[0].Duration > 0 {
-			actualFrom = actualFrom.Add(-samples[0].Duration)
-		}
-		actualTo := samples[len(samples)-1].Timestamp
-		result := &HistoryResult{
-			Samples:       samples,
-			Tier:          tierIdx,
-			Resolution:    res,
-			RequestedFrom: from,
-			RequestedTo:   to,
-			ActualFrom:    &actualFrom,
-			ActualTo:      &actualTo,
-			Complete:      candidate.complete,
-		}
+		result.Tier = tierIdx
+		result.SourceResolution = resolutions[tierIdx]
+		result.RequestedFrom = from
+		result.RequestedTo = to
+		result.Complete = candidate.complete && len(result.Samples) > 0
+		result.ExactComplete = result.ActualFrom != nil && result.ActualTo != nil &&
+			!result.ActualFrom.After(from) && !result.ActualTo.Before(to)
+		result.ValidAggregations = validHistoryAggregations(result.Samples)
 
 		// Cache with a TTL of one tier-0 resolution. The cap is a safety bound:
 		// if it's reached we sweep expired entries first and, failing that, skip
 		// caching rather than let the map grow without limit.
+		cached := cloneHistoryResult(result)
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		// A write during reduction already invalidated the old snapshot. Do
+		// not reinsert it after that invalidation.
+		if s.writeGeneration != generation {
+			return result, nil
+		}
 		s.queryCacheMu.Lock()
 		if len(s.queryCache) >= maxQueryCacheEntries {
 			s.sweepQueryCacheLocked(time.Now(), 0)
 		}
 		if len(s.queryCache) < maxQueryCacheEntries {
 			s.queryCache[cacheKey] = queryCacheEntry{
-				result:    cloneHistoryResult(result),
+				result:    cached,
 				expiresAt: time.Now().Add(s.queryCacheTTL),
 			}
 		}
@@ -560,10 +612,12 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 	// No data found in any tier
 	res := resolutions[0]
 	return &HistoryResult{
-		Tier:          0,
-		Resolution:    res,
-		RequestedFrom: from,
-		RequestedTo:   to,
+		Tier:              0,
+		Resolution:        res,
+		SourceResolution:  res,
+		RequestedFrom:     from,
+		RequestedTo:       to,
+		ValidAggregations: validHistoryAggregations(nil),
 	}, nil
 }
 
@@ -579,15 +633,44 @@ func (s *Store) QueryLatest() (*AggregatedSample, error) {
 	}
 
 	// Fast path: in-memory cache is always kept current by WriteSample.
-	// Return a shallow copy so callers cannot mutate the cached entry.
+	// Return an independent sample graph so callers cannot mutate the cache.
 	if s.latestCache != nil {
-		cp := *s.latestCache
-		return &cp, nil
+		return cloneAggregatedSample(s.latestCache), nil
 	}
 
 	// Cold path: only reached on an empty store where no sample has been
 	// written yet this process lifetime and warmLatestCache found nothing.
 	return nil, nil
+}
+
+// RetainedRange is a tier's timestamp envelope, not a guarantee of gap-free data.
+type RetainedRange struct {
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+}
+
+// RetainedRanges reads only in-memory tier headers. Calendar constraints must
+// not scan/decode tier files or hold up collection for a full retention scan.
+func (s *Store) RetainedRanges() ([]RetainedRange, time.Duration) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ranges := make([]RetainedRange, 0, len(s.tiers))
+	interval := time.Second
+	if len(s.configs) > 0 {
+		interval = s.configs[0].Resolution
+	}
+	for i, tier := range s.tiers {
+		if tier.Count() > 0 {
+			// Records are end-timestamped, so the oldest retained interval begins
+			// one native tier resolution before its record timestamp.
+			from := tier.OldestTimestamp()
+			if i < len(s.configs) {
+				from = from.Add(-s.configs[i].Resolution)
+			}
+			ranges = append(ranges, RetainedRange{From: from, To: tier.NewestTimestamp()})
+		}
+	}
+	return ranges, interval
 }
 
 // TierCount returns the number of configured storage tiers.
@@ -623,567 +706,4 @@ func (s *Store) Close() error {
 		}
 	}
 	return firstErr
-}
-
-// aggregateSamples creates an aggregated sample from raw samples.
-// Uses the last sample's values (for gauges) and averages for rates.
-// Also tracks peak (maximum) values for CPU, disk utilisation, and network throughput.
-// minSample returns an element-wise minimum of two samples.
-func minSample(a, b *collector.Sample) *collector.Sample { return mergeSample(a, b, minF, minU) }
-func maxSample(a, b *collector.Sample) *collector.Sample { return mergeSample(a, b, maxF, maxU) }
-
-func mergeSample(a, b *collector.Sample, ff func(float64, float64) float64, fu func(uint64, uint64) uint64) *collector.Sample {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-	res := *a // copy structure and unchanged fields (like timestamps, names)
-
-	res.CPU.Total.Usage = ff(a.CPU.Total.Usage, b.CPU.Total.Usage)
-	res.CPU.Total.User = ff(a.CPU.Total.User, b.CPU.Total.User)
-	res.CPU.Total.System = ff(a.CPU.Total.System, b.CPU.Total.System)
-	res.CPU.Total.IOWait = ff(a.CPU.Total.IOWait, b.CPU.Total.IOWait)
-	res.CPU.Total.Steal = ff(a.CPU.Total.Steal, b.CPU.Total.Steal)
-	res.CPU.Temperature = ff(a.CPU.Temperature, b.CPU.Temperature)
-
-	res.LoadAvg.Load1 = ff(a.LoadAvg.Load1, b.LoadAvg.Load1)
-	res.LoadAvg.Load5 = ff(a.LoadAvg.Load5, b.LoadAvg.Load5)
-	res.LoadAvg.Load15 = ff(a.LoadAvg.Load15, b.LoadAvg.Load15)
-
-	res.Memory.Used = fu(a.Memory.Used, b.Memory.Used)
-	res.Memory.UsedPercent = ff(a.Memory.UsedPercent, b.Memory.UsedPercent)
-
-	res.Swap.Used = fu(a.Swap.Used, b.Swap.Used)
-	res.Swap.UsedPercent = ff(a.Swap.UsedPercent, b.Swap.UsedPercent)
-
-	res.Disks.Devices = make([]collector.DiskDevice, len(a.Disks.Devices))
-	for i := range a.Disks.Devices {
-		devA := a.Disks.Devices[i]
-		var devB collector.DiskDevice
-		for _, dev := range b.Disks.Devices {
-			if dev.Name == devA.Name {
-				devB = dev
-				break
-			}
-		}
-		res.Disks.Devices[i] = collector.DiskDevice{
-			Name:         devA.Name,
-			Utilization:  ff(devA.Utilization, devB.Utilization),
-			ReadBytesPS:  ff(devA.ReadBytesPS, devB.ReadBytesPS),
-			WriteBytesPS: ff(devA.WriteBytesPS, devB.WriteBytesPS),
-			ReadsPerSec:  ff(devA.ReadsPerSec, devB.ReadsPerSec),
-			WritesPerSec: ff(devA.WritesPerSec, devB.WritesPerSec),
-		}
-	}
-
-	res.Network.Interfaces = make([]collector.NetInterface, len(a.Network.Interfaces))
-	for i := range a.Network.Interfaces {
-		ifA := a.Network.Interfaces[i]
-		var ifB collector.NetInterface
-		for _, iface := range b.Network.Interfaces {
-			if iface.Name == ifA.Name {
-				ifB = iface
-				break
-			}
-		}
-		res.Network.Interfaces[i] = collector.NetInterface{
-			Name:   ifA.Name,
-			RxMbps: ff(ifA.RxMbps, ifB.RxMbps),
-			TxMbps: ff(ifA.TxMbps, ifB.TxMbps),
-			RxPPS:  ff(ifA.RxPPS, ifB.RxPPS),
-			TxPPS:  ff(ifA.TxPPS, ifB.TxPPS),
-		}
-	}
-
-	if len(a.PSU) > 0 {
-		res.PSU = make([]collector.PowerSupplyStats, len(a.PSU))
-		for i := range a.PSU {
-			merged := a.PSU[i]
-			// A supply missing from b (hotplugged UPS, renamed battery) leaves
-			// a's values untouched — merging against a zero entry would report
-			// a 0% minimum the battery never reached.
-			for _, ps := range b.PSU {
-				if ps.Name == merged.Name {
-					merged.Capacity = int(ff(float64(merged.Capacity), float64(ps.Capacity)))
-					merged.VoltageV = ff(merged.VoltageV, ps.VoltageV)
-					merged.CurrentA = ff(merged.CurrentA, ps.CurrentA)
-					merged.PowerW = ff(merged.PowerW, ps.PowerW)
-					merged.EnergyWhNow = ff(merged.EnergyWhNow, ps.EnergyWhNow)
-					break
-				}
-			}
-			res.PSU[i] = merged
-		}
-	}
-
-	return &res
-}
-
-func minF(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-func maxF(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-func minU(a, b uint64) uint64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-func maxU(a, b uint64) uint64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func roundF(v float64) float64 {
-	return math.Round(v*100) / 100
-}
-
-func (s *Store) aggregateSamples(samples []*collector.Sample, dur time.Duration) *AggregatedSample {
-	if len(samples) == 0 {
-		return nil
-	}
-
-	// Use the last sample as the base (most gauges are "current value")
-	last := samples[len(samples)-1]
-
-	avg := *last
-	// Deep-copy the three slices we mutate in-place below. The shallow struct
-	// copy shares their backing arrays with last, so in-place element writes
-	// would silently corrupt the original sample still held by tier 0.
-	if len(last.CPU.Sensors) > 0 {
-		avg.CPU.Sensors = make([]collector.CPUTempSensor, len(last.CPU.Sensors))
-		copy(avg.CPU.Sensors, last.CPU.Sensors)
-	}
-	if len(last.Network.Interfaces) > 0 {
-		avg.Network.Interfaces = make([]collector.NetInterface, len(last.Network.Interfaces))
-		copy(avg.Network.Interfaces, last.Network.Interfaces)
-	}
-	if len(last.Disks.Devices) > 0 {
-		avg.Disks.Devices = make([]collector.DiskDevice, len(last.Disks.Devices))
-		copy(avg.Disks.Devices, last.Disks.Devices)
-	}
-	if len(last.PSU) > 0 {
-		avg.PSU = make([]collector.PowerSupplyStats, len(last.PSU))
-		copy(avg.PSU, last.PSU)
-	}
-	// Deep-copy Apps to avoid sharing pointers with the original sample.
-	if last.Apps.Nginx != nil {
-		ngCopy := *last.Apps.Nginx
-		avg.Apps.Nginx = &ngCopy
-	}
-	if last.Apps.Apache2 != nil {
-		apCopy := *last.Apps.Apache2
-		avg.Apps.Apache2 = &apCopy
-	}
-	if len(last.Apps.Containers) > 0 {
-		avg.Apps.Containers = make([]collector.ContainerStats, len(last.Apps.Containers))
-		copy(avg.Apps.Containers, last.Apps.Containers)
-	}
-	if last.Apps.Postgres != nil {
-		pgCopy := *last.Apps.Postgres
-		avg.Apps.Postgres = &pgCopy
-	}
-	if last.Apps.Mysql != nil {
-		myCopy := *last.Apps.Mysql
-		avg.Apps.Mysql = &myCopy
-	}
-	if len(last.Apps.Custom) > 0 {
-		avg.Apps.Custom = make(map[string][]collector.CustomMetricValue, len(last.Apps.Custom))
-		for k, v := range last.Apps.Custom {
-			cv := make([]collector.CustomMetricValue, len(v))
-			copy(cv, v)
-			avg.Apps.Custom[k] = cv
-		}
-	}
-
-	var minS, maxS *collector.Sample
-
-	if len(samples) > 1 {
-		// Initialize min/max with a deep copy of the first element
-		first := *samples[0]
-		minS = &first
-		firstMax := *samples[0]
-		maxS = &firstMax
-
-		var totalCPUUsage, totalCPUUser, totalCPUSys, totalCPUIowait, totalCPUSteal float64
-		var totalLoad1, totalLoad5, totalLoad15 float64
-		for _, s := range samples {
-			totalCPUUsage += s.CPU.Total.Usage
-			totalCPUUser += s.CPU.Total.User
-			totalCPUSys += s.CPU.Total.System
-			totalCPUIowait += s.CPU.Total.IOWait
-			totalCPUSteal += s.CPU.Total.Steal
-
-			totalLoad1 += s.LoadAvg.Load1
-			totalLoad5 += s.LoadAvg.Load5
-			totalLoad15 += s.LoadAvg.Load15
-
-			minS = minSample(minS, s)
-			maxS = maxSample(maxS, s)
-		}
-
-		fLen := float64(len(samples))
-		avg.CPU.Total.Usage = roundF(totalCPUUsage / fLen)
-		avg.CPU.Total.User = roundF(totalCPUUser / fLen)
-		avg.CPU.Total.System = roundF(totalCPUSys / fLen)
-		avg.CPU.Total.IOWait = roundF(totalCPUIowait / fLen)
-		avg.CPU.Total.Steal = roundF(totalCPUSteal / fLen)
-
-		avg.LoadAvg.Load1 = roundF(totalLoad1 / fLen)
-		avg.LoadAvg.Load5 = roundF(totalLoad5 / fLen)
-		avg.LoadAvg.Load15 = roundF(totalLoad15 / fLen)
-
-		// Average CPU Temperature Sensors
-		for i := range avg.CPU.Sensors {
-			var tempSum float64
-			count := 0
-			for _, s := range samples {
-				for _, sens := range s.CPU.Sensors {
-					if sens.Name == avg.CPU.Sensors[i].Name {
-						tempSum += sens.Value
-						count++
-					}
-				}
-			}
-			if count > 0 {
-				avg.CPU.Sensors[i].Value = roundF(tempSum / float64(count))
-			}
-		}
-
-		// Average network rates per interface
-		for i := range avg.Network.Interfaces {
-			var rxSum, txSum, rxPpsSum, txPpsSum float64
-			count := 0
-			for _, s := range samples {
-				for _, iface := range s.Network.Interfaces {
-					if iface.Name == avg.Network.Interfaces[i].Name {
-						rxSum += iface.RxMbps
-						txSum += iface.TxMbps
-						rxPpsSum += iface.RxPPS
-						txPpsSum += iface.TxPPS
-						count++
-					}
-				}
-			}
-			if count > 0 {
-				avg.Network.Interfaces[i].RxMbps = roundF(rxSum / float64(count))
-				avg.Network.Interfaces[i].TxMbps = roundF(txSum / float64(count))
-				avg.Network.Interfaces[i].RxPPS = roundF(rxPpsSum / float64(count))
-				avg.Network.Interfaces[i].TxPPS = roundF(txPpsSum / float64(count))
-			}
-		}
-
-		// Average Disk I/O rates per device
-		for i := range avg.Disks.Devices {
-			var rBpsSum, wBpsSum, rIopsSum, wIopsSum float64
-			count := 0
-			for _, s := range samples {
-				for _, dev := range s.Disks.Devices {
-					if dev.Name == avg.Disks.Devices[i].Name {
-						rBpsSum += dev.ReadBytesPS
-						wBpsSum += dev.WriteBytesPS
-						rIopsSum += dev.ReadsPerSec
-						wIopsSum += dev.WritesPerSec
-						count++
-					}
-				}
-			}
-			if count > 0 {
-				avg.Disks.Devices[i].ReadBytesPS = roundF(rBpsSum / float64(count))
-				avg.Disks.Devices[i].WriteBytesPS = roundF(wBpsSum / float64(count))
-				avg.Disks.Devices[i].ReadsPerSec = roundF(rIopsSum / float64(count))
-				avg.Disks.Devices[i].WritesPerSec = roundF(wIopsSum / float64(count))
-			}
-		}
-
-		// Average power-supply gauges per supply. Name/type/status stay as the
-		// last sample saw them — a status is a state, not something to average.
-		for i := range avg.PSU {
-			var capSum, voltSum, currSum, powSum, energySum float64
-			count := 0
-			for _, s := range samples {
-				for _, ps := range s.PSU {
-					if ps.Name == avg.PSU[i].Name {
-						capSum += float64(ps.Capacity)
-						voltSum += ps.VoltageV
-						currSum += ps.CurrentA
-						powSum += ps.PowerW
-						energySum += ps.EnergyWhNow
-						count++
-					}
-				}
-			}
-			if count > 0 {
-				fC := float64(count)
-				avg.PSU[i].Capacity = int(math.Round(capSum / fC))
-				avg.PSU[i].VoltageV = roundF(voltSum / fC)
-				avg.PSU[i].CurrentA = roundF(currSum / fC)
-				avg.PSU[i].PowerW = roundF(powSum / fC)
-				avg.PSU[i].EnergyWhNow = roundF(energySum / fC)
-			}
-		}
-
-		// ---- Average App metrics rates ----
-
-		// Nginx rates
-		if avg.Apps.Nginx != nil {
-			var accPS, handPS, reqPS float64
-			count := 0
-			for _, s := range samples {
-				if s.Apps.Nginx != nil {
-					accPS += s.Apps.Nginx.AcceptsPS
-					handPS += s.Apps.Nginx.HandledPS
-					reqPS += s.Apps.Nginx.RequestsPS
-					count++
-				}
-			}
-			if count > 0 {
-				fC := float64(count)
-				avg.Apps.Nginx.AcceptsPS = roundF(accPS / fC)
-				avg.Apps.Nginx.HandledPS = roundF(handPS / fC)
-				avg.Apps.Nginx.RequestsPS = roundF(reqPS / fC)
-			}
-		}
-
-		// Apache2 rates
-		if avg.Apps.Apache2 != nil {
-			var accPS, kbps float64
-			count := 0
-			for _, s := range samples {
-				if s.Apps.Apache2 != nil {
-					accPS += s.Apps.Apache2.AccessesPS
-					kbps += s.Apps.Apache2.KBytesPS
-					count++
-				}
-			}
-			if count > 0 {
-				fC := float64(count)
-				avg.Apps.Apache2.AccessesPS = roundF(accPS / fC)
-				avg.Apps.Apache2.KBytesPS = roundF(kbps / fC)
-			}
-		}
-
-		// Container rates (match by ID)
-		for i := range avg.Apps.Containers {
-			ct := &avg.Apps.Containers[i]
-			var cpuSum, memPctSum, rxSum, txSum, drSum, dwSum float64
-			count := 0
-			for _, s := range samples {
-				for _, sc := range s.Apps.Containers {
-					if sc.ID == ct.ID {
-						cpuSum += sc.CPUPct
-						memPctSum += sc.MemPct
-						rxSum += sc.NetRxBPS
-						txSum += sc.NetTxBPS
-						drSum += sc.DiskRBPS
-						dwSum += sc.DiskWBPS
-						count++
-						break
-					}
-				}
-			}
-			if count > 0 {
-				fC := float64(count)
-				ct.CPUPct = roundF(cpuSum / fC)
-				ct.MemPct = roundF(memPctSum / fC)
-				ct.NetRxBPS = roundF(rxSum / fC)
-				ct.NetTxBPS = roundF(txSum / fC)
-				ct.DiskRBPS = roundF(drSum / fC)
-				ct.DiskWBPS = roundF(dwSum / fC)
-			}
-		}
-
-		// Postgres rates
-		if avg.Apps.Postgres != nil {
-			var (
-				commitPS, rollPS                           float64
-				fetchPS, retPS, insPS, updPS, delPS        float64
-				blksReadPS, blksHitPS, hitPct, deadlocksPS float64
-				bufCkptPS, bufBackPS                       float64
-			)
-			count := 0
-			for _, s := range samples {
-				if s.Apps.Postgres != nil {
-					pg := s.Apps.Postgres
-					commitPS += pg.TxCommitPS
-					rollPS += pg.TxRollbackPS
-					fetchPS += pg.TupFetchedPS
-					retPS += pg.TupReturnedPS
-					insPS += pg.TupInsertedPS
-					updPS += pg.TupUpdatedPS
-					delPS += pg.TupDeletedPS
-					blksReadPS += pg.BlksReadPS
-					blksHitPS += pg.BlksHitPS
-					hitPct += pg.BlksHitPct
-					deadlocksPS += pg.DeadlocksPS
-					bufCkptPS += pg.BufCheckpointPS
-					bufBackPS += pg.BufBackendPS
-					count++
-				}
-			}
-			if count > 0 {
-				fC := float64(count)
-				avg.Apps.Postgres.TxCommitPS = roundF(commitPS / fC)
-				avg.Apps.Postgres.TxRollbackPS = roundF(rollPS / fC)
-				avg.Apps.Postgres.TupFetchedPS = roundF(fetchPS / fC)
-				avg.Apps.Postgres.TupReturnedPS = roundF(retPS / fC)
-				avg.Apps.Postgres.TupInsertedPS = roundF(insPS / fC)
-				avg.Apps.Postgres.TupUpdatedPS = roundF(updPS / fC)
-				avg.Apps.Postgres.TupDeletedPS = roundF(delPS / fC)
-				avg.Apps.Postgres.BlksReadPS = roundF(blksReadPS / fC)
-				avg.Apps.Postgres.BlksHitPS = roundF(blksHitPS / fC)
-				avg.Apps.Postgres.BlksHitPct = roundF(hitPct / fC)
-				avg.Apps.Postgres.DeadlocksPS = roundF(deadlocksPS / fC)
-				avg.Apps.Postgres.BufCheckpointPS = roundF(bufCkptPS / fC)
-				avg.Apps.Postgres.BufBackendPS = roundF(bufBackPS / fC)
-			}
-		}
-
-		// MySQL rates
-		if avg.Apps.Mysql != nil {
-			var (
-				queriesPS, selectPS, insertPS, updatePS, deletePS float64
-				slowPS, bpReadsPS, bpHitPct                       float64
-				tableLkWaitedPS, rowLkWaitsPS                     float64
-			)
-			count := 0
-			for _, s := range samples {
-				if s.Apps.Mysql != nil {
-					my := s.Apps.Mysql
-					queriesPS += my.QueriesPS
-					selectPS += my.ComSelectPS
-					insertPS += my.ComInsertPS
-					updatePS += my.ComUpdatePS
-					deletePS += my.ComDeletePS
-					slowPS += my.SlowQueriesPS
-					bpReadsPS += my.InnodbBPReadsPS
-					bpHitPct += my.InnodbBufferPoolHitPct
-					tableLkWaitedPS += my.TableLocksWaitedPS
-					rowLkWaitsPS += my.RowLockWaitsPS
-					count++
-				}
-			}
-			if count > 0 {
-				fC := float64(count)
-				avg.Apps.Mysql.QueriesPS = roundF(queriesPS / fC)
-				avg.Apps.Mysql.ComSelectPS = roundF(selectPS / fC)
-				avg.Apps.Mysql.ComInsertPS = roundF(insertPS / fC)
-				avg.Apps.Mysql.ComUpdatePS = roundF(updatePS / fC)
-				avg.Apps.Mysql.ComDeletePS = roundF(deletePS / fC)
-				avg.Apps.Mysql.SlowQueriesPS = roundF(slowPS / fC)
-				avg.Apps.Mysql.InnodbBPReadsPS = roundF(bpReadsPS / fC)
-				avg.Apps.Mysql.InnodbBufferPoolHitPct = roundF(bpHitPct / fC)
-				avg.Apps.Mysql.TableLocksWaitedPS = roundF(tableLkWaitedPS / fC)
-				avg.Apps.Mysql.RowLockWaitsPS = roundF(rowLkWaitsPS / fC)
-			}
-		}
-
-		// Custom metric values
-		for group, metrics := range avg.Apps.Custom {
-			for mi := range metrics {
-				var sum float64
-				count := 0
-				for _, s := range samples {
-					if sMetrics, ok := s.Apps.Custom[group]; ok {
-						for _, sm := range sMetrics {
-							if sm.Name == metrics[mi].Name {
-								sum += sm.Value
-								count++
-								break
-							}
-						}
-					}
-				}
-				if count > 0 {
-					avg.Apps.Custom[group][mi].Value = roundF(sum / float64(count))
-				}
-			}
-		}
-	} else {
-		// Single sample — min and max equal the observed values
-		minCopy := *last
-		minS = &minCopy
-		maxCopy := *last
-		maxS = &maxCopy
-	}
-
-	return &AggregatedSample{
-		Timestamp: last.Timestamp,
-		Duration:  dur,
-		Data:      &avg,
-		Min:       minS,
-		Max:       maxS,
-	}
-}
-
-func (s *Store) aggregateAggregated(samples []*AggregatedSample, dur time.Duration) *AggregatedSample {
-	if len(samples) == 0 {
-		return nil
-	}
-
-	raw := make([]*collector.Sample, 0, len(samples))
-	for _, s := range samples {
-		if s.Data != nil {
-			raw = append(raw, s.Data)
-		}
-	}
-	result := s.aggregateSamples(raw, dur)
-	if result == nil {
-		return nil
-	}
-
-	hasAggregatedMinMax := false
-	for _, s := range samples {
-		if s.Min != nil || s.Max != nil {
-			hasAggregatedMinMax = true
-			break
-		}
-	}
-
-	if !hasAggregatedMinMax {
-		// These are raw tier-0 samples, aggregateSamples already computed
-		// the true min and max accurately. Return it as is.
-		return result
-	}
-
-	var minS, maxS *collector.Sample
-	if len(samples) > 0 {
-		minS = samples[0].Min
-		if minS == nil {
-			minS = samples[0].Data
-		}
-		maxS = samples[0].Max
-		if maxS == nil {
-			maxS = samples[0].Data
-		}
-	}
-
-	for _, s := range samples {
-		candMin := s.Min
-		if candMin == nil {
-			candMin = s.Data
-		}
-		candMax := s.Max
-		if candMax == nil {
-			candMax = s.Data
-		}
-		minS = minSample(minS, candMin)
-		maxS = maxSample(maxS, candMax)
-	}
-
-	result.Min = minS
-	result.Max = maxS
-	return result
 }

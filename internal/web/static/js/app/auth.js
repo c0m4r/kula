@@ -4,11 +4,12 @@
 'use strict';
 import { state } from './state.js';
 import { initCharts } from './charts-init.js';
-import { updateAllCharts, clearAllChartData } from './charts-data.js';
+import { updateAllCharts, clearAllChartData, cancelHistoryRequest } from './charts-data.js';
 import { connectWS, disconnectWS } from './websocket.js';
-import { applyTheme } from './theme.js';
+import { applyTheme } from './settings.js';
 import { applySplitFromConfig } from './split.js';
 import { apiUrl } from './api.js';
+import { i18n } from './i18n.js';
 
 export function checkAuth() {
     fetch(apiUrl('/api/auth/status'))
@@ -46,6 +47,10 @@ export function fetchConfig() {
             return r.json();
         })
         .then(cfg => {
+            if (cfg.history) {
+                state.collectionIntervalMs = cfg.history.collection_interval_ms || 1000;
+                state.retainedRanges = cfg.history.ranges || [];
+            }
             if (cfg.join_metrics !== undefined) state.joinMetrics = cfg.join_metrics;
             if (cfg.version) {
                 const versionEl = document.getElementById('kula-version');
@@ -115,6 +120,7 @@ export function fetchConfig() {
                 'background: #0b406eff; color: #fff; border-radius: 0 3px 3px 0; padding: 3px ' + (cfg.show_version === false ? '0' : '6px') + '; font-weight: bold; font-family: sans-serif;',
                 'color: #000000ff; font-weight: 500; font-family: sans-serif; margin-left: 10px;'
             );
+            return cfg;
         })
         .catch(() => { });
 }
@@ -134,7 +140,7 @@ export function handleLogin(e) {
             if (!r.ok) throw new Error('Invalid credentials');
             return r.json();
         })
-        .then(data => {
+        .then(async data => {
             if (data && data.csrf_token) {
                 state.csrfToken = data.csrf_token;
             }
@@ -142,7 +148,8 @@ export function handleLogin(e) {
             document.getElementById('dashboard').style.filter = '';
             document.getElementById('btn-logout')?.classList.remove('hidden');
             errorEl?.classList.add('hidden');
-            fetchConfig();
+            const config = await fetchConfig();
+            await i18n.refreshAfterAuth(config);
             connectWS();
         })
         .catch(err => {
@@ -163,6 +170,7 @@ export function handleLogout() {
         headers: headers
     })
         .then(() => {
+            cancelHistoryRequest();
             disconnectWS();
             document.getElementById('btn-logout')?.classList.add('hidden');
             document.getElementById('login-overlay')?.classList.remove('hidden');
@@ -175,6 +183,7 @@ export function handleLogout() {
 
             // Clear state
             state.dataBuffer = [];
+            state.historyPointContexts.clear();
             state.liveQueue = [];
             clearAllChartData();
             updateAllCharts();

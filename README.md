@@ -88,8 +88,13 @@ Kula is powered by a custom-built, high-performance **ring-buffer** storage syst
 To maximize efficiency, Kula employs a multi-tiered architecture that intelligently downsamples older data:
 
 - **Tier 1** — Raw 1-second samples (default 250 MB)
-- **Tier 2** — 1-minute metrics aggregation (Avg/Min/Max) (default 150 MB)
-- **Tier 3** — 5-minute metrics aggregation (Avg/Min/Max) (default 50 MB)
+- **Tier 2** — 1-minute metric rollups (default 150 MB)
+- **Tier 3** — 5-minute metric rollups (default 50 MB)
+
+Rollups use explicit per-field policies: sampled gauges and rates are duration-weighted,
+monotonic counters and metadata retain their latest value, and Min/Max are per-series extrema.
+Dynamic devices and applications are matched by stable identity, so a missing member is not
+fabricated as zero. Legacy rollups remain readable but do not advertise Min/Max as valid.
 
 ### HTTP server
 
@@ -101,8 +106,13 @@ Authentication is optional. When enabled, Kula uses Argon2id password hashing, s
 The frontend is a single-page application embedded in the binary. Built on Chart.js with custom SVG gauges, 
 it connects via WebSocket for live updates and falls back to history API for longer time ranges. Features include:
 
-- Interactive zoom with drag-select (auto-pauses live stream)
-- Focus mode to display only specific charts of interest
+- Live/Back/Forward/Zoom out navigation with exact shareable ranges
+- Straight historical lines with trusted Min–Max bands and explicit gaps
+- Bucket-aware tooltips and Local/UTC timestamps, with secondary choices in Customization
+- Drag, modifier-wheel, touch/pinch, and keyboard pan/zoom plus a shared pinnable crosshair
+- Accessible chart names and keyboard exploration; Data tables and CSV are opt-in
+- Chart updates limited to the viewport, with plot-width sampling and full-range live refreshes
+- Focus mode to display only specific charts and request only their history sections
 - Configurable Y-axis bounds (Manual limits or Auto-detect)
 - Per-device selectors for Network, Disk I/O, and Thermal monitoring
 - Grid / stacked list layout toggle

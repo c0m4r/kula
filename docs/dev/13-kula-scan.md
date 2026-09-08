@@ -68,7 +68,7 @@ possibly intentional, e.g. auth off) · `SKIP` (not applicable) · `ERROR` (prob
 | `traversal` | Byte-level path-traversal over a raw socket leaks nothing; no directory listing | `handleStatic` |
 | `metrics` | `/metrics` bearer enforced; warns if exposed without a token | `handleMetrics` |
 | `ws` | Unauth/cross-origin upgrade rejected; same-origin allowed; per-IP cap & read limit (aggressive) | `handleWebSocket` |
-| `input` | `/api/history` bad/inverted/over-long ranges → 400, huge `points` capped; `/api/i18n` junk codes rejected | `handleHistory`, `handleI18n` |
+| `input` | `/api/history` bad/inverted/out-of-retention over-long ranges → 400, huge `points` capped; `/api/i18n` junk codes rejected | `handleHistory`, `handleI18n` |
 | `rate` *(aggressive)* | Login brute-force throttling; Ollama rate limiting | rate limiters |
 | `dos` *(aggressive)* | Slowloris reaping; oversized headers rejected; idle-flood resilience | `ReadTimeout`, `MaxHeaderBytes`, `IdleTimeout` |
 | `redirect` | No open redirect to a foreign host via crafted paths | base-path redirect / CWE-601 |

@@ -393,7 +393,7 @@ func DefaultConfig() *Config {
 				Enabled: false,
 			},
 			JoinMetrics:        false,
-			DefaultAggregation: "max",
+			DefaultAggregation: "avg",
 			Auth: AuthConfig{
 				SessionTimeout:     24 * time.Hour,
 				SessionMaxLifetime: 7 * 24 * time.Hour,

@@ -87,7 +87,7 @@ won't execute.
 
 - Error responses use `json.Marshal` (not `fmt.Sprintf`) → no JSON injection.
 - Body size caps: login body 4096 bytes; Ollama chat 32 KB.
-- History caps: ≤31-day window, ≤5000 points.
+- History caps: ≤5000 output points and ≤31 days for every requested interval.
 - Storage path resolved with `filepath.Abs` → directory-traversal resistance.
 - Static handler resists byte-level path-traversal payloads (encoded, dot-dot, backslash) and
   serves no directory listings.

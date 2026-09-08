@@ -659,9 +659,13 @@ func (s *Server) handleCurrent(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
+	sections, orderedSections, err := parseHistorySections(r.URL.Query().Get("sections"))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	var from, to time.Time
-	var err error
 
 	if toStr == "" {
 		to = time.Now()
@@ -683,12 +687,12 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if to.Sub(from) > 31*24*time.Hour {
-		jsonError(w, "time range too large, max 31 days allowed", http.StatusBadRequest)
+	if to.Before(from) {
+		jsonError(w, "time range inverted", http.StatusBadRequest)
 		return
 	}
-	if to.Sub(from) < 0 {
-		jsonError(w, "time range inverted", http.StatusBadRequest)
+	if to.Sub(from) > 31*24*time.Hour {
+		jsonError(w, "time range too large; maximum is 31 days", http.StatusBadRequest)
 		return
 	}
 
@@ -721,8 +725,13 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[API History] loaded %d samples from tier %d (resolution: %s) for window %s in %v", len(result.Samples), result.Tier, result.Resolution, to.Sub(from).Round(time.Second), loadDuration)
 	}
 
+	payload := any(result)
+	if sections != nil {
+		payload = selectHistorySections(result, sections, orderedSections)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(result); err != nil {
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		log.Printf("JSON encode error: %v", err)
 	}
 }
@@ -732,8 +741,17 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if hostname == "" {
 		hostname, _ = os.Hostname()
 	}
+	ranges := []storage.RetainedRange{}
+	interval := time.Second
+	if s.store != nil {
+		ranges, interval = s.store.RetainedRanges()
+	}
 
 	info := map[string]interface{}{
+		"history": map[string]interface{}{
+			"collection_interval_ms": interval.Seconds() * 1000,
+			"ranges":                 ranges,
+		},
 		"auth_enabled":     s.cfg.Auth.Enabled,
 		"join_metrics":     s.cfg.JoinMetrics,
 		"os":               s.cfg.OS,

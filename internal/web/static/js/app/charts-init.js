@@ -4,13 +4,48 @@
    ============================================================ */
 'use strict';
 import { state, colors, getChartMaxBound } from './state.js';
-import { formatBytesShort, formatPPS } from './utils.js';
+import {
+    formatBytesShort,
+    formatChartTick,
+    formatFullTimestamp,
+    formatPPS,
+    historyTooltipLines,
+} from './format.js';
 import { i18n } from './i18n.js';
+import { getSetting } from './settings.js';
+import { registerChart, forEachRegisteredChart, queueChartUpdate } from './chart-controller.js';
+import {
+    attachChartGestures,
+    attachCrosshairEvents,
+    attachTooltipGestures,
+    crosshairPlugin,
+    sharedCrosshair,
+    tooltipGesturePlugin,
+} from './chart-interactions.js';
+import { attachChartAccessibility, chartAccessibilityPlugin } from './chart-accessibility.js';
+import { envelopePlugin } from './chart-envelope.js';
+import { minimumZoomSpan } from './history-navigation.js';
+
+Chart.register(envelopePlugin, chartAccessibilityPlugin, crosshairPlugin, tooltipGesturePlugin);
 
 // ---- Chart Initialization ----
 export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlugins = {}) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return null;
+
+    // Filled-to-zero areas obscure neighboring series and smooth curves imply
+    // observations that never occurred. Historical variability is rendered by
+    // the explicit Min/Max envelope plugin instead.
+    datasets.forEach(dataset => {
+        dataset.fill = false;
+        dataset.tension = 0;
+    });
+
+    if (canvasId === 'chart-cpu' && datasets.length) datasets[datasets.length - 1].kulaPrincipal = true;
+
+    const tooltipExtras = extraPlugins.tooltip || {};
+    const tooltipCallbacks = tooltipExtras.callbacks || {};
+    const tooltipTimestamp = items => Number(items?.[0]?.parsed?.x ?? items?.[0]?.raw?.x);
 
     const chart = new Chart(ctx, {
         type: 'line',
@@ -23,10 +58,21 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
             interaction: { mode: 'index', intersect: false },
             spanGaps: state.joinMetrics,
             plugins: {
+                kulaEnvelope: {
+                    allSeries: getSetting('all_series_envelopes'),
+                    gaps: () => state.historyGaps,
+                    gapColor: 'rgba(148, 163, 184, 0.12)',
+                },
                 legend: { position: 'top', align: 'end' },
                 zoom: {
+                    limits: {
+                        x: { minRange: minimumZoomSpan(state.currentSourceResolution, state.collectionIntervalMs) },
+                    },
                     pan: {
-                        enabled: true,
+                        // chartjs-plugin-zoom delegates pan/pinch to Hammer.js.
+                        // Kula uses Pointer Events instead (see chart-interactions.js),
+                        // so this must stay disabled to avoid duplicate gestures.
+                        enabled: false,
                         mode: 'x',
                         onPanStart: function({ chart }) {
                             if (state.focusSelecting) return false;
@@ -40,24 +86,57 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
                         },
                     },
                     zoom: {
+                        wheel: { enabled: true, modifierKey: 'ctrl', speed: 0.1 },
+                        pinch: { enabled: false },
                         drag: { enabled: true, backgroundColor: 'rgba(59,130,246,0.1)', borderColor: colors.blue, borderWidth: 1 },
                         mode: 'x',
-                        onZoomStart: function({ chart }) {
+                        onZoomStart: function({ chart, event }) {
                             if (state.focusSelecting) return false;
+                            // Shift+drag belongs to the Pointer Events pan layer.
+                            if (event?.shiftKey) return false;
                             state.pausedZoom = true;
                             document.dispatchEvent(new Event('kula-sync-pause'));
                         },
-                        onZoom: function({ chart }) { document.dispatchEvent(new CustomEvent('kula-zoom-sync', { detail: chart })); },
+                        onZoom: function({ chart }) {
+                            document.dispatchEvent(new CustomEvent('kula-zoom-sync', {
+                                detail: { chart, complete: false },
+                            }));
+                        },
                         onZoomComplete: function({ chart }) {
-                            document.dispatchEvent(new CustomEvent('kula-zoom-sync', { detail: chart }));
+                            document.dispatchEvent(new CustomEvent('kula-zoom-sync', {
+                                detail: { chart, complete: true },
+                            }));
                             document.dispatchEvent(new Event('kula-sync-pause'));
                         },
                     },
                 },
-                tooltip: Object.assign(
-                    { position: 'awayFromCursor' },
-                    extraPlugins.tooltip || {}
-                ),
+                tooltip: {
+                    position: 'awayFromCursor',
+                    xAlign: 'left',
+                    yAlign: 'top',
+                    caretSize: 0,
+                    ...tooltipExtras,
+                    callbacks: {
+                        ...tooltipCallbacks,
+                        title: items => formatFullTimestamp(
+                            tooltipTimestamp(items),
+                            state.timeZone,
+                            i18n.currentLang,
+                        ),
+                        footer: items => {
+                            if (!getSetting('chart_tooltip_details')) return [];
+                            const timestamp = tooltipTimestamp(items);
+                            return [
+                                ...historyTooltipLines(state.historyPointContexts.get(timestamp), {
+                                    mode: state.timeZone,
+                                    locale: i18n.currentLang,
+                                    aggregation: state.currentAggregation,
+                                    translate: key => i18n.t(key),
+                                }),
+                            ];
+                        },
+                    },
+                },
             },
             scales: {
                 x: {
@@ -72,7 +151,17 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
                         } 
                     },
                     grid: { display: false },
-                    ticks: { maxTicksLimit: 8 },
+                    ticks: {
+                        autoSkip: true,
+                        autoSkipPadding: 24,
+                        maxTicksLimit: 8,
+                        sampleSize: 8,
+                        minRotation: 0,
+                        maxRotation: 0,
+                        callback: function(value) {
+                            return formatChartTick(value, state.timeZone, this?._unit, i18n.currentLang);
+                        },
+                    },
                 },
                 y: {
                     beginAtZero: true,
@@ -82,12 +171,30 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
             },
             elements: {
                 point: { radius: 0, hoverRadius: 3 },
-                line: { tension: 0.3, borderWidth: 1.5 },
+                line: { tension: 0, borderWidth: 1.5 },
             },
         },
     });
 
-    return chart;
+    // Keep callbacks out of custom-plugin options: Chart.js may resolve an
+    // arbitrary option function as a scriptable value before the plugin sees
+    // it. Chart-local state remains a function and follows language changes.
+    chart.$kulaHistoryStatus = state.historyStatus;
+    const detachAccessibility = attachChartAccessibility(chart, {
+        translate: key => i18n.t(key),
+        formatTimestamp: value => formatFullTimestamp(value, state.timeZone, i18n.currentLang),
+        getPinnedTimestamp: () => sharedCrosshair.pinned,
+        getDataControlsEnabled: () => getSetting('chart_data_controls'),
+    });
+    const detachGestures = attachChartGestures(chart);
+    const detachTooltip = attachTooltipGestures(chart);
+    const detachCrosshair = attachCrosshairEvents(chart);
+    return registerChart(chart, () => {
+        detachAccessibility();
+        detachGestures();
+        detachTooltip();
+        detachCrosshair();
+    });
 }
 
 export function destroyAllCharts() {
@@ -245,7 +352,7 @@ export function initCharts() {
             grid: { display: false },
             ticks: { callback: v => v.toFixed(0) + ' IO/s' },
         };
-        state.charts.diskio.update('none');
+        queueChartUpdate(state.charts.diskio);
     }
 
     state.diskTempSensorNames = [];
@@ -300,7 +407,7 @@ export function initCharts() {
             grid: { display: false },
             ticks: { callback: v => v.toFixed(1) + ' W' },
         };
-        state.charts.gpuload.update('none');
+        queueChartUpdate(state.charts.gpuload);
     }
 
     // VRAM
@@ -338,7 +445,7 @@ export function initCharts() {
             grid: { display: false },
             ticks: { callback: v => formatBytesShort(v) },
         };
-        state.charts.self.update('none');
+        queueChartUpdate(state.charts.self);
     }
 
     // Applications — nginx, containers, postgres, custom charts are all
@@ -347,7 +454,7 @@ export function initCharts() {
 
 // ---- Set x-axis bounds for full time window ----
 export function setChartTimeRange() {
-    const now = Date.now();
+    const now = state.historyViewEnd ?? Date.now();
     let xMin, xMax;
 
     if (state.timeRange !== null) {
@@ -374,20 +481,7 @@ export function setChartTimeRange() {
         }
     };
 
-    Object.values(state.charts).forEach(applyToChart);
-    // Also apply to split charts
-    Object.values(state.splitCharts).forEach(typeCharts => {
-        Object.values(typeCharts).forEach(applyToChart);
-    });
-    // Also apply to dynamic app charts
-    Object.values(state.containerCharts || {}).forEach(applyToChart);
-    Object.values(state.customCharts || {}).forEach(entry => {
-        if (entry?.chart) applyToChart(entry.chart);
-    });
-    // Also apply to dynamic power-supply charts — without this they fall back
-    // to Chart.js auto-scaling and span only their own data instead of the
-    // selected window.
-    Object.values(state.psuCharts || {}).forEach(applyToChart);
+    forEachRegisteredChart(applyToChart);
 }
 
 export function updateChartLabels() {
@@ -401,7 +495,7 @@ export function updateChartLabels() {
         state.charts.cpu.data.datasets[4].label = i18n.t('total');
     }
 
-    if (state.charts.cputemp && state.cpuTempSensorNames.length === 0) {
+    if (state.charts.cputemp?.data.datasets[0] && state.cpuTempSensorNames.length === 0) {
         state.charts.cputemp.data.datasets[0].label = i18n.t('temperature');
     }
 
@@ -452,7 +546,7 @@ export function updateChartLabels() {
         state.charts.diskio.data.datasets[3].label = i18n.t('writes_s');
     }
 
-    if (state.charts.disktemp && state.diskTempSensorNames.length === 0) {
+    if (state.charts.disktemp?.data.datasets[0] && state.diskTempSensorNames.length === 0) {
         state.charts.disktemp.data.datasets[0].label = i18n.t('temperature');
     }
 

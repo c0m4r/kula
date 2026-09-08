@@ -8,6 +8,7 @@ import { apiUrl } from './api.js';
 export const i18n = {
     currentLang: 'en',
     translations: {},
+    englishTranslations: {},
     supportedLangs: ['ar', 'bn', 'cs', 'de', 'en', 'es', 'fr', 'he', 'hi', 'id', 'it', 'ja', 'ko', 'ms', 'nl', 'pl', 'pt', 'ro', 'ru', 'sv', 'th', 'tr', 'uk', 'ur', 'vi', 'zh'],
 
     async init() {
@@ -27,6 +28,17 @@ export const i18n = {
         await this.loadTranslations(this.currentLang);
         this.applyTranslations();
         this.setupDropdown();
+    },
+
+    // The translation endpoints can be protected together with the dashboard.
+    // Retry after a successful login without wiring the language dropdown a
+    // second time, and honor the now-accessible server language policy.
+    async refreshAfterAuth(config = {}) {
+        if (config.lang) this.serverConfig = config.lang;
+        const lang = this.detectLanguage();
+        await this.loadTranslations(lang);
+        this.applyTranslations();
+        document.dispatchEvent(new Event('kula-i18n-changed'));
     },
 
     detectLanguage() {
@@ -53,7 +65,22 @@ export const i18n = {
         try {
             const response = await fetch(apiUrl(`/api/i18n?lang=${lang}`));
             if (!response.ok) throw new Error('Failed to load translations');
-            this.translations = await response.json();
+            const translations = await response.json();
+            if (lang === 'en') {
+                this.englishTranslations = translations;
+            } else if (Object.keys(this.englishTranslations).length === 0) {
+                // The browser endpoint serves one raw locale, while the Go
+                // translator has English fallback semantics. Mirror those
+                // semantics in the SPA so newly introduced controls remain
+                // readable until every locale catches up.
+                try {
+                    const fallback = await fetch(apiUrl('/api/i18n?lang=en'));
+                    if (fallback.ok) this.englishTranslations = await fallback.json();
+                } catch (_error) {
+                    // A missing fallback must not discard a valid locale.
+                }
+            }
+            this.translations = { ...this.englishTranslations, ...translations };
             this.currentLang = lang;
             localStorage.setItem('kula_lang', lang);
             document.documentElement.lang = lang;
@@ -117,6 +144,14 @@ export const i18n = {
             const key = el.getAttribute('data-i18n-title');
             if (this.translations[key]) {
                 el.title = this.translations[key];
+            }
+        });
+
+        // Translate accessible names independently from visible labels.
+        document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+            const key = el.getAttribute('data-i18n-aria-label');
+            if (this.translations[key]) {
+                el.setAttribute('aria-label', this.translations[key]);
             }
         });
     },

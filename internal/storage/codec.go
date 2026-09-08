@@ -34,7 +34,8 @@ package storage
 //  5. After any format change, update ALL of:
 //       - appendVariable()  (encoder)
 //       - decodeVariable()  (decoder, with version branches)
-//       - store.go           (aggregation of new rate fields)
+//       - collector/types.go (explicit `agg` policy for every numeric field)
+//       - aggregation.go     (identity rules when adding a dynamic collection)
 //       - addons/inspect_tier.py (Python decoder, with version branches)
 //       - codec_test.go      (add a test that decodes the OLD format)
 //
@@ -58,13 +59,15 @@ import (
 
 // Flags packed into the 2-byte preamble flags field.
 const (
-	flagHasMin     uint16 = 1 << 0
-	flagHasMax     uint16 = 1 << 1
-	flagHasData    uint16 = 1 << 2
-	flagHasApps    uint16 = 1 << 3  // variable block includes application metrics section
-	flagHasApache2 uint16 = 1 << 8  // variable block includes Apache2 metrics
-	flagHasMysql   uint16 = 1 << 9  // variable block includes MySQL metrics
-	flagHasPSU     uint16 = 1 << 10 // variable block includes power-supply metrics
+	flagHasMin       uint16 = 1 << 0
+	flagHasMax       uint16 = 1 << 1
+	flagHasData      uint16 = 1 << 2
+	flagHasApps      uint16 = 1 << 3  // variable block includes application metrics section
+	flagReducerV2    uint16 = 1 << 4  // Min/Max were produced by the exhaustive policy reducer
+	flagHasApache2   uint16 = 1 << 8  // variable block includes Apache2 metrics
+	flagHasMysql     uint16 = 1 << 9  // variable block includes MySQL metrics
+	flagHasPSU       uint16 = 1 << 10 // variable block includes power-supply metrics
+	flagHasMeanStats uint16 = 1 << 11 // record ends with contributing mean statistics
 )
 
 // fixedBlockSize is the size in bytes of the encoded fixed scalar block.
@@ -89,14 +92,31 @@ const recordKindBinary = byte(0x02)
 
 // AggregatedSample holds a time-aggregated metric sample.
 // For tier 0 (raw), this is just a wrapper around the raw sample.
-// For higher tiers, Data holds averaged values and Min/Max fields hold
-// the minimum and maximum observed values over the aggregation window.
+// For higher tiers, every numeric field follows the explicit `agg` policy on
+// its collector type. Min and Max are per-series extrema, not simultaneous
+// system snapshots. AggregationVersion records whether those complete reducer
+// semantics can be trusted for data read from older tier files.
 type AggregatedSample struct {
-	Timestamp time.Time         `json:"ts"`
-	Duration  time.Duration     `json:"dur"`
-	Data      *collector.Sample `json:"data"`
-	Min       *collector.Sample `json:"min,omitempty"`
-	Max       *collector.Sample `json:"max,omitempty"`
+	Timestamp          time.Time                  `json:"ts"`
+	Duration           time.Duration              `json:"dur"`
+	Data               *collector.Sample          `json:"data"`
+	Min                *collector.Sample          `json:"min,omitempty"`
+	Max                *collector.Sample          `json:"max,omitempty"`
+	AggregationVersion uint8                      `json:"-"`
+	MeanStats          map[string]meanAccumulator `json:"-"`
+	// False for legacy aggregates whose missing-member weights cannot be recovered.
+	MeanWeightsComplete bool `json:"-"`
+
+	// The remaining fields describe the presentation bucket returned by a
+	// history query. They are populated after decoding and are intentionally
+	// absent from the positional on-disk codec, so adding them does not alter
+	// existing tier files. SampleCount is the exact number of records read from
+	// the selected source tier for this output bucket; Coverage is the fraction
+	// of the bucket duration represented by their summed observed duration.
+	BucketStart time.Time `json:"bucket_start"`
+	BucketEnd   time.Time `json:"bucket_end"`
+	SampleCount int       `json:"sample_count"`
+	Coverage    float64   `json:"coverage"`
 }
 
 // encPool holds reusable byte slices to make encodeSample allocation-free on
@@ -200,6 +220,13 @@ func encodeSample(a *AggregatedSample) ([]byte, error) {
 		}
 	}
 
+	if a.MeanStats != nil {
+		if buf, err = appendMeanStats(buf, a); err != nil {
+			*ptr = buf
+			encPool.Put(ptr)
+			return nil, err
+		}
+	}
 	out := make([]byte, len(buf))
 	copy(out, buf)
 
@@ -231,6 +258,12 @@ func appendPreamble(buf []byte, a *AggregatedSample) []byte {
 	flags |= flagHasApache2 // always set: Apache2 metrics byte follows MySQL
 	flags |= flagHasMysql   // always set: MySQL metrics byte follows Postgres
 	flags |= flagHasPSU     // always set: power-supply section follows custom metrics
+	if a.AggregationVersion >= currentAggregationVersion {
+		flags |= flagReducerV2
+	}
+	if a.MeanStats != nil {
+		flags |= flagHasMeanStats
+	}
 	binary.LittleEndian.PutUint16(b[16:], flags)
 	return append(buf, b[:]...)
 }
@@ -728,6 +761,9 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 	a.Timestamp = time.Unix(0, int64(binary.LittleEndian.Uint64(data[0:])))
 	a.Duration = time.Duration(binary.LittleEndian.Uint64(data[8:]))
 	flags := binary.LittleEndian.Uint16(data[16:])
+	if flags&flagReducerV2 != 0 {
+		a.AggregationVersion = currentAggregationVersion
+	}
 	hasApps := flags&flagHasApps != 0
 	hasApache2 := flags&flagHasApache2 != 0
 	hasMysql := flags&flagHasMysql != 0
@@ -774,11 +810,16 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode max variable: %w", err)
 		}
-		_ = vn
+		off += vn
 		s.Timestamp = a.Timestamp
 		a.Max = s
 	}
 
+	if flags&flagHasMeanStats != 0 {
+		if err := decodeMeanStats(data[off:], a); err != nil {
+			return nil, err
+		}
+	}
 	return a, nil
 }
 

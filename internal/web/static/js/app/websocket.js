@@ -4,8 +4,9 @@
    ============================================================ */
 'use strict';
 import { state } from './state.js';
-import { pushLiveSample, fetchHistory, fetchCustomHistory, fetchGapHistory } from './charts-data.js';
+import { pushLiveSample, fetchHistory, fetchCustomHistory } from './charts-data.js';
 import { wsUrl } from './api.js';
+import { normalizeHistoryItem } from './history-data.js';
 
 export function connectWS() {
     if (state.ws && (state.ws.readyState === WebSocket.CONNECTING || state.ws.readyState === WebSocket.OPEN)) {
@@ -28,10 +29,13 @@ export function connectWS() {
         }
         state.connected = true;
         state.reconnectDelay = 1000;
+        state.liveSampleIntervalMs = null;
+        state.liveSampleIntervals = [];
+        state.lastLiveSampleTs = null;
         updateConnectionStatus(true);
         // Load history for the current time window on first connect.
         // The window may be a preset range or a custom range restored
-        // from the URL (see url-state.js).
+        // from the URL (see history-navigation.js).
         if (!state.historyLoaded) {
             state.historyLoaded = true;
             if (state.timeRange !== null) {
@@ -39,8 +43,11 @@ export function connectWS() {
             } else if (state.customFrom && state.customTo) {
                 fetchCustomHistory(state.customFrom, state.customTo);
             }
-        } else if (state.lastHistoricalTs) {
-            fetchGapHistory(state.lastHistoricalTs, new Date());
+        } else if (state.timeRange !== null && state.lastHistoricalTs && !state.loadingHistory) {
+            // A reconnect repair is lower priority than an explicit viewport
+            // request already in flight. Exact historical intervals are
+            // frozen and must never be extended by reconnect repair.
+            fetchHistory(state.timeRange, { background: true });
         }
     };
 
@@ -50,13 +57,16 @@ export function connectWS() {
             console.error('WebSocket message too large');
             return;
         }
-        if (state.loadingHistory) {
-            // Buffer samples that arrive while history is loading so there
-            // is no gap when live streaming resumes after the fetch.
+        if (state.loadingHistory && state.queueLiveDuringHistory) {
+            // Foreground loads replace the current view, so buffer samples
+            // until that replacement settles. Background snapshot refreshes
+            // still pass through pushLiveSample to keep gauges and alerts live.
             try {
-                const sample = JSON.parse(evt.data);
-                state.liveQueue.push(sample);
-                if (state.liveQueue.length > 120) state.liveQueue.shift(); // cap at 2 min
+                const item = normalizeHistoryItem(JSON.parse(evt.data));
+                state.liveQueue.push(item);
+                const interval = state.liveSampleIntervalMs || 1000;
+                const queueLimit = Math.min(state.maxBufferSize, Math.max(120, Math.ceil(120000 / interval)));
+                if (state.liveQueue.length > queueLimit) state.liveQueue.shift();
             } catch (e) { /* ignore */ }
             return;
         }
@@ -95,6 +105,9 @@ export function disconnectWS() {
     state.reconnectDelay = 1000;
     state.historyLoaded = false;
     state.lastHistoricalTs = null;
+    state.liveSampleIntervalMs = null;
+    state.liveSampleIntervals = [];
+    state.lastLiveSampleTs = null;
     updateConnectionStatus(false);
 
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {

@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -104,6 +105,67 @@ func TestEncodeDecode(t *testing.T) {
 		t.Errorf("TCP.CurrEstab = %d, want %d",
 			decoded.Data.Network.TCP.CurrEstab,
 			original.Data.Network.TCP.CurrEstab)
+	}
+}
+
+func TestAggregationVersionFlagRoundTrip(t *testing.T) {
+	now := time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	current := makeSampleFull(now)
+	current.AggregationVersion = currentAggregationVersion
+
+	encoded, err := encodeSample(current)
+	if err != nil {
+		t.Fatalf("encode current reducer record: %v", err)
+	}
+	flags := binary.LittleEndian.Uint16(encoded[16:18])
+	if flags&flagReducerV2 == 0 {
+		t.Fatalf("current reducer record flags = %#x, missing flagReducerV2", flags)
+	}
+	decoded, err := decodeSample(encoded)
+	if err != nil {
+		t.Fatalf("decode current reducer record: %v", err)
+	}
+	if decoded.AggregationVersion != currentAggregationVersion {
+		t.Fatalf("decoded aggregation version = %d, want %d", decoded.AggregationVersion, currentAggregationVersion)
+	}
+
+	legacy := makeSampleFull(now)
+	encoded, err = encodeSample(legacy)
+	if err != nil {
+		t.Fatalf("encode legacy reducer record: %v", err)
+	}
+	flags = binary.LittleEndian.Uint16(encoded[16:18])
+	if flags&flagReducerV2 != 0 {
+		t.Fatalf("legacy reducer record flags = %#x, unexpectedly has flagReducerV2", flags)
+	}
+	decoded, err = decodeSample(encoded)
+	if err != nil {
+		t.Fatalf("decode legacy reducer record: %v", err)
+	}
+	if decoded.AggregationVersion != 0 {
+		t.Fatalf("legacy decoded aggregation version = %d, want 0", decoded.AggregationVersion)
+	}
+}
+
+func TestHistoryBucketMetadataIsNotPersisted(t *testing.T) {
+	now := time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
+	original := makeSampleFull(now)
+	original.BucketStart = now.Add(-time.Minute)
+	original.BucketEnd = now
+	original.SampleCount = 60
+	original.Coverage = 0.9
+
+	encoded, err := encodeSample(original)
+	if err != nil {
+		t.Fatalf("encode sample with query metadata: %v", err)
+	}
+	decoded, err := decodeSample(encoded)
+	if err != nil {
+		t.Fatalf("decode sample with query metadata: %v", err)
+	}
+	if !decoded.BucketStart.IsZero() || !decoded.BucketEnd.IsZero() ||
+		decoded.SampleCount != 0 || decoded.Coverage != 0 {
+		t.Fatalf("query-only metadata entered the positional codec: %+v", decoded)
 	}
 }
 
@@ -685,6 +747,66 @@ func TestRecordSizeReduction(t *testing.T) {
 	if len(data) > 1200 {
 		t.Errorf("record too large: %d bytes, want < 1200", len(data))
 	}
+}
+
+func TestAggregatedRecordSizeBudget(t *testing.T) {
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	raw := make([]*AggregatedSample, 60)
+	for i := range raw {
+		sample := makeSampleFull(base.Add(time.Duration(i) * time.Second))
+		sample.AggregationVersion = currentAggregationVersion
+		sample.Data.Apps.Custom = make(map[string][]collector.CustomMetricValue)
+		for group := 0; group < 4; group++ {
+			for metric := 0; metric < 4; metric++ {
+				if (i+group+metric)%5 == 0 {
+					continue
+				}
+				sample.Data.Apps.Custom[fmt.Sprintf("group_%d", group)] = append(
+					sample.Data.Apps.Custom[fmt.Sprintf("group_%d", group)],
+					collector.CustomMetricValue{
+						Name:  fmt.Sprintf("metric_%d", metric),
+						Value: float64(i + metric),
+					},
+				)
+			}
+		}
+		for container := 0; container < 8; container++ {
+			if (i+container)%4 == 0 {
+				continue
+			}
+			sample.Data.Apps.Containers = append(sample.Data.Apps.Containers, collector.ContainerStats{
+				ID:      fmt.Sprintf("container-%d", container),
+				Name:    fmt.Sprintf("service-%d", container),
+				CPUPct:  float64(i + container),
+				MemUsed: uint64(1000 + i + container),
+			})
+		}
+		raw[i] = sample
+	}
+
+	aggregated := (&Store{}).aggregateAggregated(raw, 0)
+	if aggregated == nil || len(aggregated.MeanStats) == 0 {
+		t.Fatal("rich aggregate did not exercise sparse contributing statistics")
+	}
+	encoded, err := encodeSample(aggregated)
+	if err != nil {
+		t.Fatalf("encode rich aggregate: %v", err)
+	}
+	t.Logf("rich aggregate: %d bytes, %d sparse mean statistics", len(encoded), len(aggregated.MeanStats))
+	// Leave modest schema growth headroom over the measured ~8 KiB while
+	// making a retention-changing size regression an explicit review decision.
+	if len(encoded) > 10*1024 {
+		t.Fatalf("rich aggregate record = %d bytes, want <= 10 KiB", len(encoded))
+	}
+	withoutStats := *aggregated
+	withoutStats.MeanStats = nil
+	withoutStats.MeanWeightsComplete = false
+	baseline, err := encodeSample(&withoutStats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("without sparse statistics: %d bytes; contributing-statistics overhead: %d bytes",
+		len(baseline), len(encoded)-len(baseline))
 }
 
 // ---- TestBinaryMigration ----------------------------------------------------

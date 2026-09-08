@@ -21,9 +21,15 @@
     <!-- App modules preloading with Subresource Integrity (SRI) -->
     <link rel="modulepreload" href="js/app/api.js" integrity="{{sri `js/app/api.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/state.js" integrity="{{sri `js/app/state.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
-    <link rel="modulepreload" href="js/app/url-state.js" integrity="{{sri `js/app/url-state.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/i18n.js" integrity="{{sri `js/app/i18n.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
-    <link rel="modulepreload" href="js/app/utils.js" integrity="{{sri `js/app/utils.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/format.js" integrity="{{sri `js/app/format.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/history-request.js" integrity="{{sri `js/app/history-request.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/history-data.js" integrity="{{sri `js/app/history-data.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/history-navigation.js" integrity="{{sri `js/app/history-navigation.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/chart-controller.js" integrity="{{sri `js/app/chart-controller.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/chart-interactions.js" integrity="{{sri `js/app/chart-interactions.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/chart-envelope.js" integrity="{{sri `js/app/chart-envelope.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/chart-accessibility.js" integrity="{{sri `js/app/chart-accessibility.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/charts-init.js" integrity="{{sri `js/app/charts-init.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/chart-card-actions.js" integrity="{{sri `js/app/chart-card-actions.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/section-utils.js" integrity="{{sri `js/app/section-utils.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
@@ -34,10 +40,9 @@
     <link rel="modulepreload" href="js/app/alerts.js" integrity="{{sri `js/app/alerts.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/websocket.js" integrity="{{sri `js/app/websocket.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/controls.js" integrity="{{sri `js/app/controls.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/date-range-calendar.js" integrity="{{sri `js/app/date-range-calendar.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/auth.js" integrity="{{sri `js/app/auth.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
-    <link rel="modulepreload" href="js/app/theme.js" integrity="{{sri `js/app/theme.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/settings.js" integrity="{{sri `js/app/settings.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
-    <link rel="modulepreload" href="js/app/ui-actions.js" integrity="{{sri `js/app/ui-actions.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/focus-mode.js" integrity="{{sri `js/app/focus-mode.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/split.js" integrity="{{sri `js/app/split.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/ollama.js" integrity="{{sri `js/app/ollama.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
@@ -195,6 +200,33 @@
                                 <span data-i18n="focus_outline">Strong focus outline</span>
                             </label>
                         </div>
+                        <div class="settings-group">
+                            <div class="settings-group-title" data-i18n="charts">Charts</div>
+                            <label class="settings-row">
+                                <input type="checkbox" id="set-chart-data-controls">
+                                <span data-i18n="show_chart_data_controls">Show chart data controls</span>
+                            </label>
+                            <label class="settings-row">
+                                <input type="checkbox" id="set-chart-tooltip-details">
+                                <span data-i18n="show_chart_tooltip_details">Show detailed chart tooltips</span>
+                            </label>
+                            <label class="settings-row">
+                                <input type="checkbox" id="set-all-series-envelopes">
+                                <span data-i18n="show_all_series_envelopes">Show Min–Max bands for all series</span>
+                            </label>
+                            <div class="settings-row settings-time-zone">
+                              <span data-i18n="time_zone">Display time zone</span>
+                              <div class="time-zone-actions" role="group" aria-label="Display time zone"
+                                data-i18n-aria-label="time_zone">
+                                <button class="time-btn time-zone-btn active" type="button" data-time-zone="local"
+                                    aria-pressed="true" data-i18n="time_zone_local" data-i18n-title="use_local_time"
+                                    title="Use local time">Local</button>
+                                <button class="time-btn time-zone-btn" type="button" data-time-zone="utc"
+                                    aria-pressed="false" data-i18n="time_zone_utc" data-i18n-title="use_utc_time"
+                                    title="Use UTC">UTC</button>
+                              </div>
+                            </div>
+                        </div>
                         <div class="settings-menu-footer">
                             <button type="button" id="btn-settings-reset" class="settings-reset"
                                 data-i18n="reset_defaults">Reset to defaults</button>
@@ -263,32 +295,78 @@
                     <button class="time-btn" data-range="2592000">30d</button>
                 </div>
                 <span class="time-divider" id="agg-desktop-divider">│</span>
-                <button id="btn-agg-menu" class="btn-icon btn-time-menu" data-i18n-title="aggregation"
+                <button id="btn-agg-menu" class="btn-icon btn-time-menu hidden" data-i18n-title="aggregation"
                     title="Aggregation">📊</button>
-                <div id="agg-presets-list" class="time-presets-list">
+                <div id="agg-presets-list" class="time-presets-list hidden">
                     <button class="time-btn active" data-agg="avg" data-i18n="avg">Avg</button>
                     <button class="time-btn" data-agg="min" data-i18n="min">Min</button>
                     <button class="time-btn" data-agg="max" data-i18n="max">Max</button>
                 </div>
-                <span class="time-divider" id="agg-divider">│</span>
+                <span class="time-divider hidden" id="agg-divider">│</span>
                 <button class="time-btn" id="btn-custom-range" data-i18n-title="custom_range"
-                    title="Custom range">📅</button>
+                    title="Custom range" aria-label="Custom range" data-i18n-aria-label="custom_range"
+                    aria-controls="time-custom" aria-expanded="false">📅</button>
+                <span class="time-divider">│</span>
+                <div class="viewport-actions" role="group" aria-label="Historical navigation"
+                    data-i18n-aria-label="historical_navigation">
+                    <button class="time-btn viewport-btn active" id="btn-live" title="Live" aria-label="Live"
+                        data-i18n="live" data-i18n-title="live" data-i18n-aria-label="live">Live</button>
+                    <button class="time-btn viewport-btn" id="btn-history-back" title="Back" aria-label="Back"
+                        data-i18n-title="history_back" data-i18n-aria-label="history_back" disabled>←</button>
+                    <button class="time-btn viewport-btn" id="btn-history-forward" title="Forward" aria-label="Forward"
+                        data-i18n-title="history_forward" data-i18n-aria-label="history_forward" disabled>→</button>
+                    <button class="time-btn viewport-btn" id="btn-zoom-out" title="Zoom out" aria-label="Zoom out"
+                        data-i18n-title="zoom_out" data-i18n-aria-label="zoom_out" disabled>−</button>
+                    </div>
+                <span class="time-divider">│</span>
                 <span id="loading-spinner" class="loading-spinner hidden" title="Loading history...">⏳</span>
             </div>
             <div class="time-info">
                 <span id="time-range-display" data-i18n="last_5_m">Last 5 minutes</span>
+                <span id="pinned-time" class="pinned-time hidden"></span>
+                <span id="pinned-time-announcement" class="sr-only" aria-live="polite"></span>
+                <span id="history-status-announcement" class="sr-only" role="status"
+                    aria-live="polite" aria-atomic="true"></span>
                 <span id="sampling-info" class="sampling-info"></span>
             </div>
         </section>
 
         <!-- Custom time range picker (separate row for responsiveness) -->
-        <div class="time-custom-section hidden" id="time-custom">
-            <input type="datetime-local" id="custom-from" class="time-input">
-            <span class="time-sep">→</span>
-            <input type="datetime-local" id="custom-to" class="time-input">
-            <button class="time-btn time-apply" id="btn-apply-custom" data-i18n="apply">Apply</button>
-        </div>
+        <form class="time-custom-section hidden" id="time-custom" aria-labelledby="custom-range-title" novalidate>
+            <div class="time-custom-header">
+                <h3 id="custom-range-title" data-i18n="custom_range">Custom range</h3>
+                <span id="custom-time-zone" class="time-custom-zone"></span>
+            </div>
+            <div class="time-custom-shortcuts" role="group" aria-label="Quick ranges" data-i18n-aria-label="quick_ranges">
+                <button type="button" class="time-btn" data-custom-preset="hour" data-i18n="last_1_h">Last 1 hour</button>
+                <button type="button" class="time-btn" data-custom-preset="day" data-i18n="last_24_h">Last 24 hours</button>
+                <button type="button" class="time-btn" data-custom-preset="today" data-i18n="today">Today</button>
+                <button type="button" class="time-btn" data-custom-preset="yesterday" data-i18n="yesterday">Yesterday</button>
+            </div>
+            <div id="custom-range-calendar" class="range-calendar"></div>
+            <div class="time-custom-fields">
+                <label class="time-custom-field" for="custom-from">
+                    <span data-i18n="from">From</span>
+                    <input type="datetime-local" id="custom-from" class="time-input" step="1" required
+                        aria-describedby="custom-time-zone custom-range-summary custom-range-error">
+                </label>
+                <label class="time-custom-field" for="custom-to">
+                    <span data-i18n="to">To</span>
+                    <input type="datetime-local" id="custom-to" class="time-input" step="1" required
+                        aria-describedby="custom-time-zone custom-range-summary custom-range-error">
+                </label>
+            </div>
+            <p id="custom-range-error" class="time-custom-error hidden" role="alert"></p>
+            <div class="time-custom-footer">
+                <span id="custom-range-summary" class="time-custom-summary" role="status"></span>
+                <div class="time-custom-actions">
+                    <button type="button" class="time-btn" id="btn-cancel-custom" data-i18n="cancel">Cancel</button>
+                    <button type="submit" class="time-btn time-apply" id="btn-apply-custom" data-i18n="apply_range">Apply range</button>
+                </div>
+            </div>
+        </form>
         </div><!-- /.sticky-topbar -->
+
 
         <!-- Gauges row -->
         <section class="gauges-row" id="gauges-row">

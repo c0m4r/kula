@@ -4,7 +4,7 @@
    ============================================================ */
 'use strict';
 import { colors } from './state.js';
-import { formatMbps } from './utils.js';
+import { formatMbps } from './format.js';
 import { getSetting } from './settings.js';
 
 // ---- Sparkline History (network gauges only) ----

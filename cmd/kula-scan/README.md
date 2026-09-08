@@ -96,7 +96,7 @@ the build if a safeguard regressed.
 | `traversal` | Byte-level path-traversal payloads (encoded, dot-dot, backslash) over a raw socket leak no files; no directory listing | `handleStatic` |
 | `metrics` | `/metrics` bearer token enforced (and wrong token rejected); warns if exposed without a token | `handleMetrics` |
 | `ws` | Unauthenticated upgrade rejected; cross-origin upgrade rejected (CSWSH); same-origin upgrade allowed; per-IP connection cap *(aggressive)*; oversized-message read limit *(aggressive)* | `handleWebSocket`, `CheckOrigin`, `SetReadLimit` |
-| `input` | `/api/history` bad/inverted/over-long ranges → 400, huge `points` capped; `/api/i18n` rejects junk/traversal language codes | `handleHistory`, `handleI18n` |
+| `input` | `/api/history` bad/inverted/out-of-retention over-long ranges → 400, huge `points` capped; `/api/i18n` rejects junk/traversal language codes | `handleHistory`, `handleI18n` |
 | `rate` *(aggressive)* | Login brute-force throttling; Ollama rate limiting | login `RateLimiter`, Ollama limiter |
 | `dos` *(aggressive)* | Slowloris / slow-request reaping; oversized request headers rejected; idle-connection-flood resilience | `ReadTimeout`, `MaxHeaderBytes`, `IdleTimeout` |
 | `redirect` | No open redirect to a foreign host via crafted paths (`//`, `\`, encoded, base-path tricks) | base-path redirect / CWE-601 |

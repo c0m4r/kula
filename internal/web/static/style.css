@@ -43,7 +43,7 @@
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
     --chart-grid: rgba(55, 65, 81, 0.2);
     --chart-text: #a9b8cd;
-    /* Read by theme.js and copied into the Chart.js defaults — the canvas
+    /* Read by settings.js and copied into the Chart.js defaults — the canvas
        cannot resolve custom properties on its own. */
     --chart-tooltip-bg: rgba(17, 24, 39, 0.9);
     --chart-tooltip-text: #f1f5f9;
@@ -104,6 +104,18 @@ body {
 
 .hidden {
     display: none !important;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 /* ---- Login ---- */
@@ -551,9 +563,6 @@ body {
     box-shadow: var(--shadow-glow);
 }
 
-
-
-
 .gauge-label {
     font-size: 0.75rem;
     color: var(--text-muted);
@@ -656,6 +665,34 @@ body {
     margin: 0 0.15rem;
 }
 
+.viewport-actions {
+    display: inline-flex;
+    gap: 0.2rem;
+    align-items: center;
+}
+
+.time-zone-actions {
+    display: inline-flex;
+    gap: 0.15rem;
+    align-items: center;
+}
+
+.time-zone-btn {
+    min-width: 3.25rem;
+    padding-inline: 0.45rem;
+}
+
+.viewport-btn {
+    min-width: 2rem;
+    padding-inline: 0.5rem;
+}
+
+.viewport-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+}
+
+
 .time-btn {
     padding: 0.3rem 0.7rem;
     border: 1px solid var(--border-color);
@@ -690,14 +727,168 @@ body {
 }
 
 .time-custom-section {
+    display: grid;
+    gap: 0.55rem;
+    position: absolute;
+    top: 100%;
+    right: 1rem;
+    width: min(42rem, calc(100vw - 2rem));
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    backdrop-filter: blur(10px);
+    max-height: 65vh;
+    max-height: 65dvh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+    z-index: 120;
+}
+
+.time-custom-header,
+.time-custom-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.time-custom-header h3 {
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.time-custom-zone,
+.time-custom-summary {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+}
+
+.time-custom-shortcuts,
+.time-custom-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+
+.time-custom-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+}
+
+.range-calendar {
+    display: grid;
+    gap: 0.4rem;
+}
+
+.range-calendar-nav {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem 1.5rem;
-    border-bottom: 1px solid var(--border-color);
-    flex-wrap: wrap;
-    background: var(--bg-card);
-    backdrop-filter: blur(10px);
+}
+
+.range-calendar-nav .time-input {
+    min-height: 2rem;
+    padding-block: 0.3rem;
+    font-size: 0.8rem;
+}
+
+.range-calendar-year { width: 5.25rem; }
+.range-calendar-nav .time-btn {
+    min-height: 2rem;
+    padding: 0.1rem 0.55rem;
+    font-size: 1.1rem;
+}
+
+.range-calendar-months {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.range-calendar-month h4 {
+    margin-bottom: 0.3rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+}
+
+.range-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 0.2rem 0;
+    text-align: center;
+}
+
+.range-calendar-weekday {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    padding-bottom: 0.25rem;
+}
+
+.range-calendar-day {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid transparent;
+    min-height: 2rem;
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+
+.range-calendar-day:hover { background: var(--bg-hover); }
+.range-calendar-day.in-range { background: rgba(59, 130, 246, 0.18); }
+.range-calendar-day.range-edge {
+    background: #1d4ed8;
+    color: #fff;
+    border-radius: var(--radius-sm);
+}
+.range-calendar-day:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: -3px;
+}
+
+@media (max-width: 600px) {
+    .range-calendar-months { grid-template-columns: minmax(0, 1fr); }
+    .range-calendar-month + .range-calendar-month { display: none; }
+    .range-calendar-nav { justify-content: space-between; }
+    .range-calendar-nav select { min-width: 0; flex: 1; }
+}
+
+.time-custom-field {
+    display: grid;
+    gap: 0.25rem;
+    min-width: 0;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.time-custom-field .time-input {
+    width: 100%;
+    min-width: 0;
+    min-height: 2.25rem;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+}
+
+.time-custom-error {
+    color: var(--accent-red);
+    font-size: 0.85rem;
+}
+
+.time-custom-section .time-btn {
+    min-height: 2rem;
+}
+
+.time-custom-section .time-btn:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+}
+
+.time-custom-field .time-input[aria-invalid="true"] {
+    border-color: var(--accent-red);
 }
 
 .time-input {
@@ -731,6 +922,15 @@ body.light-mode .time-input {
     font-size: 0.8rem;
     color: var(--text-muted);
     font-family: var(--font-mono);
+}
+
+.pinned-time {
+    margin-left: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.pinned-time.pinned::before {
+    content: '📌 ';
 }
 
 /* ---- Chart Search (in header) ---- */
@@ -1089,6 +1289,95 @@ body.light-mode .time-input {
     height: 100% !important;
 }
 
+.chart-body canvas:focus-visible,
+.btn-chart-data:focus-visible,
+.chart-data-download:focus-visible {
+    outline: 3px solid var(--accent-yellow);
+    outline-offset: 2px;
+}
+
+.btn-chart-data,
+.chart-data-download {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    padding: 0.2rem 0.45rem;
+    font: 500 0.72rem/1.2 var(--font-mono);
+    cursor: pointer;
+}
+
+.btn-chart-data:hover,
+.btn-chart-data[aria-expanded="true"],
+.chart-data-download:hover {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+}
+
+.chart-data-panel {
+    border-top: 1px solid var(--border-color);
+    padding: 0.75rem 1rem 1rem;
+    background: var(--bg-secondary);
+}
+
+.chart-data-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.6rem;
+}
+
+.chart-data-summary {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.chart-data-scroll {
+    max-height: 20rem;
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+}
+
+.chart-data-table {
+    width: 100%;
+    min-width: 36rem;
+    border-collapse: collapse;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font: 0.72rem/1.35 var(--font-mono);
+}
+
+.chart-data-table caption {
+    padding: 0.55rem;
+    color: var(--text-primary);
+    font: 600 0.78rem/1.3 var(--font-sans);
+    text-align: left;
+}
+
+.chart-data-table th,
+.chart-data-table td {
+    padding: 0.4rem 0.55rem;
+    border-top: 1px solid var(--border-color);
+    text-align: left;
+    white-space: nowrap;
+    vertical-align: top;
+}
+
+.chart-data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+
+.chart-data-table tbody tr:nth-child(even) {
+    background: rgba(148, 163, 184, 0.04);
+}
+
+
 /* ---- Expanded Chart ---- */
 .chart-card.chart-expanded {
     grid-column: 1 / -1;
@@ -1443,8 +1732,37 @@ body.light-mode .focus-selecting .chart-card::after {
         grid-template-columns: repeat(2, 1fr);
     }
 
+    .time-info {
+        display: flex;
+        width: 100%;
+        justify-content: space-between;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        font-size: 0.68rem;
+    }
+
     .sampling-info {
-        display: none;
+        margin-left: 0;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+    }
+
+    .time-custom-section {
+        padding: 0.85rem 1rem;
+    }
+
+    .time-custom-fields {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.75rem;
+    }
+
+    .time-custom-footer {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .time-custom-actions .time-btn {
+        flex: 1;
     }
 
     .alert-dropdown {
@@ -1630,6 +1948,31 @@ body.light-mode .focus-selecting .chart-card::after {
 
 .settings-row:hover {
     background: var(--bg-hover);
+}
+
+.settings-time-zone {
+    justify-content: space-between;
+    flex-wrap: wrap;
+    cursor: default;
+}
+
+.settings-time-zone .time-zone-actions {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+}
+
+.settings-time-zone .time-zone-btn {
+    font-family: inherit;
+    border: 0;
+    border-radius: 5px;
+}
+
+.range-calendar-day:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    background: transparent;
 }
 
 .settings-row-stepper {
@@ -2256,7 +2599,7 @@ body.light-mode .ai-input {
 /* Both appearance settings default to on, so the class is only ever present
    when the visitor (or the config) turned the feature off. */
 html.no-sticky-topbar .sticky-topbar {
-    position: static;
+    position: relative;
 }
 
 html.no-gauges .gauges-row {

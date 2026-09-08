@@ -11,6 +11,7 @@ a shared middleware chain.
 | File | Role |
 |------|------|
 | [`server.go`](../../internal/web/server.go) | HTTP server, listeners, routing, middleware, templates, SRI, config endpoint |
+| [`history_sections.go`](../../internal/web/history_sections.go) | Optional history response section filtering |
 | [`auth.go`](../../internal/web/auth.go) | Argon2id hashing, sessions, rate limiting, CSRF, Origin validation |
 | [`websocket.go`](../../internal/web/websocket.go) | WebSocket upgrade, broadcast, pause/resume, connection limits |
 | [`prometheus.go`](../../internal/web/prometheus.go) | `/metrics` exposition + bearer auth |
@@ -70,17 +71,56 @@ tagged) → CORS → auth/CSRF. Security headers, CSP nonce, and SRI behavior ar
 
 Returns the latest `Sample` as JSON. `503 no data yet` before the first sample.
 
-### `GET /api/history?from=&to=&points=`
+### `GET /api/history?from=&to=&points=&sections=`
 
 - `from`, `to` — RFC 3339 timestamps. Defaults: `to = now`, `from = to − 5m`.
 - `points` — desired data points, default `450`, **capped at 5000** (min 1).
-- Window **capped at 31 days**; inverted ranges → `400`.
-- Returns `{ samples, tier, resolution, requested_from, requested_to, actual_from, actual_to,
-  complete }`. The store prefers a tier covering the full request and downsamples to no more
-  than `points`. `complete` is false when only part of the requested range is retained;
-  `actual_from` and `actual_to` describe the returned bucket coverage (which can extend by one
-  bucket at the left edge) and are omitted when no data exists. At `perf`/`debug` log level the
-  chosen tier, resolution, sample count, and load time are logged.
+- `sections` — optional comma-separated top-level sample sections. Accepted values are
+  `cpu,lavg,mem,swap,net,disk,sys,proc,self,gpu,psu,apps`. Unknown names return `400`.
+- Inverted ranges and all windows over 31 days return `400`.
+- Returns `{ samples, tier, resolution, source_resolution, downsampled, requested_from, requested_to,
+  actual_from, actual_to, complete, exact_complete, valid_aggregations }`. When `sections` is supplied, the same compatible envelope
+  also includes the canonical ordered `sections` list, and each sample's Data/Min/Max tree
+  contains only its timestamp plus those sections. Omitting the parameter preserves the full
+  response for existing clients.
+
+  Each item in `samples` contains `ts`, `dur`, `data`, optional trusted `min`/`max`, and
+  query-only presentation metadata: `bucket_start`, `bucket_end`, `sample_count`, and
+  `coverage`. `sample_count` is the exact number of immediate records from the selected source
+  tier that contributed to that output bucket (not an inferred raw-observation count).
+  `coverage` is their summed observed duration divided by the bucket width, clamped to `[0,1]`.
+  Source timestamps mark interval **ends**. History includes overlapping source intervals
+  even when their endpoints fall after `to`. When downsampling, boundary-crossing intervals
+  contribute proportionally to each overlapping output bucket; sums and weights are scaled
+  together. A source record can therefore contribute to two buckets. Raw interval widths use
+  their recorded duration; coarse records use native resolution because their duration is
+  contributing weight, not a precise wall-clock span. Coarse boundary allocation and extrema
+  remain limited to source resolution; this does not reconstruct missing raw observations.
+  The selected source `tier`, its native `source_resolution`, and effective output `resolution`
+  remain response-level metadata; section filtering preserves them and all bucket fields.
+
+  The store chooses source quality with a fixed 7,500-record target independent of display
+  density, then uses stable epoch-aligned output buckets and returns no more than `points`.
+  Denser sources are processed in bounded decode batches, retaining all observations and
+  their extrema. A 30-day range is supported even when it exceeds that selection target;
+  the target does not cause HTTP 422 or silently truncate history.
+  `downsampled` means records were reduced for presentation, including when `tier` is `0`.
+  Usually output resolution exceeds native resolution; excess jittered observations can
+  also require reduction at the native step, as does clipping an interval ending after `to`.
+  Clients must not equate tier `0` with raw output.
+  `complete` describes retention selection, tolerating one source interval at the left edge
+  and two at the live edge for collection/rollup lag. `actual_from` and `actual_to` describe the
+  represented source bounds **clipped to the request**, before presentation downsampling, and
+  are omitted when no source interval overlaps it. `exact_complete` requires those bounds to
+  reach both requested edges without tolerance. Neither completeness flag guarantees absence
+  of interior gaps; inspect timestamps and per-bucket coverage as well. Exact/custom views use
+  `exact_complete`; rolling live views tolerate normal lag using `complete`.
+  `valid_aggregations` lists the
+  envelope fields that are valid across every metric in the response. Trusted policy-reducer
+  buckets return `["data","min","max"]`; raw points and legacy rollups return `["data"]`.
+  Clients must honor this list because old tier files remain readable but their historical
+  Min/Max blocks are intentionally not trusted. At `perf`/`debug` log level the chosen tier,
+  effective resolution, sample count, and load time are logged.
 
 ### `GET /api/config`
 
@@ -88,6 +128,12 @@ Returns UI configuration: `auth_enabled`, `join_metrics`, OS/kernel/arch, hostna
 `show_system_info`, `show_version`, theme, aggregation, per-graph bounds (`cpu_temp`,
 `disk_temp`, `network` with `mode`/`value`/`auto`-detected limit), split toggles, language
 config, `ollama_enabled`/`ollama_model`, custom-metric definitions, and (if shown) version.
+
+`history` contains `collection_interval_ms` and `ranges: [{from,to}, ...]` for nonempty
+storage tiers. These are inexpensive interval envelopes derived from in-memory tier headers
+(the oldest end timestamp is extended left by that tier's native resolution),
+not an index of every available day or proof of gap-free data. The date picker refreshes them
+on opening; no retention scan or new endpoint is involved.
 
 ### `GET /api/i18n?lang=`
 

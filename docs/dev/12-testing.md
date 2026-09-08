@@ -39,6 +39,13 @@ Collectors are driven against synthetic `/proc` and `/sys` fixture trees under
 on any machine. The sandbox tests are *negative* tests — they assert that forbidden
 writes/exec/network actually fail once Landlock is enforced.
 
+When Node.js is available, `server_test.go` runs `history_frontend_test.mjs`. It checks request
+cancellation and stale responses, envelope preservation, formatter reuse, missing-data breaks,
+viewport batching and culling, gestures, keyboard exploration and complete formula-safe CSV.
+Storage tests cover sparse contributing statistics through multiple reductions, disk round
+trips, malformed metadata, old records and parity with the Python decoder. API tests retain
+the 31-day range cap even when more data exists on disk.
+
 ## Fuzzing
 
 Go-native fuzz targets (each with a committed seed corpus that also runs under plain
@@ -77,6 +84,78 @@ benchstat old.txt new.txt             # compare two runs
 
 Generate large multi-day datasets to benchmark realistic tier rollups and wrap behavior with
 [`cmd/gen-mock-data`](../../cmd/gen-mock-data/main.go).
+
+Two focused history benchmarks are also available:
+
+```bash
+go test ./internal/storage -run '^$' \
+  -bench '^BenchmarkQueryRange_SourceBudget$' -benchmem -benchtime=3x
+go test ./internal/web -run '^$' \
+  -bench '^BenchmarkHistoryPayloadEncoding$' -benchmem -benchtime=3x
+```
+
+Aggregation schema policies are enforced by `TestAggregationPoliciesCoverSampleSchema` during
+the test suite; `go build` alone does not validate aggregation tags. Storage regressions also
+cover nested sample ownership under concurrent callers and bounded history decode batches,
+including complete 30-day views, sub-resolution observations, wrapped tiers, and writes
+between batches. Cross-batch reduction must preserve means, extrema, and contributor counts.
+
+The source-budget benchmark clears the query cache outside the timed region and reads 7,500
+raw records. On an AMD Ryzen 5 5600H with Go 1.26.7 it measured 129.0 ms/op, 100.4 MB/op, and
+634,577 allocs/op. The application-heavy 120-bucket JSON fixture measured:
+
+| Shape | Encoded size | Parsed JSON nodes | Encode time | Encoder allocation |
+|---|---:|---:|---:|---:|
+| Full | 5,857,996 B | 356,896 | 14.60 ms/op | 11.79 MB/op |
+| Summary sections | 724,087 B | 59,543 | 2.77 ms/op | 1.65 MB/op |
+
+The same section selection is only a 1.1× reduction for the committed bare-host fixture; its
+benefit depends on disks, filesystems, GPUs, containers, applications, and custom metrics.
+Timing/allocation figures are short diagnostic runs, not production service-level guarantees;
+encoder pooling, garbage collection, and hardware affect them.
+
+`TestAggregatedRecordSizeBudget` measures a 60-observation rollup with eight intermittent
+containers and sixteen intermittent custom metrics. It currently encodes to **8,190 bytes**,
+including 72 sparse mean statistics (4,926 bytes above the same envelope without statistics).
+The test enforces a 10 KiB ceiling to make material retention regressions visible. This is not
+a universal record-size bound: deployment cardinality and identity-string lengths matter.
+At this fixture's size, default 150 MiB minute and 50 MiB five-minute tiers hold roughly 13.3
+and 22.2 days respectively, including the four-byte record prefix. Measure real tiers with
+`kula inspect` before relying on a specific retention window; fixed-size files do not promise
+a fixed number of days.
+
+### Real-browser fixtures
+
+Run the dashboard regression against actual frontend modules and a controlled local API:
+
+```bash
+node internal/web/testdata/history_dashboard_test.mjs
+```
+
+It requires Node.js 22+, Chromium/Chrome, and localhost access. It exercises the real grid/list transition,
+legend and instance preservation, Data opt-in/opt-out, two accelerated hours of rolling
+24-hour history, failed refreshes, a 5,000-observation response with extra gap markers,
+horizontal time labels, visible sampling tiers, custom-range validation and time zone
+conversion, frozen custom ranges, sub-three-hour tier-0 aggregation/zoom, slow collection
+cadence, sensor reorder/disappearance, application gaps, and live language switching.
+Timing is diagnostic; assertions check behavior rather than host-specific
+millisecond limits. The fixture uses temporary browser data and cleans it up on exit.
+
+`history_performance.html` separately measures 46 charts with three 1,200-point datasets each.
+Run it with a fixed DevTools viewport:
+
+```bash
+node internal/web/testdata/history_performance_test.mjs
+```
+
+Its JSON result must report
+`status: "pass"`, fewer updated charts than registered charts, the same visible count for
+crosshair renders, working keyboard gestures, exact UTC tooltips, off-by-default Data controls,
+and a lazy 50-row table with CSV after opt-in. Both fixtures are required in CI.
+`./addons/check.sh` runs them when Node.js and a supported Chromium/Chrome executable are
+installed; otherwise it reports the skipped optional local dependency. CI explicitly sets up
+Node.js 22 and treats missing browsers as failures. Set `KULA_CHROMIUM`
+when the browser lives at a non-standard path.
 
 ## Runtime security tests
 

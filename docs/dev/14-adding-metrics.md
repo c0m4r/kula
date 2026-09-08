@@ -73,7 +73,7 @@ if appCfg.Foo.Enabled && appCfg.Foo.StatusURL != "" {
 
 ## 6. Preamble flag — `internal/storage/codec.go`
 
-Add a new flag using the next free bit (bit 10):
+Add a new flag using the next free bit (bit 12):
 
 ```go
 const (
@@ -81,9 +81,11 @@ const (
     flagHasMax     uint16 = 1 << 1
     flagHasData    uint16 = 1 << 2
     flagHasApps    uint16 = 1 << 3
+    flagReducerV2  uint16 = 1 << 4
     flagHasApache2 uint16 = 1 << 8
     flagHasMysql   uint16 = 1 << 9
-    flagHasFoo     uint16 = 1 << 10  // <-- NEW (never reuse a bit)
+    flagHasPSU     uint16 = 1 << 10
+    flagHasFoo     uint16 = 1 << 12  // <-- NEW (never reuse a bit)
 )
 ```
 
@@ -95,11 +97,11 @@ flags |= flagHasFoo
 
 ## 7. Encode — `internal/storage/codec.go` (`appendVariable`)
 
-**Append** the new section after MySQL/Apache2 and **before Custom**:
+**Append** the new section after every existing section:
 
 ```
-nginx → containers → postgres → mysql → apache2 → foo → custom
-                                                  ^^^^^
+nginx → containers → postgres → mysql → apache2 → custom → psu → foo
+                                                                 ^^^^^
 ```
 
 ```go
@@ -120,7 +122,7 @@ section's *position* must never move).
 
 ## 8. Decode — `internal/storage/codec.go` (`decodeVariable`)
 
-Gate the section behind the flag, appended after Apache2, before Custom:
+Gate the section behind the flag, appended after PSU:
 
 ```go
 if hasFoo {
@@ -141,23 +143,43 @@ Extract the flag in `decodeSample()` and thread it through `decodeVariable()`:
 
 ```go
 hasFoo := flags&flagHasFoo != 0
-vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasFoo)
+vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasFoo)
 ```
 
 Update the `decodeVariable` signature and **all call sites (tests included)**.
 
-## 9. Aggregation — `internal/storage/store.go`
+## 9. Aggregation — `internal/storage/aggregation.go`
 
-- **Deep copy** on init: add `if last.Apps.Foo != nil { ... }` alongside nginx/apache2.
-- **Rate averaging**: average any per-second rate fields across the aggregated samples (same
-  pattern as nginx).
+Declare the Data reducer for **every numeric field** with an `agg` tag in the collector type:
+
+```go
+type FooStats struct {
+    Current int     `json:"current" agg:"mean"`
+    RatePS  float64 `json:"rate_ps" agg:"mean"`
+    Total   uint64  `json:"total" agg:"last"`
+}
+```
+
+- `mean` computes a duration-weighted mean (`int`/`uint` results are rounded).
+- `mean_nonnegative` additionally excludes negative unavailable sentinels such as `-1`.
+- `last` retains the newest value and is appropriate for monotonic counters, identifiers, and
+  fixed capacity/configuration values.
+- `identity` marks the stable key for an element in a dynamic slice.
+- `identity_fallback` is used only when the primary identity is empty (for example, a container
+  ID when its human-readable name is unavailable).
+
+Min/Max extrema are generated for every numeric metric regardless of whether its Data policy is
+`mean` or `last`. Dynamic collections are unioned and matched by identity; never match by slice
+position. `TestAggregationPoliciesCoverSampleSchema` fails if a numeric field lacks a policy or
+a dynamic collection lacks an identity, so no manual deep-copy or per-application averaging
+branch is needed.
 
 ## 10. Python decoder — `addons/inspect_tier.py`
 
-- Add `FLAG_HAS_FOO = 1 << 10`.
+- Add `FLAG_HAS_FOO = 1 << 12`.
 - Extract `has_foo` from flags, pass to `_decode_variable()`.
-- Add the Foo decode block at the same position (after Apache2, before Custom), gated `if
-  has_foo:`. **This must mirror the Go codec exactly** or it will mis-decode.
+- Add the Foo decode block at the same trailing position (after PSU), gated `if has_foo:`.
+  **This must mirror the Go codec exactly** or it will mis-decode.
 
 ## 11. Frontend charts — `internal/web/static/js/app/charts-data.js`
 
@@ -190,11 +212,18 @@ Add the config section with comments explaining prerequisites (and update the us
 | 1 | `flagHasMax` | Max block present |
 | 2 | `flagHasData` | Data block present |
 | 3 | `flagHasApps` | Application section present |
+| 4 | `flagReducerV2` | Exhaustive reducer provenance |
 | 8 | `flagHasApache2` | Apache2 block present |
 | 9 | `flagHasMysql` | MySQL block present |
-| 10 | — | **Next available** |
-| 4–7, 11–15 | — | Available |
+| 10 | `flagHasPSU` | Power-supply section present |
+| 11 | `flagHasMeanStats` | Trailing contributing statistics |
+| 12 | — | **Next available** |
+| 5–7, 12–15 | — | Available |
 
-Use bit 10 next. **Never reuse a bit.**
+Use bit 12 next. **Never reuse a bit.**
 
 Next: [Packaging & Release](15-packaging.md).
+
+Contributing mean statistics use preamble bit 11 and a record-level trailer after all
+Data/Min/Max blocks (`aggregation_codec.go`). Preserve that trailer when extending metrics;
+new metric sections use bit 12 next and still append within each variable block.

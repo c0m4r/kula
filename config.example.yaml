@@ -144,8 +144,11 @@ web:
   # When false, gaps between measurements are displayed as empty space
   join_metrics: false
 
-  # Default aggregation for historical data: avg, min, or max (default: max)
-  default_aggregation: max
+  # Preferred aggregation for historical data: avg, min, or max (default: avg).
+  # The dashboard applies it only when /api/history advertises that operation as
+  # valid. New/recomputed buckets carry exhaustive reducer provenance and support
+  # all three; unbucketed raw points and legacy rollups advertise data only.
+  default_aggregation: avg
  
   # Default look of the web dashboard.
   # These are defaults only: each visitor can override them for their own

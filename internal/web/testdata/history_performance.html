@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Kula history renderer benchmark</title>
+    <script src="../static/js/chartjs/chart.umd.min.js"></script>
+    <script src="../static/js/chartjs/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="../static/js/chartjs/chartjs-plugin-zoom.min.js"></script>
+    <style>
+        body { margin: 0; background: #111827; color: #e5e7eb; font: 12px sans-serif; }
+        #results { position: fixed; inset: 0 0 auto 0; z-index: 10; margin: 0; padding: 8px; background: #111827; }
+        #grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding-top: 72px; }
+        .chart-card { height: 240px; min-width: 0; }
+        .chart-header { height: 20px; }
+        .chart-header h3 { margin: 0; font-size: 12px; }
+        .chart-body { height: 220px; }
+        .hidden { display: none; }
+        .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+    </style>
+</head>
+<body>
+    <pre id="results">running</pre>
+    <main id="grid"></main>
+    <div class="hidden">
+        <button id="btn-settings" type="button">Settings</button>
+        <div id="settings-menu"><input id="set-chart-tooltip-details" type="checkbox"></div>
+    </div>
+    <script type="module">
+        import { createTimeSeriesChart } from '../static/js/app/charts-init.js';
+        import { chartUpdates, historyPointBudget, setSharedCrosshair } from '../static/js/app/chart-controller.js';
+        import { state } from '../static/js/app/state.js';
+        import { initSettingsMenu } from '../static/js/app/settings.js';
+
+        const grid = document.getElementById('grid');
+        const charts = [];
+        const start = Date.UTC(2026, 8, 3, 8, 0, 0);
+        const series = Array.from({ length: 1200 }, (_, i) => ({ x: start + i * 1000, y: 50 + Math.sin(i / 20) * 25 }));
+        const dataset = (label, data, borderColor) => {
+            return {
+                label,
+                data,
+                borderColor,
+                $kulaEnvelope: data.flatMap(point => [Math.max(0, point.y - 5), point.y + 5]),
+            };
+        };
+
+        try {
+            for (let i = 0; i < 46; i++) {
+                const card = document.createElement('section');
+                card.className = 'chart-card';
+                const header = document.createElement('div');
+                header.className = 'chart-header';
+                const title = document.createElement('h3');
+                title.textContent = `Benchmark chart ${i + 1}`;
+                header.appendChild(title);
+                const body = document.createElement('div');
+                body.className = 'chart-body';
+                const canvas = document.createElement('canvas');
+                canvas.id = `benchmark-chart-${i}`;
+                body.appendChild(canvas);
+                card.append(header, body);
+                grid.appendChild(card);
+                charts.push(createTimeSeriesChart(canvas.id, [
+                    dataset('A', series.slice(), '#3b82f6'),
+                    dataset('B', series.map(point => ({ x: point.x, y: point.y * 0.7 })), '#10b981'),
+                    dataset('C', series.map(point => ({ x: point.x, y: point.y * 0.4 })), '#f97316'),
+                ]));
+            }
+            state.timeZone = 'utc';
+            state.historyPointContexts.set(start, {
+                bucketStart: start - 60000,
+                bucketEnd: start,
+                sampleCount: 60,
+                coverage: 0.95,
+                source: {
+                    tier: 1,
+                    resolution: '1m',
+                    sourceResolution: '1m',
+                    complete: false,
+                    validAggregations: ['data', 'min', 'max'],
+                },
+            });
+            const tooltipCallbacks = charts[0].options.plugins.tooltip.callbacks;
+            const tooltipItems = [{ parsed: { x: start }, raw: series[0] }];
+            const tooltipTitle = tooltipCallbacks.title(tooltipItems);
+            if (tooltipCallbacks.footer(tooltipItems).length) throw new Error('Detailed tooltips must be opt-in');
+            initSettingsMenu();
+            const details = document.getElementById('set-chart-tooltip-details');
+            details.checked = true;
+            details.dispatchEvent(new Event('change'));
+            const tooltipFooter = tooltipCallbacks.footer(tooltipItems);
+            details.checked = false;
+            details.dispatchEvent(new Event('change'));
+            const timezoneTooltip = tooltipTitle.includes('2026') && tooltipTitle.includes('UTC') &&
+                tooltipFooter.some(line => line.includes('95.0%')) &&
+                tooltipFooter.some(line => line.includes('60'));
+            const directStart = performance.now();
+            charts.forEach(chart => chart.update('none'));
+            const directMs = performance.now() - directStart;
+
+            const counts = new Map();
+            charts.forEach(chart => {
+                const update = chart.update.bind(chart);
+                counts.set(chart, 0);
+                chart.update = mode => {
+                    counts.set(chart, counts.get(chart) + 1);
+                    return update(mode);
+                };
+            });
+
+            // Measure the controller's synchronous flush so headless DOM dumps
+            // do not depend on animation-frame scheduling or virtual time.
+            const culledStart = performance.now();
+            chartUpdates.markAll();
+            chartUpdates.flush();
+            const culledMs = performance.now() - culledStart;
+            const updatedCharts = Array.from(counts.values()).filter(count => count > 0).length;
+            const heapBytes = performance.memory?.usedJSHeapSize ?? null;
+            const cardRects = charts.map(chart => chart.canvas.closest('.chart-card').getBoundingClientRect());
+
+            const renderCounts = new Map();
+            charts.forEach(chart => {
+                const render = chart.render.bind(chart);
+                renderCounts.set(chart, 0);
+                chart.render = () => {
+                    renderCounts.set(chart, renderCounts.get(chart) + 1);
+                    return render();
+                };
+            });
+            const crosshairStart = performance.now();
+            setSharedCrosshair(start + 600 * 1000);
+            chartUpdates.flush();
+            const crosshairMs = performance.now() - crosshairStart;
+            const renderedCharts = Array.from(renderCounts.values()).filter(count => count > 0).length;
+
+            // The first canvas must also expose keyboard zoom without Hammer.js.
+            let keyboardGesture = false;
+            document.addEventListener('kula-zoom-sync', () => { keyboardGesture = true; }, { once: true });
+            charts[0].canvas.dispatchEvent(new KeyboardEvent('keydown', { key: '+', bubbles: true }));
+
+            let keyboardPoint = null;
+            document.addEventListener('kula-crosshair', event => {
+                if (event.detail?.keyboard) keyboardPoint = event.detail;
+            }, { once: true });
+            charts[0].canvas.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            const defaultDataControlsOff = !document.querySelector('.btn-chart-data') && !document.querySelector('.chart-data-panel');
+            charts[0].$kulaAccessibility.options.getDataControlsEnabled = () => true;
+            charts[0].update('none');
+            const optInIsLazy = !document.querySelector('.chart-data-panel');
+            const firstCard = charts[0].canvas.closest('.chart-card');
+            firstCard.querySelector('.btn-chart-data')?.click();
+            const accessibleAlternatives = charts[0].canvas.getAttribute('role') === 'img' &&
+                charts[0].canvas.tabIndex === 0 &&
+                Boolean(charts[0].canvas.getAttribute('aria-labelledby')) &&
+                Boolean(charts[0].canvas.getAttribute('aria-describedby')) &&
+                keyboardPoint?.action === 'pin' && Number.isFinite(keyboardPoint.timestamp) &&
+                firstCard.querySelectorAll('.chart-data-table tbody tr').length === 50 &&
+                Boolean(firstCard.querySelector('.chart-data-download'));
+
+            const result = {
+                status: keyboardGesture && accessibleAlternatives && timezoneTooltip && defaultDataControlsOff && optInIsLazy && window.innerHeight > 0 && updatedCharts > 0 &&
+                    updatedCharts < charts.length && renderedCharts === updatedCharts
+                    ? 'pass'
+                    : 'fail',
+                charts: charts.length,
+                points: charts.length * 3 * series.length,
+                envelope_series: charts.length * 3,
+                plot_point_budget: historyPointBudget(),
+                direct_update_ms: Number(directMs.toFixed(2)),
+                culled_frame_ms: Number(culledMs.toFixed(2)),
+                charts_updated_in_viewport: updatedCharts,
+                crosshair_render_ms: Number(crosshairMs.toFixed(2)),
+                charts_rendered_for_crosshair: renderedCharts,
+                first_card_top: Math.round(cardRects[0].top),
+                last_card_top: Math.round(cardRects.at(-1).top),
+                viewport_height: window.innerHeight,
+                heap_bytes: heapBytes,
+                keyboard_gesture: keyboardGesture,
+                timezone_tooltip: timezoneTooltip,
+                accessible_alternatives: accessibleAlternatives,
+                data_controls_off_by_default: defaultDataControlsOff,
+                data_panel_lazy: optInIsLazy,
+            };
+            document.getElementById('results').textContent = JSON.stringify(result);
+            document.body.dataset.status = result.status;
+            chartUpdates.clear();
+        } catch (error) {
+            document.getElementById('results').textContent = JSON.stringify({ status: 'fail', error: error.stack || String(error) });
+            document.body.dataset.status = 'fail';
+        }
+    </script>
+</body>
+</html>

@@ -3,12 +3,13 @@
    ============================================================ */
 'use strict';
 import { state, escapeHTML } from './state.js';
-import { formatBytesShort, formatMbps, formatPPS } from './utils.js';
+import { formatBytesShort, formatClockTimestamp, formatMbps, formatPPS } from './format.js';
+import { i18n } from './i18n.js';
 
 export function updateHeader(s) {
     const el = (id) => document.getElementById(id);
     if (s.sys?.uptime_human) el('uptime').textContent = '⏱ ' + s.sys.uptime_human;
-    el('clock').textContent = new Date(s.ts).toLocaleTimeString();
+    el('clock').textContent = formatClockTimestamp(s.ts, state.timeZone, i18n.currentLang);
 
     // System info footer — with colored clock sync
     const sysInfo = [];

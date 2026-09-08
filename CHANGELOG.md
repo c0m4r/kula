@@ -7,20 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
-## [Unreleased]
+## [0.20.0] - TBA
+
+### Added
+
+- Live, Back, Forward and Zoom out navigation with shareable historical ranges
+- Drag-selection, Ctrl+wheel and touch pan/pinch, plus keyboard navigation and a shared
+  crosshair with timestamp pinning
+- Min–Max bands and detailed history tooltips with exact timestamps and coverage
+- Local/UTC display and optional Data/CSV controls in Customization; chart keyboard and
+  accessibility controls remain available without enabling data export
+
+### Changed
+
+- Smoother chart rendering and lower-memory history queries, including full 30-day views
+  and smaller Focus Mode responses
+- Custom and zoomed ranges, including device selections, stay frozen while live status updates;
+  long live windows retain the selected history during refreshes and failures
+- Zoom-in stops at 12 data points, excluding gaps, with a sampling-aware minimum duration
+- Fresh installs default to Avg with straight, unfilled lines and one principal Min–Max band
+- Grid/list changes preserve chart data and legend selections
 
 ### Fixed
 
-- History queries can choose an overlapping fine-grained tier that does not cover the full
-  requested range; responses now expose requested and actual coverage with an explicit
-  completeness flag
-- History downsampling can return more points than requested
-- WebSocket disconnect races the metric broadcast and panics the process
-- Container ID shorter than 12 bytes panics the collector goroutine
-- Login rate limiter allows targeted account lockout and global login denial
-- Sessions renew forever; no absolute lifetime
-- WebSocket read unexpected error on logout
-- Changing `storage.tiers[].max_size` silently does nothing to existing tiers
+- History aggregation, bucket boundaries and coverage across storage tiers, collection gaps
+  and missing metrics; older rollups remain approximate and untrusted Min/Max stay unavailable
+- History caching and point limits, including sub-second requests and concurrent updates
+- Historical points, extrema and sensor identities lost during zoom, redraws or live updates;
+  missing observations now retain line breaks and shaded gap indicators
+- Slow history responses overwriting newer ranges or active zoom gestures
+- Date-picker, Focus Mode, chart-label, localization and crosshair accessibility issues
+- Crashes on WebSocket disconnects, short container IDs and malformed history, plus spurious
+  WebSocket errors on logout
+- Increased `storage.tiers[].max_size` now takes effect without discarding history;
+  shrinking an existing tier still requires manual action
+
+### Security
+
+- Fixed login rate limiting that allowed targeted account lockout and global login denial
+- Added an absolute session lifetime to prevent indefinite renewal
 
 ## [0.19.0] - 2026-08-31
 

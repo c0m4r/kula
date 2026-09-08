@@ -50,7 +50,7 @@ Lightweight, self-contained Linux® server monitoring tool
 
 - **Go** — 100% of the backend. The entire binary (`cmd/kula/main.go`) is pure Go.
 - **JavaScript** — Frontend SPA dashboard (embedded in binary via `//go:embed`). ES6 modules:
-  - `main.js`, `auth.js`, `charts-data.js`, `gauges.js`, `ui-actions.js`, `alerts.js`, `state.js`, `ollama.js`, `game.js`, plus Chart.js library.
+  - `main.js`, `auth.js`, `charts-data.js`, `history-data.js`, `chart-interactions.js`, `settings.js`, `gauges.js`, `alerts.js`, `state.js`, `ollama.js`, `game.js`, plus Chart.js library.
 - **Bash** — Build/test/release automation (`addons/build.sh`, `addons/check.sh`, `scripts/nvidia-exporter.sh`, `addons/install.sh`)
 - **Python** — Helper scripts (`addons/inspect_tier.py`, `addons/go_modules_updates.py`, `scripts/custom_example.py`)
 - **HTML/CSS** — Embedded static assets (`index.html`, `game.html`, `style.css`)
@@ -104,6 +104,8 @@ Lightweight, self-contained Linux® server monitoring tool
 | File | Purpose |
 |---|---|
 | `store.go` (~868 lines) | Tiered storage manager — writes raw samples, triggers aggregation to higher tiers, QueryRange/QueryLatest with in-memory cache, query cache, downsampling |
+| `aggregation.go` | Exhaustive schema-policy reducer, duration-weighted cascading, dynamic identity union |
+| `query_planner.go` | Fixed-budget source selection and stable epoch-aligned history buckets |
 | `tier.go` (~735 lines) | Ring-buffer file format: 64-byte header + variable-length records. Supports v1 (JSON) to v2 (binary) migration, wrapped segment handling, chronological ReadRange |
 | `codec.go` (~1103 lines) | High-performance binary codec: 218-byte fixed block (float32-encoded CPU/mem/swap/tcp/proc/self) + variable sections (ifaces, sensors, disks, filesystems, GPU, apps). Kind-tagged `0x02` records for format detection |
 
@@ -118,6 +120,7 @@ Lightweight, self-contained Linux® server monitoring tool
 | File | Purpose |
 |---|---|
 | `server.go` (~922 lines) | HTTP server with dual-stack IPv4/IPv6 listeners, middleware chain (security, gzip, logging), API routes, template rendering, CSP nonce injection, SRI hashes |
+| `history_sections.go` | Optional top-level metric filtering for history responses |
 | `auth.go` (~418 lines) | Argon2id password hashing, session management with SHA-256 token hashing, rate limiting (IP + username), CSRF protection with Origin/Referer validation and synchronizer tokens |
 | `websocket.go` (~188 lines) | WebSocket handler with Origin validation, pause/resume commands, per-IP/global connection limits, ping/pong keepalive |
 | `prometheus.go` (~353 lines) | `/metrics` endpoint in Prometheus text format with optional bearer token auth |
@@ -155,10 +158,11 @@ Each record has this structure:
 │          flagHasMax     = 1 << 1                         │
 │          flagHasData    = 1 << 2                         │
 │          flagHasApps    = 1 << 3   (gate: app section)   │
+│          flagReducerV2  = 1 << 4   (reducer provenance)  │
 │          flagHasApache2 = 1 << 8   (gate: Apache2 block) │
 │          flagHasMysql   = 1 << 9   (gate: MySQL block)   │
 │          flagHasPSU     = 1 << 10  (gate: PSU section)   │
-│          ... new flags: 1 << 11, 1 << 12, ...            │
+│          ... new metrics: 1 << 12, 1 << 13, ...            │
 ├──────────────────────────────────────────────────────────┤
 │  Fixed block (218 bytes) — CPU, memory, swap, TCP,       │
 │  process, self metrics. Always the same size.            │
@@ -308,9 +312,11 @@ const (
     flagHasMax     uint16 = 1 << 1
     flagHasData    uint16 = 1 << 2
     flagHasApps    uint16 = 1 << 3
+    flagReducerV2  uint16 = 1 << 4
     flagHasApache2 uint16 = 1 << 8
     flagHasMysql   uint16 = 1 << 9
-    flagHasFoo     uint16 = 1 << 10  // <-- NEW
+    flagHasPSU     uint16 = 1 << 10
+    flagHasFoo     uint16 = 1 << 12  // <-- NEW
 )
 ```
 
@@ -378,17 +384,19 @@ vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, 
 Update the `decodeVariable` signature to accept the new `hasFoo bool` parameter.
 Update all call sites (tests included).
 
-#### 9. Store aggregation (`internal/storage/store.go`)
+#### 9. Store aggregation (`internal/storage/aggregation.go`)
 
-- **Deep copy** on init: add `if last.Apps.Foo != nil { ... }` alongside nginx/apache2.
-- **Rate averaging**: average per-second rate fields across aggregated samples (same
-  pattern as nginx at `store.go:680`).
+- Add an `agg` tag to every numeric field: `mean`, `mean_nonnegative`, or `last`.
+- Mark a dynamic element's stable key with `identity`; use `identity_fallback` only when a
+  primary identity can be empty (for example container name → ID).
+- Do not add manual deep-copy or per-application reducer branches. The schema reducer handles
+  pointers, maps, and identity-unioned slices, and the exhaustive policy test rejects omissions.
 
 #### 10. Python decoder (`addons/inspect_tier.py`)
 
-- Add the flag constant: `FLAG_HAS_FOO = 1 << 10`
+- Add the flag constant: `FLAG_HAS_FOO = 1 << 12`
 - Extract `has_foo` from flags and pass to `_decode_variable()`.
-- Add the Foo decoding block at the same position (after Apache2, before Custom).
+- Add the Foo decoding block at the same trailing position as the Go encoder (after PSU).
 - Gate with `if has_foo:`.
 
 #### 11. Frontend charts (`internal/web/static/js/app/charts-data.js`)
@@ -425,14 +433,15 @@ All four checks must pass: govulncheck, go vet, go test -race, golangci-lint.
 | 1   | `flagHasMax`     | Max block present |
 | 2   | `flagHasData`    | Data block present |
 | 3   | `flagHasApps`    | Application metrics section present |
+| 4   | `flagReducerV2`  | Exhaustive reducer provenance |
 | 8   | `flagHasApache2` | Apache2 block present |
 | 9   | `flagHasMysql`   | MySQL block present |
 | 10  | `flagHasPSU`     | Power-supply (battery/UPS) section present |
-| 11  | —                | Next available |
-| 12  | —                | Available |
+| 11  | `flagHasMeanStats` | Trailing contributing statistics |
+| 12  | —                | Next available |
 | ... | —                | Available up to bit 15 |
 
-Use bit 11 for the next metric type. Bits 4–7 and 11–15 are free. Do not reuse bits.
+Use bit 12 for the next metric type. Bits 5–7 and 12–15 are free. Do not reuse bits.
 
 ---
 
@@ -549,3 +558,7 @@ All security-critical code has dedicated tests:
 - `prometheus_test.go` — bearer token auth, empty store, label escaping
 - `sandbox_test.go` — write outside storage, execute outside paths, external network dial (all expected to fail)
 - `config_test.go` — YAML parsing, env overrides, tier validation
+
+Contributing mean statistics use preamble bit 11 and a record-level trailer after all
+Data/Min/Max blocks (`aggregation_codec.go`). Preserve that trailer when extending metrics;
+new metric sections use bit 12 next and still append within each variable block.

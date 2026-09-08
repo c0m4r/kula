@@ -6,11 +6,12 @@
 'use strict';
 import { state, colors, getChartMaxBound } from './state.js';
 import { createTimeSeriesChart } from './charts-init.js';
-import { formatBytesShort, formatPPS } from './utils.js';
+import { formatBytesShort, formatPPS } from './format.js';
 import { i18n } from './i18n.js';
+import { queueChartUpdate } from './chart-controller.js';
+import { appendEnvelopeGap, appendEnvelopePoint, clearEnvelopeData, ensureSensorDatasets, hasEnvelopeData } from './chart-envelope.js';
 
 let _redrawFromBuffer = null;
-let _resetZoom = null;
 let _rebuilding = false;
 
 // Cards that receive a split toggle button (string or array of card IDs)
@@ -51,9 +52,8 @@ const SPLIT_LS_KEY = {
 // Cached option lists to detect changes
 const splitOptionsCache = {};
 
-export function initSplitModule(redrawFromBufferFn, resetZoomFn) {
+export function initSplitModule(redrawFromBufferFn) {
     _redrawFromBuffer = redrawFromBufferFn;
-    _resetZoom = resetZoomFn || null;
     _addSplitButtons();
 }
 
@@ -99,22 +99,35 @@ export function updateSplitSelectors(s) {
 }
 
 // Called from addSampleToCharts in charts-data.js for every data point
-export function addSampleToSplitCharts(s, ts) {
-    const point = v => ({ x: ts, y: v });
+export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = false) {
+    const touchedDatasets = new Set();
+    const push = (dataset, value, minValue, maxValue, extra = null) => {
+        if (dataset) touchedDatasets.add(dataset);
+        appendEnvelopePoint(
+            dataset,
+            ts,
+            value,
+            hasEnvelope ? minValue : null,
+            hasEnvelope ? maxValue : null,
+            extra,
+        );
+    };
 
     // Network
     if (state.splitNet && s.net?.ifaces && state.splitCharts.network) {
         for (const iface of s.net.ifaces) {
             if (iface.name === 'lo') continue;
+            const minIface = _memberBy(minimum?.net?.ifaces, 'name', iface.name);
+            const maxIface = _memberBy(maximum?.net?.ifaces, 'name', iface.name);
             const netChart = state.splitCharts.network[`net_${iface.name}`];
             const ppsChart = state.splitCharts.network[`pps_${iface.name}`];
             if (netChart?.data?.datasets) {
-                netChart.data.datasets[0].data.push(point(iface.rx_mbps || 0));
-                netChart.data.datasets[1].data.push(point(iface.tx_mbps || 0));
+                push(netChart.data.datasets[0], iface.rx_mbps || 0, minIface?.rx_mbps, maxIface?.rx_mbps);
+                push(netChart.data.datasets[1], iface.tx_mbps || 0, minIface?.tx_mbps, maxIface?.tx_mbps);
             }
             if (ppsChart?.data?.datasets) {
-                ppsChart.data.datasets[0].data.push(point(iface.rx_pps || 0));
-                ppsChart.data.datasets[1].data.push(point(iface.tx_pps || 0));
+                push(ppsChart.data.datasets[0], iface.rx_pps || 0, minIface?.rx_pps, maxIface?.rx_pps);
+                push(ppsChart.data.datasets[1], iface.tx_pps || 0, minIface?.tx_pps, maxIface?.tx_pps);
             }
         }
     }
@@ -122,12 +135,14 @@ export function addSampleToSplitCharts(s, ts) {
     // Disk I/O
     if (state.splitDiskIo && s.disk?.devices && state.splitCharts.diskio) {
         for (const dev of s.disk.devices) {
+            const minDev = _memberBy(minimum?.disk?.devices, 'name', dev.name);
+            const maxDev = _memberBy(maximum?.disk?.devices, 'name', dev.name);
             const chart = state.splitCharts.diskio[`diskio_${dev.name}`];
             if (chart?.data?.datasets) {
-                chart.data.datasets[0].data.push(point(dev.read_bps || 0));
-                chart.data.datasets[1].data.push(point(dev.write_bps || 0));
-                chart.data.datasets[2].data.push(point(dev.reads_ps || 0));
-                chart.data.datasets[3].data.push(point(dev.writes_ps || 0));
+                push(chart.data.datasets[0], dev.read_bps || 0, minDev?.read_bps, maxDev?.read_bps);
+                push(chart.data.datasets[1], dev.write_bps || 0, minDev?.write_bps, maxDev?.write_bps);
+                push(chart.data.datasets[2], dev.reads_ps || 0, minDev?.reads_ps, maxDev?.reads_ps);
+                push(chart.data.datasets[3], dev.writes_ps || 0, minDev?.writes_ps, maxDev?.writes_ps);
             }
         }
     }
@@ -135,64 +150,76 @@ export function addSampleToSplitCharts(s, ts) {
     // Disk Space
     if (state.splitDiskSpace && s.disk?.filesystems && state.splitCharts.diskspace) {
         for (const fs of s.disk.filesystems) {
+            const minFS = _memberBy(minimum?.disk?.filesystems, 'mount', fs.mount);
+            const maxFS = _memberBy(maximum?.disk?.filesystems, 'mount', fs.mount);
             const chart = state.splitCharts.diskspace[`diskspace_${fs.mount}`];
             if (chart?.data?.datasets) {
-                chart.data.datasets[0].data.push({ x: ts, y: fs.used_pct || 0, used: fs.used || 0, total: fs.total || 0 });
+                push(
+                    chart.data.datasets[0],
+                    fs.used_pct || 0,
+                    minFS?.used_pct,
+                    maxFS?.used_pct,
+                    { used: fs.used || 0, total: fs.total || 0 },
+                );
             }
         }
     }
 
     // Disk Temp
-    if (state.splitDiskTemp && s.disk?.devices && state.splitCharts.disktemp) {
+    if (state.splitDiskTemp && state.splitCharts.disktemp) {
         const thermalsTitle = document.getElementById('thermals-title');
         const thermalsGrid  = document.getElementById('thermals-grid');
-        for (const dev of s.disk.devices) {
-            const hasSensors = dev.sensors && dev.sensors.length > 0;
+        const pairs = [
+            [colors.red, colors.redAlpha],
+            [colors.orange, colors.orangeAlpha],
+            [colors.yellow, colors.yellowAlpha],
+            [colors.pink, colors.pinkAlpha],
+            [colors.purple, colors.purpleAlpha],
+            [colors.cyan, colors.cyanAlpha],
+        ];
+        for (const dev of s.disk?.devices || []) {
+            const chartKey = `disktemp_${dev.name}`;
+            const chart = state.splitCharts.disktemp[chartKey];
+            if (!chart) continue;
+            const minDev = _memberBy(minimum?.disk?.devices, 'name', dev.name);
+            const maxDev = _memberBy(maximum?.disk?.devices, 'name', dev.name);
+            const hasSensors = Array.isArray(dev.sensors) && dev.sensors.length > 0;
             const hasTemp    = dev.temp > 0;
-            if (!hasSensors && !hasTemp) continue;
 
             const card = document.getElementById(`card-split-disktemp-${_sanitize(dev.name)}`);
-            if (card) {
+            if ((hasSensors || hasTemp) && card) {
                 card.classList.remove('hidden');
                 thermalsTitle?.classList.remove('hidden');
                 thermalsGrid?.classList.remove('hidden');
             }
 
-            if (hasSensors) {
-                // Multi-sensor device — one dataset per sensor
-                const incomingNames = dev.sensors.map(sens => sens.name);
-                const chart = state.splitCharts.disktemp[`disktemp_${dev.name}`];
-                if (chart) {
-                    if (incomingNames.join(',') !== (chart._sensorNames || []).join(',')) {
-                        chart._sensorNames = incomingNames;
-                        const pairs = [
-                            [colors.red, colors.redAlpha],
-                            [colors.orange, colors.orangeAlpha],
-                            [colors.yellow, colors.yellowAlpha],
-                            [colors.pink, colors.pinkAlpha],
-                            [colors.purple, colors.purpleAlpha],
-                            [colors.cyan, colors.cyanAlpha],
-                        ];
-                        chart.data.datasets = incomingNames.map((name, i) => ({
-                            label: name,
-                            borderColor: pairs[i % pairs.length][0],
-                            backgroundColor: pairs[i % pairs.length][1],
-                            fill: i === 0,
-                            data: [],
-                            pointHitRadius: 5,
-                        }));
-                    }
-                    dev.sensors.forEach((sens, i) => {
-                        if (i < chart.data.datasets.length) {
-                            chart.data.datasets[i].data.push(point(sens.value));
-                        }
-                    });
-                }
-            } else {
-                const chart = state.splitCharts.disktemp[`disktemp_${dev.name}`];
-                if (chart?.data?.datasets?.[0]) {
-                    chart.data.datasets[0].data.push(point(dev.temp));
-                }
+            const readings = hasSensors
+                ? dev.sensors.map(sensor => ({
+                    name: sensor.name,
+                    value: sensor.value,
+                    minimum: _memberBy(minDev?.sensors, 'name', sensor.name)?.value,
+                    maximum: _memberBy(maxDev?.sensors, 'name', sensor.name)?.value,
+                }))
+                : hasTemp ? [{
+                    name: 'Temperature',
+                    value: dev.temp,
+                    minimum: minDev?.temp,
+                    maximum: maxDev?.temp,
+                }] : [];
+            const hasHistory = chart.data.datasets.some(hasEnvelopeData);
+            if (readings.length > 0 || hasHistory) {
+                const byName = new Map(readings.map(reading => [reading.name, reading]));
+                const datasets = ensureSensorDatasets(
+                    chart,
+                    readings.map(reading => reading.name),
+                    pairs,
+                    ts,
+                );
+                chart._sensorNames = datasets.map(dataset => dataset.$kulaSensorName || dataset.label);
+                datasets.forEach(dataset => {
+                    const reading = byName.get(dataset.$kulaSensorName || dataset.label);
+                    push(dataset, reading?.value ?? null, reading?.minimum, reading?.maximum);
+                });
             }
         }
     }
@@ -202,6 +229,8 @@ export function addSampleToSplitCharts(s, ts) {
         const thermalsTitle = document.getElementById('thermals-title');
         const thermalsGrid  = document.getElementById('thermals-grid');
         for (const g of s.gpu) {
+            const minGPU = _gpuMember(minimum?.gpu, g);
+            const maxGPU = _gpuMember(maximum?.gpu, g);
             const hasAny = g.load_pct > 0 || g.power_w > 0 || g.vram_total > 0 || g.temp > 0;
             if (!hasAny) continue;
 
@@ -213,14 +242,14 @@ export function addSampleToSplitCharts(s, ts) {
             const loadChart = state.splitCharts.gpu[`gpuload_${g.name}`];
             if (loadChart?.data?.datasets && (g.load_pct > 0 || g.power_w > 0)) {
                 loadCard?.classList.remove('hidden');
-                loadChart.data.datasets[0].data.push(point(g.load_pct || 0));
-                loadChart.data.datasets[1].data.push(point(g.power_w || 0));
+                push(loadChart.data.datasets[0], g.load_pct || 0, minGPU?.load_pct, maxGPU?.load_pct);
+                push(loadChart.data.datasets[1], g.power_w || 0, minGPU?.power_w, maxGPU?.power_w);
             }
 
             const vramChart = state.splitCharts.gpu[`vram_${g.name}`];
             if (vramChart?.data?.datasets && g.vram_total > 0 && g.vram_used > 0) {
                 vramCard?.classList.remove('hidden');
-                vramChart.data.datasets[0].data.push(point(g.vram_used || 0));
+                push(vramChart.data.datasets[0], g.vram_used || 0, minGPU?.vram_used, maxGPU?.vram_used);
                 vramChart.options.scales.y.max = g.vram_total > 0 ? g.vram_total : undefined;
             }
 
@@ -229,10 +258,28 @@ export function addSampleToSplitCharts(s, ts) {
                 tempCard?.classList.remove('hidden');
                 thermalsTitle?.classList.remove('hidden');
                 thermalsGrid?.classList.remove('hidden');
-                tempChart.data.datasets[0].data.push(point(g.temp));
+                push(tempChart.data.datasets[0], g.temp, minGPU?.temp, maxGPU?.temp);
             }
         }
     }
+
+    const activeSplitCharts = [
+        [state.splitNet, state.splitCharts.network],
+        [state.splitDiskIo, state.splitCharts.diskio],
+        [state.splitDiskSpace, state.splitCharts.diskspace],
+        [state.splitDiskTemp, state.splitCharts.disktemp],
+        [state.splitGpu, state.splitCharts.gpu],
+    ];
+    activeSplitCharts.forEach(([enabled, charts]) => {
+        if (!enabled || !charts) return;
+        Object.values(charts).forEach(chart => {
+            chart?.data?.datasets?.forEach(dataset => {
+                if (!touchedDatasets.has(dataset) && dataset.data?.length > 0) {
+                    appendEnvelopeGap(dataset, ts);
+                }
+            });
+        });
+    });
 }
 
 // ---- Private helpers ----
@@ -248,6 +295,16 @@ function setSplitState(type, enabled) {
 
 function _sanitize(str) {
     return String(str).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function _memberBy(items, field, value) {
+    return Array.isArray(items) ? items.find(item => item?.[field] === value) : undefined;
+}
+
+function _gpuMember(items, gpu) {
+    if (!Array.isArray(items) || !gpu) return undefined;
+    return items.find(item => item?.index === gpu.index) ||
+        items.find(item => item?.name === gpu.name);
 }
 
 function _escapeHtml(str) {
@@ -313,8 +370,8 @@ function _clearDataForOptions(type, opts) {
         for (const key of getKeys(opt)) {
             const chart = charts[key];
             if (chart?.data?.datasets) {
-                chart.data.datasets.forEach(ds => { ds.data = []; });
-                chart.update('none');
+                chart.data.datasets.forEach(clearEnvelopeData);
+                queueChartUpdate(chart);
             }
         }
     }
@@ -468,12 +525,6 @@ function _makeSplitCard(cardId, title, type, graphId = null) {
         state.pausedHover = false;
         document.dispatchEvent(new Event('kula-sync-pause'));
     });
-
-    // Double-click on canvas to reset zoom
-    const canvas = card.querySelector('canvas');
-    if (canvas && _resetZoom) {
-        canvas.addEventListener('dblclick', _resetZoom);
-    }
 
     return card;
 }
@@ -735,7 +786,7 @@ function _buildSplitChartsForType(type, options) {
             const ch = charts[`diskio_${dev}`];
             if (ch) {
                 ch.options.scales.y1 = { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { callback: v => v.toFixed(0) + ' IO/s' } };
-                ch.update('none');
+                queueChartUpdate(ch);
                 card.classList.remove('hidden');
             }
         }
@@ -801,7 +852,7 @@ function _buildSplitChartsForType(type, options) {
             const loadCh = charts[`gpuload_${gpu}`];
             if (loadCh) {
                 loadCh.options.scales.y1 = { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { callback: v => v.toFixed(1) + ' W' } };
-                loadCh.update('none');
+                queueChartUpdate(loadCh);
             }
 
             // VRAM card (in main grid)

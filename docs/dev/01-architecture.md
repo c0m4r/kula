@@ -74,8 +74,12 @@ the binary via `//go:embed`, so there are no runtime assets to ship.
 - **Positional binary codec.** Samples are encoded into a compact, keyless binary record
   (float32 fields, fixed offsets) for density and speed. New metric types are appended and
   gated by preamble flag bits so old records stay decodable. See [Codec](06-storage-codec.md).
-- **Tiered downsampling.** Raw 1-second data ages into 1-minute and 5-minute Avg/Min/Max
-  aggregates, each in its own fixed-size ring buffer file. See [Storage Engine](05-storage-engine.md).
+- **Tiered downsampling.** Raw 1-second data ages into 1-minute and 5-minute rollups, each in
+  its own fixed-size ring buffer file. See [Storage Engine](05-storage-engine.md).
+- **Stable history planning.** Source quality uses a fixed read budget independent of display
+  density; output buckets use epoch-aligned nice steps and a strict point cap.
+- **Kula-owned chart scheduling.** Chart.js instances sit behind one controller that batches
+  updates, culls off-screen work, and derives history density from actual plot width.
 - **Security in depth.** Argon2id auth, CSRF/CSP/HSTS, SRI hashes, WebSocket origin
   validation, a hardened systemd unit, *and* a Landlock sandbox enforced in-process. See
   [Security Model](08-security.md).

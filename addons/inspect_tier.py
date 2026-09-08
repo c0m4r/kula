@@ -10,6 +10,7 @@ import sys
 import os
 import datetime
 import json
+import math
 from typing import Optional, Tuple, BinaryIO, Dict, Any, List
 
 MAGIC = b"KULA"
@@ -25,6 +26,8 @@ FLAG_HAS_MIN = 1 << 0
 FLAG_HAS_MAX = 1 << 1
 FLAG_HAS_DATA = 1 << 2
 FLAG_HAS_APPS = 1 << 3
+FLAG_REDUCER_V2 = 1 << 4
+FLAG_HAS_MEAN_STATS = 1 << 11
 FLAG_HAS_APACHE2 = 1 << 8
 FLAG_HAS_MYSQL = 1 << 9
 FLAG_HAS_PSU = 1 << 10
@@ -824,6 +827,8 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
             "has_min": bool(flags & FLAG_HAS_MIN),
             "has_max": bool(flags & FLAG_HAS_MAX),
             "has_apps": bool(flags & FLAG_HAS_APPS),
+            "reducer_v2": bool(flags & FLAG_REDUCER_V2),
+            "has_mean_stats": bool(flags & FLAG_HAS_MEAN_STATS),
             "has_apache2": bool(flags & FLAG_HAS_APACHE2),
             "has_mysql": bool(flags & FLAG_HAS_MYSQL),
             "has_psu": bool(flags & FLAG_HAS_PSU),
@@ -846,6 +851,32 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
             )
             result[label] = block
 
+    if flags & FLAG_HAS_MEAN_STATS:
+        if len(payload) - off < 6:
+            raise ValueError("truncated mean statistics header")
+        version, complete, count = struct.unpack_from("<BBI", payload, off)
+        off += 6
+        if version != 1 or complete > 1 or count > (len(payload) - off) // 19:
+            raise ValueError("invalid mean statistics header")
+        stats = {}
+        for _ in range(count):
+            if len(payload) - off < 2:
+                raise ValueError("truncated mean statistic path")
+            size = struct.unpack_from("<H", payload, off)[0]
+            off += 2
+            if size == 0 or len(payload) - off < size + 16:
+                raise ValueError("truncated mean statistic")
+            path = payload[off:off + size].decode("utf-8")
+            off += size
+            total, weight = struct.unpack_from("<dd", payload, off)
+            off += 16
+            if path in stats or not math.isfinite(total) or not math.isfinite(weight) or weight < 0 or (weight == 0 and total != 0):
+                raise ValueError("invalid mean statistic")
+            stats[path] = {"sum": total, "weight": weight}
+        if off != len(payload):
+            raise ValueError("trailing mean statistics bytes")
+        result["mean_weights_complete"] = bool(complete)
+        result["mean_stats"] = stats
     return result
 
 

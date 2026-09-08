@@ -3,6 +3,7 @@ package storage
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -58,6 +59,10 @@ type Tier struct {
 	// boundary, so it stays correct even when record sizes vary across a wrap.
 	oldestOff int64
 	codecVer  uint64 // 1 = legacy JSON, 2 = binary
+	// In-memory ring pass and attempted write extent let batched readers
+	// detect overwritten snapshot bytes while releasing the lock to reduce.
+	writeCycle int64
+	writeEnd   int64
 }
 
 func OpenTier(path string, maxSize int64) (*Tier, error) {
@@ -350,7 +355,10 @@ func (t *Tier) Write(s *AggregatedSample) error {
 			t.wrapped = true
 			t.oldestOff = 0
 		}
+		t.writeCycle++
+		t.writeEnd = 0
 	}
+	t.writeEnd = t.writeOff + int64(recordLen)
 
 	// While wrapped, the record about to be written at [writeOff,
 	// writeOff+recordLen) may overlap one or more surviving old records.
@@ -426,8 +434,17 @@ func (t *Tier) Write(s *AggregatedSample) error {
 	return t.writeHeader()
 }
 
-// ReadRange returns all samples within [from, to].
+// errHistorySnapshotExpired prevents combining old and overwritten ring bytes
+// if a writer overtakes a reader between batches.
+var errHistorySnapshotExpired = errors.New("history retention changed during query; retry the request")
+
+// ReadRange returns all samples within [from, to]. History queries use the
+// batched scanner to avoid retaining every decoded source record at once.
 func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
+	return t.scanRange(from, to, 0, nil)
+}
+
+func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*AggregatedSample) error) ([]*AggregatedSample, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -436,6 +453,22 @@ func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
 	}
 
 	var samples []*AggregatedSample
+	flush := func() error {
+		if consume == nil {
+			return nil
+		}
+		// Always reacquire before the outer deferred unlock, even on panic.
+		err := func() error {
+			t.mu.RUnlock()
+			defer t.mu.RLock()
+			if len(samples) > 0 {
+				return consume(samples)
+			}
+			return nil
+		}()
+		samples = nil
+		return err
+	}
 
 	// Build list of (start, size) segments to scan in chronological order.
 	//
@@ -449,6 +482,7 @@ func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
 	// each segment always starts on a record boundary).
 	type segment struct {
 		start, size int64
+		cycle       int64
 		// resync is true for the active head segment ([0, writeOff)). There a
 		// zero/garbage record is a hole left by an unclean shutdown, so the scan
 		// must skip it and continue. It is false for the old wrapped segment,
@@ -458,8 +492,8 @@ func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
 	var segments []segment
 
 	if t.wrapped {
-		seg1 := segment{start: t.oldestOff, size: t.maxData - t.oldestOff}
-		seg2 := segment{start: 0, size: t.writeOff, resync: true}
+		seg1 := segment{start: t.oldestOff, size: t.maxData - t.oldestOff, cycle: t.writeCycle - 1}
+		seg2 := segment{start: 0, size: t.writeOff, resync: true, cycle: t.writeCycle}
 
 		if t.codecVer >= codecVersion2 && t.writeOff > 0 {
 			// Peek at the oldest record in segment 2 (data region offset 0).
@@ -474,9 +508,10 @@ func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
 			segments = []segment{seg1, seg2}
 		}
 	} else {
-		segments = []segment{{start: 0, size: t.writeOff, resync: true}}
+		segments = []segment{{start: 0, size: t.writeOff, resync: true, cycle: t.writeCycle}}
 	}
 
+	scanned := 0
 	for _, seg := range segments {
 		bytesRead := int64(0)
 
@@ -485,6 +520,19 @@ func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
 		br := bufio.NewReaderSize(sr, 1024*1024)
 
 		for bytesRead < seg.size {
+			if consume != nil && batchSize > 0 && scanned >= batchSize {
+				if err := flush(); err != nil {
+					return nil, err
+				}
+				scanned = 0
+			}
+			scanned++
+			// The source extent is fixed at scan start. Appends are harmless;
+			// overwrites of unread bytes invalidate this snapshot.
+			passes := t.writeCycle - seg.cycle
+			if passes > 1 || (passes == 1 && max(t.writeOff, t.writeEnd) > seg.start+bytesRead) {
+				return nil, errHistorySnapshotExpired
+			}
 			if seg.size-bytesRead < 4 {
 				break
 			}
@@ -513,6 +561,22 @@ func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
 			}
 
 			recordLen := int64(4 + dataLen)
+			// Binary timestamps fit in the peeked header. Skip out-of-range
+			// payloads without allocating or decoding their metric graphs.
+			if len(hdr) >= 13 && dataLen >= 9 && hdr[4] != '{' {
+				if ts, err := extractTimestamp(hdr[4:]); err == nil {
+					if ts.After(to) {
+						break
+					}
+					if ts.Before(from) {
+						if _, err := br.Discard(int(recordLen)); err != nil {
+							break
+						}
+						bytesRead += recordLen
+						continue
+					}
+				}
+			}
 			if _, err := br.Discard(4); err != nil {
 				break
 			}
@@ -559,6 +623,9 @@ func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
 		}
 	}
 
+	if err := flush(); err != nil {
+		return nil, err
+	}
 	return samples, nil
 }
 

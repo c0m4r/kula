@@ -66,6 +66,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Web.PrometheusMetrics.Enabled {
 		t.Error("Web.PrometheusMetrics.Enabled should be false by default")
 	}
+	if cfg.Web.DefaultAggregation != "avg" {
+		t.Errorf("Web.DefaultAggregation = %q, want avg", cfg.Web.DefaultAggregation)
+	}
 	if cfg.Web.Auth.Enabled {
 		t.Error("Web.Auth.Enabled should be false by default")
 	}

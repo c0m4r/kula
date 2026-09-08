@@ -1,15 +1,82 @@
 /* ============================================================
-   settings.js — Customization menu: appearance and
-   accessibility preferences, persisted per browser.
+   settings.js — Theme, appearance, and accessibility
+   preferences, persisted per browser.
 
-   Every setting has a server-side default (web.appearance.* /
+   Appearance and accessibility settings have a server-side default (web.appearance.* /
    web.accessibility.* in the config, delivered by /api/config).
    The browser only stores the settings the visitor actually
-   changed, so an operator editing the config still moves anyone
+   changed; chart controls are browser preferences. An operator editing the config moves anyone
    who never opened the menu.
    ============================================================ */
 'use strict';
-import { applyTheme } from './theme.js';
+import { state } from './state.js';
+import { forEachRegisteredChart, queueChartUpdate } from './chart-controller.js';
+
+function resolveTheme() {
+    if (state.theme === 'auto') {
+        return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    return state.theme;
+}
+
+// Chart.js paints on a canvas, so it can't use CSS custom properties directly.
+// Reading them here keeps the canvas synchronized with stylesheet overrides.
+function cssVar(name, fallback) {
+    const value = getComputedStyle(document.body).getPropertyValue(name).trim();
+    return value || fallback;
+}
+
+export function applyTheme() {
+    const isLight = resolveTheme() === 'light';
+    document.body.classList.toggle('light-mode', isLight);
+
+    const gridColor = cssVar('--chart-grid', isLight ? 'rgba(203, 213, 225, 0.4)' : 'rgba(55, 65, 81, 0.2)');
+    const textColor = cssVar('--chart-text', isLight ? '#64748b' : '#94a3b8');
+    const tooltipBg = cssVar('--chart-tooltip-bg', isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(17, 24, 39, 0.9)');
+    const tooltipText = cssVar('--chart-tooltip-text', isLight ? '#1e293b' : '#f1f5f9');
+    const tooltipBorder = cssVar('--chart-tooltip-border', isLight ? 'rgba(203, 213, 225, 0.8)' : 'rgba(55, 65, 81, 0.5)');
+
+    Chart.defaults.color = textColor;
+    Chart.defaults.borderColor = gridColor;
+    Chart.defaults.plugins.tooltip.backgroundColor = tooltipBg;
+    Chart.defaults.plugins.tooltip.titleColor = tooltipText;
+    Chart.defaults.plugins.tooltip.bodyColor = tooltipText;
+    Chart.defaults.plugins.tooltip.footerColor = tooltipText;
+    Chart.defaults.plugins.tooltip.borderColor = tooltipBorder;
+    Chart.defaults.plugins.tooltip.borderWidth = 1;
+
+    forEachRegisteredChart(chart => {
+        if (!chart) return;
+        if (chart.options.scales.x) {
+            chart.options.scales.x.grid.color = gridColor;
+            chart.options.scales.x.ticks.color = textColor;
+        }
+        if (chart.options.scales.y) {
+            chart.options.scales.y.grid.color = gridColor;
+            chart.options.scales.y.ticks.color = textColor;
+        }
+        if (chart.options.scales.y1) {
+            chart.options.scales.y1.grid.color = gridColor;
+            chart.options.scales.y1.ticks.color = textColor;
+        }
+        if (chart.options.plugins.tooltip) {
+            chart.options.plugins.tooltip.backgroundColor = tooltipBg;
+            chart.options.plugins.tooltip.titleColor = tooltipText;
+            chart.options.plugins.tooltip.bodyColor = tooltipText;
+            chart.options.plugins.tooltip.footerColor = tooltipText;
+            chart.options.plugins.tooltip.borderColor = tooltipBorder;
+            chart.options.plugins.tooltip.borderWidth = 1;
+        }
+        queueChartUpdate(chart);
+    });
+}
+
+export function toggleTheme() {
+    const effective = resolveTheme();
+    state.theme = effective === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('kula_theme', state.theme);
+    applyTheme();
+}
 
 const STORAGE_KEY = 'kula_ui_settings';
 
@@ -32,6 +99,9 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 // `body.light-mode` in both themes.
 export const SETTINGS = [
     { key: 'sticky_topbar', group: 'appearance', fallback: true, cls: 'no-sticky-topbar', whenFalse: true, input: 'set-sticky-topbar' },
+    { key: 'chart_data_controls', group: 'charts', fallback: false, cls: 'chart-data-controls', input: 'set-chart-data-controls' },
+    { key: 'chart_tooltip_details', group: 'charts', fallback: false, cls: 'chart-tooltip-details', input: 'set-chart-tooltip-details' },
+    { key: 'all_series_envelopes', group: 'charts', fallback: false, cls: 'all-series-envelopes', input: 'set-all-series-envelopes' },
     { key: 'gauges', group: 'appearance', fallback: true, cls: 'no-gauges', whenFalse: true, input: 'set-gauges' },
     { key: 'high_contrast', group: 'accessibility', fallback: false, cls: 'a11y-contrast', input: 'set-high-contrast' },
     { key: 'reduce_motion', group: 'accessibility', fallback: false, cls: 'a11y-reduce-motion', input: 'set-reduce-motion' },

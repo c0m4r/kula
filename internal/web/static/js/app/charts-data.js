@@ -4,7 +4,7 @@
    ============================================================ */
 'use strict';
 import { state, colors } from './state.js';
-import { formatBytesShort } from './utils.js';
+import { formatBytesShort, formatRangeTimestamp } from './format.js';
 import { createTimeSeriesChart, setChartTimeRange, updateChartLabels } from './charts-init.js';
 import { updateHeader, updateSubtitles } from './header.js';
 import { updateGauges } from './gauges.js';
@@ -12,8 +12,46 @@ import { evaluateAlerts } from './alerts.js';
 import { applyStoredFocusMode } from './focus-mode.js';
 import { addSampleToSplitCharts, updateSplitSelectors } from './split.js';
 import { attachDynamicChartCardActions } from './chart-card-actions.js';
-import { addContainerSample, markContainersAbsent } from './container-apps.js';
+import {
+    addContainerSample,
+    markContainersAbsent,
+} from './container-apps.js';
 import { apiUrl } from './api.js';
+import {
+    HistoryRequestController,
+    liveHistoryRefreshInterval,
+    updateLiveSampleInterval,
+} from './history-request.js';
+import {
+    aggregationField,
+    annotateHistoryItems,
+    historyItemContext,
+    historyItemSample,
+    historyItemTimestamp,
+    historySectionsForFocus,
+    insertHistoryGaps,
+    normalizeHistoryItem,
+    resolveAggregation,
+} from './history-data.js';
+import { i18n } from './i18n.js';
+import {
+    forEachRegisteredChart,
+    historyPointBudget,
+    queueAllChartUpdates,
+    queueChartUpdate,
+} from './chart-controller.js';
+import { clampHistoryInterval, fitZoomToObservations, minimumZoomSpan } from './history-navigation.js';
+import {
+    appendEnvelopeGap,
+    appendEnvelopePoint,
+    clearEnvelopeData,
+    ensureSensorDatasets,
+    hasEnvelopeData,
+    trimEnvelopeData,
+} from './chart-envelope.js';
+import { updateChartAccessibility } from './chart-accessibility.js';
+
+const historyRequests = new HistoryRequestController();
 
 // CSS order values for dynamic app chart grouping within the grid.
 const APP_ORDER_NGINX = 10;
@@ -54,9 +92,9 @@ function createAppChartCard(cardId, chartId, subtitleId, title, order) {
     wrapper.appendChild(body);
 
     // setupChartActions only runs at page load, so dynamic app cards need
-    // their expand, hover-pause, and zoom-reset interactions wired here.
-    // resetZoomAll is defined later in this module (function declarations are hoisted).
-    attachDynamicChartCardActions(wrapper, resetZoomAll);
+    // their expand and hover-pause interactions wired here. Zoom reset uses
+    // main.js's delegated canvas double-click handler.
+    attachDynamicChartCardActions(wrapper);
 
     // If focus mode is active, place card in the combined grid and apply visibility
     if (state.focusMode && !state.focusSelecting && state.focusVisible) {
@@ -82,88 +120,134 @@ function forEachAppChart(fn) {
     Object.values(state.psuCharts || {}).forEach(chart => { if (chart) fn(chart); });
 }
 
-// ---- Data Update ----
-export function addSampleToCharts(item, ts) {
-    let s = item.data || item;
-    if (state.currentAggregation === 'min' && item.min) s = item.min;
-    if (state.currentAggregation === 'max' && item.max) s = item.max;
+function rebuildHistoryPointContexts() {
+    const contexts = new Map();
+    state.dataBuffer.forEach(item => {
+        const timestamp = new Date(historyItemTimestamp(item)).getTime();
+        const context = historyItemContext(item);
+        if (Number.isFinite(timestamp) && context) contexts.set(timestamp, context);
+    });
+    state.historyPointContexts = contexts;
+}
 
-    const point = (v) => ({ x: ts, y: v });
+function memberBy(items, field, value) {
+    return Array.isArray(items) ? items.find(item => item?.[field] === value) : undefined;
+}
+
+function gpuMember(items, gpu) {
+    if (!Array.isArray(items) || !gpu) return undefined;
+    const byIndex = items.find(item => item?.index === gpu.index);
+    return byIndex || items.find(item => item?.name === gpu.name);
+}
+
+// ---- Data Update ----
+export function addSampleToCharts(item, ts, {
+    aggregation = state.currentAggregation,
+    validAggregations = state.validAggregations,
+} = {}) {
+    const historyItem = normalizeHistoryItem(item);
+    let s = historyItemSample(historyItem);
+    if (!s) return;
+    const selectedField = aggregationField(aggregation);
+    if (validAggregations.includes(selectedField) && historyItem[selectedField]) {
+        s = historyItem[selectedField];
+    }
+
+    const hasEnvelope = validAggregations.includes('min') &&
+        validAggregations.includes('max') && !!historyItem.min && !!historyItem.max;
+    const minimum = hasEnvelope ? historyItem.min : null;
+    const maximum = hasEnvelope ? historyItem.max : null;
+    const touchedDatasets = new Set();
+
+    const push = (dataset, value, minValue, maxValue, extra = null) => {
+        if (dataset) touchedDatasets.add(dataset);
+        appendEnvelopePoint(
+            dataset,
+            ts,
+            value,
+            hasEnvelope ? minValue : null,
+            hasEnvelope ? maxValue : null,
+            extra,
+        );
+    };
+    const pushFields = (chart, value, minValue, maxValue, fields) => {
+        fields.forEach((field, index) => {
+            push(chart.data.datasets[index], value?.[field], minValue?.[field], maxValue?.[field]);
+        });
+    };
 
     // CPU
     if (state.charts.cpu && s.cpu?.total) {
-        state.charts.cpu.data.datasets[0].data.push(point(s.cpu.total.user));
-        state.charts.cpu.data.datasets[1].data.push(point(s.cpu.total.system));
-        state.charts.cpu.data.datasets[2].data.push(point(s.cpu.total.iowait));
-        state.charts.cpu.data.datasets[3].data.push(point(s.cpu.total.steal));
-        state.charts.cpu.data.datasets[4].data.push(point(s.cpu.total.usage));
+        pushFields(
+            state.charts.cpu,
+            s.cpu.total,
+            minimum?.cpu?.total,
+            maximum?.cpu?.total,
+            ['user', 'system', 'iowait', 'steal', 'usage'],
+        );
     }
 
     // CPU Temperature
     const tempCard = document.getElementById('card-cpu-temp');
-    if (state.charts.cputemp && ((s.cpu?.sensors && s.cpu.sensors.length > 0) || s.cpu?.temp > 0)) {
-        if (tempCard) {
+    if (state.charts.cputemp) {
+        const hasSensors = Array.isArray(s.cpu?.sensors) && s.cpu.sensors.length > 0;
+        const readings = hasSensors
+            ? s.cpu.sensors.map(sensor => ({
+                name: sensor.name,
+                value: sensor.value,
+                minimum: memberBy(minimum?.cpu?.sensors, 'name', sensor.name)?.value,
+                maximum: memberBy(maximum?.cpu?.sensors, 'name', sensor.name)?.value,
+            }))
+            : s.cpu?.temp > 0 ? [{
+                name: 'Temperature',
+                value: s.cpu.temp,
+                minimum: minimum?.cpu?.temp,
+                maximum: maximum?.cpu?.temp,
+            }] : [];
+        const hasHistory = state.charts.cputemp.data.datasets.some(hasEnvelopeData);
+        if (readings.length > 0 && tempCard) {
             tempCard.classList.remove('hidden');
             document.getElementById('thermals-title')?.classList.remove('hidden');
             document.getElementById('thermals-grid')?.classList.remove('hidden');
         }
-
-        const hasSensors = s.cpu?.sensors && s.cpu.sensors.length > 0;
-
-        if (hasSensors) {
-            const incomingNames = s.cpu.sensors.map(sens => sens.name);
-            if (incomingNames.join(',') !== state.cpuTempSensorNames.join(',')) {
-                state.cpuTempSensorNames = incomingNames;
-                const cpuTempColorPairs = [
-                    [colors.orange, colors.orangeAlpha],
-                    [colors.red, colors.redAlpha],
-                    [colors.yellow, colors.yellowAlpha],
-                    [colors.pink, colors.pinkAlpha],
-                    [colors.purple, colors.purpleAlpha],
-                    [colors.cyan, colors.cyanAlpha],
-                ];
-                state.charts.cputemp.data.datasets = incomingNames.map((name, i) => ({
-                    label: name,
-                    borderColor: cpuTempColorPairs[i % cpuTempColorPairs.length][0],
-                    backgroundColor: cpuTempColorPairs[i % cpuTempColorPairs.length][1],
-                    fill: i === 0, // only fill the primary one
-                    data: [],
-                    pointHitRadius: 5,
-                }));
-            }
-
-            s.cpu.sensors.forEach((sens, i) => {
-                if (i < state.charts.cputemp.data.datasets.length) {
-                    state.charts.cputemp.data.datasets[i].data.push(point(sens.value));
-                }
+        if (readings.length > 0 || hasHistory) {
+            const cpuTempColorPairs = [
+                [colors.orange, colors.orangeAlpha],
+                [colors.red, colors.redAlpha],
+                [colors.yellow, colors.yellowAlpha],
+                [colors.pink, colors.pinkAlpha],
+                [colors.purple, colors.purpleAlpha],
+                [colors.cyan, colors.cyanAlpha],
+            ];
+            const byName = new Map(readings.map(reading => [reading.name, reading]));
+            const datasets = ensureSensorDatasets(
+                state.charts.cputemp,
+                readings.map(reading => reading.name),
+                cpuTempColorPairs,
+                ts,
+            );
+            state.cpuTempSensorNames = datasets.map(dataset => dataset.$kulaSensorName || dataset.label);
+            datasets.forEach(dataset => {
+                const reading = byName.get(dataset.$kulaSensorName || dataset.label);
+                push(dataset, reading?.value ?? null, reading?.minimum, reading?.maximum);
             });
-        } else {
-            // Fallback to plain Temperature if no sensors array
-            if (state.charts.cputemp.data.datasets.length !== 1 || state.charts.cputemp.data.datasets[0].label !== 'Temperature') {
-                state.cpuTempSensorNames = [];
-                state.charts.cputemp.data.datasets = [
-                    { label: 'Temperature', borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [] },
-                ];
-            }
-            state.charts.cputemp.data.datasets[0].data.push(point(s.cpu.temp));
         }
     }
 
     // Load Average
     if (state.charts.loadavg && s.lavg) {
-        state.charts.loadavg.data.datasets[0].data.push(point(s.lavg.load1));
-        state.charts.loadavg.data.datasets[1].data.push(point(s.lavg.load5));
-        state.charts.loadavg.data.datasets[2].data.push(point(s.lavg.load15));
+        pushFields(state.charts.loadavg, s.lavg, minimum?.lavg, maximum?.lavg, ['load1', 'load5', 'load15']);
     }
 
     // Memory — with Free, Available, and Shmem
     if (state.charts.memory && s.mem) {
-        state.charts.memory.data.datasets[0].data.push(point(s.mem.used));
-        state.charts.memory.data.datasets[1].data.push(point(s.mem.buffers));
-        state.charts.memory.data.datasets[2].data.push(point(s.mem.cached));
-        state.charts.memory.data.datasets[3].data.push(point(s.mem.shmem || 0));
-        state.charts.memory.data.datasets[4].data.push(point(s.mem.free));
-        state.charts.memory.data.datasets[5].data.push(point(s.mem.available));
+        pushFields(
+            state.charts.memory,
+            s.mem,
+            minimum?.mem,
+            maximum?.mem,
+            ['used', 'buffers', 'cached', 'shmem', 'free', 'available'],
+        );
         // Set max to total RAM
         if (s.mem.total > 0) {
             state.charts.memory.options.scales.y.max = s.mem.total;
@@ -172,8 +256,7 @@ export function addSampleToCharts(item, ts) {
 
     // Swap — with Free
     if (state.charts.swap && s.swap) {
-        state.charts.swap.data.datasets[0].data.push(point(s.swap.used || 0));
-        state.charts.swap.data.datasets[1].data.push(point(s.swap.free || 0));
+        pushFields(state.charts.swap, s.swap, minimum?.swap, maximum?.swap, ['used', 'free']);
         // Set max to total swap
         if (s.swap.total > 0) {
             state.charts.swap.options.scales.y.max = s.swap.total;
@@ -184,51 +267,61 @@ export function addSampleToCharts(item, ts) {
     if (!state.splitNet && state.charts.network && s.net?.ifaces) {
         let rx = 0, tx = 0;
         const iface = s.net.ifaces.find(i => i.name === state.selectedNet);
+        let minIface, maxIface;
         if (iface) {
             rx = iface.rx_mbps || 0;
             tx = iface.tx_mbps || 0;
+            minIface = memberBy(minimum?.net?.ifaces, 'name', iface.name);
+            maxIface = memberBy(maximum?.net?.ifaces, 'name', iface.name);
         } else if (!state.selectedNet && s.net.ifaces.length > 0) {
             // Sum all if nothing selected
             s.net.ifaces.forEach(i => { if (i.name !== 'lo') { rx += i.rx_mbps || 0; tx += i.tx_mbps || 0; } });
         }
-        state.charts.network.data.datasets[0].data.push(point(rx));
-        state.charts.network.data.datasets[1].data.push(point(tx));
+        push(state.charts.network.data.datasets[0], rx, minIface?.rx_mbps, maxIface?.rx_mbps);
+        push(state.charts.network.data.datasets[1], tx, minIface?.tx_mbps, maxIface?.tx_mbps);
     }
 
     // Packets per second (selected non-lo interface) — skip when split is active
     if (!state.splitNet && state.charts.pps && s.net?.ifaces) {
         let rxPps = 0, txPps = 0;
         const iface = s.net.ifaces.find(i => i.name === state.selectedNet);
+        let minIface, maxIface;
         if (iface) {
             rxPps = iface.rx_pps || 0;
             txPps = iface.tx_pps || 0;
+            minIface = memberBy(minimum?.net?.ifaces, 'name', iface.name);
+            maxIface = memberBy(maximum?.net?.ifaces, 'name', iface.name);
         } else if (!state.selectedNet && s.net.ifaces.length > 0) {
             s.net.ifaces.forEach(i => { if (i.name !== 'lo') { rxPps += i.rx_pps || 0; txPps += i.tx_pps || 0; } });
         }
-        state.charts.pps.data.datasets[0].data.push(point(rxPps));
-        state.charts.pps.data.datasets[1].data.push(point(txPps));
+        push(state.charts.pps.data.datasets[0], rxPps, minIface?.rx_pps, maxIface?.rx_pps);
+        push(state.charts.pps.data.datasets[1], txPps, minIface?.tx_pps, maxIface?.tx_pps);
     }
 
     // Connections
     if (state.charts.connections && s.net?.sockets) {
-        state.charts.connections.data.datasets[0].data.push(point(s.net.sockets.tcp_inuse));
-        state.charts.connections.data.datasets[1].data.push(point(s.net.sockets.udp_inuse));
-        state.charts.connections.data.datasets[2].data.push(point(s.net.sockets.tcp_tw));
-        state.charts.connections.data.datasets[3].data.push(point(s.net?.tcp?.curr_estab || 0));
-        state.charts.connections.data.datasets[4].data.push(point(s.net?.tcp?.in_errs_ps || 0));
-        state.charts.connections.data.datasets[5].data.push(point(s.net?.tcp?.out_rsts_ps || 0));
-        state.charts.connections.data.datasets[6].data.push(point(s.net?.tcp?.retrans_ps || 0));
+        const datasets = state.charts.connections.data.datasets;
+        push(datasets[0], s.net.sockets.tcp_inuse, minimum?.net?.sockets?.tcp_inuse, maximum?.net?.sockets?.tcp_inuse);
+        push(datasets[1], s.net.sockets.udp_inuse, minimum?.net?.sockets?.udp_inuse, maximum?.net?.sockets?.udp_inuse);
+        push(datasets[2], s.net.sockets.tcp_tw, minimum?.net?.sockets?.tcp_tw, maximum?.net?.sockets?.tcp_tw);
+        push(datasets[3], s.net?.tcp?.curr_estab || 0, minimum?.net?.tcp?.curr_estab, maximum?.net?.tcp?.curr_estab);
+        push(datasets[4], s.net?.tcp?.in_errs_ps || 0, minimum?.net?.tcp?.in_errs_ps, maximum?.net?.tcp?.in_errs_ps);
+        push(datasets[5], s.net?.tcp?.out_rsts_ps || 0, minimum?.net?.tcp?.out_rsts_ps, maximum?.net?.tcp?.out_rsts_ps);
+        push(datasets[6], s.net?.tcp?.retrans_ps || 0, minimum?.net?.tcp?.retrans_ps, maximum?.net?.tcp?.retrans_ps);
     }
 
     // Disk I/O (selected device) — skip when split is active
     if (!state.splitDiskIo && state.charts.diskio && s.disk?.devices) {
         let rBps = 0, wBps = 0, rIops = 0, wIops = 0;
         const d = s.disk.devices.find(d => d.name === state.selectedDiskIo);
+        let minDisk, maxDisk;
         if (d) {
             rBps = d.read_bps || 0;
             wBps = d.write_bps || 0;
             rIops = d.reads_ps || 0;
             wIops = d.writes_ps || 0;
+            minDisk = memberBy(minimum?.disk?.devices, 'name', d.name);
+            maxDisk = memberBy(maximum?.disk?.devices, 'name', d.name);
         } else if (!state.selectedDiskIo && s.disk.devices.length > 0) {
             s.disk.devices.forEach(d => {
                 rBps += d.read_bps || 0;
@@ -237,16 +330,19 @@ export function addSampleToCharts(item, ts) {
                 wIops += d.writes_ps || 0;
             });
         }
-        state.charts.diskio.data.datasets[0].data.push(point(rBps));
-        state.charts.diskio.data.datasets[1].data.push(point(wBps));
-        state.charts.diskio.data.datasets[2].data.push(point(rIops));
-        state.charts.diskio.data.datasets[3].data.push(point(wIops));
+        const datasets = state.charts.diskio.data.datasets;
+        push(datasets[0], rBps, minDisk?.read_bps, maxDisk?.read_bps);
+        push(datasets[1], wBps, minDisk?.write_bps, maxDisk?.write_bps);
+        push(datasets[2], rIops, minDisk?.reads_ps, maxDisk?.reads_ps);
+        push(datasets[3], wIops, minDisk?.writes_ps, maxDisk?.writes_ps);
     }
 
     // Disk Temperature — skip when split is active
     const diskTempCard = document.getElementById('card-disk-temp');
-    if (!state.splitDiskTemp && state.charts.disktemp && s.disk?.devices) {
-        const d = s.disk.devices.find(d => d.name === state.selectedDiskTemp);
+    if (!state.splitDiskTemp && state.charts.disktemp) {
+        const d = s.disk?.devices?.find(d => d.name === state.selectedDiskTemp);
+        const minDisk = memberBy(minimum?.disk?.devices, 'name', d?.name);
+        const maxDisk = memberBy(maximum?.disk?.devices, 'name', d?.name);
         const hasSensors = d && d.sensors && d.sensors.length > 0;
         const hasTemp = d && d.temp > 0;
 
@@ -257,117 +353,125 @@ export function addSampleToCharts(item, ts) {
                 document.getElementById('thermals-grid')?.classList.remove('hidden');
             }
 
-            if (hasSensors) {
-                const incomingNames = d.sensors.map(sens => sens.name);
-                if (incomingNames.join(',') !== state.diskTempSensorNames.join(',')) {
-                    state.diskTempSensorNames = incomingNames;
-                    const tempColorPairs = [
-                        [colors.red, colors.redAlpha],
-                        [colors.orange, colors.orangeAlpha],
-                        [colors.yellow, colors.yellowAlpha],
-                        [colors.pink, colors.pinkAlpha],
-                        [colors.purple, colors.purpleAlpha],
-                        [colors.cyan, colors.cyanAlpha],
-                    ];
-                    state.charts.disktemp.data.datasets = incomingNames.map((name, i) => ({
-                        label: name,
-                        borderColor: tempColorPairs[i % tempColorPairs.length][0],
-                        backgroundColor: tempColorPairs[i % tempColorPairs.length][1],
-                        fill: i === 0,
-                        data: [],
-                        pointHitRadius: 5,
-                    }));
-                }
+        }
 
-                d.sensors.forEach((sens, i) => {
-                    if (i < state.charts.disktemp.data.datasets.length) {
-                        state.charts.disktemp.data.datasets[i].data.push(point(sens.value));
-                    }
-                });
-            } else {
-                if (state.charts.disktemp.data.datasets.length !== 1 || state.charts.disktemp.data.datasets[0].label !== 'Temperature') {
-                    state.diskTempSensorNames = [];
-                    state.charts.disktemp.data.datasets = [
-                        { label: 'Temperature', borderColor: colors.red, backgroundColor: colors.redAlpha, fill: true, data: [] },
-                    ];
-                }
-                state.charts.disktemp.data.datasets[0].data.push(point(d.temp));
-            }
-        } else {
-            if (diskTempCard) diskTempCard.classList.add('hidden');
+        const readings = hasSensors
+            ? d.sensors.map(sensor => ({
+                name: sensor.name,
+                value: sensor.value,
+                minimum: memberBy(minDisk?.sensors, 'name', sensor.name)?.value,
+                maximum: memberBy(maxDisk?.sensors, 'name', sensor.name)?.value,
+            }))
+            : hasTemp ? [{
+                name: 'Temperature',
+                value: d.temp,
+                minimum: minDisk?.temp,
+                maximum: maxDisk?.temp,
+            }] : [];
+        const hasHistory = state.charts.disktemp.data.datasets.some(hasEnvelopeData);
+        if (readings.length > 0 || hasHistory) {
+            const tempColorPairs = [
+                [colors.red, colors.redAlpha],
+                [colors.orange, colors.orangeAlpha],
+                [colors.yellow, colors.yellowAlpha],
+                [colors.pink, colors.pinkAlpha],
+                [colors.purple, colors.purpleAlpha],
+                [colors.cyan, colors.cyanAlpha],
+            ];
+            const byName = new Map(readings.map(reading => [reading.name, reading]));
+            const datasets = ensureSensorDatasets(
+                state.charts.disktemp,
+                readings.map(reading => reading.name),
+                tempColorPairs,
+                ts,
+            );
+            state.diskTempSensorNames = datasets.map(dataset => dataset.$kulaSensorName || dataset.label);
+            datasets.forEach(dataset => {
+                const reading = byName.get(dataset.$kulaSensorName || dataset.label);
+                push(dataset, reading?.value ?? null, reading?.minimum, reading?.maximum);
+            });
         }
     }
 
     // Disk Space — single dataset for selected mount — skip when split is active
     if (!state.splitDiskSpace && state.charts.diskspace && s.disk?.filesystems && s.disk.filesystems.length > 0) {
-        if (state.charts.diskspace.data.datasets.length !== 1 || state.charts.diskspace.data.datasets[0].label !== 'Space Used %') {
+        if ((state.charts.diskspace.data.datasets.length !== 1 || state.charts.diskspace.data.datasets[0].label !== 'Space Used %')) {
             state.charts.diskspace.data.datasets = [{
                 label: 'Space Used %',
                 borderColor: colors.purple,
                 backgroundColor: colors.purpleAlpha,
-                fill: true,
+                fill: false,
+                tension: 0,
                 data: [],
                 pointHitRadius: 5,
             }];
         }
         let usedPct = 0, used = 0, total = 0;
         const fs = s.disk.filesystems.find(f => f.mount === state.selectedDiskSpace);
+        let minFS, maxFS;
         if (fs) {
             usedPct = fs.used_pct || 0;
             used = fs.used || 0;
             total = fs.total || 0;
+            minFS = memberBy(minimum?.disk?.filesystems, 'mount', fs.mount);
+            maxFS = memberBy(maximum?.disk?.filesystems, 'mount', fs.mount);
         } else if (!state.selectedDiskSpace) {
             s.disk.filesystems.forEach(f => { used += f.used || 0; total += f.total || 0; });
             if (total > 0) usedPct = (used / total) * 100;
         }
-        state.charts.diskspace.data.datasets[0].data.push({ x: ts, y: usedPct, used, total });
+        push(state.charts.diskspace.data.datasets[0], usedPct, minFS?.used_pct, maxFS?.used_pct, { used, total });
     }
 
     // Processes
     if (state.charts.processes && s.proc) {
-        state.charts.processes.data.datasets[0].data.push(point(s.proc.running));
-        state.charts.processes.data.datasets[1].data.push(point(s.proc.sleeping));
-        state.charts.processes.data.datasets[2].data.push(point(s.proc.blocked));
-        state.charts.processes.data.datasets[3].data.push(point(s.proc.zombie));
-        state.charts.processes.data.datasets[4].data.push(point(s.proc.total));
+        pushFields(
+            state.charts.processes,
+            s.proc,
+            minimum?.proc,
+            maximum?.proc,
+            ['running', 'sleeping', 'blocked', 'zombie', 'total'],
+        );
     }
 
     // Entropy
     if (state.charts.entropy && s.sys) {
-        state.charts.entropy.data.datasets[0].data.push(point(s.sys.entropy));
+        push(state.charts.entropy.data.datasets[0], s.sys.entropy, minimum?.sys?.entropy, maximum?.sys?.entropy);
     }
 
     // Self
     if (state.charts.self && s.self) {
-        state.charts.self.data.datasets[0].data.push(point(s.self.cpu_pct));
-        state.charts.self.data.datasets[1].data.push(point(s.self.mem_rss || 0));
+        pushFields(state.charts.self, s.self, minimum?.self, maximum?.self, ['cpu_pct', 'mem_rss']);
     }
 
     // GPU Metrics — skip regular cards when split is active
     if (!state.splitGpu && s.gpu && s.gpu.length > 0) {
         const g = s.gpu.find(g => g.name === state.selectedGpuLoad) || s.gpu[0];
+        const minGPU = gpuMember(minimum?.gpu, g);
+        const maxGPU = gpuMember(maximum?.gpu, g);
         const hasAnyGpuMetric = (g.load_pct > 0 || g.power_w > 0 || g.vram_total > 0 || g.temp > 0);
 
         if (hasAnyGpuMetric) {
             if (state.charts.gpuload && (g.load_pct > 0 || g.power_w > 0)) {
                 document.getElementById('card-gpu-load')?.classList.remove('hidden');
-                state.charts.gpuload.data.datasets[0].data.push(point(g.load_pct || 0));
-                state.charts.gpuload.data.datasets[1].data.push(point(g.power_w || 0));
+                push(state.charts.gpuload.data.datasets[0], g.load_pct || 0, minGPU?.load_pct, maxGPU?.load_pct);
+                push(state.charts.gpuload.data.datasets[1], g.power_w || 0, minGPU?.power_w, maxGPU?.power_w);
             } else {
                 document.getElementById('card-gpu-load')?.classList.add('hidden');
             }
             if (state.charts.vram && g.vram_total > 0 && g.vram_used > 0) {
                 document.getElementById('card-vram')?.classList.remove('hidden');
-                state.charts.vram.data.datasets[0].data.push(point(g.vram_used || 0));
+                push(state.charts.vram.data.datasets[0], g.vram_used || 0, minGPU?.vram_used, maxGPU?.vram_used);
                 state.charts.vram.options.scales.y.max = g.vram_total > 0 ? g.vram_total : undefined;
             } else {
                 document.getElementById('card-vram')?.classList.add('hidden');
             }
             if (state.charts.gputemp && g.temp > 0) {
-                document.getElementById('card-gpu-temp')?.classList.remove('hidden');
-                document.getElementById('thermals-title')?.classList.remove('hidden');
-                document.getElementById('thermals-grid')?.classList.remove('hidden');
-                state.charts.gputemp.data.datasets[0].data.push(point(g.temp));
+                {
+                    document.getElementById('card-gpu-temp')?.classList.remove('hidden');
+                    document.getElementById('thermals-title')?.classList.remove('hidden');
+                    document.getElementById('thermals-grid')?.classList.remove('hidden');
+                }
+                push(state.charts.gputemp.data.datasets[0], g.temp, minGPU?.temp, maxGPU?.temp);
             } else {
                 document.getElementById('card-gpu-temp')?.classList.add('hidden');
             }
@@ -397,6 +501,8 @@ export function addSampleToCharts(item, ts) {
             if (ps.type !== 'Battery' && ps.type !== 'UPS') continue;
 
             const psuKey = `psu_${ps.name}`;
+            const minPSU = memberBy(minimum?.psu, 'name', ps.name);
+            const maxPSU = memberBy(maximum?.psu, 'name', ps.name);
             if (!state.psuCharts) state.psuCharts = {};
 
             if (!state.psuCharts[psuKey]) {
@@ -423,7 +529,7 @@ export function addSampleToCharts(item, ts) {
                     wrapper.appendChild(header);
                     wrapper.appendChild(body);
                     grid.appendChild(wrapper);
-                    attachDynamicChartCardActions(wrapper, resetZoomAll);
+                    attachDynamicChartCardActions(wrapper);
 
                     if (state.focusSelecting) {
                         if (state.focusVisible?.includes(wrapper.id)) {
@@ -447,7 +553,7 @@ export function addSampleToCharts(item, ts) {
                             grid: { display: false },
                             ticks: { callback: v => v.toFixed(1) + ' W' },
                         };
-                        state.psuCharts[psuKey].update('none');
+                        queueChartUpdate(state.psuCharts[psuKey]);
                     }
 
                     // A stored focus selection may be restored before telemetry
@@ -460,9 +566,9 @@ export function addSampleToCharts(item, ts) {
 
             const chart = state.psuCharts[psuKey];
             if (chart) {
-                chart.data.datasets[0].data.push(point(ps.capacity || 0));
-                chart.data.datasets[1].data.push(point(ps.power_w || 0));
-                if (!state.loadingHistory) chart.update('none');
+                push(chart.data.datasets[0], ps.capacity || 0, minPSU?.capacity, maxPSU?.capacity);
+                push(chart.data.datasets[1], ps.power_w || 0, minPSU?.power_w, maxPSU?.power_w);
+                if (!state.loadingHistory) queueChartUpdate(chart);
             }
 
             const sub = document.getElementById(`${psuKey}-subtitle`);
@@ -484,6 +590,8 @@ export function addSampleToCharts(item, ts) {
     // Nginx — create charts on first data, push data, update subtitles
     if (s.apps?.nginx) {
         const n = s.apps.nginx;
+        const minN = minimum?.apps?.nginx;
+        const maxN = maximum?.apps?.nginx;
         appsVisible = true;
 
         if (!state.charts.nginxConn) {
@@ -493,7 +601,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.nginxConn) {
-            state.charts.nginxConn.data.datasets[0].data.push(point(n.active_conn));
+            push(state.charts.nginxConn.data.datasets[0], n.active_conn, minN?.active_conn, maxN?.active_conn);
             const sub = document.getElementById('nginx-conn-subtitle');
             if (sub) sub.textContent = `Active: ${n.active_conn}`;
         }
@@ -507,9 +615,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.nginxReqs) {
-            state.charts.nginxReqs.data.datasets[0].data.push(point(n.accepts_ps));
-            state.charts.nginxReqs.data.datasets[1].data.push(point(n.handled_ps));
-            state.charts.nginxReqs.data.datasets[2].data.push(point(n.requests_ps));
+            pushFields(state.charts.nginxReqs, n, minN, maxN, ['accepts_ps', 'handled_ps', 'requests_ps']);
             const sub = document.getElementById('nginx-reqs-subtitle');
             if (sub) sub.textContent = `Req/s: ${n.requests_ps?.toFixed(1) || '0'}`;
         }
@@ -523,9 +629,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.nginxRw) {
-            state.charts.nginxRw.data.datasets[0].data.push(point(n.reading));
-            state.charts.nginxRw.data.datasets[1].data.push(point(n.writing));
-            state.charts.nginxRw.data.datasets[2].data.push(point(n.waiting));
+            pushFields(state.charts.nginxRw, n, minN, maxN, ['reading', 'writing', 'waiting']);
             const sub = document.getElementById('nginx-rw-subtitle');
             if (sub) sub.textContent = `R: ${n.reading}  W: ${n.writing}  Wait: ${n.waiting}`;
         }
@@ -534,6 +638,8 @@ export function addSampleToCharts(item, ts) {
     // Apache2 — create charts on first data, push data, update subtitles
     if (s.apps?.apache2) {
         const a = s.apps.apache2;
+        const minA = minimum?.apps?.apache2;
+        const maxA = maximum?.apps?.apache2;
         appsVisible = true;
 
         if (!state.charts.apache2Workers) {
@@ -544,8 +650,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.apache2Workers) {
-            state.charts.apache2Workers.data.datasets[0].data.push(point(a.busy_workers));
-            state.charts.apache2Workers.data.datasets[1].data.push(point(a.idle_workers));
+            pushFields(state.charts.apache2Workers, a, minA, maxA, ['busy_workers', 'idle_workers']);
             const sub = document.getElementById('apache2-workers-subtitle');
             if (sub) sub.textContent = `Busy: ${a.busy_workers}  Idle: ${a.idle_workers}`;
         }
@@ -559,9 +664,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.apache2Tput) {
-            state.charts.apache2Tput.data.datasets[0].data.push(point(a.accesses_ps));
-            state.charts.apache2Tput.data.datasets[1].data.push(point(a.req_per_sec));
-            state.charts.apache2Tput.data.datasets[2].data.push(point(a.kbytes_ps));
+            pushFields(state.charts.apache2Tput, a, minA, maxA, ['accesses_ps', 'req_per_sec', 'kbytes_ps']);
             const sub = document.getElementById('apache2-tput-subtitle');
             if (sub) sub.textContent = `Req/s: ${a.req_per_sec?.toFixed(1) || '0'}  kB/s: ${a.kbytes_ps?.toFixed(1) || '0'}`;
         }
@@ -584,17 +687,13 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.apache2States) {
-            state.charts.apache2States.data.datasets[0].data.push(point(a.waiting));
-            state.charts.apache2States.data.datasets[1].data.push(point(a.reading));
-            state.charts.apache2States.data.datasets[2].data.push(point(a.sending));
-            state.charts.apache2States.data.datasets[3].data.push(point(a.keepalive));
-            state.charts.apache2States.data.datasets[4].data.push(point(a.starting));
-            state.charts.apache2States.data.datasets[5].data.push(point(a.dns));
-            state.charts.apache2States.data.datasets[6].data.push(point(a.closing));
-            state.charts.apache2States.data.datasets[7].data.push(point(a.logging));
-            state.charts.apache2States.data.datasets[8].data.push(point(a.graceful));
-            state.charts.apache2States.data.datasets[9].data.push(point(a.idle_cleanup));
-            state.charts.apache2States.data.datasets[10].data.push(point(a.open_slots));
+            pushFields(
+                state.charts.apache2States,
+                a,
+                minA,
+                maxA,
+                ['waiting', 'reading', 'sending', 'keepalive', 'starting', 'dns', 'closing', 'logging', 'graceful', 'idle_cleanup', 'open_slots'],
+            );
             const sub = document.getElementById('apache2-states-subtitle');
             if (sub) sub.textContent = `Busy: ${a.busy_workers}  Idle: ${a.idle_workers}  Slots: ${a.open_slots}`;
         }
@@ -603,6 +702,8 @@ export function addSampleToCharts(item, ts) {
     // MySQL — create charts on first data
     if (s.apps?.mysql) {
         const m = s.apps.mysql;
+        const minM = minimum?.apps?.mysql;
+        const maxM = maximum?.apps?.mysql;
         appsVisible = true;
 
         // 1. Connection States
@@ -616,10 +717,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.mysqlConn) {
-            state.charts.mysqlConn.data.datasets[0].data.push(point(m.threads_connected));
-            state.charts.mysqlConn.data.datasets[1].data.push(point(m.threads_running));
-            state.charts.mysqlConn.data.datasets[2].data.push(point(m.threads_cached));
-            state.charts.mysqlConn.data.datasets[3].data.push(point(m.max_conns));
+            pushFields(state.charts.mysqlConn, m, minM, maxM, ['threads_connected', 'threads_running', 'threads_cached', 'max_conns']);
             const sub = document.getElementById('mysql-conn-subtitle');
             if (sub) sub.textContent = `Connected: ${m.threads_connected}  Running: ${m.threads_running}  Cached: ${m.threads_cached}  Max: ${m.max_conns}`;
         }
@@ -636,11 +734,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.mysqlQPS) {
-            state.charts.mysqlQPS.data.datasets[0].data.push(point(m.queries_ps));
-            state.charts.mysqlQPS.data.datasets[1].data.push(point(m.select_ps));
-            state.charts.mysqlQPS.data.datasets[2].data.push(point(m.insert_ps));
-            state.charts.mysqlQPS.data.datasets[3].data.push(point(m.update_ps));
-            state.charts.mysqlQPS.data.datasets[4].data.push(point(m.delete_ps));
+            pushFields(state.charts.mysqlQPS, m, minM, maxM, ['queries_ps', 'select_ps', 'insert_ps', 'update_ps', 'delete_ps']);
             const sub = document.getElementById('mysql-qps-subtitle');
             if (sub) sub.textContent = `QPS: ${(m.queries_ps || 0).toFixed(1)}  Sel: ${(m.select_ps || 0).toFixed(1)}  Ins: ${(m.insert_ps || 0).toFixed(1)}`;
         }
@@ -653,7 +747,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.mysqlSlow) {
-            state.charts.mysqlSlow.data.datasets[0].data.push(point(m.slow_queries_ps));
+            push(state.charts.mysqlSlow.data.datasets[0], m.slow_queries_ps, minM?.slow_queries_ps, maxM?.slow_queries_ps);
             const sub = document.getElementById('mysql-slow-subtitle');
             if (sub) sub.textContent = `Slow: ${(m.slow_queries_ps || 0).toFixed(2)}`;
         }
@@ -667,8 +761,7 @@ export function addSampleToCharts(item, ts) {
             ], { ticks: { callback: v => v.toFixed(1) + '%' } });
         }
         if (state.charts.mysqlInnoDB) {
-            state.charts.mysqlInnoDB.data.datasets[0].data.push(point(m.innodb_buffer_pool_hit_pct));
-            state.charts.mysqlInnoDB.data.datasets[1].data.push(point(m.innodb_bp_reads_ps));
+            pushFields(state.charts.mysqlInnoDB, m, minM, maxM, ['innodb_buffer_pool_hit_pct', 'innodb_bp_reads_ps']);
             const sub = document.getElementById('mysql-innodb-subtitle');
             if (sub) sub.textContent = `Hit: ${(m.innodb_buffer_pool_hit_pct || 0).toFixed(1)}%  Reads/s: ${(m.innodb_bp_reads_ps || 0).toFixed(0)}`;
         }
@@ -682,8 +775,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.mysqlLocks) {
-            state.charts.mysqlLocks.data.datasets[0].data.push(point(m.table_locks_waited_ps));
-            state.charts.mysqlLocks.data.datasets[1].data.push(point(m.row_lock_waits_ps));
+            pushFields(state.charts.mysqlLocks, m, minM, maxM, ['table_locks_waited_ps', 'row_lock_waits_ps']);
             const sub = document.getElementById('mysql-locks-subtitle');
             if (sub) sub.textContent = `Table: ${(m.table_locks_waited_ps || 0).toFixed(2)}  Row: ${(m.row_lock_waits_ps || 0).toFixed(2)}`;
         }
@@ -707,8 +799,8 @@ export function addSampleToCharts(item, ts) {
             }
             if (state.charts.mysqlRepl) {
                 const secs = (typeof m.replica_seconds_behind === 'number' && m.replica_seconds_behind >= 0) ? m.replica_seconds_behind : null;
-                state.charts.mysqlRepl.data.datasets[0].data.push(point(secs));
-                state.charts.mysqlRepl.data.datasets[1].data.push(point(m.replica_count));
+                push(state.charts.mysqlRepl.data.datasets[0], secs, minM?.replica_seconds_behind, maxM?.replica_seconds_behind);
+                push(state.charts.mysqlRepl.data.datasets[1], m.replica_count, minM?.replica_count, maxM?.replica_count);
                 const sub = document.getElementById('mysql-repl-subtitle');
                 if (sub) {
                     const io  = m.replica_io_running  ? 'running' : 'stopped';
@@ -734,14 +826,23 @@ export function addSampleToCharts(item, ts) {
     // cards hide when no containers remain (even if Nginx keeps the section open).
     if (s.apps?.containers?.length > 0) {
         appsVisible = true;
-        addContainerSample(s.apps.containers, ts, point, createAppChartCard);
+            addContainerSample(
+                s.apps.containers,
+                ts,
+                createAppChartCard,
+                minimum?.apps?.containers,
+                maximum?.apps?.containers,
+                hasEnvelope,
+            );
     } else {
-        markContainersAbsent(ts, point);
+        markContainersAbsent(ts);
     }
 
     // PostgreSQL — create charts on first data
     if (s.apps?.postgres) {
         const pg = s.apps.postgres;
+        const minPG = minimum?.apps?.postgres;
+        const maxPG = maximum?.apps?.postgres;
         appsVisible = true;
 
         // 1. Connection States (stacked area)
@@ -756,11 +857,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.pgConnStates) {
-            state.charts.pgConnStates.data.datasets[0].data.push(point(pg.active_conns));
-            state.charts.pgConnStates.data.datasets[1].data.push(point(pg.idle_conns));
-            state.charts.pgConnStates.data.datasets[2].data.push(point(pg.idle_in_tx_conns));
-            state.charts.pgConnStates.data.datasets[3].data.push(point(pg.waiting_conns));
-            state.charts.pgConnStates.data.datasets[4].data.push(point(pg.max_conns));
+            pushFields(state.charts.pgConnStates, pg, minPG, maxPG, ['active_conns', 'idle_conns', 'idle_in_tx_conns', 'waiting_conns', 'max_conns']);
             const sub = document.getElementById('pg-conn-subtitle');
             if (sub) sub.textContent = `Active: ${pg.active_conns}  Idle: ${pg.idle_conns}  IdleTx: ${pg.idle_in_tx_conns}  Wait: ${pg.waiting_conns}`;
         }
@@ -774,8 +871,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.pgTPS) {
-            state.charts.pgTPS.data.datasets[0].data.push(point(pg.tx_commit_ps));
-            state.charts.pgTPS.data.datasets[1].data.push(point(pg.tx_rollback_ps));
+            pushFields(state.charts.pgTPS, pg, minPG, maxPG, ['tx_commit_ps', 'tx_rollback_ps']);
             const sub = document.getElementById('pg-tps-subtitle');
             if (sub) sub.textContent = `Commits/s: ${(pg.tx_commit_ps || 0).toFixed(1)}  Rollbacks/s: ${(pg.tx_rollback_ps || 0).toFixed(1)}`;
         }
@@ -789,8 +885,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.pgLocks) {
-            state.charts.pgLocks.data.datasets[0].data.push(point(pg.waiting_conns));
-            state.charts.pgLocks.data.datasets[1].data.push(point(pg.deadlocks_ps));
+            pushFields(state.charts.pgLocks, pg, minPG, maxPG, ['waiting_conns', 'deadlocks_ps']);
             const sub = document.getElementById('pg-locks-subtitle');
             if (sub) sub.textContent = `Lock Waits: ${pg.waiting_conns}  Deadlocks/s: ${(pg.deadlocks_ps || 0).toFixed(2)}`;
         }
@@ -807,11 +902,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.pgTuples) {
-            state.charts.pgTuples.data.datasets[0].data.push(point(pg.tup_fetched_ps));
-            state.charts.pgTuples.data.datasets[1].data.push(point(pg.tup_returned_ps));
-            state.charts.pgTuples.data.datasets[2].data.push(point(pg.tup_inserted_ps));
-            state.charts.pgTuples.data.datasets[3].data.push(point(pg.tup_updated_ps));
-            state.charts.pgTuples.data.datasets[4].data.push(point(pg.tup_deleted_ps));
+            pushFields(state.charts.pgTuples, pg, minPG, maxPG, ['tup_fetched_ps', 'tup_returned_ps', 'tup_inserted_ps', 'tup_updated_ps', 'tup_deleted_ps']);
             const sub = document.getElementById('pg-tuples-subtitle');
             if (sub) sub.textContent = `Fetched/s: ${(pg.tup_fetched_ps || 0).toFixed(1)}  Ins: ${(pg.tup_inserted_ps || 0).toFixed(1)}  Upd: ${(pg.tup_updated_ps || 0).toFixed(1)}  Del: ${(pg.tup_deleted_ps || 0).toFixed(1)}`;
         }
@@ -825,8 +916,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.pgIO) {
-            state.charts.pgIO.data.datasets[0].data.push(point(pg.blks_hit_ps));
-            state.charts.pgIO.data.datasets[1].data.push(point(pg.blks_read_ps));
+            pushFields(state.charts.pgIO, pg, minPG, maxPG, ['blks_hit_ps', 'blks_read_ps']);
             const sub = document.getElementById('pg-io-subtitle');
             if (sub) sub.textContent = `Hit/s: ${(pg.blks_hit_ps || 0).toFixed(0)}  Read/s: ${(pg.blks_read_ps || 0).toFixed(0)}`;
         }
@@ -839,7 +929,7 @@ export function addSampleToCharts(item, ts) {
             ], { min: 0, max: 100, ticks: { callback: v => v.toFixed(1) + '%' } });
         }
         if (state.charts.pgCacheHit) {
-            state.charts.pgCacheHit.data.datasets[0].data.push(point(pg.blks_hit_pct));
+            push(state.charts.pgCacheHit.data.datasets[0], pg.blks_hit_pct, minPG?.blks_hit_pct, maxPG?.blks_hit_pct);
             const sub = document.getElementById('pg-cache-subtitle');
             if (sub) sub.textContent = `Hit: ${(pg.blks_hit_pct || 0).toFixed(1)}%`;
         }
@@ -853,8 +943,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.pgTableHealth) {
-            state.charts.pgTableHealth.data.datasets[0].data.push(point(pg.dead_tuples));
-            state.charts.pgTableHealth.data.datasets[1].data.push(point(pg.live_tuples));
+            pushFields(state.charts.pgTableHealth, pg, minPG, maxPG, ['dead_tuples', 'live_tuples']);
             const sub = document.getElementById('pg-table-subtitle');
             if (sub) sub.textContent = `Dead: ${(pg.dead_tuples || 0).toLocaleString()}  Live: ${(pg.live_tuples || 0).toLocaleString()}  Vacuums: ${pg.autovacuum_count || 0}`;
         }
@@ -868,8 +957,7 @@ export function addSampleToCharts(item, ts) {
             ]);
         }
         if (state.charts.pgBgwriter) {
-            state.charts.pgBgwriter.data.datasets[0].data.push(point(pg.buf_checkpoint_ps));
-            state.charts.pgBgwriter.data.datasets[1].data.push(point(pg.buf_backend_ps));
+            pushFields(state.charts.pgBgwriter, pg, minPG, maxPG, ['buf_checkpoint_ps', 'buf_backend_ps']);
             const sub = document.getElementById('pg-bgwriter-subtitle');
             if (sub) sub.textContent = `Checkpoint: ${(pg.buf_checkpoint_ps || 0).toFixed(1)}/s  Backend: ${(pg.buf_backend_ps || 0).toFixed(1)}/s`;
         }
@@ -887,8 +975,7 @@ export function addSampleToCharts(item, ts) {
                 ]);
             }
             if (state.charts.pgRepl) {
-                state.charts.pgRepl.data.datasets[0].data.push(point(pg.repl_lag_seconds));
-                state.charts.pgRepl.data.datasets[1].data.push(point(pg.replica_count));
+                pushFields(state.charts.pgRepl, pg, minPG, maxPG, ['repl_lag_seconds', 'replica_count']);
                 const sub = document.getElementById('pg-repl-subtitle');
                 if (sub) {
                     if (pg.is_in_recovery) {
@@ -921,7 +1008,7 @@ export function addSampleToCharts(item, ts) {
                     fill: false,
                     pointRadius: 0,
                     borderWidth: 1.5,
-                    tension: 0.2,
+                    tension: 0,
                 }));
 
                 const title = group.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -935,19 +1022,7 @@ export function addSampleToCharts(item, ts) {
                     if (unit) yConfig.title = { display: true, text: unit };
 
                     state.customCharts[group] = {
-                        chart: new Chart(ctx, {
-                            type: 'line',
-                            data: { datasets },
-                            options: {
-                                responsive: true, maintainAspectRatio: false, animation: false,
-                                interaction: { mode: 'index', intersect: false },
-                                plugins: { tooltip: { position: 'awayFromCursor' } },
-                                scales: {
-                                    x: { type: 'time', display: true, time: { unit: 'minute' }, ticks: { maxTicksLimit: 6, maxRotation: 0, autoSkip: true } },
-                                    y: yConfig,
-                                },
-                            }
-                        }),
+                        chart: createTimeSeriesChart(canvas.id, datasets, yConfig),
                         names: cfgList.map(c => c.name),
                     };
                 }
@@ -961,9 +1036,11 @@ export function addSampleToCharts(item, ts) {
                 }
                 for (let i = 0; i < entry.names.length; i++) {
                     const v = valMap[entry.names[i]] ?? null;
-                    entry.chart.data.datasets[i].data.push(point(v));
+                    const minMetric = memberBy(minimum?.apps?.custom?.[group], 'name', entry.names[i]);
+                    const maxMetric = memberBy(maximum?.apps?.custom?.[group], 'name', entry.names[i]);
+                    push(entry.chart.data.datasets[i], v, minMetric?.value, maxMetric?.value);
                 }
-                if (!state.loadingHistory) entry.chart.update('none');
+                if (!state.loadingHistory) queueChartUpdate(entry.chart);
 
                 const sub = document.getElementById(`custom-${group}-subtitle`);
                 if (sub) {
@@ -974,50 +1051,63 @@ export function addSampleToCharts(item, ts) {
         }
     }
     // Hide custom cards not in this sample
-    Object.keys(state.customCharts || {}).forEach(k => {
-        const el = document.getElementById(`card-custom-${k}`);
-        if (seenCustom.has(k)) {
-            el?.classList.remove('hidden');
-        } else {
-            el?.classList.add('hidden');
-        }
-    });
+    {
+        Object.keys(state.customCharts || {}).forEach(k => {
+            const el = document.getElementById(`card-custom-${k}`);
+            const chart = state.customCharts[k]?.chart;
+            const hasHistory = chart?.data?.datasets?.some(hasEnvelopeData);
+            if (seenCustom.has(k) || hasHistory) {
+                el?.classList.remove('hidden');
+            } else {
+                el?.classList.add('hidden');
+            }
+        });
+    }
+
+    // Optional sections must contribute an explicit null tick when absent.
+    // Otherwise Chart.js connects the last pre-outage value directly to the
+    // first recovered value and visually erases the outage.
+    const appendMissing = chart => {
+        chart?.data?.datasets?.forEach(dataset => {
+            if (!touchedDatasets.has(dataset) && dataset.data?.length > 0) {
+                appendEnvelopeGap(dataset, ts);
+            }
+        });
+    };
+    Object.values(state.charts).forEach(appendMissing);
+    Object.values(state.psuCharts || {}).forEach(appendMissing);
+    Object.values(state.customCharts || {}).forEach(entry => appendMissing(entry?.chart));
 
     // Show/hide applications section
-    const titleEl = document.getElementById('applications-title');
-    const headerEl = document.getElementById('applications-header');
-    const gridEl = document.getElementById('applications-grid');
-    if (appsVisible) {
-        titleEl?.classList.remove('hidden');
-        headerEl?.classList.remove('hidden');
-        gridEl?.classList.remove('hidden');
-    } else {
-        titleEl?.classList.add('hidden');
-        headerEl?.classList.add('hidden');
-        gridEl?.classList.add('hidden');
+    {
+        const titleEl = document.getElementById('applications-title');
+        const headerEl = document.getElementById('applications-header');
+        const gridEl = document.getElementById('applications-grid');
+        const hasVisibleHistory = !!gridEl?.querySelector('.chart-card:not(.hidden)');
+        if (appsVisible || hasVisibleHistory) {
+            titleEl?.classList.remove('hidden');
+            headerEl?.classList.remove('hidden');
+            gridEl?.classList.remove('hidden');
+        } else {
+            titleEl?.classList.add('hidden');
+            headerEl?.classList.add('hidden');
+            gridEl?.classList.add('hidden');
+        }
     }
 
     // Feed split charts
-    addSampleToSplitCharts(s, ts);
+    addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope);
 }
 
-// Batch-update all charts at once
+// Mark every chart dirty. The chart controller coalesces calls into one
+// animation frame and leaves off-screen charts dirty until they enter the
+// viewport.
 export function updateAllCharts() {
     setChartTimeRange();
     if (typeof updateChartLabels === 'function') {
         updateChartLabels();
     }
-    Object.values(state.charts).forEach(chart => {
-        if (chart) chart.update('none');
-    });
-    // Also update split charts
-    Object.values(state.splitCharts).forEach(typeCharts => {
-        Object.values(typeCharts).forEach(chart => {
-            if (chart && typeof chart.update === 'function') chart.update('none');
-        });
-    });
-    // Also update dynamic app charts (containers, custom)
-    forEachAppChart(chart => chart.update('none'));
+    queueAllChartUpdates();
 }
 
 // Redraw charts from the active buffer (used when selected devices change)
@@ -1025,33 +1115,35 @@ export function redrawChartsFromBuffer() {
     clearAllChartData();
     state.dataBuffer.forEach(item => {
         if (item._gap) {
-            addGapToCharts(new Date(item.ts));
+            addGapToCharts(item);
             return;
         }
-        const timestampSrc = item.data || item;
-        const ts = new Date(timestampSrc.ts || item.ts);
-        addSampleToCharts(item.data || item, ts);
+        addSampleToCharts(item, new Date(historyItemTimestamp(item)));
     });
     updateAllCharts();
 
     // Also update subtitles and gauges with the latest buffer item
     if (state.lastSample) {
         updateSubtitles(state.lastSample);
-        updateSelectors(state.lastSample);
+        const selectors = state.timeRange === null
+            ? historyItemSample(latestHistoryItem(state.dataBuffer)) : state.lastSample;
+        if (selectors) updateSelectors(selectors);
     }
 }
 
 export function trimChartsToTimeRange() {
-    if (state.timeRange === null) return; // custom range — don't trim
-    const cutoffMs = Date.now() - state.timeRange * 1000;
+    const viewEnd = state.historyViewEnd ?? Date.now();
+    const cutoffMs = state.timeRange === null ? null : viewEnd - state.timeRange * 1000;
 
     const trimChart = (chart) => {
         if (!chart || !chart.data?.datasets) return;
         chart.data.datasets.forEach(ds => {
             if (!Array.isArray(ds.data) || ds.data.length === 0) return;
             let i = 0;
-            while (i < ds.data.length && ds.data[i].x && ds.data[i].x < cutoffMs) i++;
-            if (i > 0) ds.data.splice(0, i);
+            if (cutoffMs !== null) {
+                while (i < ds.data.length && ds.data[i].x && ds.data[i].x < cutoffMs) i++;
+            }
+            if (i > 0) trimEnvelopeData(ds, i);
         });
     };
 
@@ -1061,18 +1153,38 @@ export function trimChartsToTimeRange() {
     });
     forEachAppChart(trimChart);
 
+    if (cutoffMs !== null) {
+        state.historyGaps = (state.historyGaps || []).filter(gap => gap.end > cutoffMs);
+    }
+
     // Keep dataBuffer in sync with the displayed time window
-    const cutoffDate = new Date(cutoffMs);
-    let bi = 0;
-    while (bi < state.dataBuffer.length && new Date(state.dataBuffer[bi].ts) < cutoffDate) bi++;
-    if (bi > 0) state.dataBuffer.splice(0, bi);
+    let trimmedBuffer = false;
+    if (cutoffMs !== null) {
+        const cutoffDate = new Date(cutoffMs);
+        let bi = 0;
+        while (bi < state.dataBuffer.length) {
+            const item = state.dataBuffer[bi];
+            const gapEnd = item?._gap ? Date.parse(item.gap_end) : NaN;
+            if (Number.isFinite(gapEnd) && gapEnd > cutoffMs) break;
+            if (new Date(historyItemTimestamp(item)) >= cutoffDate) break;
+            bi++;
+        }
+        if (bi > 0) {
+            state.dataBuffer.splice(0, bi);
+            trimmedBuffer = true;
+        }
+    }
+    if (trimmedBuffer) {
+        rebuildHistoryPointContexts();
+    }
 }
 
 export function clearAllChartData() {
+    state.historyGaps = [];
     const clearChart = (chart) => {
         if (!chart?.data?.datasets) return;
         chart.data.datasets.forEach(ds => {
-            if (Array.isArray(ds.data)) ds.data = [];
+            if (Array.isArray(ds.data)) clearEnvelopeData(ds);
         });
     };
     Object.values(state.charts).forEach(clearChart);
@@ -1087,23 +1199,267 @@ export function clearAllChartData() {
 // Debounce timer for zoom-triggered history fetches.
 export let _zoomFetchTimer = null;
 
+function cancelPendingZoomFetch() {
+    clearTimeout(_zoomFetchTimer);
+    _zoomFetchTimer = null;
+}
+
+function setHistoryStatus(status, response = null, error = null) {
+    state.historyStatus = status;
+    state.historyError = error ? (error.message || String(error)) : null;
+
+    if (response && !Array.isArray(response)) {
+        state.historyCoverage = {
+            requestedFrom: response.requested_from ?? null,
+            requestedTo: response.requested_to ?? null,
+            actualFrom: response.actual_from ?? null,
+            actualTo: response.actual_to ?? null,
+            complete: typeof response.exact_complete === 'boolean'
+                ? response.exact_complete
+                : response.complete !== false,
+            retentionComplete: response.complete !== false,
+            tier: response.tier ?? null,
+            resolution: response.resolution ?? null,
+            sourceResolution: response.source_resolution ?? response.resolution ?? null,
+            downsampled: response.downsampled === true || (
+                !!response.resolution && !!response.source_resolution &&
+                response.resolution !== response.source_resolution
+            ),
+        };
+    }
+
+    const statusEl = document.getElementById('sampling-info');
+    if (statusEl) {
+        statusEl.dataset.historyStatus = status;
+        if (state.historyError) statusEl.dataset.historyError = state.historyError;
+        else delete statusEl.dataset.historyError;
+        renderSamplingInfo(status);
+    }
+
+    const announcement = document.getElementById('history-status-announcement');
+    if (announcement) {
+        const key = {
+            loading: 'history_loading',
+            failed: 'history_failed',
+            empty: 'history_empty',
+            partial: 'history_partial',
+            complete: 'history_complete',
+        }[status];
+        announcement.textContent = key ? i18n.t(key) : '';
+    }
+
+    forEachRegisteredChart(chart => {
+        chart.$kulaHistoryStatus = status;
+        updateChartAccessibility(chart);
+    });
+
+    document.dispatchEvent(new CustomEvent('kula-history-status', {
+        detail: {
+            status,
+            error: state.historyError,
+            coverage: state.historyCoverage,
+            generation: state.historyRequestGeneration,
+        },
+    }));
+}
+
+function historyPayloadSamples(response) {
+    if (Array.isArray(response)) return response;
+    if (response && Object.prototype.hasOwnProperty.call(response, 'samples')) {
+        if (response.samples == null) return [];
+        if (Array.isArray(response.samples)) return response.samples;
+    }
+    throw new Error('Invalid history response');
+}
+
+function historyPayloadStatus(response, samples) {
+    if (samples.length === 0) return 'empty';
+    if (!Array.isArray(response) && response.complete === false) return 'partial';
+    if (!Array.isArray(response) && state.timeRange === null && response.exact_complete === false) {
+        return 'partial';
+    }
+    return 'complete';
+}
+
+function renderHistoryItem(item) {
+    if (!item) return;
+    if (item._gap) {
+        addGapToCharts(item);
+        return;
+    }
+    addSampleToCharts(item, new Date(historyItemTimestamp(item)));
+}
+
+function latestHistoryItem(items) {
+    for (let i = items.length - 1; i >= 0; i--) {
+        if (!items[i]?._gap && historyItemSample(items[i])) return items[i];
+    }
+    return null;
+}
+
+function replaceHistoryBuffer(samples, resolution, response = null) {
+    const processed = insertGapsInHistory(annotateHistoryItems(samples, response), resolution);
+    if (processed.length > state.maxBufferSize) throw new Error('History response exceeds point budget');
+    const latest = latestHistoryItem(processed);
+    if (latest) updateSelectors(historyItemSample(latest));
+
+    clearAllChartData();
+    state.dataBuffer = [];
+    processed.forEach(item => {
+        state.dataBuffer.push(item);
+        renderHistoryItem(item);
+    });
+    rebuildHistoryPointContexts();
+
+    return latest;
+}
+
+function updateLatestHistorySample(item) {
+    const sample = historyItemSample(item);
+    if (!sample) return;
+
+    state.lastHistoricalTs = new Date(historyItemTimestamp(item));
+    // A background history response must not move the live gauges backwards.
+    if (state.lastSample && new Date(historyItemTimestamp(state.lastSample)) > state.lastHistoricalTs) return;
+    state.lastSample = sample;
+    updateGauges(sample);
+    updateHeader(sample);
+    updateSubtitles(sample);
+    evaluateAlerts(sample);
+}
+
+function requestHistory(fromDate, toDate, points, apply, {
+    label = 'History',
+    showSpinner = true,
+    queueLive = true,
+} = {}) {
+    // A delayed zoom must not start a new request after this newer view and
+    // supersede it through the latest-request-wins controller.
+    cancelPendingZoomFetch();
+    const query = new URLSearchParams({
+        from: fromDate.toISOString(),
+        to: toDate.toISOString(),
+        points: String(points),
+    });
+    const sections = historySectionsForFocus(state.focusMode, state.focusVisible);
+    if (sections) query.set('sections', sections.join(','));
+
+    return historyRequests.fetchJSON(apiUrl(`/api/history?${query.toString()}`), {
+        onStart: generation => {
+            state.historyRequestGeneration = generation;
+            state.loadingHistory = true;
+            state.queueLiveDuringHistory = queueLive;
+            setHistoryStatus('loading');
+            const spinner = document.getElementById('loading-spinner');
+            spinner?.classList.toggle('hidden', !showSpinner);
+        },
+        onApply: (response, { isCurrent }) => {
+            const samples = historyPayloadSamples(response);
+            if (!Array.isArray(response)) {
+                updateSamplingInfo(
+                    response.tier,
+                    response.resolution,
+                    response.complete,
+                    response.valid_aggregations,
+                    response.source_resolution,
+                    response.downsampled,
+                );
+            } else {
+                applyAggregationValidity(['data']);
+            }
+            if (samples.length > points) throw new Error('History response exceeds requested point budget');
+            state.historyPointLimit = points;
+            apply(response, samples);
+            if (!isCurrent()) return;
+            setHistoryStatus(historyPayloadStatus(response, samples), response);
+        },
+        onFailure: error => {
+            console.error(`${label} history fetch error:`, error);
+            setHistoryStatus('failed', null, error);
+        },
+        onFinish: () => {
+            state.loadingHistory = false;
+            state.queueLiveDuringHistory = false;
+            document.getElementById('loading-spinner')?.classList.add('hidden');
+            drainLiveQueue();
+        },
+    });
+}
+
+function supersedeHistoryRequest() {
+    cancelPendingZoomFetch();
+    state.historyRequestGeneration = historyRequests.supersede();
+    state.loadingHistory = false;
+    state.queueLiveDuringHistory = false;
+    document.getElementById('loading-spinner')?.classList.add('hidden');
+}
+
+function releaseZoomPause() {
+    if (!state.pausedZoom) return;
+    state.pausedZoom = false;
+    document.dispatchEvent(new Event('kula-sync-pause'));
+}
+
+function settleLocalHistoryView(fromDate, toDate, visible) {
+    const previous = state.historyCoverage;
+    const sourceResolution = previous?.sourceResolution || state.currentSourceResolution || state.currentResolution;
+    const priorFrom = Date.parse(previous?.actualFrom);
+    const priorTo = Date.parse(previous?.actualTo);
+    const fromMs = fromDate.getTime();
+    const toMs = toDate.getTime();
+    const actualFrom = Number.isFinite(priorFrom) ? new Date(Math.max(fromMs, priorFrom)).toISOString() : null;
+    const actualTo = Number.isFinite(priorTo) ? new Date(Math.min(toMs, priorTo)).toISOString() : null;
+    const complete = previous?.complete === true && actualFrom !== null && actualTo !== null &&
+        Date.parse(actualFrom) <= fromMs && Date.parse(actualTo) >= toMs &&
+        !visible.some(item => item?._gap);
+    state.historyCoverage = {
+        requestedFrom: fromDate.toISOString(),
+        requestedTo: toDate.toISOString(),
+        actualFrom,
+        actualTo,
+        complete,
+        retentionComplete: previous?.retentionComplete === true,
+        tier: state.currentTier,
+        resolution: state.currentResolution,
+        sourceResolution,
+        downsampled: state.currentDownsampled,
+    };
+    setHistoryStatus(complete ? 'complete' : 'partial');
+    drainLiveQueue();
+}
+
+export function cancelHistoryRequest() {
+    supersedeHistoryRequest();
+    state.historyViewEnd = null;
+    state.historyCoverage = null;
+    setHistoryStatus('idle');
+}
+
 // tryZoomFromBuffer attempts to satisfy a zoom request from the in-memory
 // data buffer, avoiding a network round-trip when the buffer already covers
 // the requested window. Returns true if the redraw succeeded.
 export function tryZoomFromBuffer(fromDate, toDate) {
+    if (state.currentTier !== 0 || state.currentDownsampled) return false;
     if (!state.dataBuffer || state.dataBuffer.length === 0) return false;
 
     const fromMs = fromDate.getTime();
     const toMs   = toDate.getTime();
 
+    const actualFrom = Date.parse(state.historyCoverage?.actualFrom);
+    const actualTo = Date.parse(state.historyCoverage?.actualTo);
+    if (!Number.isFinite(actualFrom) || !Number.isFinite(actualTo) ||
+        actualFrom > fromMs || actualTo < toMs) return false;
+
     // Determine the time span of the current buffer.
     const first = state.dataBuffer[0];
     const last  = state.dataBuffer[state.dataBuffer.length - 1];
-    const bufStart = new Date(first.ts || first.data?.ts).getTime();
-    const bufEnd   = new Date(last.ts  || last.data?.ts).getTime();
+    const bufStart = new Date(historyItemTimestamp(first)).getTime();
+    const bufEnd   = new Date(historyItemTimestamp(last)).getTime();
 
     if (isNaN(bufStart) || isNaN(bufEnd)) return false;
     if (bufStart > fromMs || bufEnd < toMs) return false; // buffer doesn't cover window
+
+    supersedeHistoryRequest();
 
     // Buffer covers the window — redraw directly from it.
     state.timeRange = null;
@@ -1112,64 +1468,62 @@ export function tryZoomFromBuffer(fromDate, toDate) {
 
     clearAllChartData();
     const visible = state.dataBuffer.filter(item => {
-        const t = new Date(item.ts || item.data?.ts).getTime();
+        const t = new Date(historyItemTimestamp(item)).getTime();
         return !isNaN(t) && t >= fromMs && t <= toMs;
     });
-    visible.forEach(item => {
-        const ts = new Date(item.ts || item.data?.ts);
-        addSampleToCharts(item, ts);
-    });
+    visible.forEach(renderHistoryItem);
     updateAllCharts();
+    settleLocalHistoryView(fromDate, toDate, visible);
     return true;
 }
 
-export function syncZoom(sourceChart) {
-    const { min, max } = sourceChart.scales.x;
+export function syncZoom(detail) {
+    const sourceChart = detail?.chart || detail;
+    const complete = detail?.chart ? detail.complete === true : true;
+    const xOptions = sourceChart?.options?.scales?.x;
+    const requestedMin = Number(xOptions?.min ?? sourceChart?.scales?.x?.min);
+    const requestedMax = Number(xOptions?.max ?? sourceChart?.scales?.x?.max);
+    const minSpan = minimumZoomSpan(state.currentSourceResolution, state.collectionIntervalMs);
+    let bounded = clampHistoryInterval(requestedMin, requestedMax, Date.now(), undefined, minSpan);
+    if (!bounded) return;
+    const previousMin = state.timeRange === null ? +state.customFrom
+        : (state.historyViewEnd ?? Date.now()) - state.timeRange * 1000;
+    const previousMax = state.timeRange === null ? +state.customTo : (state.historyViewEnd ?? Date.now());
+    if (requestedMax - requestedMin < previousMax - previousMin &&
+        requestedMin >= previousMin && requestedMax <= previousMax) {
+        // Count retained observations, not gap markers or nominal intervals.
+        // A finer response can allow another zoom, but this gesture must not
+        // discard all but a handful of the points currently being displayed.
+        const span = bounded.max - bounded.min;
+        bounded.min = Math.max(previousMin, Math.min(bounded.min, previousMax - span));
+        bounded.max = Math.min(previousMax, bounded.min + span);
+        const timestamps = state.dataBuffer.filter(item => !item?._gap && historyItemSample(item))
+            .map(item => Date.parse(historyItemTimestamp(item)))
+            .filter(ts => ts >= previousMin && ts <= previousMax);
+        bounded = fitZoomToObservations(bounded, timestamps) || { min: previousMin, max: previousMax };
+    }
+    const { min, max } = bounded;
+
+    // The viewport changes on the first movement, before pointerup or the
+    // wheel debounce. Supersede both pending responses and delayed zoom fetches
+    // immediately so neither can restore a previous viewport mid-gesture.
+    supersedeHistoryRequest();
 
     // Update the display to show the zoomed timeframe explicitly
-    if (min && max) {
-        state.timeRange = null; // Exit preset range immediately on interaction
-        const fmt = d => d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        document.getElementById('time-range-display').textContent = `${fmt(new Date(min))} \u2192 ${fmt(new Date(max))} (Zoomed)`;
-    }
+    state.timeRange = null; // Exact historical view: live chart insertion stops.
+    state.customFrom = new Date(min);
+    state.customTo = new Date(max);
+    document.querySelectorAll('.time-btn[data-range]').forEach(button => button.classList.remove('active'));
+    document.getElementById('btn-custom-range')?.classList.add('active');
+    const fmt = date => formatRangeTimestamp(date, state.timeZone, i18n.currentLang);
+    const zone = state.timeZone === 'utc' ? i18n.t('time_zone_utc') : i18n.t('time_zone_local');
+    document.getElementById('time-range-display').textContent =
+        `${fmt(state.customFrom)} \u2192 ${fmt(state.customTo)} · ${zone} (${i18n.t('zoomed')})`;
 
     const windowSec = (max - min) / 1000;
     const minUnit = windowSec >= 259200 ? 'day' : false; // 3 days
 
-    Object.values(state.charts).forEach(chart => {
-        if (!chart?.options?.scales?.x) return;
-        
-        if (minUnit) {
-            chart.options.scales.x.time.minUnit = minUnit;
-        } else {
-            delete chart.options.scales.x.time.minUnit;
-        }
-
-        if (chart !== sourceChart) {
-            chart.options.scales.x.min = min;
-            chart.options.scales.x.max = max;
-            chart.update('none');
-        } else {
-            chart.update('none');
-        }
-    });
-
-    // Sync split charts too
-    Object.values(state.splitCharts).forEach(typeCharts => {
-        Object.values(typeCharts).forEach(chart => {
-            if (!chart?.options?.scales?.x) return;
-            if (minUnit) {
-                chart.options.scales.x.time.minUnit = minUnit;
-            } else {
-                delete chart.options.scales.x.time.minUnit;
-            }
-            chart.options.scales.x.min = min;
-            chart.options.scales.x.max = max;
-            chart.update('none');
-        });
-    });
-    // Sync dynamic app charts
-    forEachAppChart(chart => {
+    forEachRegisteredChart(chart => {
         if (!chart?.options?.scales?.x) return;
         if (minUnit) {
             chart.options.scales.x.time.minUnit = minUnit;
@@ -1178,202 +1532,106 @@ export function syncZoom(sourceChart) {
         }
         chart.options.scales.x.min = min;
         chart.options.scales.x.max = max;
-        chart.update('none');
     });
+    queueAllChartUpdates();
+
+    // Continuous drag/pinch/wheel events only synchronize rendering. One
+    // completed gesture owns the request, URL update, and navigation entry.
+    if (!complete) return;
+    document.dispatchEvent(new CustomEvent('kula-viewport-commit', {
+        detail: { from: state.customFrom, to: state.customTo, source: 'gesture' },
+    }));
 
     // When zooming or panning, fetch the optimal data resolution for the new view.
     // If we're already at max resolution (raw tier) and the buffer completely covers
     // the window, we can skip the network request.
-    if (min && max) {
-        const fromDate = new Date(min);
-        const toDate   = new Date(max);
+    const fromDate = new Date(min);
+    const toDate   = new Date(max);
 
-        if (state.currentTier === 0 && tryZoomFromBuffer(fromDate, toDate)) {
-            return;
-        }
-
-        clearTimeout(_zoomFetchTimer);
-        _zoomFetchTimer = setTimeout(() => {
-            fetchZoomedHistory(fromDate, toDate);
-        }, 150);
+    if (state.currentTier === 0 && !state.currentDownsampled && tryZoomFromBuffer(fromDate, toDate)) {
+        releaseZoomPause();
+        return;
     }
+
+    state.loadingHistory = true;
+    state.queueLiveDuringHistory = true;
+    setHistoryStatus('loading');
+    document.getElementById('loading-spinner')?.classList.remove('hidden');
+    _zoomFetchTimer = setTimeout(() => {
+        fetchZoomedHistory(fromDate, toDate);
+    }, 150);
 }
 
 // Fetch higher-resolution data for a zoomed window and replace chart data,
 // then re-apply the zoom so the viewport stays exactly where the user dragged.
 export function fetchZoomedHistory(fromDate, toDate) {
-    if (state.loadingHistory) return;
-    state.loadingHistory = true;
-    document.getElementById('loading-spinner')?.classList.remove('hidden');
+    const points = historyPointBudget();
+    return requestHistory(fromDate, toDate, points, (response, samples) => {
+        const latest = replaceHistoryBuffer(samples, response?.resolution, response);
+        updateLatestHistorySample(latest);
 
-    const from = fromDate.toISOString();
-    const to = toDate.toISOString();
-    const points = Math.max(600, window.innerWidth || 1000);
-    fetch(apiUrl(`/api/history?from=${from}&to=${to}&points=${points}`))
-        .then(r => r.json())
-        .then(response => {
-            const data = response.samples || response;
-            const isEnvelope = response.samples !== undefined;
-
-            if (isEnvelope) {
-                updateSamplingInfo(response.tier, response.resolution);
-            }
-
-            clearAllChartData();
-            state.dataBuffer = [];
-
-            if (Array.isArray(data) && data.length > 0) {
-                const processed = insertGapsInHistory(data, response?.resolution);
-                processed.forEach(item => {
-                    if (item._gap) {
-                        addGapToCharts(new Date(item.ts));
-                        return;
-                    }
-                    const sample = item.data || item;
-                    const ts = new Date(sample.ts);
-                    state.dataBuffer.push(sample);
-                    addSampleToCharts(item, ts); // pass raw item to preserve peaks
-                });
-
-                if (state.dataBuffer.length > state.maxBufferSize) {
-                    state.dataBuffer = state.dataBuffer.slice(-state.maxBufferSize);
-                }
-
-                const lastSample = data[data.length - 1];
-                const s = lastSample.data || lastSample;
-                state.lastSample = s;
-                state.lastHistoricalTs = new Date(s.ts || lastSample.ts);
-                updateGauges(s);
-                updateHeader(s);
-                updateSubtitles(s);
-                evaluateAlerts(s);
-            }
-
-            // Re-apply the zoom viewport so the user stays in the same window
-            const minMs = fromDate.getTime();
-            const maxMs = toDate.getTime();
-            const reapplyZoom = (chart) => {
-                if (!chart?.options?.scales?.x) return;
-                chart.options.scales.x.min = minMs;
-                chart.options.scales.x.max = maxMs;
-                chart.update('none');
-            };
-            Object.values(state.charts).forEach(reapplyZoom);
-            forEachAppChart(reapplyZoom);
-
-            // Treat the zoomed window as a custom range so trimChartsToTimeRange
-            // leaves the data alone, and live samples arriving after this point
-            // won't clobber the viewport.
-            state.timeRange = null;
-            state.customFrom = fromDate;
-            state.customTo = toDate;
-
-            // The zoom is now "baked in" as a custom range — release zoom-pause
-            // so the WS stream resumes (new samples land outside the viewport
-            // and are ignored visually until the user resets zoom).
-            if (state.pausedZoom) {
-                state.pausedZoom = false;
-                document.dispatchEvent(new Event('kula-sync-pause'));
-            }
-
-            state.loadingHistory = false;
-            document.getElementById('loading-spinner')?.classList.add('hidden');
-            drainLiveQueue();
-        })
-        .catch(e => {
-            console.error('Zoomed history fetch error:', e);
-            state.loadingHistory = false;
-            document.getElementById('loading-spinner')?.classList.add('hidden');
-            drainLiveQueue();
+        // Re-apply the zoom viewport so the user stays in the same window.
+        const minMs = fromDate.getTime();
+        const maxMs = toDate.getTime();
+        forEachRegisteredChart(chart => {
+            if (!chart?.options?.scales?.x) return;
+            chart.options.scales.x.min = minMs;
+            chart.options.scales.x.max = maxMs;
         });
+        queueAllChartUpdates();
+
+        // Treat the zoomed window as a custom range so trimChartsToTimeRange
+        // leaves the data alone, and live samples arriving after this point
+        // won't clobber the viewport.
+        state.timeRange = null;
+        state.customFrom = fromDate;
+        state.customTo = toDate;
+
+        // The zoom is now "baked in" as an immutable exact range. Release the
+        // transport pause; live samples continue updating status surfaces but
+        // pushLiveSample keeps them out of historical datasets.
+        releaseZoomPause();
+    }, { label: 'Zoomed' }).finally(releaseZoomPause);
 }
 
 export function resetZoomAll() {
-    const resetChart = (chart) => {
+    forEachRegisteredChart(chart => {
         if (!chart?.options?.scales?.x) return;
         delete chart.options.scales.x.min;
         delete chart.options.scales.x.max;
         delete chart.options.scales.x.time.minUnit;
-        chart.update('none');
-    };
-    Object.values(state.charts).forEach(resetChart);
-    Object.values(state.splitCharts).forEach(typeCharts => {
-        Object.values(typeCharts).forEach(resetChart);
     });
-    forEachAppChart(resetChart);
-
-    // Restore time range display text
-    if (state.timeRange !== null) {
-        const labels = {
-            60: 'Last 1 minute', 300: 'Last 5 minutes', 900: 'Last 15 minutes', 1800: 'Last 30 minutes',
-            3600: 'Last 1 hour', 10800: 'Last 3 hours', 21600: 'Last 6 hours', 43200: 'Last 12 hours',
-            86400: 'Last 24 hours', 259200: 'Last 3 days', 604800: 'Last 7 days', 2592000: 'Last 30 days'
-        };
-        document.getElementById('time-range-display').textContent = labels[state.timeRange] || `Last ${state.timeRange}s`;
-    } else if (state.customFrom && state.customTo) {
-        const fmt = d => d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        document.getElementById('time-range-display').textContent = `${fmt(state.customFrom)} → ${fmt(state.customTo)}`;
-    }
+    queueAllChartUpdates();
 
     // Resume from zoom-pause
-    if (state.pausedZoom) {
-        state.pausedZoom = false;
-        document.dispatchEvent(new Event('kula-sync-pause'));
-    }
+    releaseZoomPause();
 }
 
 // ---- Gap Insertion ----
 export function insertGapsInHistory(data, resolutionStr = '1s') {
-    if (state.joinMetrics || data.length < 2) return data;
-
-    let expectedInterval = 1000; // default 1s
-    if (typeof resolutionStr === 'string') {
-        const num = parseInt(resolutionStr) || 1;
-        if (resolutionStr.endsWith('s')) expectedInterval = num * 1000;
-        else if (resolutionStr.endsWith('m')) expectedInterval = num * 60000;
-        else if (resolutionStr.endsWith('h')) expectedInterval = num * 3600000;
-    }
-
-    // Auto-detect actual data interval from the median gap between the first
-    // samples.  The storage resolution can be "1s" even when collection.interval
-    // is e.g. 5s, which would cause every normal gap to be misclassified.
-    const sampleLimit = Math.min(data.length - 1, 20);
-    if (sampleLimit >= 3) {
-        const gaps = [];
-        for (let i = 0; i < sampleLimit; i++) {
-            const a = new Date(data[i].ts || data[i].data?.ts).getTime();
-            const b = new Date(data[i + 1].ts || data[i + 1].data?.ts).getTime();
-            gaps.push(b - a);
-        }
-        gaps.sort((a, b) => a - b);
-        const median = gaps[Math.floor(gaps.length / 2)];
-        if (median > expectedInterval) {
-            expectedInterval = median;
-        }
-    }
-
-    const gapThreshold = expectedInterval * 2.5;
-
-    const result = [];
-    for (let i = 0; i < data.length; i++) {
-        result.push(data[i]);
-        if (i < data.length - 1) {
-            const curTs = new Date(data[i].ts || data[i].data?.ts).getTime();
-            const nextTs = new Date(data[i + 1].ts || data[i + 1].data?.ts).getTime();
-            if (nextTs - curTs > gapThreshold) {
-                // Insert a null gap marker
-                result.push({ _gap: true, ts: new Date(curTs + expectedInterval).toISOString() });
-            }
-        }
-    }
-    return result;
+    const items = data.map(normalizeHistoryItem).filter(Boolean);
+    return insertHistoryGaps(items, resolutionStr);
 }
 
-export function addGapToCharts(ts) {
+export function addGapToCharts(marker) {
+    const start = new Date(marker?.gap_start ?? marker?.ts ?? marker).getTime();
+    const end = new Date(marker?.gap_end).getTime();
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        const gaps = state.historyGaps || (state.historyGaps = []);
+        const previous = gaps[gaps.length - 1];
+        if (previous && start <= previous.end) {
+            previous.end = Math.max(previous.end, end);
+        } else {
+            gaps.push({ start, end });
+        }
+    }
+
+    const ts = new Date(Number.isFinite(start) ? start : marker);
+    if (!Number.isFinite(ts.getTime())) return;
     const addGap = (chart) => {
         if (!chart?.data?.datasets) return;
         chart.data.datasets.forEach(ds => {
-            if (Array.isArray(ds.data)) ds.data.push({ x: ts, y: null });
+            if (Array.isArray(ds.data)) appendEnvelopeGap(ds, ts);
         });
     };
     Object.values(state.charts).forEach(addGap);
@@ -1578,265 +1836,198 @@ export function updateSelectors(s) {
 // ---- Live Sample Pipeline ----
 // Push a single live sample — adds data + updates charts immediately
 export function pushLiveSample(sample) {
-    const ts = new Date(sample.ts || sample.data?.ts);
+    const item = annotateHistoryItems([sample], {
+        tier: 0,
+        resolution: 'live',
+        complete: null,
+        valid_aggregations: ['data'],
+    })[0];
+    const liveSample = historyItemSample(item);
+    if (!liveSample) return;
+    const ts = new Date(historyItemTimestamp(item));
+    if (!Number.isFinite(ts.getTime())) return;
+
+    // Learn cadence from live messages, including those already represented
+    // by a history response. Historical timestamps must never become the
+    // baseline for estimating the collection interval.
+    if (state.lastLiveSampleTs === null || ts.getTime() > state.lastLiveSampleTs) {
+        if (state.lastLiveSampleTs !== null) {
+            const observed = updateLiveSampleInterval(
+                state.liveSampleIntervals,
+                ts.getTime() - state.lastLiveSampleTs,
+            );
+            state.liveSampleIntervals = observed.intervals;
+            state.liveSampleIntervalMs = observed.estimate;
+        }
+        state.lastLiveSampleTs = ts.getTime();
+    }
 
     // Prevent duplicate or out-of-order samples
     if (state.lastSample) {
-        const lastTs = new Date(state.lastSample.ts || state.lastSample.data?.ts);
+        const lastTs = new Date(historyItemTimestamp(state.lastSample));
         if (ts.getTime() <= lastTs.getTime()) {
             return;
         }
     }
 
-    state.dataBuffer.push(sample);
-    state.lastSample = sample;
-    if (state.dataBuffer.length > state.maxBufferSize) {
-        state.dataBuffer.shift();
+    state.lastSample = liveSample;
+    updateGauges(liveSample);
+    updateHeader(liveSample);
+
+    // Exact custom/zoomed intervals are immutable evidence. Keep the live
+    // status surfaces current, but do not append off-screen points to their
+    // Chart.js datasets or canonical history buffer.
+    if (state.timeRange === null && state.customFrom && state.customTo) {
+        updateSubtitles(liveSample);
+        evaluateAlerts(liveSample);
+        return;
     }
 
-    updateSelectors(sample);
-    updateGauges(sample);
-    updateHeader(sample);
-    addSampleToCharts(sample, ts); // For live sample, item is the sample itself
+    updateSelectors(liveSample);
+
+    const refreshInterval = liveHistoryRefreshInterval(
+        state.timeRange, state.historyPointLimit, state.liveSampleIntervalMs);
+    if (refreshInterval > 0 || state.historyViewEnd !== null) {
+        refreshRollingHistory(refreshInterval || 1000);
+        updateSubtitles(liveSample);
+        evaluateAlerts(liveSample);
+        return;
+    }
+
+    trimChartsToTimeRange();
+    if (state.dataBuffer.length >= state.historyPointLimit) {
+        // The existing representation stays visible while a bounded full-range
+        // response is fetched. Failed refreshes never delete its left edge.
+        refreshRollingHistory(1000);
+        updateSubtitles(liveSample);
+        evaluateAlerts(liveSample);
+        return;
+    }
+    state.dataBuffer.push(item);
+    const context = historyItemContext(item);
+    if (context) state.historyPointContexts.set(ts.getTime(), context);
+
+    addSampleToCharts(item, ts);
     trimChartsToTimeRange();
     updateAllCharts();
-    updateSubtitles(sample);
-    evaluateAlerts(sample);
+    updateSubtitles(liveSample);
+    evaluateAlerts(liveSample);
 }
 
-export function updateSamplingInfo(tier, resolution) {
-    const el = document.getElementById('sampling-info');
-    if (!el) return;
-    const tierNames = ['Tier 1 (raw)', 'Tier 2 (aggregated)', 'Tier 3 (long-term)'];
-    const name = tierNames[tier] || `Tier ${tier + 1}`;
-    el.textContent = `${resolution} samples · ${name}`;
-    state.currentResolution = resolution || '1s';
-    state.currentTier = tier;
+function applyAggregationValidity(validAggregations) {
+    const resolved = resolveAggregation(state.currentAggregation, validAggregations);
+    state.validAggregations = resolved.valid;
 
-    const aggList = document.getElementById('agg-presets-list');
-    const aggDiv = document.getElementById('agg-divider');
-    const aggBtnMobile = document.getElementById('btn-agg-menu');
+    if (resolved.selection !== state.currentAggregation) {
+        state.currentAggregation = resolved.selection;
 
-    if (aggList && aggDiv) {
-        if (tier === 0) {
-            aggList.classList.add('hidden');
-            aggDiv.classList.add('hidden');
-            if (aggBtnMobile) aggBtnMobile.classList.add('hidden');
-        } else {
-            aggList.classList.remove('hidden');
-            aggDiv.classList.remove('hidden');
-            if (aggBtnMobile) aggBtnMobile.classList.remove('hidden');
+        // An old bookmark may still request agg=min|max. Once the server has
+        // declared that operation invalid, remove the misleading URL state.
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('agg')) {
+            params.delete('agg');
+            const query = params.toString();
+            const url = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
+            window.history.replaceState(null, '', url);
         }
     }
+
+    document.querySelectorAll('#agg-presets-list .time-btn').forEach(button => {
+        const field = aggregationField(button.dataset.agg);
+        const valid = state.validAggregations.includes(field);
+        button.classList.toggle('hidden', !valid);
+        button.disabled = !valid;
+        button.classList.toggle('active', button.dataset.agg === state.currentAggregation);
+    });
+
+    const hasChoice = state.validAggregations.some(field => field !== 'data');
+    document.getElementById('agg-presets-list')?.classList.toggle('hidden', !hasChoice);
+    document.getElementById('agg-divider')?.classList.toggle('hidden', !hasChoice);
+    document.getElementById('btn-agg-menu')?.classList.toggle('hidden', !hasChoice);
+    document.dispatchEvent(new Event('kula-history-metadata-changed'));
 }
 
-export function fetchHistory(rangeSeconds) {
-    if (state.loadingHistory) return;
-    state.loadingHistory = true;
-    document.getElementById('loading-spinner')?.classList.remove('hidden');
+export function renderSamplingInfo(status = state.historyStatus) {
+    const el = document.getElementById('sampling-info');
+    if (!el) return;
+    const tier = Number.isInteger(state.currentTier) && state.currentTier >= 0
+        ? `${i18n.t('tier')} ${state.currentTier + 1}` : '';
+    const label = { failed: 'history_failed', partial: 'partial_range', empty: 'history_empty' }[status];
+    el.textContent = [state.currentResolution, tier, label ? i18n.t(label) : ''].filter(Boolean).join(' · ');
+}
 
-    const to = new Date().toISOString();
-    const from = new Date(Date.now() - rangeSeconds * 1000).toISOString();
-    const points = Math.max(600, window.innerWidth || 1000);
-    fetch(apiUrl(`/api/history?from=${from}&to=${to}&points=${points}`))
-        .then(r => r.json())
-        .then(response => {
-            const data = response.samples || response;
-            const isEnvelope = response.samples !== undefined;
+export function updateSamplingInfo(
+    tier,
+    resolution,
+    complete = true,
+    validAggregations = ['data'],
+    sourceResolution = resolution,
+    downsampled = null,
+) {
+    state.currentResolution = resolution || '1s';
+    state.currentSourceResolution = sourceResolution || state.currentResolution;
+    state.currentDownsampled = typeof downsampled === 'boolean'
+        ? downsampled
+        : state.currentResolution !== state.currentSourceResolution;
+    state.currentTier = tier;
+    const minRange = minimumZoomSpan(state.currentSourceResolution, state.collectionIntervalMs);
+    forEachRegisteredChart(chart => {
+        if (chart.options?.plugins?.zoom?.limits?.x) {
+            chart.options.plugins.zoom.limits.x.minRange = minRange;
+        }
+    });
+    applyAggregationValidity(validAggregations);
 
-            if (isEnvelope) {
-                updateSamplingInfo(response.tier, response.resolution);
-            }
+    const el = document.getElementById('sampling-info');
+    if (!el) return;
+    const name = Number.isInteger(tier) && tier >= 0 ? `${i18n.t('tier')} ${tier + 1}` : '';
+    renderSamplingInfo(complete === false ? 'partial' : 'complete');
+    const source = state.currentDownsampled
+        ? `${i18n.t('source')}: ${state.currentSourceResolution}`
+        : '';
+    el.title = [name, source, state.timeZone === 'utc' ? 'UTC' : i18n.t('time_zone_local')]
+        .filter(Boolean).join(' · ');
+}
 
-            if (!Array.isArray(data) || data.length === 0) {
-                clearAllChartData();
-                state.dataBuffer = [];
-                setChartTimeRange();
-                updateAllCharts();
-                state.loadingHistory = false;
-                document.getElementById('loading-spinner')?.classList.add('hidden');
-                return;
-            }
+function refreshRollingHistory(interval) {
+    const now = Date.now();
+    if (state.historyViewEnd === null) {
+        const end = Date.parse(state.historyCoverage?.requestedTo);
+        state.historyViewEnd = Number.isFinite(end) ? end : now;
+    }
+    if (state.loadingHistory || now - Math.max(state.historyRefreshAttempt, state.historyViewEnd) < interval) return;
+    void fetchHistory(state.timeRange, { background: true });
+}
 
-            // Pre-calculate selectors from newest sample so charting has correct selection
-            const lastItemH = data[data.length - 1];
-            updateSelectors(lastItemH.data || lastItemH);
-
-            // Clear all chart data before loading history
-            clearAllChartData();
-            state.dataBuffer = [];
-
-            // Batch add all historical points WITHOUT chart.update() per sample
-            const processed = insertGapsInHistory(data, response?.resolution);
-            processed.forEach(item => {
-                if (item._gap) {
-                    addGapToCharts(new Date(item.ts));
-                    return;
-                }
-                const timestampSrc = item.data || item;
-                const ts = new Date(timestampSrc.ts || item.ts);
-                state.dataBuffer.push(item);
-                addSampleToCharts(item, ts);
-            });
-
-            // Trim buffer
-            if (state.dataBuffer.length > state.maxBufferSize) {
-                state.dataBuffer = state.dataBuffer.slice(-state.maxBufferSize);
-            }
-
-            // Single batch update of all charts
-            trimChartsToTimeRange();
-            updateAllCharts();
-
-            // Update gauges/header with latest sample
-            const lastItem = data[data.length - 1];
-            const s = lastItem.data || lastItem;
-            state.lastSample = s;
-            state.lastHistoricalTs = new Date(s.ts || lastItem.ts);
-            updateGauges(s);
-            updateHeader(s);
-            updateSubtitles(s);
-            evaluateAlerts(s);
-
-            state.loadingHistory = false;
-            document.getElementById('loading-spinner')?.classList.add('hidden');
-            drainLiveQueue();
-        })
-        .catch(e => {
-            console.error('History fetch error:', e);
-            state.loadingHistory = false;
-            document.getElementById('loading-spinner')?.classList.add('hidden');
-            drainLiveQueue();
-        });
+export function fetchHistory(rangeSeconds, { background = false } = {}) {
+    const toDate = new Date();
+    const fromDate = new Date(toDate.getTime() - rangeSeconds * 1000);
+    const points = historyPointBudget();
+    state.historyRefreshAttempt = toDate.getTime();
+    return requestHistory(fromDate, toDate, points, (response, samples) => {
+        const interval = liveHistoryRefreshInterval(rangeSeconds, points, state.liveSampleIntervalMs);
+        state.historyViewEnd = interval > 0 ? toDate.getTime() : null;
+        const latest = replaceHistoryBuffer(samples, response?.resolution, response);
+        trimChartsToTimeRange();
+        updateAllCharts();
+        updateLatestHistorySample(latest);
+        const info = document.getElementById('sampling-info');
+        if (info && interval > 0) {
+            info.title += ` · ${i18n.t('history_refresh_every')} ${Math.ceil(interval / 1000)}s` +
+                ` · ${i18n.t('updated')}: ${formatRangeTimestamp(toDate, state.timeZone, i18n.currentLang)}`;
+        }
+    }, { showSpinner: !background, queueLive: !background });
 }
 
 export function fetchCustomHistory(fromDate, toDate) {
-    if (state.loadingHistory) return;
-    state.loadingHistory = true;
-    document.getElementById('loading-spinner')?.classList.remove('hidden');
-
-    const from = fromDate.toISOString();
-    const to = toDate.toISOString();
-    const points = Math.max(600, window.innerWidth || 1000);
-    fetch(apiUrl(`/api/history?from=${from}&to=${to}&points=${points}`))
-        .then(r => r.json())
-        .then(response => {
-            const data = response.samples || response;
-            const isEnvelope = response.samples !== undefined;
-
-            if (isEnvelope) {
-                updateSamplingInfo(response.tier, response.resolution);
-            }
-
-            if (Array.isArray(data) && data.length > 0) {
-                const lastItemC = data[data.length - 1];
-                updateSelectors(lastItemC.data || lastItemC);
-            }
-
-            clearAllChartData();
-            state.dataBuffer = [];
-
-            if (Array.isArray(data) && data.length > 0) {
-                const processed = insertGapsInHistory(data, response?.resolution);
-                processed.forEach(item => {
-                    if (item._gap) {
-                        addGapToCharts(new Date(item.ts));
-                        return;
-                    }
-                    const timestampSrc = item.data || item;
-                    const ts = new Date(timestampSrc.ts || item.ts);
-                    state.dataBuffer.push(item);
-                    addSampleToCharts(item, ts);
-                });
-
-                if (state.dataBuffer.length > state.maxBufferSize) {
-                    state.dataBuffer = state.dataBuffer.slice(-state.maxBufferSize);
-                }
-
-                const lastItem = data[data.length - 1];
-                const s = lastItem.data || lastItem;
-                state.lastSample = s;
-                state.lastHistoricalTs = new Date(s.ts || lastItem.ts);
-                updateGauges(s);
-                updateHeader(s);
-                updateSubtitles(s);
-                evaluateAlerts(s);
-            }
-
-            setChartTimeRange();
-            updateAllCharts();
-            state.loadingHistory = false;
-            document.getElementById('loading-spinner')?.classList.add('hidden');
-            drainLiveQueue();
-        })
-        .catch(e => {
-            console.error('Custom history fetch error:', e);
-            state.loadingHistory = false;
-            document.getElementById('loading-spinner')?.classList.add('hidden');
-            drainLiveQueue();
-        });
+    const points = historyPointBudget();
+    return requestHistory(fromDate, toDate, points, (response, samples) => {
+        const latest = replaceHistoryBuffer(samples, response?.resolution, response);
+        setChartTimeRange();
+        updateAllCharts();
+        updateLatestHistorySample(latest);
+    }, { label: 'Custom' });
 }
-
-export function fetchGapHistory(fromDate, toDate) {
-    if (state.loadingHistory) return;
-    state.loadingHistory = true;
-
-    const from = fromDate.toISOString();
-    const to = toDate.toISOString();
-    fetch(apiUrl(`/api/history?from=${from}&to=${to}&points=300`))
-        .then(r => r.json())
-        .then(response => {
-            const data = response.samples || response;
-            if (Array.isArray(data) && data.length > 0) {
-                const lastItemC = data[data.length - 1];
-                updateSelectors(lastItemC.data || lastItemC);
-
-                const processed = insertGapsInHistory(data, response?.resolution);
-                const existingTs = new Set(state.dataBuffer.map(i => new Date(i.ts || i.data?.ts).getTime()));
-                let added = 0;
-
-                processed.forEach(item => {
-                    const tsMs = new Date(item.ts || item.data?.ts).getTime();
-                    if (tsMs <= fromDate.getTime() || existingTs.has(tsMs)) return;
-
-                    state.dataBuffer.push(item);
-                    added++;
-                });
-
-                if (added > 0) {
-                    state.dataBuffer.sort((a,b) => new Date(a.ts || a.data?.ts).getTime() - new Date(b.ts || b.data?.ts).getTime());
-                    if (state.dataBuffer.length > state.maxBufferSize) {
-                        state.dataBuffer = state.dataBuffer.slice(-state.maxBufferSize);
-                    }
-                    redrawChartsFromBuffer();
-                }
-
-                if (state.dataBuffer.length > state.maxBufferSize) {
-                    state.dataBuffer = state.dataBuffer.slice(-state.maxBufferSize);
-                }
-
-                const lastItem = data[data.length - 1];
-                const s = lastItem.data || lastItem;
-                state.lastSample = s;
-                state.lastHistoricalTs = new Date(s.ts || lastItem.ts);
-
-                trimChartsToTimeRange();
-                updateAllCharts();
-                updateGauges(s);
-                updateHeader(s);
-                updateSubtitles(s);
-                evaluateAlerts(s);
-            }
-            state.loadingHistory = false;
-            drainLiveQueue();
-        })
-        .catch(e => {
-            console.error('Gap history fetch error:', e);
-            state.loadingHistory = false;
-            drainLiveQueue();
-        });
-}
-
 
 
 // Replay any samples that arrived while history was loading.
@@ -1844,9 +2035,9 @@ export function drainLiveQueue() {
     if (state.liveQueue.length === 0) return;
     const queue = state.liveQueue;
     state.liveQueue = [];
-    queue.forEach(sample => {
+    queue.forEach(item => {
         // Skip samples whose timestamp was already covered by the history load
-        if (state.lastHistoricalTs && new Date(sample.ts) <= state.lastHistoricalTs) return;
-        pushLiveSample(sample);
+        if (state.lastHistoricalTs && new Date(historyItemTimestamp(item)) <= state.lastHistoricalTs) return;
+        pushLiveSample(item);
     });
 }

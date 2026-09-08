@@ -36,33 +36,111 @@ Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.
 | Module | Responsibility |
 |--------|----------------|
 | `state.js` | Shared app state, color palette, global Chart.js config (**load first**) |
-| `url-state.js` | Restore/sync time window, custom range, and aggregation to the URL query string (shareable views) |
-| `main.js` | Entry point; wires event listeners, starts auth + WebSocket (**load last**) |
+| `history-navigation.js` | Shareable URL state, bounded Back/Forward stack, and deterministic interval clamping |
+| `main.js` | Entry point; wires event listeners and static chart-card actions, starts auth + WebSocket (**load last**) |
 | `api.js` | URL helpers that prepend `window.KULA_BASE_PATH` (base-path support) |
 | `auth.js` | Auth status check, config fetch, login/logout |
 | `websocket.js` | WebSocket connect, reconnect, live-queue drain |
 | `charts-init.js` | Chart.js instance creation; full dashboard init; app-chart teardown |
 | `charts-data.js` | Sample ingestion, chart updates, zoom sync, gap insertion, device selectors |
+| `chart-controller.js` | Chart registry, animation-frame batching, viewport culling, plot-width budgets |
+| `chart-interactions.js` | Pointer/keyboard pan and zoom, shared crosshair, and gesture-safe tooltips |
+| `chart-envelope.js` | Compact extrema arrays plus Min–Max and missing-interval chart bands |
+| `chart-accessibility.js` | Canvas names/summaries, keyboard point cursor, bounded semantic tables, and complete chart CSV |
+| `format.js` | Metric and Local/UTC formatting, datetime conversion, and bucket-tooltip semantics |
+| `history-request.js` | Abortable, generation-safe latest-history-request controller |
+| `history-data.js` | Canonical history items, aggregation validity, missing-observation gaps, and Focus Mode API sections |
+| `date-range-calendar.js` | Tier-availability calendar for exact historical intervals |
 | `gauges.js` | Bar gauges, sparkline backgrounds, live gauge updates |
 | `controls.js` | Pause/resume, layout toggle, time-range selection, history fetch |
 | `focus-mode.js` | Select/persist a subset of chart cards |
 | `split.js` | Per-device/interface graph splitting |
 | `header.js` | Header bar + chart subtitle updates |
-| `theme.js` | Dark/light theme apply + toggle |
+| `settings.js` | Dark/light theme and persisted appearance/accessibility preferences |
 | `alerts.js` | Alert evaluation (clock sync, low entropy, overload) + dropdown |
 | `i18n.js` | Fetches translations from `/api/i18n` and applies to the DOM |
 | `ollama.js` | AI assistant panel; SSE streaming from `/api/ollama/chat` |
-| `ui-actions.js` | Hover-pause on cards, expand/collapse, per-chart Y-axis settings |
-| `utils.js` | Formatting helpers |
 
-### Data flow
+### History and rendering
 
-```
-WebSocket /ws ──► websocket.js ──► charts-data.js ──► Chart.js + gauges.js
-                                       ▲
-Time-range select ── controls.js ──► /api/history ──┘ (downsampled history)
-/api/config ── auth.js ──► state.js (theme, langs, graph bounds, custom metrics, ollama)
-```
+WebSocket samples enter `charts-data.js`; preset, custom, zoom and reconnect requests share
+one abortable `HistoryRequestController`. Only its current generation can replace history.
+Failures retain the successful view and expose a failed status. Reconnection refreshes the
+whole selected preset. Custom/zoomed intervals stay frozen while live gauges and status update.
+
+Every buffer observation uses the canonical `ts`, `data`, optional `min`/`max`, `dur`, and
+bucket-metadata shape. Rendering selects only operations allowed by `valid_aggregations`.
+Response provenance is shared between observations and indexed by timestamp for tooltips.
+Tier `0` is not synonymous with raw output: `downsampled` responses still refetch on zoom and
+retain valid Min/Max controls, including below three hours. The share URL preserves an allowed
+non-default aggregation regardless of window length. Local raw-buffer zooms preserve partial
+coverage and gap markers instead of unconditionally promoting a view to complete.
+
+Requests use 300–5,000 observations based on the widest visible plot. There is room for one
+explicit gap marker between adjacent observations (at most 10,000 buffer items). Gap markers
+never evict observations. Short rolling windows append live data while it fits the selected
+budget; long windows refresh the entire range at display resolution. Their axes remain at the
+last successful snapshot until replacement, including during network failures. The refresh
+cadence and snapshot time appear in the resolution tooltip. Still-selected history is never
+removed to make room for a stream of raw points.
+The live cadence estimate uses a bounded median of observed live timestamp differences, so
+supported slower collectors are not permanently treated as one-second sources. Reconnects
+reset that estimate; historical responses never supply its timestamp baseline.
+
+`chart-controller.js` batches updates in animation frames and defers off-screen charts using
+IntersectionObserver. It reads all visibility rectangles before drawing. Cursor changes use
+`render()`; metric/scale changes use `update('none')`. Grid/list changes resize existing
+instances without refetching history, preserving legend selections and data. `format.js`
+reuses a bounded formatter cache; tick measurement samples eight labels.
+
+Time series are straight and unfilled. Trusted extrema remain in flat companion arrays, with
+one principal-series band by default (CPU uses total usage). Additional bands are optional in
+Customization. Min/Max selection and Data/CSV can inspect extrema from every series. Derived
+sums across devices remain line-only because independent extrema may occur at different times.
+`history-data.js` retains exact missing-observation bounds and inserts null line breaks. The
+chart plugin paints those bounds as neutral, text-free background bands; `join_metrics` is the
+explicit operator override for joining lines across them without hiding the bands.
+Sensor series keep stable identity across reorder/disappearance, and new sensors receive
+null backfill. Missing applications/devices append nulls to retained series, preserving outages.
+
+Local/UTC selection lives in Customization and changes presentation without changing instants.
+Tooltips show exact times, bucket bounds, selected source/native resolution, output resolution,
+source-record contributor count, coverage and aggregation validity.
+
+### Chart interaction and accessibility
+
+The gesture layer provides selection zoom, Shift+drag/touch pan, two-finger pinch and Ctrl+wheel
+zoom. Back/Forward use a bounded dashboard navigation stack. Live returns to the last preset;
+Zoom out doubles an exact interval up to 31 days. Completed gestures create one request and
+history entry; the first continuous gesture frame invalidates pending history requests before
+synchronizing scales. Zooming within the loaded view retains at least twelve observations
+(excluding gap markers), with a twelve-source-interval floor shared by Chart.js and the gesture
+handler. Panning into a new range still depends on that range's available history.
+Refetching finer history can lower that floor for the next gesture.
+Every gesture uses the same 31-day/future-edge clamp. Changing language recomputes the active
+preset/custom label rather than reapplying the initial five-minute placeholder. Twelve-hour
+tick labels reserve explicit skip padding. The custom picker derives precision from the
+collection interval and refreshes selectable tier-header retention ranges when opened;
+outside pointer/click actions dismiss its unapplied draft.
+
+Each canvas has a visible-heading accessible name, summary and keyboard controls. Enter pins a
+point, arrows step through pinned observations, Home/End selects endpoints and Escape clears
+it. Unpinned arrows pan and +/- zoom. Pointer hover shares a crosshair without announcements or
+changing the header layout; only an explicit pin displays a timestamp there. Drag completion is
+filtered from click-to-pin handling. Keyboard changes use a card-local status region. History
+transitions use one global region.
+
+Data controls are off by default. `chart-accessibility.js` receives a preference callback from
+chart creation, creates a Data button only after opt-in, and creates table/export DOM only on
+first use. Opt-out removes those nodes without removing canvas accessibility. The table preview
+shows up to 50 timestamps; CSV includes all represented observations in the selected viewport,
+with representative values and trusted extrema. Spreadsheet formula strings are escaped.
+
+Focus Mode selects API metric sections through `history-data.js`; leaving or changing
+Focus Mode refreshes the interval to populate newly visible cards. The default dashboard asks
+for all sections. Opening the dashboard does not start a background storage-coverage scan.
+
+Browser regression commands and performance fixtures are described in [Testing](12-testing.md).
 
 ### Base-path awareness
 

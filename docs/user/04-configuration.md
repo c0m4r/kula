@@ -168,7 +168,7 @@ matching origins, those origins pass `origin_validation`, and session cookies sw
 
 ```yaml
   join_metrics: false        # connect across gaps in graphs (false = show gaps)
-  default_aggregation: max   # historical aggregation: avg | min | max
+  default_aggregation: avg   # preferred historical operation: avg | min | max
   lang:
     default: en              # ar de en es fr hi ja ko pl pt zh
     force: false             # hide the language selector
@@ -183,6 +183,14 @@ matching origins, those origins pass `origin_validation`, and session cookies sw
       disk_temp: false    # one chart per disk (thermals)
       gpu: false          # one chart per GPU
 ```
+
+`default_aggregation` is retained for configuration compatibility, but the dashboard uses it
+only when `/api/history` reports that operation as valid. New or recomputed buckets support
+Avg/Min/Max. Unbucketed raw points and rollups written by versions without exhaustive reducer
+provenance advertise representative `data` only, so the selector stays hidden for those
+responses. The default is `avg`, which supplies the representative center line while validated
+Min/Max values remain visible in the surrounding history band. Existing explicit `max` or
+`min` settings continue to work.
 
 `max_mode` per graph:
 

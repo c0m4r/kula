@@ -111,6 +111,7 @@ export function toggleFocusMode() {
         localStorage.removeItem('kula_focus_visible');
         state.focusVisible = null;
         restoreGrids();
+        document.dispatchEvent(new Event('kula-history-sections-changed'));
         return;
     }
 
@@ -139,7 +140,10 @@ export function toggleFocusMode() {
             clearAllSectionFocusChrome();
             btn.classList.remove('focus-active');
             removeFocusBar();
+            localStorage.removeItem('kula_focus_visible');
+            state.focusVisible = null;
             restoreGrids();
+            document.dispatchEvent(new Event('kula-history-sections-changed'));
             return;
         }
 
@@ -199,6 +203,7 @@ export function toggleFocusMode() {
 
         combineGrids();
         removeFocusBar();
+        document.dispatchEvent(new Event('kula-history-sections-changed'));
         return;
     }
 

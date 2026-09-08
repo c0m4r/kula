@@ -33,13 +33,13 @@ legacy v1 JSON records).
 │    7. Application metrics — fixed sequence:               │
 │         a. Nginx       (1B presence + 52B data)           │
 │         b. Containers  (2B count + variable)              │
-│         c. PostgreSQL  (1B version + 56/104B)             │
-│         d. MySQL       (1B version + 56B)                 │
+│         c. PostgreSQL  (1B version + versioned data)      │
+│         d. MySQL       (1B version + versioned data)      │
 │         e. Apache2     (1B version + 72/100B)             │
 │         f. Custom      (2B group count + variable)        │
+│    8. Power supplies  (version + count + variable)        │
 │                                                           │
-│       ← NEW fixed app metric types go HERE, after the     │
-│         existing ones and BEFORE Custom.                  │
+│       ← NEW sections go HERE, after every existing one.   │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -49,11 +49,14 @@ legacy v1 JSON records).
 const (
     flagHasMin     uint16 = 1 << 0  // min aggregate block present
     flagHasMax     uint16 = 1 << 1  // max aggregate block present
-    flagHasData    uint16 = 1 << 2  // data (avg) block present
+    flagHasData    uint16 = 1 << 2  // representative data block present
     flagHasApps    uint16 = 1 << 3  // application section present
+    flagReducerV2  uint16 = 1 << 4  // exhaustive reducer provenance
     flagHasApache2 uint16 = 1 << 8  // Apache2 block present
     flagHasMysql   uint16 = 1 << 9  // MySQL block present
-    // bits 4–7 and 10–15 are free for new metric types
+    flagHasPSU     uint16 = 1 << 10 // power-supply section present
+    flagHasMeanStats uint16 = 1 << 11 // record-level contributing statistics
+    // bits 5–7 and 12–15 are free for new metric types
 )
 ```
 
@@ -61,11 +64,33 @@ const (
 |-----|------|---------|
 | 0 | `flagHasMin` | Min aggregate present |
 | 1 | `flagHasMax` | Max aggregate present |
-| 2 | `flagHasData` | Avg/data block present |
+| 2 | `flagHasData` | Representative Data block present |
 | 3 | `flagHasApps` | Application section present |
+| 4 | `flagReducerV2` | Min/Max use the exhaustive policy reducer |
 | 8 | `flagHasApache2` | Apache2 block present |
 | 9 | `flagHasMysql` | MySQL block present |
-| 10–15, 4–7 | — | **Available** — use bit 10 next |
+| 10 | `flagHasPSU` | Power-supply section present |
+| 11 | `flagHasMeanStats` | Trailing contributing statistics |
+| 5–7, 12–15 | — | **Available** — use bit 12 next |
+
+`flagReducerV2` adds no payload bytes. It distinguishes new trustworthy envelopes from
+incomplete Min/Max blocks already present in older tier files, allowing the history API to
+advertise operation validity without invalidating or rewriting retained history.
+
+## Contributing statistics extension
+
+When bit 11 (`flagHasMeanStats`) is set, a record-level extension follows **all** Data, Min and
+Max fixed/variable blocks. Existing metric offsets and block sizes are unchanged. Raw records
+need no extension. Version 1 contains `version:u8`, `complete:u8`, `count:u32`, followed by sorted
+entries: `path_length:u16`, UTF-8 path bytes, `sum:f64`, `weight_seconds:f64`, all little-endian.
+Paths include quoted dynamic identities; they are not positional member indices.
+
+The sparse map preserves weights for partially present metrics and sums for rounded integer
+means. `complete=0` means legacy inputs lacked their original contributing weights; those means
+remain approximate. `flagReducerV2` still describes extrema independently. Readers reject
+truncated entries, unknown versions, duplicate paths, and invalid numeric statistics. The Python
+inspector decodes the same extension. New metric sections still append inside each variable
+block; this record-level extension follows the final block.
 
 ## Forward compatibility — the core invariant
 
@@ -91,8 +116,8 @@ missing flag means "pretend this section doesn't exist and move on."
 
 ## Two ways a metric type evolves
 
-1. **New metric type** → new flag bit + new section appended **after existing app sections,
-   before Custom**. Old records lack the flag and skip it.
+1. **New metric type** → new flag bit + new section appended **after every existing section**.
+   Old records lack the flag and skip it.
 2. **New fields on an existing type** → bump that section's **version-tagged presence byte**
    (`0` = absent, `1` = v1/old size, `2` = v2/new size). The decoder reads the version byte and
    dispatches to the right block layout. The section's *position* never changes, so old records
