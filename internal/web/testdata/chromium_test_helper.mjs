@@ -21,8 +21,8 @@ function devToolsEndpoint(userDataDir, output) {
         const [port, target] = fs.readFileSync(path.join(userDataDir, 'DevToolsActivePort'), 'utf8')
             .trim().split(/\r?\n/);
         if (!/^\d+$/.test(port) || !target) return undefined;
-        if (target.startsWith('ws://') || target.startsWith('wss://')) return target;
-        if (!target.startsWith('/')) return undefined;
+        // DevToolsActivePort contains a browser path, never a remote URL.
+        if (!/^\/devtools\/browser\/[A-Za-z0-9-]+$/.test(target)) return undefined;
         return `ws://127.0.0.1:${port}${target}`;
     } catch (error) {
         if (error.code === 'ENOENT') return undefined;
