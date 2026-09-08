@@ -75,7 +75,11 @@ const server = http.createServer((req, res) => {
         const mime = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
         res.setHeader('Content-Type', mime[path.extname(relative)] || 'application/octet-stream');
         res.end(source(variant, `internal/web/static/${relative}`));
-    } catch (error) { res.statusCode = 404; res.end(String(error)); }
+    } catch {
+        res.statusCode = 404;
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.end('Not found');
+    }
 });
 await new Promise((resolve, reject) => {
     server.once('error', reject);
