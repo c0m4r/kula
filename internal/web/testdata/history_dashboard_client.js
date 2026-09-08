@@ -91,6 +91,28 @@ check(state.dataBuffer === originalBuffer, 'Layout replaced history buffer');
 check(window.historyRequests === requestsBefore, 'Layout refetched history');
 check(!cpu.isDatasetVisible(0), 'Layout lost legend visibility');
 
+// Graph bounds copy only their known fields from stored preferences. A
+// __proto__ key must not supply an inherited automatic limit to the UI.
+const savedGraphBounds = localStorage.getItem('kula_graphs_max');
+const boundsButton = document.querySelector('#card-network button[title="Graph Bounds"]');
+const boundsDropdown = document.querySelector('#card-network .chart-settings-dropdown');
+for (const fixture of [
+    { stored: '{}', mode: 'off', value: 1000 },
+    { stored: '{"network":{"value":123,"__proto__":{"auto":999}}}', mode: 'off', value: 123 },
+    { stored: '{"network":{"value":123,"auto":456}}', mode: 'off', value: 456 },
+    { stored: '{"network":{"mode":"auto","value":123,"auto":456}}', mode: 'on', value: 456 },
+    { stored: '{"network":{"mode":"on","value":123}}', mode: 'on', value: 123 },
+]) {
+    localStorage.setItem('kula_graphs_max', fixture.stored);
+    boundsButton.click();
+    check(boundsDropdown.querySelector('select').value === fixture.mode &&
+        Number(boundsDropdown.querySelector('input').value) === fixture.value,
+        'Graph bounds adopted unexpected properties or lost a saved limit');
+    boundsButton.click();
+}
+if (savedGraphBounds === null) localStorage.removeItem('kula_graphs_max');
+else localStorage.setItem('kula_graphs_max', savedGraphBounds);
+
 // A local raw-data zoom must retain a known interior outage rather than mark
 // the new view complete merely because its outer bounds fit the buffer.
 const localFrom = new Date('2026-09-04T16:00:00Z');

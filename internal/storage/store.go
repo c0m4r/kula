@@ -410,68 +410,24 @@ func (s *Store) QueryRange(from, to time.Time) ([]*AggregatedSample, error) {
 	return result.Samples, nil
 }
 
-// QueryRangeWithMeta returns samples with tier and coverage metadata.
-// It prefers a fully covering tier whose source density is reasonable. A tier
-// is complete when both requested edges are within its collection-lag
-// tolerance. If no tier is complete, the tier with the greatest overlap is
-// returned with Complete=false rather than silently presenting it as complete.
-// Results are cached for the duration of one tier-0 resolve cycle to serve
-// concurrent or repeated API calls without extra disk I/O.
-func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*HistoryResult, error) {
+// planHistoryQuery snapshots tier selection and cache state under a scoped
+// read lock. Callers clone cache hits and reduce history after the lock is
+// released, so neither operation holds up collection.
+func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey) ([]queryTierCandidate, *HistoryResult, uint64) {
 	s.mu.RLock()
-	locked := true
-	unlock := func() {
-		if locked {
-			s.mu.RUnlock()
-			locked = false
-		}
-	}
-	defer unlock()
+	defer s.mu.RUnlock()
 	generation := s.writeGeneration
 
-	if len(s.tiers) == 0 {
-		return &HistoryResult{
-			RequestedFrom:     from,
-			RequestedTo:       to,
-			ValidAggregations: validHistoryAggregations(nil),
-		}, nil
-	}
-
-	const maxScreenPoints = 7200
-	if targetPoints <= 0 {
-		targetPoints = 450
-	} else if targetPoints > maxScreenPoints {
-		targetPoints = maxScreenPoints
-	}
-
-	// --- Query cache lookup ---
-	// Exact bounds are part of the result: coalescing sub-second requests can
-	// return samples outside the caller's interval even when their display
-	// buckets happen to be identical.
-	cacheKey := queryCacheKey{
-		fromNano:     from.UnixNano(),
-		toNano:       to.UnixNano(),
-		targetPoints: targetPoints,
-	}
 	s.queryCacheMu.Lock()
 	if entry, ok := s.queryCache[cacheKey]; ok {
 		if time.Now().Before(entry.expiresAt) {
 			s.queryCacheMu.Unlock()
-			unlock()
-			// Cache entries are immutable. Copy without serializing other hits.
-			return cloneHistoryResult(entry.result), nil
+			return nil, entry.result, generation
 		}
 		// Expired — drop it and fall through to recompute.
 		delete(s.queryCache, cacheKey)
 	}
 	s.queryCacheMu.Unlock()
-
-	var resolutions []string
-	var resDurations []time.Duration
-	for _, tc := range s.configs {
-		resolutions = append(resolutions, fmtRes(tc.Resolution))
-		resDurations = append(resDurations, tc.Resolution)
-	}
 
 	duration := to.Sub(from)
 	var fullCandidates, partialCandidates []queryTierCandidate
@@ -488,7 +444,7 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 
 		oldest := tier.OldestTimestamp()
 		newest := tier.NewestTimestamp()
-		resDur := resDurations[tierIdx]
+		resDur := s.configs[tierIdx].Resolution
 		// Candidate overlap uses interval starts, not only record endpoints.
 		// Raw widths are checked precisely after decoding the bounded lookahead.
 		oldestStart := oldest.Add(-historyMaxSourceWidth(resDur, tierIdx == 0))
@@ -546,19 +502,58 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 		candidates = append(candidates, fullCandidates[:firstFull]...)
 	}
 	candidates = append(candidates, partialCandidates...)
+	return candidates, nil, generation
+}
 
-	// Tier handles are immutable after construction. Each scanner protects
-	// its own snapshot and releases the tier lock between reduction batches.
-	unlock()
+// QueryRangeWithMeta returns samples with tier and coverage metadata.
+// It prefers a fully covering tier whose source density is reasonable. A tier
+// is complete when both requested edges are within its collection-lag
+// tolerance. If no tier is complete, the tier with the greatest overlap is
+// returned with Complete=false rather than silently presenting it as complete.
+// Results are cached for the duration of one tier-0 resolve cycle to serve
+// concurrent or repeated API calls without extra disk I/O.
+func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*HistoryResult, error) {
+	// Tier handles and their configuration are immutable after construction.
+	if len(s.tiers) == 0 {
+		return &HistoryResult{
+			RequestedFrom:     from,
+			RequestedTo:       to,
+			ValidAggregations: validHistoryAggregations(nil),
+		}, nil
+	}
+
+	const maxScreenPoints = 7200
+	if targetPoints <= 0 {
+		targetPoints = 450
+	} else if targetPoints > maxScreenPoints {
+		targetPoints = maxScreenPoints
+	}
+
+	// Exact bounds are part of the result: coalescing sub-second requests can
+	// return samples outside the caller's interval even when their display
+	// buckets happen to be identical.
+	cacheKey := queryCacheKey{
+		fromNano:     from.UnixNano(),
+		toNano:       to.UnixNano(),
+		targetPoints: targetPoints,
+	}
+	candidates, cachedResult, generation := s.planHistoryQuery(from, to, cacheKey)
+	if cachedResult != nil {
+		// Cache entries are immutable. Copy without serializing other hits.
+		return cloneHistoryResult(cachedResult), nil
+	}
+
+	// Each scanner protects its own snapshot and releases the tier lock
+	// between reduction batches. No store lock is held during reduction.
 	for _, candidate := range candidates {
 		tierIdx := candidate.index
 		tier := s.tiers[tierIdx]
 
-		result, err := s.readHistory(tier, from, to, targetPoints, resDurations[tierIdx], tierIdx == 0)
+		result, err := s.readHistory(tier, from, to, targetPoints, candidate.resolution, tierIdx == 0)
 		if errors.Is(err, errHistorySnapshotExpired) {
 			// Retention advanced across unread bytes. Restart from the current
 			// snapshot once, without ever publishing the abandoned partial data.
-			result, err = s.readHistory(tier, from, to, targetPoints, resDurations[tierIdx], tierIdx == 0)
+			result, err = s.readHistory(tier, from, to, targetPoints, candidate.resolution, tierIdx == 0)
 			candidate.complete = false
 		}
 		if err != nil {
@@ -575,7 +570,7 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 		}
 
 		result.Tier = tierIdx
-		result.SourceResolution = resolutions[tierIdx]
+		result.SourceResolution = fmtRes(candidate.resolution)
 		result.RequestedFrom = from
 		result.RequestedTo = to
 		result.Complete = candidate.complete && len(result.Samples) > 0
@@ -610,7 +605,7 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 	}
 
 	// No data found in any tier
-	res := resolutions[0]
+	res := fmtRes(s.configs[0].Resolution)
 	return &HistoryResult{
 		Tier:              0,
 		Resolution:        res,

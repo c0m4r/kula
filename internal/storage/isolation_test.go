@@ -9,6 +9,57 @@ import (
 	"kula/internal/collector"
 )
 
+func TestHistoryQueryReleasesLocks(t *testing.T) {
+	for _, scenario := range []string{"no tiers", "empty", "fresh", "cached", "expired cache", "outside retention"} {
+		t.Run(scenario, func(t *testing.T) {
+			store := &Store{}
+			if scenario != "no tiers" {
+				store = newTestStore(t)
+			}
+			defer func() { _ = store.Close() }()
+			assertUnlocked := func() {
+				t.Helper()
+				if !store.mu.TryLock() {
+					t.Fatal("history query retained the collection lock")
+				}
+				store.mu.Unlock()
+				if !store.queryCacheMu.TryLock() {
+					t.Fatal("history query retained the cache lock")
+				}
+				store.queryCacheMu.Unlock()
+			}
+			base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			if scenario != "no tiers" && scenario != "empty" {
+				if err := store.WriteSample(makeSample(base)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			from, to := base.Add(-time.Second), base.Add(time.Second)
+			if scenario == "cached" || scenario == "expired cache" {
+				store.queryCacheTTL = time.Hour
+				if scenario == "expired cache" {
+					store.queryCacheTTL = -time.Second
+				}
+				if _, err := store.QueryRangeWithMeta(from, to, 100); err != nil {
+					t.Fatal(err)
+				}
+				assertUnlocked()
+				if len(store.queryCache) != 1 {
+					t.Fatal("fixture did not populate the query cache")
+				}
+			}
+			if scenario == "outside retention" {
+				from, to = base.Add(time.Hour), base.Add(2*time.Hour)
+			}
+			_, err := store.QueryRangeWithMeta(from, to, 100)
+			assertUnlocked()
+			if err != nil {
+				t.Fatalf("unexpected query error: %v", err)
+			}
+		})
+	}
+}
+
 func TestHistoryOwnsCompleteSampleGraph(t *testing.T) {
 	for _, points := range []int{1, 100} {
 		t.Run(fmtRes(time.Duration(points)*time.Second), func(t *testing.T) {

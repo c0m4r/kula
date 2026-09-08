@@ -178,12 +178,12 @@ function setupChartActions() {
                     preferences = JSON.parse(localStorage.getItem('kula_graphs_max') || '{}');
                 } catch (error) { /* Invalid stored preferences fall back to defaults. */ }
                 let current = preferences[graphId] || (state.configMax && state.configMax[graphId]);
-                // nosemgrep: insecure-object-assign -- assigned keys are static literals, not user-controlled
                 if (!current || !current.mode) {
-                    current = Object.assign({}, current, {
+                    current = {
                         mode: 'off',
                         value: current?.value || (graphId === 'network' ? 1000 : 100),
-                    });
+                        auto: current?.auto,
+                    };
                 }
 
                 const uiMode = (current.mode === 'auto' || current.mode === 'on') ? 'on' : 'off';

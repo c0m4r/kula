@@ -1374,7 +1374,7 @@ function requestHistory(fromDate, toDate, points, apply, {
             setHistoryStatus(historyPayloadStatus(response, samples), response);
         },
         onFailure: error => {
-            console.error(`${label} history fetch error:`, error);
+            console.error('%s history fetch error:', label, error);
             setHistoryStatus('failed', null, error);
         },
         onFinish: () => {
