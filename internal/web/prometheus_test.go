@@ -202,6 +202,35 @@ func TestHandleMetrics(t *testing.T) {
 	}
 }
 
+func TestDiskMetricsFollowStableIdentity(t *testing.T) {
+	store := newTestStoreWithSample(t)
+	defer func() { _ = store.Close() }()
+	srv := newTestServer(t, store)
+	for _, name := range []string{"sda", "sdb"} {
+		sample := &collector.Sample{Timestamp: time.Now(), System: collector.SystemStats{Hostname: "host"},
+			Disks: collector.DiskStats{Devices: []collector.DiskDevice{
+				{ID: "wwid:eui.0011223344556677", Name: name, ReadsPerSec: 42},
+				{Name: "vda", ReadsPerSec: 3},
+			}}}
+		if err := store.WriteSample(sample); err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		srv.handleMetrics(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		body := w.Body.String()
+		for _, want := range []string{
+			`kula_disk_reads_per_second{host="host",device="wwid:eui.0011223344556677"} 42`,
+			`kula_disk_info{host="host",device="wwid:eui.0011223344556677",kernel_name="` + name + `",identity_source="wwid"} 1`,
+			`kula_disk_reads_per_second{host="host",device="kernel:vda"} 3`,
+			`kula_disk_info{host="host",device="kernel:vda",kernel_name="vda",identity_source="kernel"} 1`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("missing metric %s", want)
+			}
+		}
+	}
+}
+
 // TestHandleMetricsMethodNotAllowed verifies that POST /metrics returns 405.
 func TestHandleMetricsMethodNotAllowed(t *testing.T) {
 	store := newTestStoreWithSample(t)

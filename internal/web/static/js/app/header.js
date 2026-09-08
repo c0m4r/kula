@@ -3,6 +3,7 @@
    ============================================================ */
 'use strict';
 import { state, escapeHTML } from './state.js';
+import { diskMember } from './disk-identity.js';
 import { formatBytesShort, formatClockTimestamp, formatMbps, formatPPS } from './format.js';
 import { i18n } from './i18n.js';
 
@@ -67,7 +68,7 @@ export function updateSubtitles(s) {
     }
     if (s.disk?.devices) {
         let r = 0, w = 0, rIops = 0, wIops = 0;
-        const d = s.disk.devices.find(d => d.name === state.selectedDiskIo);
+        const d = diskMember(s.disk.devices, state.selectedDiskIo);
         if (d) {
             r = d.read_bps || 0; w = d.write_bps || 0;
             rIops = d.reads_ps || 0; wIops = d.writes_ps || 0;
@@ -80,8 +81,10 @@ export function updateSubtitles(s) {
             el('diskio-subtitle', `R:${formatBytesShort(r)}/s W:${formatBytesShort(w)}/s  rIOPS:${rIops.toFixed(0)} wIOPS:${wIops.toFixed(0)}`);
         }
 
+        if (state.selectedDiskIo && !d) el('diskio-subtitle', '');
+
         let temp = 0;
-        const dt = s.disk.devices.find(d => d.name === state.selectedDiskTemp);
+        const dt = diskMember(s.disk.devices, state.selectedDiskTemp);
         if (dt) {
             temp = dt.temp || 0;
             if (temp > 0) {
@@ -89,7 +92,7 @@ export function updateSubtitles(s) {
             } else {
                 el('disktemp-subtitle', '');
             }
-        } else if (!state.selectedDiskTemp) {
+        } else {
             el('disktemp-subtitle', '');
         }
     }

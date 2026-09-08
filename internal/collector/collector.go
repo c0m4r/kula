@@ -19,21 +19,22 @@ var (
 
 // Collector orchestrates all metric sub-collectors.
 type Collector struct {
-	mu         sync.RWMutex
-	cfg        config.GlobalConfig
-	collCfg    config.CollectionConfig
-	appCfg     config.ApplicationsConfig
-	latest     *Sample
-	prevCPU    []cpuRaw
-	prevNet    map[string]netRaw
-	prevDisk   map[string]diskRaw
-	prevSelf   selfRaw
-	prevTCP    tcpRaw
-	prevEnergy map[string]uint64 // for Intel energy derivation
-	gpus       []GPUInfo
-	storageDir string
-	prevTime   time.Time
-	debugDone  bool // set after the first Collect(); suppresses repeated debug logs
+	mu           sync.RWMutex
+	cfg          config.GlobalConfig
+	collCfg      config.CollectionConfig
+	appCfg       config.ApplicationsConfig
+	latest       *Sample
+	prevCPU      []cpuRaw
+	prevNet      map[string]netRaw
+	prevDisk     map[string]diskRaw
+	diskWarnings map[string]bool
+	prevSelf     selfRaw
+	prevTCP      tcpRaw
+	prevEnergy   map[string]uint64 // for Intel energy derivation
+	gpus         []GPUInfo
+	storageDir   string
+	prevTime     time.Time
+	debugDone    bool // set after the first Collect(); suppresses repeated debug logs
 
 	// Application monitoring state
 	nginxClient   *http.Client

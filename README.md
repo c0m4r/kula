@@ -275,9 +275,55 @@ health, and short-term trends visible in a standard terminal.
 ./kula inspect
 ```
 
+### List disks
+
+```bash
+./kula disks
+```
+
+Lists available disks and partitions supported by Kula with their persistent IDs.
+Copy IDs into `collection.devices` to select drives across reboots. The command
+ignores configured device filters and works without a config file or running
+daemon. Devices without a unique ID are marked `unavailable (unstable kernel name)`.
+Virtual, logical and optical devices excluded by the disk collector are omitted.
+
 ### Prometheus metrics
 
 See: [Prometheus metrics](https://github.com/c0m4r/kula/wiki/Prometheus-metrics) for more info.
+
+Disk I/O and temperature metrics use the persistent disk ID as the `device` label
+value. `kula_disk_info{device="...",kernel_name="sda",identity_source="wwid"} 1`
+maps that ID to the current kernel name. Unidentified disks use `device="kernel:sda"`
+and `identity_source="kernel"`. Upgrading to 0.20.0 starts new disk metric series;
+update dashboards and alert rules that filter by old `device="sda"` values.
+
+### Persistent disk identities
+
+Kula tracks disk I/O and temperatures by hardware identity so history follows the
+drive when Linux changes names such as `sda` or `nvme0n1`. The JSON API retains
+`name` as the kernel name and adds `id`; selectors show the name with the ID in
+their tooltip. Discovery reads sysfs directly, preferring WWID, NVMe namespace
+UUID/NGUID/EUI, then vendor/model/serial. NVMe serial fallback includes the namespace
+number. No external tools or raw block-device access are required.
+
+Automatic discovery needs no configuration change. To monitor particular drives,
+copy IDs from `kula disks` (or `disk.devices[].id` in `/api/current`) into `collection.devices`.
+Legacy kernel names still work as filters but may select a different drive after
+reboot. Explicit partitions use the parent ID followed by `:part:<number>`; this
+tracks a numbered partition on that drive, not a filesystem across repartitioning.
+Filesystem capacity history continues to follow mount points.
+
+Disks without usable identifiers, or with duplicate identifiers, remain visible
+as **unstable** with a warning and kernel-name history. Their API `id` is absent;
+cross-reboot physical identity cannot be guaranteed for these devices. Duplicate
+paths to the same storage are treated as ambiguous, not combined as multipath I/O.
+Containers must expose the corresponding host sysfs metadata to obtain stable IDs.
+
+Existing tier files remain readable. Old records have no physical identity and
+stay in separate name-based series: Kula cannot safely assign their history to
+today's drives. New physical-disk series therefore begin at upgrade. The binary
+format extension is backward-readable by the new version; older binaries cannot
+read the newly extended records, so retain a pre-upgrade backup if downgrading.
 
 ### Health endpoints
 

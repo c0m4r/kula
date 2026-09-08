@@ -4,6 +4,7 @@
    ============================================================ */
 'use strict';
 import { state, colors } from './state.js';
+import { diskKey, diskMember, diskLabel, diskTitle, migrateDiskSelection } from './disk-identity.js';
 import { formatBytesShort, formatRangeTimestamp } from './format.js';
 import { createTimeSeriesChart, setChartTimeRange, updateChartLabels } from './charts-init.js';
 import { updateHeader, updateSubtitles } from './header.js';
@@ -311,24 +312,26 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Disk I/O (selected device) — skip when split is active
-    if (!state.splitDiskIo && state.charts.diskio && s.disk?.devices) {
+    if (!state.splitDiskIo && state.charts.diskio) {
         let rBps = 0, wBps = 0, rIops = 0, wIops = 0;
-        const d = s.disk.devices.find(d => d.name === state.selectedDiskIo);
+        const d = diskMember(s.disk?.devices, state.selectedDiskIo);
         let minDisk, maxDisk;
         if (d) {
             rBps = d.read_bps || 0;
             wBps = d.write_bps || 0;
             rIops = d.reads_ps || 0;
             wIops = d.writes_ps || 0;
-            minDisk = memberBy(minimum?.disk?.devices, 'name', d.name);
-            maxDisk = memberBy(maximum?.disk?.devices, 'name', d.name);
-        } else if (!state.selectedDiskIo && s.disk.devices.length > 0) {
+            minDisk = diskMember(minimum?.disk?.devices, diskKey(d));
+            maxDisk = diskMember(maximum?.disk?.devices, diskKey(d));
+        } else if (!state.selectedDiskIo && s.disk?.devices?.length > 0) {
             s.disk.devices.forEach(d => {
                 rBps += d.read_bps || 0;
                 wBps += d.write_bps || 0;
                 rIops += d.reads_ps || 0;
                 wIops += d.writes_ps || 0;
             });
+        } else {
+            rBps = wBps = rIops = wIops = null;
         }
         const datasets = state.charts.diskio.data.datasets;
         push(datasets[0], rBps, minDisk?.read_bps, maxDisk?.read_bps);
@@ -340,9 +343,9 @@ export function addSampleToCharts(item, ts, {
     // Disk Temperature — skip when split is active
     const diskTempCard = document.getElementById('card-disk-temp');
     if (!state.splitDiskTemp && state.charts.disktemp) {
-        const d = s.disk?.devices?.find(d => d.name === state.selectedDiskTemp);
-        const minDisk = memberBy(minimum?.disk?.devices, 'name', d?.name);
-        const maxDisk = memberBy(maximum?.disk?.devices, 'name', d?.name);
+        const d = diskMember(s.disk?.devices, state.selectedDiskTemp);
+        const minDisk = diskMember(minimum?.disk?.devices, diskKey(d));
+        const maxDisk = diskMember(maximum?.disk?.devices, diskKey(d));
         const hasSensors = d && d.sensors && d.sensors.length > 0;
         const hasTemp = d && d.temp > 0;
 
@@ -1642,6 +1645,47 @@ export function addGapToCharts(marker) {
 }
 
 // ---- Device Selectors ----
+function updateDiskSelector(disks, type, selectionField, optionsField) {
+    disks = [...disks].sort((a, b) => diskKey(a).localeCompare(diskKey(b)));
+    const selected = migrateDiskSelection(state[selectionField], disks);
+    const signature = JSON.stringify([selected, disks.map(d => [diskKey(d), d.name])]);
+    state[selectionField] = selected;
+    state[optionsField] = disks.map(diskKey);
+    if (selected) localStorage.setItem(`kula_sel_${type}`, selected);
+    const sel = document.getElementById(`${type}-selector`);
+    if (!sel || state.diskSelectorSignatures[type] === signature) return;
+    state.diskSelectorSignatures[type] = signature;
+    sel.replaceChildren();
+    for (const disk of disks) {
+        const opt = document.createElement('option');
+        opt.value = diskKey(disk);
+        opt.textContent = diskLabel(disk);
+        if (disk.id && disks.some(d => d !== disk && d.name === disk.name)) {
+            opt.textContent += ` (${disk.id})`;
+        }
+        opt.title = diskTitle(disk);
+        sel.appendChild(opt);
+    }
+    if (selected && !state[optionsField].includes(selected)) {
+        const opt = document.createElement('option');
+        opt.value = selected;
+        opt.textContent = `${selected} (unavailable)`;
+        sel.appendChild(opt);
+    }
+    sel.value = selected;
+    const selectedDisk = diskMember(disks, selected);
+    sel.title = selectedDisk ? diskTitle(selectedDisk) : selected;
+    sel.classList.toggle('no-arrow', sel.options.length <= 1);
+    sel.classList.remove('hidden');
+    sel.onchange = e => {
+        state[selectionField] = e.target.value;
+        localStorage.setItem(`kula_sel_${type}`, state[selectionField]);
+        const disk = diskMember(disks, state[selectionField]);
+        sel.title = disk ? diskTitle(disk) : state[selectionField];
+        redrawChartsFromBuffer();
+    };
+}
+
 export function updateSelectors(s) {
     const el = (id) => document.getElementById(id);
 
@@ -1697,64 +1741,11 @@ export function updateSelectors(s) {
         }
     }
 
-    if (s.disk && s.disk.devices) {
-        const devs = s.disk.devices.map(d => d.name).sort();
-        if (devs.join(',') !== state.diskIoOptions.join(',')) {
-            state.diskIoOptions = devs;
-            const sel = el('diskio-selector');
-            if (sel) {
-                if (!state.selectedDiskIo || !devs.includes(state.selectedDiskIo)) {
-                    state.selectedDiskIo = devs[0] || '';
-                    localStorage.setItem('kula_sel_diskio', state.selectedDiskIo);
-                }
-                sel.innerHTML = '';
-                devs.forEach(d => {
-                    const opt = document.createElement('option');
-                    opt.value = d;
-                    opt.textContent = d;
-                    sel.appendChild(opt);
-                });
-                sel.value = state.selectedDiskIo;
-                sel.classList.toggle('no-arrow', devs.length <= 1);
-                sel.classList.remove('hidden');
-                sel.onchange = (e) => {
-                    state.selectedDiskIo = e.target.value;
-                    localStorage.setItem('kula_sel_diskio', state.selectedDiskIo);
-                    redrawChartsFromBuffer();
-                };
-            }
-        }
-    }
-
-    if (s.disk && s.disk.devices) {
-        const tempDevs = s.disk.devices.filter(d => d.temp > 0 || (d.sensors && d.sensors.length > 0)).map(d => d.name).sort();
-        if (tempDevs.join(',') !== state.diskTempOptions.join(',')) {
-            state.diskTempOptions = tempDevs;
-            const sel = el('disktemp-selector');
-            if (sel) {
-                if (!state.selectedDiskTemp || !tempDevs.includes(state.selectedDiskTemp)) {
-                    state.selectedDiskTemp = tempDevs[0] || '';
-                    if (state.selectedDiskTemp) {
-                        localStorage.setItem('kula_sel_disktemp', state.selectedDiskTemp);
-                    }
-                }
-                sel.innerHTML = '';
-                tempDevs.forEach(d => {
-                    const opt = document.createElement('option');
-                    opt.value = d;
-                    opt.textContent = d;
-                    sel.appendChild(opt);
-                });
-                sel.value = state.selectedDiskTemp;
-                sel.classList.toggle('no-arrow', tempDevs.length <= 1);
-                sel.classList.remove('hidden');
-                sel.onchange = (e) => {
-                    state.selectedDiskTemp = e.target.value;
-                    localStorage.setItem('kula_sel_disktemp', state.selectedDiskTemp);
-                    redrawChartsFromBuffer();
-                };
-            }
-        }
+    if (s.disk?.devices) {
+        state.diskDevices = new Map(s.disk.devices.map(d => [diskKey(d), d]));
+        updateDiskSelector(s.disk.devices, 'diskio', 'selectedDiskIo', 'diskIoOptions');
+        updateDiskSelector(s.disk.devices.filter(d => d.temp > 0 || d.sensors?.length > 0),
+            'disktemp', 'selectedDiskTemp', 'diskTempOptions');
     }
 
     if (s.disk && s.disk.filesystems) {

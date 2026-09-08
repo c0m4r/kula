@@ -162,7 +162,8 @@ Each record has this structure:
 │          flagHasApache2 = 1 << 8   (gate: Apache2 block) │
 │          flagHasMysql   = 1 << 9   (gate: MySQL block)   │
 │          flagHasPSU     = 1 << 10  (gate: PSU section)   │
-│          ... new metrics: 1 << 12, 1 << 13, ...            │
+│          flagHasDiskIDs = 1 << 12  (gate: disk IDs)      │
+│          ... new metrics: 1 << 13, 1 << 14, ...            │
 ├──────────────────────────────────────────────────────────┤
 │  Fixed block (218 bytes) — CPU, memory, swap, TCP,       │
 │  process, self metrics. Always the same size.            │
@@ -185,6 +186,7 @@ Each record has this structure:
 │                                                          │
 │    8. Power supplies — battery / UPS / mains:            │
 │       1 byte version + 2 bytes count + per-supply data   │
+│    9. Disk IDs: version + count + u16-length ID strings  │
 │                                                          │
 │       ← NEW SECTIONS ARE APPENDED HERE, AT THE END,      │
 │         gated by a new preamble flag bit                 │
@@ -195,7 +197,7 @@ Each record has this structure:
 
 **New sections MUST be appended after every existing section.** Never insert a new
 section between existing ones and never resize one in place. The power-supply
-section went in after Custom for exactly this reason.
+section went in after Custom for exactly this reason. Disk IDs (bit 12) now follow PSU.
 
 Each new type is gated by a dedicated preamble flag bit. The decoder checks each flag:
 if absent (old record), that section's bytes are skipped entirely and subsequent
@@ -316,7 +318,8 @@ const (
     flagHasApache2 uint16 = 1 << 8
     flagHasMysql   uint16 = 1 << 9
     flagHasPSU     uint16 = 1 << 10
-    flagHasFoo     uint16 = 1 << 12  // <-- NEW
+    flagHasDiskIDs uint16 = 1 << 12
+    flagHasFoo     uint16 = 1 << 13  // <-- NEW
 )
 ```
 
@@ -332,8 +335,8 @@ flags |= flagHasFoo
 that is already there:
 
 ```
-nginx → containers → postgres → mysql → apache2 → custom → psu → foo
-                                                                 ^^^^^
+nginx → containers → postgres → mysql → apache2 → custom → psu → disk IDs → foo
+                                                                          ^^^
 ```
 
 ```go
@@ -378,7 +381,7 @@ Extract the flag in `decodeSample()` and thread it through `decodeVariable()`:
 ```go
 hasFoo := flags&flagHasFoo != 0
 // ...
-vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasFoo)
+vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs, hasFoo)
 ```
 
 Update the `decodeVariable` signature to accept the new `hasFoo bool` parameter.
@@ -394,9 +397,9 @@ Update all call sites (tests included).
 
 #### 10. Python decoder (`addons/inspect_tier.py`)
 
-- Add the flag constant: `FLAG_HAS_FOO = 1 << 12`
+- Add the flag constant: `FLAG_HAS_FOO = 1 << 13`
 - Extract `has_foo` from flags and pass to `_decode_variable()`.
-- Add the Foo decoding block at the same trailing position as the Go encoder (after PSU).
+- Add the Foo decoding block at the same trailing position as the Go encoder (after disk IDs).
 - Gate with `if has_foo:`.
 
 #### 11. Frontend charts (`internal/web/static/js/app/charts-data.js`)
@@ -438,10 +441,11 @@ All four checks must pass: govulncheck, go vet, go test -race, golangci-lint.
 | 9   | `flagHasMysql`   | MySQL block present |
 | 10  | `flagHasPSU`     | Power-supply (battery/UPS) section present |
 | 11  | `flagHasMeanStats` | Trailing contributing statistics |
-| 12  | —                | Next available |
+| 12  | `flagHasDiskIDs` | Persistent disk IDs after PSU in each variable block |
+| 13  | —                | Next available |
 | ... | —                | Available up to bit 15 |
 
-Use bit 12 for the next metric type. Bits 5–7 and 12–15 are free. Do not reuse bits.
+Use bit 13 for the next metric type. Bits 5–7 and 13–15 are free. Do not reuse bits.
 
 ---
 
@@ -561,4 +565,4 @@ All security-critical code has dedicated tests:
 
 Contributing mean statistics use preamble bit 11 and a record-level trailer after all
 Data/Min/Max blocks (`aggregation_codec.go`). Preserve that trailer when extending metrics;
-new metric sections use bit 12 next and still append within each variable block.
+new metric sections use bit 13 next and append after the disk-ID section within each variable block.

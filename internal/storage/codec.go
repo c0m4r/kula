@@ -22,8 +22,9 @@ package storage
 //     length-prefixed IOState string; the v3 additions cover the IO/SQL
 //     error codes and the human-readable IO thread state).
 //
-//  3. To add an entirely new section, append it AFTER the custom metrics
-//     section and gate it behind a new preamble flag bit (like flagHasApps
+//  3. To add an entirely new section, append it AFTER all existing variable
+//     sections (currently disk IDs, after PSU) and use a new preamble flag (bit 13 next).
+//     Keep the record-level MeanStats trailer after all Data/Min/Max blocks. flagHasApps
 //     gates the whole apps section). Old records without the flag will not
 //     attempt to read the new section. See the power-supply section
 //     (flagHasPSU) for a worked example.
@@ -68,6 +69,7 @@ const (
 	flagHasMysql     uint16 = 1 << 9  // variable block includes MySQL metrics
 	flagHasPSU       uint16 = 1 << 10 // variable block includes power-supply metrics
 	flagHasMeanStats uint16 = 1 << 11 // record ends with contributing mean statistics
+	flagHasDiskIDs   uint16 = 1 << 12 // variable block ends with persistent disk identities
 )
 
 // fixedBlockSize is the size in bytes of the encoded fixed scalar block.
@@ -258,6 +260,7 @@ func appendPreamble(buf []byte, a *AggregatedSample) []byte {
 	flags |= flagHasApache2 // always set: Apache2 metrics byte follows MySQL
 	flags |= flagHasMysql   // always set: MySQL metrics byte follows Postgres
 	flags |= flagHasPSU     // always set: power-supply section follows custom metrics
+	flags |= flagHasDiskIDs // always set: disk identities follow power supplies
 	if a.AggregationVersion >= currentAggregationVersion {
 		flags |= flagReducerV2
 	}
@@ -745,7 +748,7 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 		buf = append(buf, pb[:]...)
 	}
 
-	return buf, nil
+	return appendDiskIDs(buf, s)
 }
 
 // ---- Decoder ----------------------------------------------------------------
@@ -768,6 +771,10 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 	hasApache2 := flags&flagHasApache2 != 0
 	hasMysql := flags&flagHasMysql != 0
 	hasPSU := flags&flagHasPSU != 0
+	hasDiskIDs := flags&flagHasDiskIDs != 0
+	if hasDiskIDs && (!hasApps || !hasPSU) {
+		return nil, fmt.Errorf("disk identities require apps and PSU sections")
+	}
 	off := 18
 
 	if flags&flagHasData != 0 {
@@ -776,7 +783,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, fmt.Errorf("decode data fixed: %w", err)
 		}
 		off += n
-		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU)
+		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs)
 		if err != nil {
 			return nil, fmt.Errorf("decode data variable: %w", err)
 		}
@@ -791,7 +798,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, fmt.Errorf("decode min fixed: %w", err)
 		}
 		off += n
-		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU)
+		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs)
 		if err != nil {
 			return nil, fmt.Errorf("decode min variable: %w", err)
 		}
@@ -806,7 +813,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, fmt.Errorf("decode max fixed: %w", err)
 		}
 		off += n
-		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU)
+		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs)
 		if err != nil {
 			return nil, fmt.Errorf("decode max variable: %w", err)
 		}
@@ -899,7 +906,7 @@ func decodeFixed(data []byte) (*collector.Sample, int, error) {
 // Records written before each type existed omit the flag, so the decoder
 // skips that section's bytes and subsequent offsets stay correct.
 // Returns the number of bytes consumed and any error.
-func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMysql, hasPSU bool) (int, error) {
+func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs bool) (int, error) {
 	off := 0
 
 	need := func(n int, ctx string) error {
@@ -1548,6 +1555,13 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	// the custom metrics above, are not read past their last byte.
 	if hasPSU {
 		n, err := decodePSUSection(data[off:], s)
+		off += n
+		if err != nil {
+			return off, err
+		}
+	}
+	if hasDiskIDs {
+		n, err := decodeDiskIDs(data[off:], s)
 		off += n
 		if err != nil {
 			return off, err

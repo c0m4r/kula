@@ -222,7 +222,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	// ---- Disk I/O ----------------------------------------------------------
 	for _, dev := range d.Disks.Devices {
-		devLbl := host + "," + lbl("device", dev.Name)
+		devLbl := host + "," + lbl("device", dev.SeriesKey())
+		gauge("kula_disk_info", "Disk identity and current kernel name (kernel source is unstable).",
+			devLbl+","+lbl("kernel_name", dev.Name)+","+lbl("identity_source", dev.IdentitySource()), 1)
 		gauge("kula_disk_reads_per_second",
 			"Disk read operations per second.",
 			devLbl, dev.ReadsPerSec)

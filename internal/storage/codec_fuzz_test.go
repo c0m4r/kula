@@ -41,6 +41,17 @@ func seedRecords(tb testing.TB) [][]byte {
 	full.Max = makeSampleFull(ts).Data
 	add(full)
 
+	// The disk-ID extension must also be exercised with populated ID strings.
+	disks := makeSampleFull(ts)
+	disks.Data.Disks.Devices = []collector.DiskDevice{
+		{ID: "wwid:eui.0011223344556677", Name: "sda"},
+		{ID: "serial:||A%3Apart%3A1", Name: "sdb"},
+		{Name: "vda"},
+	}
+	disks.Min = disks.Data
+	disks.Max = disks.Data
+	add(disks)
+
 	// Minimal record: valid preamble, no sample blocks.
 	add(&AggregatedSample{Timestamp: ts, Duration: time.Second})
 

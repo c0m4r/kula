@@ -3,9 +3,11 @@ package collector
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 )
@@ -25,20 +27,25 @@ var (
 )
 
 type diskRaw struct {
+	id        string
+	name      string
+	diskseq   string
 	reads     uint64
 	writes    uint64
 	readSect  uint64
 	writeSect uint64
 }
 
-func (c *Collector) parseDiskStats() map[string]diskRaw {
+// readDiskStats enumerates monitorable block devices before configured filters.
+// Partitions are useful for discovery and explicit selection but are omitted
+// from automatic monitoring to avoid counting the same I/O twice.
+func (c *Collector) readDiskStats(includePartitions bool) (map[string]diskRaw, error) {
 	f, err := os.Open(filepath.Join(procPath, "diskstats"))
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("open diskstats: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
-	explicitFilter := len(c.collCfg.Devices) > 0
 	// Only construct device-name strings for log lines when debug output is
 	// actually on this tick; the steady-state path stays allocation-light.
 	dbg := c.collCfg.DebugLog && !c.debugDone
@@ -110,23 +117,7 @@ func (c *Collector) parseDiskStats() map[string]diskRaw {
 
 		name := string(nameB)
 
-		// When an explicit device list is configured, it takes full priority —
-		// partitions (e.g. sda1, mmcblk0p2) are allowed if explicitly listed.
-		if explicitFilter {
-			allowed := false
-			for _, allowedDev := range c.collCfg.Devices {
-				if allowedDev == name {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				if dbg {
-					c.debugf(" disk: skipping %q — not in configured devices list", name)
-				}
-				continue
-			}
-		} else if isPartition(name) {
+		if !includePartitions && isPartition(name) {
 			// Auto-discovery mode: skip partitions, only keep whole physical devices
 			// to avoid double-counting IO across parent disk + its partitions.
 			if dbg {
@@ -136,14 +127,49 @@ func (c *Collector) parseDiskStats() map[string]diskRaw {
 		}
 
 		d := diskRaw{
+			name:      name,
 			reads:     parseUintBytes(readsB),
 			readSect:  parseUintBytes(readSectB),
 			writes:    parseUintBytes(writesB),
 			writeSect: parseUintBytes(writeSectB),
 		}
 		result[name] = d
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read diskstats: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Collector) parseDiskStats() map[string]diskRaw {
+	explicitFilter := len(c.collCfg.Devices) > 0
+	dbg := c.collCfg.DebugLog && !c.debugDone
+	result, err := c.readDiskStats(explicitFilter)
+	if err != nil {
+		return nil
+	}
+	// Resolve and check ALL candidates before filtering: selecting one member
+	// of a duplicate-ID pair must not make its identity appear trustworthy.
+	c.identifyDisks(result)
+	if explicitFilter {
+		for name, raw := range result {
+			allowed := false
+			for _, want := range c.collCfg.Devices {
+				if want == name || (raw.id != "" && want == raw.id) {
+					allowed = true
+				}
+			}
+			if !allowed {
+				delete(result, name)
+			}
+		}
+	}
+	for name, raw := range result {
+		if raw.id == "" {
+			c.warnDiskOnce("unstable:"+name, "disk %q has no unique persistent identity; history uses its unstable kernel name", name)
+		}
 		if dbg {
-			c.debugf(" disk: monitoring device %q", name)
+			c.debugf(" disk: monitoring device %q (id=%q)", name, raw.id)
 		}
 	}
 	if dbg {
@@ -156,7 +182,14 @@ func (c *Collector) parseDiskStats() map[string]diskRaw {
 	// Warn for any explicitly-configured device that was never found in /proc/diskstats
 	if explicitFilter && !c.debugDone {
 		for _, want := range c.collCfg.Devices {
-			if _, found := result[want]; !found {
+			_, found := result[want]
+			if found {
+				c.warnDiskOnce("config:"+want, "configured disk %q uses a mutable kernel name; prefer its id from 'kula disks' or /api/current", want)
+			}
+			for _, raw := range result {
+				found = found || (raw.id != "" && raw.id == want)
+			}
+			if !found {
 				log.Printf("Warning: configured device %q was not found in /proc/diskstats — check name or drive availability", want)
 			}
 		}
@@ -206,13 +239,16 @@ func isPartition(name string) bool {
 func (c *Collector) collectDisks(elapsed float64) DiskStats {
 	current := c.parseDiskStats()
 	stats := DiskStats{}
+	next := make(map[string]diskRaw, len(current))
 
 	for name, cur := range current {
 		dev := DiskDevice{
+			ID:   cur.id,
 			Name: name,
 		}
 
-		if prev, ok := c.prevDisk[name]; ok && elapsed > 0 {
+		key := dev.SeriesKey()
+		if prev, ok := c.prevDisk[key]; ok && elapsed > 0 && prev.name == name && prev.diskseq == cur.diskseq {
 			// Guard against uint64 underflow on counter reset
 			if cur.reads >= prev.reads {
 				dev.ReadsPerSec = round2(float64(cur.reads-prev.reads) / elapsed)
@@ -231,9 +267,17 @@ func (c *Collector) collectDisks(elapsed float64) DiskStats {
 		dev.Temperature, dev.Sensors = c.getDiskTemperature(name)
 
 		stats.Devices = append(stats.Devices, dev)
+		next[key] = cur
 	}
 
-	c.prevDisk = current
+	c.prevDisk = next
+	sort.Slice(stats.Devices, func(i, j int) bool {
+		a, b := stats.Devices[i], stats.Devices[j]
+		if a.ID != b.ID {
+			return a.ID < b.ID
+		}
+		return a.Name < b.Name
+	})
 	stats.FileSystems = c.collectFileSystems()
 	return stats
 }

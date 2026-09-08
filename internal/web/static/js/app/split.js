@@ -5,6 +5,7 @@
    ============================================================ */
 'use strict';
 import { state, colors, getChartMaxBound } from './state.js';
+import { diskKey, diskMember, diskLabel, diskTitle, diskDOMKey } from './disk-identity.js';
 import { createTimeSeriesChart } from './charts-init.js';
 import { formatBytesShort, formatPPS } from './format.js';
 import { i18n } from './i18n.js';
@@ -95,6 +96,17 @@ export function updateSplitSelectors(s) {
                 _clearDataForOptions(type, newOptions);
             }
         }
+        if (type === 'diskio' || type === 'disktemp') {
+            // A rename changes display metadata without replacing the series.
+            for (const key of options) {
+                const title = document.getElementById(`card-split-${type}-${diskDOMKey(key)}`)?.querySelector('h3');
+                const disk = state.diskDevices.get(key);
+                if (title && disk) {
+                    title.textContent = `${i18n.t(type === 'diskio' ? 'disk_io' : 'disk_temp')}: ${diskLabel(disk)}`;
+                    title.title = diskTitle(disk);
+                }
+            }
+        }
     }
 }
 
@@ -135,9 +147,9 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
     // Disk I/O
     if (state.splitDiskIo && s.disk?.devices && state.splitCharts.diskio) {
         for (const dev of s.disk.devices) {
-            const minDev = _memberBy(minimum?.disk?.devices, 'name', dev.name);
-            const maxDev = _memberBy(maximum?.disk?.devices, 'name', dev.name);
-            const chart = state.splitCharts.diskio[`diskio_${dev.name}`];
+            const minDev = diskMember(minimum?.disk?.devices, diskKey(dev));
+            const maxDev = diskMember(maximum?.disk?.devices, diskKey(dev));
+            const chart = state.splitCharts.diskio[`diskio_${diskKey(dev)}`];
             if (chart?.data?.datasets) {
                 push(chart.data.datasets[0], dev.read_bps || 0, minDev?.read_bps, maxDev?.read_bps);
                 push(chart.data.datasets[1], dev.write_bps || 0, minDev?.write_bps, maxDev?.write_bps);
@@ -178,15 +190,15 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
             [colors.cyan, colors.cyanAlpha],
         ];
         for (const dev of s.disk?.devices || []) {
-            const chartKey = `disktemp_${dev.name}`;
+            const chartKey = `disktemp_${diskKey(dev)}`;
             const chart = state.splitCharts.disktemp[chartKey];
             if (!chart) continue;
-            const minDev = _memberBy(minimum?.disk?.devices, 'name', dev.name);
-            const maxDev = _memberBy(maximum?.disk?.devices, 'name', dev.name);
+            const minDev = diskMember(minimum?.disk?.devices, diskKey(dev));
+            const maxDev = diskMember(maximum?.disk?.devices, diskKey(dev));
             const hasSensors = Array.isArray(dev.sensors) && dev.sensors.length > 0;
             const hasTemp    = dev.temp > 0;
 
-            const card = document.getElementById(`card-split-disktemp-${_sanitize(dev.name)}`);
+            const card = document.getElementById(`card-split-disktemp-${diskDOMKey(diskKey(dev))}`);
             if ((hasSensors || hasTemp) && card) {
                 card.classList.remove('hidden');
                 thermalsTitle?.classList.remove('hidden');
@@ -325,9 +337,9 @@ function _getOptions(type, s) {
     }
     switch (type) {
         case 'network':   return (s.net?.ifaces || []).map(i => i.name).filter(n => n !== 'lo').sort();
-        case 'diskio':    return (s.disk?.devices || []).map(d => d.name).sort();
+        case 'diskio':    return (s.disk?.devices || []).map(diskKey).sort();
         case 'diskspace': return (s.disk?.filesystems || []).map(f => f.mount).sort();
-        case 'disktemp':  return (s.disk?.devices || []).filter(d => d.temp > 0 || (d.sensors && d.sensors.length > 0)).map(d => d.name).sort();
+        case 'disktemp':  return (s.disk?.devices || []).filter(d => d.temp > 0 || (d.sensors && d.sensors.length > 0)).map(diskKey).sort();
         case 'gpu':       return (s.gpu || []).map(g => g.name).sort();
     }
     return [];
@@ -769,9 +781,10 @@ function _buildSplitChartsForType(type, options) {
     if (type === 'diskio') {
         let prevId = 'card-disk-io';
         for (const dev of options) {
-            const safe = _sanitize(dev);
+            const safe = diskDOMKey(dev);
             const cardId = `card-split-diskio-${safe}`;
-            const card = _makeSplitCard(cardId, `${i18n.t('disk_io')}: ${dev}`, type);
+            const card = _makeSplitCard(cardId, `${i18n.t('disk_io')}: ${diskLabel(state.diskDevices.get(dev))}`, type);
+            card.querySelector('h3').title = diskTitle(state.diskDevices.get(dev));
             _insertCard(card, 'charts-grid', prevId);
             prevId = cardId;
 
@@ -817,9 +830,10 @@ function _buildSplitChartsForType(type, options) {
         if (diskTempMax !== undefined) diskTempYConf.max = diskTempMax;
 
         for (const dev of options) {
-            const safe = _sanitize(dev);
+            const safe = diskDOMKey(dev);
             const cardId = `card-split-disktemp-${safe}`;
-            const card = _makeSplitCard(cardId, `${i18n.t('disk_temp')}: ${dev}`, type, 'disk_temp');
+            const card = _makeSplitCard(cardId, `${i18n.t('disk_temp')}: ${diskLabel(state.diskDevices.get(dev))}`, type, 'disk_temp');
+            card.querySelector('h3').title = diskTitle(state.diskDevices.get(dev));
             _insertCard(card, 'thermals-grid', prevId);
             prevId = cardId;
 

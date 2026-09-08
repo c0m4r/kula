@@ -73,6 +73,8 @@ export const state = {
     netOptions: [],
     diskIoOptions: [],
     diskTempOptions: [],
+    diskDevices: new Map(),
+    diskSelectorSignatures: {},
     diskSpaceOptions: [],
     gpuLoadOptions: [],
     selectedNet: localStorage.getItem('kula_sel_net') || null,

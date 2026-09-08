@@ -39,6 +39,7 @@ Commands:
   tui            Launch the terminal UI dashboard
   hash-password  Generate an Argon2 password hash for config
   inspect        Display information about storage tier files
+  disks          List available disks and partitions with persistent IDs
 
 Flags:
   -config string  Path to configuration file (default "config.yaml")
@@ -56,6 +57,26 @@ func main() {
 	flag.BoolVar(&showVersionShort, "v", false, "Print version and exit")
 	configPath := flag.String("config", "config.yaml", "path to configuration file")
 	flag.Parse()
+
+	if showVersion || showVersionShort {
+		fmt.Printf("Kula v%s — Lightweight Linux Server Monitor\n", version)
+		return
+	}
+
+	cmd := "serve"
+	if flag.NArg() > 0 {
+		cmd = flag.Arg(0)
+	}
+
+	// Disk discovery must work before a config exists and must not seed a
+	// config file, create storage directories, or initialize applications.
+	if cmd == "disks" {
+		if err := runDisks(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to list disks: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Track whether -config was explicitly provided. When it is, a missing or
 	// unreadable file must abort startup rather than silently using defaults.
@@ -82,19 +103,9 @@ func main() {
 		}
 	}
 
-	if showVersion || showVersionShort {
-		fmt.Printf("Kula v%s — Lightweight Linux Server Monitor\n", version)
-		os.Exit(0)
-	}
-
 	osName := getOSName()
 	kernelVersion := getKernelVersion()
 	cpuArch := runtime.GOARCH
-
-	cmd := "serve"
-	if flag.NArg() > 0 {
-		cmd = flag.Arg(0)
-	}
 
 	if cmd == "serve" || cmd == "tui" {
 		log.Printf("Kula v%s starting...", version)
@@ -134,7 +145,7 @@ func main() {
 	case "inspect":
 		runInspectTier(cfg)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: kula [serve|tui|hash-password|inspect]\n", cmd)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: kula [serve|tui|hash-password|inspect|disks]\n", cmd)
 		os.Exit(1)
 	}
 }

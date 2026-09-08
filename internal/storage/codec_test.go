@@ -260,10 +260,10 @@ func TestDecodeOldAggregatedRecord(t *testing.T) {
 		t.Fatalf("appendVariable: %v", err)
 	}
 
-	// An empty variable tail has exactly 11 trailing bytes:
+	// An empty variable tail has exactly 14 trailing bytes:
 	// 1 (nginx=0) + 2 (containers=0) + 1 (postgres=0) + 1 (mysql=0) + 1 (apache2=0) +
-	// 2 (custom=0) + 3 (psu version + count=0).
-	const emptyTailSize = 11
+	// 2 (custom=0) + 3 (psu version + count=0) + 3 (disk IDs version + count=0).
+	const emptyTailSize = 14
 	oldVarBuf := varBuf[:len(varBuf)-emptyTailSize]
 
 	// Append 218 bytes of "next fixed block" — simulates a min/max block
@@ -274,7 +274,7 @@ func TestDecodeOldAggregatedRecord(t *testing.T) {
 	// With hasApps=false, decodeVariable must consume only sections 1-6
 	// and NOT touch the trailing 218 bytes.
 	target := &collector.Sample{}
-	n, err := decodeVariable(padded, target, false, false, false, false)
+	n, err := decodeVariable(padded, target, false, false, false, false, false)
 	if err != nil {
 		t.Fatalf("decodeVariable(hasApps=false) error: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestDecodePostgresV1Block(t *testing.T) {
 
 	// Decode the v1-format variable section
 	target := &collector.Sample{}
-	_, err = decodeVariable(v1Var, target, true, true, false, false)
+	_, err = decodeVariable(v1Var, target, true, true, false, false, false)
 	if err != nil {
 		t.Fatalf("decodeVariable(v1 postgres) error: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestDecodeApache2V1Block(t *testing.T) {
 
 	// Decode v1 Apache2 variable section (hasMysql=true since encoder always sets it)
 	target := &collector.Sample{}
-	_, err = decodeVariable(v1Var, target, true, true, true, false)
+	_, err = decodeVariable(v1Var, target, true, true, true, false, false)
 	if err != nil {
 		t.Fatalf("decodeVariable(v1 apache2) error: %v", err)
 	}
@@ -987,7 +987,7 @@ func TestDecodePostgresV2Block(t *testing.T) {
 	v2Var = append(v2Var, varBuf[pgOff+1+121:]...)
 
 	target := &collector.Sample{}
-	if _, err := decodeVariable(v2Var, target, true, true, true, false); err != nil {
+	if _, err := decodeVariable(v2Var, target, true, true, true, false, false); err != nil {
 		t.Fatalf("decodeVariable(v2 postgres) error: %v", err)
 	}
 	got := target.Apps.Postgres
@@ -1231,7 +1231,7 @@ func TestDecodeMysqlV3Block(t *testing.T) {
 	v2Var = append(v2Var, varBuf[myOff+1+74+1+v3StateLen:]...) // append remainder
 
 	target := &collector.Sample{}
-	if _, err := decodeVariable(v2Var, target, true, true, true, false); err != nil {
+	if _, err := decodeVariable(v2Var, target, true, true, true, false, false); err != nil {
 		t.Fatalf("decodeVariable(v2 mysql) error: %v", err)
 	}
 	gotV2 := target.Apps.Mysql
@@ -1346,9 +1346,9 @@ func TestDecodeRecordWithoutPSUSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("appendVariable: %v", err)
 	}
-	// Strip the trailing PSU section (version byte + zero count) to get the
+	// Strip the trailing disk IDs and PSU sections (each version + zero count) to get the
 	// exact bytes a pre-flagHasPSU encoder would have written.
-	const psuEmptySize = 3
+	const psuEmptySize = 6
 	oldVarBuf := varBuf[:len(varBuf)-psuEmptySize]
 
 	fixedBuf := appendFixed(nil, sample.Data)

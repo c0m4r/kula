@@ -33,7 +33,13 @@ collection:
   # - self: reads only /proc/self/mounts (container-level visibility)
   mounts_detection: auto
   # You can override the auto-detected list of disks and network interfaces by uncommenting and populating these lists:
-  # devices: ["sda", "nvme0n1"]
+  # Disks are tracked by persistent hardware ID automatically. Run `kula disks`
+  # (or see disk.devices[].id in /api/current) and copy IDs here to select drives
+  # across reboots/renames:
+  # devices: ["wwid:eui.0011223344556677", "wwid:naa.5000112233445566"]
+  # Legacy kernel names (e.g. "sda", "nvme0n1") still work, but select whatever
+  # drive currently has that name. Explicit partitions use <disk-id>:part:<number>.
+  # Devices without unique IDs remain visible with unstable kernel-name history.
   # mountpoints: ["/", "/mnt/data"]
   # interfaces: ["eth0", "wlan0"]
 

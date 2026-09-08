@@ -648,12 +648,67 @@ for (let i = 0; i < 50; i++) {
 }
 check(state.dataBuffer === frozen && cpu.data.datasets[1].data.length === frozenPoints, 'Live stream modified a custom range');
 chartUpdates.plotWidth = plotWidth;
+
+// Physical identities survive kernel-name swaps in selectors, normal charts,
+// split charts and extrema. Legacy samples must produce a gap for a stable ID.
+const gapItemCount = state.dataBuffer.length;
+const { diskDOMKey } = await import('./js/app/disk-identity.js');
+const splitModule = await import('./js/app/split.js');
+const diskSample = (offset, devices) => {
+    const sample = structuredClone(state.lastSample);
+    sample.ts = new Date(Date.parse(sample.ts) + offset * 1000).toISOString();
+    sample.disk.devices = devices.map(d => ({ reads_ps: 1, writes_ps: 2, write_bps: 3, temp: 40, ...d }));
+    return sample;
+};
+const diskBefore = diskSample(0, [{ id: 'wwid:A', name: 'sda', read_bps: 10 }, { id: 'wwid:B', name: 'sdb', read_bps: 100 }]);
+const diskAfter = diskSample(1, [{ id: 'wwid:B', name: 'sda', read_bps: 200 }, { id: 'wwid:A', name: 'sdb', read_bps: 20 }]);
+const diskLegacy = diskSample(-1, [{ name: 'sda', read_bps: 999 }]);
+state.selectedDiskIo = 'sda'; state.selectedDiskTemp = 'sda';
+data.updateSelectors(diskBefore);
+check(state.selectedDiskIo === 'wwid:A' && state.selectedDiskTemp === 'wwid:A', 'Old disk selection was not migrated');
+state.lastSample = diskAfter;
+data.updateSelectors(diskAfter);
+const diskSelector = document.getElementById('diskio-selector');
+check(diskSelector.value === 'wwid:A' && diskSelector.selectedOptions[0].textContent === 'sdb', 'Disk rename changed selection or left stale label');
+check(diskSelector.selectedOptions[0].title === 'wwid:A', 'Stable ID missing from disk details');
+const minimumDisks = structuredClone(diskAfter), maximumDisks = structuredClone(diskAfter);
+minimumDisks.disk.devices.reverse();
+minimumDisks.disk.devices.find(d => d.id === 'wwid:A').read_bps = 5;
+maximumDisks.disk.devices.find(d => d.id === 'wwid:A').read_bps = 25;
+state.dataBuffer = [diskLegacy, diskBefore, {
+    ts: diskAfter.ts, data: diskAfter, min: minimumDisks, max: maximumDisks,
+}];
+state.currentAggregation = 'avg'; state.validAggregations = ['data', 'min', 'max'];
+data.redrawChartsFromBuffer();
+let diskPoints = state.charts.diskio.data.datasets[0].data;
+check(diskPoints.length === 3 && diskPoints[0].y === null && diskPoints[1].y === 10 && diskPoints[2].y === 20,
+    'Disk chart joined legacy/name-swapped readings or filled a false zero');
+check(state.charts.diskio.data.datasets[0].$kulaEnvelope.at(-2) === 5 &&
+    state.charts.diskio.data.datasets[0].$kulaEnvelope.at(-1) === 25, 'Disk envelopes followed array order or kernel name');
+splitModule.applySplitFromConfig({ disk_io: true, disk_temp: true });
+data.updateSelectors(diskBefore);
+const physicalChart = state.splitCharts.diskio['diskio_wwid:A'];
+data.updateSelectors(diskAfter);
+check(state.splitCharts.diskio['diskio_wwid:A'] === physicalChart, 'Kernel rename replaced the physical disk chart');
+data.redrawChartsFromBuffer();
+diskPoints = physicalChart.data.datasets[0].data;
+check(diskPoints.at(-1).y === 20, 'Split disk chart followed kernel name');
+check(physicalChart.data.datasets[0].$kulaEnvelope.at(-2) === 5 &&
+    physicalChart.data.datasets[0].$kulaEnvelope.at(-1) === 25, 'Split disk envelopes mixed physical drives');
+check(document.getElementById(`card-split-diskio-${diskDOMKey('wwid:A')}`).querySelector('h3').textContent.endsWith('sdb'),
+    'Split disk title did not follow current kernel name');
+check(state.splitCharts.disktemp['disktemp_wwid:A'].data.datasets[0].data.at(-1).y === 40,
+    'Split temperature did not follow physical disk');
+const diskReplacement = diskSample(2, [{ id: 'wwid:C', name: 'sdb', read_bps: 9999 }]);
+data.updateSelectors(diskReplacement);
+check(state.selectedDiskIo === 'wwid:A', 'Replacement drive inherited an unavailable disk selection');
+await frame();
 window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math.round(layoutMs),
-    retained_hours: span / 3600000, max_live_items: maxItems, gap_items: state.dataBuffer.length,
+    retained_hours: span / 3600000, max_live_items: maxItems, gap_items: gapItemCount,
     data_opt_in: true, background_live_gauges: true, failure_preserves_history: true,
     horizontal_time_labels: true, visible_sampling_tier: true, custom_picker: true,
     calendar_range: true, tooltip_details_opt_in: true, crosshair_drag_safe: true,
-    shaded_measurement_gaps: true, historical_device_selection: true,
+    shaded_measurement_gaps: true, historical_device_selection: true, stable_disk_identity: true,
     gesture_request_isolation: true, minimum_zoom_points: 12, errors };
 check(errors.length === 0, errors.join('; '));
 window.ready = true;

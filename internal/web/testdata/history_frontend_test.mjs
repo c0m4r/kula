@@ -13,6 +13,25 @@ const {
     liveHistoryRefreshInterval,
     updateLiveSampleInterval,
 } = await importSource('../static/js/app/history-request.js');
+const { diskKey, diskMember, diskLabel, diskDOMKey, migrateDiskSelection } =
+    await importSource('../static/js/app/disk-identity.js');
+
+test('disk selection and envelopes follow identity through kernel renames', () => {
+    const old = [{ id: 'wwid:A', name: 'sda', read_bps: 10 }, { id: 'wwid:B', name: 'sdb', read_bps: 100 }];
+    const renamed = [{ id: 'wwid:B', name: 'sda', read_bps: 200 }, { id: 'wwid:A', name: 'sdb', read_bps: 20 }];
+    const key = migrateDiskSelection('sda', old);
+    assert.equal(key, 'wwid:A');
+    assert.equal(diskMember(renamed, key).read_bps, 20);
+    assert.equal(diskMember(old, diskKey(renamed[1])).read_bps, 10);
+    assert.equal(diskMember([{ name: 'sda', read_bps: 999 }], key), undefined);
+    assert.equal(migrateDiskSelection(key, renamed), key);
+    assert.equal(migrateDiskSelection(key, [{ id: 'wwid:C', name: 'sda' }]), key);
+    assert.equal(migrateDiskSelection(key, []), key);
+    assert.equal(diskKey({ name: 'sda' }), 'kernel:sda');
+    assert.equal(migrateDiskSelection('kernel:sda', old), 'kernel:sda');
+    assert.match(diskLabel({ name: 'sda' }), /unstable/);
+    assert.notEqual(diskDOMKey('serial:a|b'), diskDOMKey('serial:a_b'));
+});
 const {
     insertHistoryGaps,
     annotateHistoryItems,

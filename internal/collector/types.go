@@ -112,7 +112,8 @@ type DiskStats struct {
 }
 
 type DiskDevice struct {
-	Name         string           `json:"name" agg:"identity"`
+	ID           string           `json:"id,omitempty" agg:"identity"`
+	Name         string           `json:"name" agg:"identity_fallback"`
 	ReadsPerSec  float64          `json:"reads_ps" agg:"mean"`
 	WritesPerSec float64          `json:"writes_ps" agg:"mean"`
 	ReadBytesPS  float64          `json:"read_bps" agg:"mean"`

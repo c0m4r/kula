@@ -11,6 +11,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Added
 
+- Persistent disk IDs from sysfs, stable disk selectors and `kula_disk_info` mappings
+- `kula disks` helper to list available disks and partitions with their persistent IDs
 - Live, Back, Forward and Zoom out navigation with shareable historical ranges
 - Drag-selection, Ctrl+wheel and touch pan/pinch, plus keyboard navigation and a shared
   crosshair with timestamp pinning
@@ -20,6 +22,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Changed
 
+- Disk Prometheus `device` labels now use persistent IDs (or `kernel:<name>` when
+  unavailable); update queries that select kernel-name label values
 - Smoother chart rendering and lower-memory history queries, including full 30-day views
   and smaller Focus Mode responses
 - Custom and zoomed ranges, including device selections, stay frozen while live status updates;
@@ -30,6 +34,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Fixed
 
+- Disk history and rates mixing physical drives when kernel device names change;
+  old name-only history remains separate from new identified series
 - History aggregation, bucket boundaries and coverage across storage tiers, collection gaps
   and missing metrics; older rollups remain approximate and untrusted Min/Max stay unavailable
 - History caching and point limits, including sub-second requests and concurrent updates

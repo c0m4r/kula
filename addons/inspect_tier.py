@@ -31,6 +31,7 @@ FLAG_HAS_MEAN_STATS = 1 << 11
 FLAG_HAS_APACHE2 = 1 << 8
 FLAG_HAS_MYSQL = 1 << 9
 FLAG_HAS_PSU = 1 << 10
+FLAG_HAS_DISK_IDS = 1 << 12
 
 FIXED_BLOCK_SIZE = 218  # must match fixedBlockSize in codec.go
 
@@ -288,6 +289,7 @@ def _decode_variable(
     has_apache2: bool = False,
     has_mysql: bool = False,
     has_psu: bool = False,
+    has_disk_ids: bool = False,
 ) -> Tuple[Dict[str, Any], int]:
     # pylint: disable=too-many-locals, too-many-statements
     # 1. Network interfaces
@@ -794,6 +796,26 @@ def _decode_variable(
         if supplies:
             s["psu"] = supplies
 
+    # 9. Persistent disk identities, aligned with section 3's disk entries.
+    if has_disk_ids:
+        version, off = _get_u8(data, off)
+        if version != 1:
+            raise ValueError(f"unsupported disk identities version {version}")
+        count, off = _get_u16(data, off)
+        if count != len(devs):
+            raise ValueError("disk identity count differs from disk count")
+        for dev in devs:
+            if len(data) - off < 2:
+                raise ValueError("truncated disk id length")
+            size = struct.unpack_from("<H", data, off)[0]
+            if size > len(data) - off - 2:
+                raise ValueError("truncated disk id")
+            off += 2
+            identity = data[off:off + size].decode("utf-8")
+            off += size
+            if identity:
+                dev["id"] = identity
+
     return s, off
 
 
@@ -832,6 +854,7 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
             "has_apache2": bool(flags & FLAG_HAS_APACHE2),
             "has_mysql": bool(flags & FLAG_HAS_MYSQL),
             "has_psu": bool(flags & FLAG_HAS_PSU),
+            "has_disk_ids": bool(flags & FLAG_HAS_DISK_IDS),
         },
     }
 
@@ -839,6 +862,9 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
     has_apache2 = bool(flags & FLAG_HAS_APACHE2)
     has_mysql = bool(flags & FLAG_HAS_MYSQL)
     has_psu = bool(flags & FLAG_HAS_PSU)
+    has_disk_ids = bool(flags & FLAG_HAS_DISK_IDS)
+    if has_disk_ids and (not has_apps or not has_psu):
+        raise ValueError("disk identities require apps and PSU sections")
     for label, flag in [
         ("data", FLAG_HAS_DATA),
         ("min", FLAG_HAS_MIN),
@@ -847,7 +873,7 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
         if flags & flag:
             block, off = _decode_fixed(payload, off)
             block, off = _decode_variable(
-                payload, off, block, has_apps, has_apache2, has_mysql, has_psu
+                payload, off, block, has_apps, has_apache2, has_mysql, has_psu, has_disk_ids
             )
             result[label] = block
 

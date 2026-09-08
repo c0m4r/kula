@@ -4,7 +4,7 @@ _kula_completion() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    commands="serve tui hash-password inspect"
+    commands="serve tui hash-password inspect disks"
     opts="--config -config --help -h --version -version -v"
 
     if [[ ${cur} == -* ]] ; then

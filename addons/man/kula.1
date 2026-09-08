@@ -20,6 +20,14 @@ Starts the local Terminal User Interface (TUI) monitor.
 .TP
 .B hash-password
 Generates a bcrypt hash of a password, suitable for use in the configuration file.
+.TP
+.B disks
+Lists available disks and partitions supported by Kula, with their persistent IDs.
+Copy IDs into collection.devices to select disks across reboots.
+Devices without a unique persistent ID are marked unavailable (unstable kernel name).
+This command does not load configuration or access storage; configured device filters
+do not restrict the listing. Virtual, logical and optical devices excluded by Kula's
+disk collector are omitted.
 .SH OPTIONS
 .TP
 \fB\-\-config\fR \fCFILE\fP
