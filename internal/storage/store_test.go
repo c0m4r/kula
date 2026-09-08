@@ -970,6 +970,24 @@ func TestDownsampleSplitsJitteredSourceWeightsAcrossBoundaries(t *testing.T) {
 	}
 }
 
+func TestDownsampleHandlesNegativeTargetPoints(t *testing.T) {
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	samples := []*AggregatedSample{
+		{
+			Timestamp: base.Add(time.Second),
+			Duration:  time.Second,
+			Data:      makeSampleWithCPU(base.Add(time.Second), 10),
+		},
+	}
+
+	result, _ := (&Store{}).downsampleHistory(
+		samples, base, base.Add(2*time.Second), -1, time.Second, true,
+	)
+	if len(result) != 1 {
+		t.Fatalf("samples = %d, want 1", len(result))
+	}
+}
+
 func TestDownsampleOverlappingSourceIntervalsKeepUniqueOrderedBuckets(t *testing.T) {
 	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	samples := []*AggregatedSample{

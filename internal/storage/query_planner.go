@@ -242,7 +242,13 @@ func (s *Store) downsampleHistory(
 // reduceHistoryBuckets always uses the supplied epoch-aligned step, even for
 // a final small batch. This keeps bucket identities stable across batch splits.
 func (s *Store) reduceHistoryBuckets(samples []*AggregatedSample, from, to time.Time, targetPoints int, sourceResolution time.Duration, trustedRawSource bool, step time.Duration) []*AggregatedSample {
-	downsampled := make([]*AggregatedSample, 0, min(len(samples), targetPoints))
+	capacity := len(samples)
+	if targetPoints <= 0 {
+		capacity = 0
+	} else if targetPoints < capacity {
+		capacity = targetPoints
+	}
+	downsampled := make([]*AggregatedSample, 0, capacity)
 	// Source intervals can overlap because coarse rollups retain collection
 	// jitter but no precise wall-clock start. Accumulate by bucket, rather than
 	// flushing when the next fragment changes buckets: that can emit the same
