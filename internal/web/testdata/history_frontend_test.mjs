@@ -330,6 +330,7 @@ test('metric numbers are rounded without exponent notation', () => {
 test('chart envelope storage stays aligned through raw points, gaps, trimming, and clearing', () => {
     const dataset = { data: [] };
     appendEnvelopePoint(dataset, new Date(1000), 5, null, null);
+    assert.deepEqual(dataset.data, [{ x: 1000, y: 5 }], 'chart timestamps use numeric milliseconds');
     assert.equal(dataset.$kulaEnvelope, undefined, 'raw points do not allocate extrema storage');
 
     appendEnvelopePoint(dataset, new Date(2000), 6, 3, 9);
@@ -353,6 +354,20 @@ test('chart envelope storage stays aligned through raw points, gaps, trimming, a
     clearEnvelopeData(dataset);
     assert.deepEqual(dataset.data, []);
     assert.equal(dataset.$kulaEnvelope, undefined);
+});
+
+test('unparsed chart points preserve zero and normalize missing or nonfinite readings to null', () => {
+    const dataset = { data: [] };
+    [0, undefined, null, NaN, Infinity, -Infinity].forEach((value, index) => {
+        appendEnvelopePoint(dataset, new Date(index * 1000), value, null, null);
+    });
+    assert.deepEqual(dataset.data, [
+        { x: 0, y: 0 }, { x: 1000, y: null }, { x: 2000, y: null },
+        { x: 3000, y: null }, { x: 4000, y: null }, { x: 5000, y: null },
+    ]);
+    appendEnvelopePoint(dataset, new Date(NaN), 99, 98, 100);
+    assert.equal(dataset.data.length, 6, 'invalid timestamps never reach an unparsed scale');
+    assert.equal(dataset.$kulaValueCount, 1);
 });
 
 test('new dynamic series are null-aligned to retained peer timestamps', () => {

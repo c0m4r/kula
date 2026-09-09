@@ -44,6 +44,7 @@ Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.
 | `charts-init.js` | Chart.js instance creation; full dashboard init; app-chart teardown |
 | `charts-data.js` | Sample ingestion, chart updates, zoom sync, gap insertion, device selectors |
 | `chart-controller.js` | Chart registry, animation-frame batching, viewport culling, plot-width budgets |
+| `chart-ui.js` | Coalesces chart visibility, subtitles, and container controls during history replay |
 | `chart-interactions.js` | Pointer/keyboard pan and zoom, shared crosshair, and gesture-safe tooltips |
 | `chart-envelope.js` | Compact extrema arrays plus Min–Max and missing-interval chart bands |
 | `chart-accessibility.js` | Canvas names/summaries, keyboard point cursor, bounded semantic tables, and complete chart CSV |
@@ -92,6 +93,13 @@ IntersectionObserver. It reads all visibility rectangles before drawing. Cursor 
 `render()`; metric/scale changes use `update('none')`. Grid/list changes resize existing
 instances without refetching history, preserving legend selections and data. `format.js`
 reuses a bounded formatter cache; tick measurement samples eight labels.
+
+History loads, local zooms, and aggregation changes ingest their samples in a synchronous
+`batchChartUI` call. It commits only the last presentation update for each key, retaining
+every observation and extrema pair. New chart structures are still created when discovered.
+Device selectors replay only their affected charts, preserving other datasets and shared gap
+metadata. Chart points use numeric epoch milliseconds and finite numeric values or explicit
+`null` gaps, so Chart.js can run with `parsing: false`.
 
 Time series are straight and unfilled. Trusted extrema remain in flat companion arrays, with
 one principal-series band by default (CPU uses total usage). Additional bands are optional in

@@ -27,6 +27,11 @@ function envelopeRange(minimum, maximum) {
  */
 export function appendEnvelopePoint(dataset, x, y, minimum, maximum, extra = null) {
     if (!dataset) return;
+    // Chart.js parsing is disabled. Its time/linear scales require numeric
+    // milliseconds and finite values, with explicit nulls for missing data.
+    x = x instanceof Date ? x.getTime() : x;
+    if (!finiteNumber(x)) return;
+    y = finiteNumber(y) ? y : null;
     if (!Array.isArray(dataset.data)) dataset.data = [];
 
     const oldLength = dataset.data.length;
@@ -64,7 +69,7 @@ export function nullAlignedData(datasets, fallbackX) {
     }
     if (!peer || peer.data.length === 0) return [];
     return peer.data.map(point => ({
-        x: point && typeof point === 'object' && point.x != null ? point.x : fallbackX,
+        x: Number(point && typeof point === 'object' && point.x != null ? point.x : fallbackX),
         y: null,
     }));
 }

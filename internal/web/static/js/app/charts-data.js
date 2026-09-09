@@ -51,6 +51,7 @@ import {
     trimEnvelopeData,
 } from './chart-envelope.js';
 import { updateChartAccessibility } from './chart-accessibility.js';
+import { batchChartUI, updateChartUI, setChartHidden, setChartSubtitle } from './chart-ui.js';
 
 const historyRequests = new HistoryRequestController();
 
@@ -145,7 +146,10 @@ function gpuMember(items, gpu) {
 export function addSampleToCharts(item, ts, {
     aggregation = state.currentAggregation,
     validAggregations = state.validAggregations,
+    charts = null,
 } = {}) {
+    ts = ts instanceof Date ? ts.getTime() : ts;
+    if (!Number.isFinite(ts)) return;
     const historyItem = normalizeHistoryItem(item);
     let s = historyItemSample(historyItem);
     if (!s) return;
@@ -159,6 +163,7 @@ export function addSampleToCharts(item, ts, {
     const minimum = hasEnvelope ? historyItem.min : null;
     const maximum = hasEnvelope ? historyItem.max : null;
     const touchedDatasets = new Set();
+    const wantsChart = chart => chart && (!charts || charts.has(chart));
 
     const push = (dataset, value, minValue, maxValue, extra = null) => {
         if (dataset) touchedDatasets.add(dataset);
@@ -178,7 +183,7 @@ export function addSampleToCharts(item, ts, {
     };
 
     // CPU
-    if (state.charts.cpu && s.cpu?.total) {
+    if (wantsChart(state.charts.cpu) && s.cpu?.total) {
         pushFields(
             state.charts.cpu,
             s.cpu.total,
@@ -189,8 +194,7 @@ export function addSampleToCharts(item, ts, {
     }
 
     // CPU Temperature
-    const tempCard = document.getElementById('card-cpu-temp');
-    if (state.charts.cputemp) {
+    if (wantsChart(state.charts.cputemp)) {
         const hasSensors = Array.isArray(s.cpu?.sensors) && s.cpu.sensors.length > 0;
         const readings = hasSensors
             ? s.cpu.sensors.map(sensor => ({
@@ -206,10 +210,10 @@ export function addSampleToCharts(item, ts, {
                 maximum: maximum?.cpu?.temp,
             }] : [];
         const hasHistory = state.charts.cputemp.data.datasets.some(hasEnvelopeData);
-        if (readings.length > 0 && tempCard) {
-            tempCard.classList.remove('hidden');
-            document.getElementById('thermals-title')?.classList.remove('hidden');
-            document.getElementById('thermals-grid')?.classList.remove('hidden');
+        if (readings.length > 0) {
+            setChartHidden('card-cpu-temp', false);
+            setChartHidden('thermals-title', false);
+            setChartHidden('thermals-grid', false);
         }
         if (readings.length > 0 || hasHistory) {
             const cpuTempColorPairs = [
@@ -236,12 +240,12 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Load Average
-    if (state.charts.loadavg && s.lavg) {
+    if (wantsChart(state.charts.loadavg) && s.lavg) {
         pushFields(state.charts.loadavg, s.lavg, minimum?.lavg, maximum?.lavg, ['load1', 'load5', 'load15']);
     }
 
     // Memory — with Free, Available, and Shmem
-    if (state.charts.memory && s.mem) {
+    if (wantsChart(state.charts.memory) && s.mem) {
         pushFields(
             state.charts.memory,
             s.mem,
@@ -256,7 +260,7 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Swap — with Free
-    if (state.charts.swap && s.swap) {
+    if (wantsChart(state.charts.swap) && s.swap) {
         pushFields(state.charts.swap, s.swap, minimum?.swap, maximum?.swap, ['used', 'free']);
         // Set max to total swap
         if (s.swap.total > 0) {
@@ -265,7 +269,7 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Network (selected non-lo interface) — skip when split is active
-    if (!state.splitNet && state.charts.network && s.net?.ifaces) {
+    if (!state.splitNet && wantsChart(state.charts.network) && s.net?.ifaces) {
         let rx = 0, tx = 0;
         const iface = s.net.ifaces.find(i => i.name === state.selectedNet);
         let minIface, maxIface;
@@ -283,7 +287,7 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Packets per second (selected non-lo interface) — skip when split is active
-    if (!state.splitNet && state.charts.pps && s.net?.ifaces) {
+    if (!state.splitNet && wantsChart(state.charts.pps) && s.net?.ifaces) {
         let rxPps = 0, txPps = 0;
         const iface = s.net.ifaces.find(i => i.name === state.selectedNet);
         let minIface, maxIface;
@@ -300,7 +304,7 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Connections
-    if (state.charts.connections && s.net?.sockets) {
+    if (wantsChart(state.charts.connections) && s.net?.sockets) {
         const datasets = state.charts.connections.data.datasets;
         push(datasets[0], s.net.sockets.tcp_inuse, minimum?.net?.sockets?.tcp_inuse, maximum?.net?.sockets?.tcp_inuse);
         push(datasets[1], s.net.sockets.udp_inuse, minimum?.net?.sockets?.udp_inuse, maximum?.net?.sockets?.udp_inuse);
@@ -312,7 +316,7 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Disk I/O (selected device) — skip when split is active
-    if (!state.splitDiskIo && state.charts.diskio) {
+    if (!state.splitDiskIo && wantsChart(state.charts.diskio)) {
         let rBps = 0, wBps = 0, rIops = 0, wIops = 0;
         const d = diskMember(s.disk?.devices, state.selectedDiskIo);
         let minDisk, maxDisk;
@@ -341,8 +345,7 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Disk Temperature — skip when split is active
-    const diskTempCard = document.getElementById('card-disk-temp');
-    if (!state.splitDiskTemp && state.charts.disktemp) {
+    if (!state.splitDiskTemp && wantsChart(state.charts.disktemp)) {
         const d = diskMember(s.disk?.devices, state.selectedDiskTemp);
         const minDisk = diskMember(minimum?.disk?.devices, diskKey(d));
         const maxDisk = diskMember(maximum?.disk?.devices, diskKey(d));
@@ -350,12 +353,9 @@ export function addSampleToCharts(item, ts, {
         const hasTemp = d && d.temp > 0;
 
         if (hasSensors || hasTemp) {
-            if (diskTempCard) {
-                diskTempCard.classList.remove('hidden');
-                document.getElementById('thermals-title')?.classList.remove('hidden');
-                document.getElementById('thermals-grid')?.classList.remove('hidden');
-            }
-
+            setChartHidden('card-disk-temp', false);
+            setChartHidden('thermals-title', false);
+            setChartHidden('thermals-grid', false);
         }
 
         const readings = hasSensors
@@ -397,7 +397,7 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Disk Space — single dataset for selected mount — skip when split is active
-    if (!state.splitDiskSpace && state.charts.diskspace && s.disk?.filesystems && s.disk.filesystems.length > 0) {
+    if (!state.splitDiskSpace && wantsChart(state.charts.diskspace) && s.disk?.filesystems && s.disk.filesystems.length > 0) {
         if ((state.charts.diskspace.data.datasets.length !== 1 || state.charts.diskspace.data.datasets[0].label !== 'Space Used %')) {
             state.charts.diskspace.data.datasets = [{
                 label: 'Space Used %',
@@ -426,7 +426,7 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Processes
-    if (state.charts.processes && s.proc) {
+    if (wantsChart(state.charts.processes) && s.proc) {
         pushFields(
             state.charts.processes,
             s.proc,
@@ -437,68 +437,52 @@ export function addSampleToCharts(item, ts, {
     }
 
     // Entropy
-    if (state.charts.entropy && s.sys) {
+    if (wantsChart(state.charts.entropy) && s.sys) {
         push(state.charts.entropy.data.datasets[0], s.sys.entropy, minimum?.sys?.entropy, maximum?.sys?.entropy);
     }
 
     // Self
-    if (state.charts.self && s.self) {
+    if (wantsChart(state.charts.self) && s.self) {
         pushFields(state.charts.self, s.self, minimum?.self, maximum?.self, ['cpu_pct', 'mem_rss']);
     }
 
     // GPU Metrics — skip regular cards when split is active
-    if (!state.splitGpu && s.gpu && s.gpu.length > 0) {
-        const g = s.gpu.find(g => g.name === state.selectedGpuLoad) || s.gpu[0];
+    const updateGPU = !state.splitGpu && (!charts ||
+        [state.charts.gpuload, state.charts.vram, state.charts.gputemp].some(wantsChart));
+    if (updateGPU) {
+        const g = s.gpu?.find(g => g.name === state.selectedGpuLoad) || s.gpu?.[0];
         const minGPU = gpuMember(minimum?.gpu, g);
         const maxGPU = gpuMember(maximum?.gpu, g);
-        const hasAnyGpuMetric = (g.load_pct > 0 || g.power_w > 0 || g.vram_total > 0 || g.temp > 0);
-
-        if (hasAnyGpuMetric) {
-            if (state.charts.gpuload && (g.load_pct > 0 || g.power_w > 0)) {
-                document.getElementById('card-gpu-load')?.classList.remove('hidden');
+        if (wantsChart(state.charts.gpuload)) {
+            const show = !!g && (g.load_pct > 0 || g.power_w > 0);
+            setChartHidden('card-gpu-load', !show);
+            if (show) {
                 push(state.charts.gpuload.data.datasets[0], g.load_pct || 0, minGPU?.load_pct, maxGPU?.load_pct);
                 push(state.charts.gpuload.data.datasets[1], g.power_w || 0, minGPU?.power_w, maxGPU?.power_w);
-            } else {
-                document.getElementById('card-gpu-load')?.classList.add('hidden');
             }
-            if (state.charts.vram && g.vram_total > 0 && g.vram_used > 0) {
-                document.getElementById('card-vram')?.classList.remove('hidden');
-                push(state.charts.vram.data.datasets[0], g.vram_used || 0, minGPU?.vram_used, maxGPU?.vram_used);
-                state.charts.vram.options.scales.y.max = g.vram_total > 0 ? g.vram_total : undefined;
-            } else {
-                document.getElementById('card-vram')?.classList.add('hidden');
+        }
+        if (wantsChart(state.charts.vram)) {
+            const show = !!g && g.vram_total > 0 && g.vram_used > 0;
+            setChartHidden('card-vram', !show);
+            if (show) {
+                push(state.charts.vram.data.datasets[0], g.vram_used, minGPU?.vram_used, maxGPU?.vram_used);
+                state.charts.vram.options.scales.y.max = g.vram_total;
             }
-            if (state.charts.gputemp && g.temp > 0) {
-                {
-                    document.getElementById('card-gpu-temp')?.classList.remove('hidden');
-                    document.getElementById('thermals-title')?.classList.remove('hidden');
-                    document.getElementById('thermals-grid')?.classList.remove('hidden');
-                }
+        }
+        if (wantsChart(state.charts.gputemp)) {
+            const show = !!g && g.temp > 0;
+            setChartHidden('card-gpu-temp', !show);
+            if (show) {
+                setChartHidden('thermals-title', false);
+                setChartHidden('thermals-grid', false);
                 push(state.charts.gputemp.data.datasets[0], g.temp, minGPU?.temp, maxGPU?.temp);
-            } else {
-                document.getElementById('card-gpu-temp')?.classList.add('hidden');
             }
-        } else {
-            document.getElementById('card-gpu-load')?.classList.add('hidden');
-            document.getElementById('card-vram')?.classList.add('hidden');
-            document.getElementById('card-gpu-temp')?.classList.add('hidden');
         }
-
-        // If in focus mode, re-apply visibility based on the new .hidden state
-        if (state.focusMode && typeof applyStoredFocusMode === 'function') {
-            applyStoredFocusMode();
-        }
-    } else if (!state.splitGpu) {
-        document.getElementById('card-gpu-load')?.classList.add('hidden');
-        document.getElementById('card-vram')?.classList.add('hidden');
-        document.getElementById('card-gpu-temp')?.classList.add('hidden');
-        if (state.focusMode && typeof applyStoredFocusMode === 'function') {
-            applyStoredFocusMode();
-        }
+        if (state.focusMode) updateChartUI('focus-layout', applyStoredFocusMode);
     }
 
     // ---- Power Supply (batteries/UPS) — dynamic charts in system metrics grid ----
-    if (s.psu && s.psu.length > 0) {
+    if (!charts && s.psu && s.psu.length > 0) {
         for (const ps of s.psu) {
             // Only chart batteries and UPS, skip Mains adapters
             if (ps.type !== 'Battery' && ps.type !== 'UPS') continue;
@@ -562,7 +546,7 @@ export function addSampleToCharts(item, ts, {
                     // A stored focus selection may be restored before telemetry
                     // creates this card, so re-apply it once the card exists.
                     if (state.focusMode && !state.focusSelecting) {
-                        applyStoredFocusMode();
+                        updateChartUI('focus-layout', applyStoredFocusMode);
                     }
                 }
             }
@@ -574,14 +558,13 @@ export function addSampleToCharts(item, ts, {
                 if (!state.loadingHistory) queueChartUpdate(chart);
             }
 
-            const sub = document.getElementById(`${psuKey}-subtitle`);
-            if (sub) {
+            setChartSubtitle(`${psuKey}-subtitle`, () => {
                 const parts = [`${formatMetricNumber(ps.capacity)}%`];
                 if (ps.status) parts.push(ps.status);
                 if (ps.power_w > 0) parts.push(`${ps.power_w.toFixed(1)} W`);
                 if (ps.voltage_v > 0) parts.push(`${ps.voltage_v.toFixed(2)} V`);
-                sub.textContent = parts.join('  ');
-            }
+                return parts.join('  ');
+            });
         }
     }
 
@@ -591,7 +574,7 @@ export function addSampleToCharts(item, ts, {
     const colorList = [colors.blue, colors.green, colors.orange, colors.purple, colors.cyan, colors.red, colors.yellow, colors.pink, colors.teal, colors.lime];
 
     // Nginx — create charts on first data, push data, update subtitles
-    if (s.apps?.nginx) {
+    if (!charts && s.apps?.nginx) {
         const n = s.apps.nginx;
         const minN = minimum?.apps?.nginx;
         const maxN = maximum?.apps?.nginx;
@@ -605,8 +588,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.nginxConn) {
             push(state.charts.nginxConn.data.datasets[0], n.active_conn, minN?.active_conn, maxN?.active_conn);
-            const sub = document.getElementById('nginx-conn-subtitle');
-            if (sub) sub.textContent = `Active: ${n.active_conn}`;
+            setChartSubtitle('nginx-conn-subtitle', () => `Active: ${n.active_conn}`);
         }
 
         if (!state.charts.nginxReqs) {
@@ -619,8 +601,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.nginxReqs) {
             pushFields(state.charts.nginxReqs, n, minN, maxN, ['accepts_ps', 'handled_ps', 'requests_ps']);
-            const sub = document.getElementById('nginx-reqs-subtitle');
-            if (sub) sub.textContent = `Req/s: ${n.requests_ps?.toFixed(1) || '0'}`;
+            setChartSubtitle('nginx-reqs-subtitle', () => `Req/s: ${n.requests_ps?.toFixed(1) || '0'}`);
         }
 
         if (!state.charts.nginxRw) {
@@ -633,13 +614,12 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.nginxRw) {
             pushFields(state.charts.nginxRw, n, minN, maxN, ['reading', 'writing', 'waiting']);
-            const sub = document.getElementById('nginx-rw-subtitle');
-            if (sub) sub.textContent = `R: ${n.reading}  W: ${n.writing}  Wait: ${n.waiting}`;
+            setChartSubtitle('nginx-rw-subtitle', () => `R: ${n.reading}  W: ${n.writing}  Wait: ${n.waiting}`);
         }
     }
 
     // Apache2 — create charts on first data, push data, update subtitles
-    if (s.apps?.apache2) {
+    if (!charts && s.apps?.apache2) {
         const a = s.apps.apache2;
         const minA = minimum?.apps?.apache2;
         const maxA = maximum?.apps?.apache2;
@@ -654,8 +634,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.apache2Workers) {
             pushFields(state.charts.apache2Workers, a, minA, maxA, ['busy_workers', 'idle_workers']);
-            const sub = document.getElementById('apache2-workers-subtitle');
-            if (sub) sub.textContent = `Busy: ${a.busy_workers}  Idle: ${a.idle_workers}`;
+            setChartSubtitle('apache2-workers-subtitle', () => `Busy: ${a.busy_workers}  Idle: ${a.idle_workers}`);
         }
 
         if (!state.charts.apache2Tput) {
@@ -668,8 +647,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.apache2Tput) {
             pushFields(state.charts.apache2Tput, a, minA, maxA, ['accesses_ps', 'req_per_sec', 'kbytes_ps']);
-            const sub = document.getElementById('apache2-tput-subtitle');
-            if (sub) sub.textContent = `Req/s: ${a.req_per_sec?.toFixed(1) || '0'}  kB/s: ${a.kbytes_ps?.toFixed(1) || '0'}`;
+            setChartSubtitle('apache2-tput-subtitle', () => `Req/s: ${a.req_per_sec?.toFixed(1) || '0'}  kB/s: ${a.kbytes_ps?.toFixed(1) || '0'}`);
         }
 
         if (!state.charts.apache2States) {
@@ -697,13 +675,12 @@ export function addSampleToCharts(item, ts, {
                 maxA,
                 ['waiting', 'reading', 'sending', 'keepalive', 'starting', 'dns', 'closing', 'logging', 'graceful', 'idle_cleanup', 'open_slots'],
             );
-            const sub = document.getElementById('apache2-states-subtitle');
-            if (sub) sub.textContent = `Busy: ${a.busy_workers}  Idle: ${a.idle_workers}  Slots: ${a.open_slots}`;
+            setChartSubtitle('apache2-states-subtitle', () => `Busy: ${a.busy_workers}  Idle: ${a.idle_workers}  Slots: ${a.open_slots}`);
         }
     }
 
     // MySQL — create charts on first data
-    if (s.apps?.mysql) {
+    if (!charts && s.apps?.mysql) {
         const m = s.apps.mysql;
         const minM = minimum?.apps?.mysql;
         const maxM = maximum?.apps?.mysql;
@@ -721,8 +698,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.mysqlConn) {
             pushFields(state.charts.mysqlConn, m, minM, maxM, ['threads_connected', 'threads_running', 'threads_cached', 'max_conns']);
-            const sub = document.getElementById('mysql-conn-subtitle');
-            if (sub) sub.textContent = `Connected: ${m.threads_connected}  Running: ${m.threads_running}  Cached: ${m.threads_cached}  Max: ${m.max_conns}`;
+            setChartSubtitle('mysql-conn-subtitle', () => `Connected: ${m.threads_connected}  Running: ${m.threads_running}  Cached: ${m.threads_cached}  Max: ${m.max_conns}`);
         }
 
         // 2. Queries per Second
@@ -738,8 +714,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.mysqlQPS) {
             pushFields(state.charts.mysqlQPS, m, minM, maxM, ['queries_ps', 'select_ps', 'insert_ps', 'update_ps', 'delete_ps']);
-            const sub = document.getElementById('mysql-qps-subtitle');
-            if (sub) sub.textContent = `QPS: ${(m.queries_ps || 0).toFixed(1)}  Sel: ${(m.select_ps || 0).toFixed(1)}  Ins: ${(m.insert_ps || 0).toFixed(1)}`;
+            setChartSubtitle('mysql-qps-subtitle', () => `QPS: ${(m.queries_ps || 0).toFixed(1)}  Sel: ${(m.select_ps || 0).toFixed(1)}  Ins: ${(m.insert_ps || 0).toFixed(1)}`);
         }
 
         // 3. Slow Queries
@@ -751,8 +726,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.mysqlSlow) {
             push(state.charts.mysqlSlow.data.datasets[0], m.slow_queries_ps, minM?.slow_queries_ps, maxM?.slow_queries_ps);
-            const sub = document.getElementById('mysql-slow-subtitle');
-            if (sub) sub.textContent = `Slow: ${(m.slow_queries_ps || 0).toFixed(2)}`;
+            setChartSubtitle('mysql-slow-subtitle', () => `Slow: ${(m.slow_queries_ps || 0).toFixed(2)}`);
         }
 
         // 4. InnoDB Buffer Pool
@@ -765,8 +739,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.mysqlInnoDB) {
             pushFields(state.charts.mysqlInnoDB, m, minM, maxM, ['innodb_buffer_pool_hit_pct', 'innodb_bp_reads_ps']);
-            const sub = document.getElementById('mysql-innodb-subtitle');
-            if (sub) sub.textContent = `Hit: ${(m.innodb_buffer_pool_hit_pct || 0).toFixed(1)}%  Reads/s: ${(m.innodb_bp_reads_ps || 0).toFixed(0)}`;
+            setChartSubtitle('mysql-innodb-subtitle', () => `Hit: ${(m.innodb_buffer_pool_hit_pct || 0).toFixed(1)}%  Reads/s: ${(m.innodb_bp_reads_ps || 0).toFixed(0)}`);
         }
 
         // 5. Lock Waits
@@ -779,8 +752,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.mysqlLocks) {
             pushFields(state.charts.mysqlLocks, m, minM, maxM, ['table_locks_waited_ps', 'row_lock_waits_ps']);
-            const sub = document.getElementById('mysql-locks-subtitle');
-            if (sub) sub.textContent = `Table: ${(m.table_locks_waited_ps || 0).toFixed(2)}  Row: ${(m.row_lock_waits_ps || 0).toFixed(2)}`;
+            setChartSubtitle('mysql-locks-subtitle', () => `Table: ${(m.table_locks_waited_ps || 0).toFixed(2)}  Row: ${(m.row_lock_waits_ps || 0).toFixed(2)}`);
         }
 
         // 6. Replication — only render the card when the server actually
@@ -804,8 +776,7 @@ export function addSampleToCharts(item, ts, {
                 const secs = (typeof m.replica_seconds_behind === 'number' && m.replica_seconds_behind >= 0) ? m.replica_seconds_behind : null;
                 push(state.charts.mysqlRepl.data.datasets[0], secs, minM?.replica_seconds_behind, maxM?.replica_seconds_behind);
                 push(state.charts.mysqlRepl.data.datasets[1], m.replica_count, minM?.replica_count, maxM?.replica_count);
-                const sub = document.getElementById('mysql-repl-subtitle');
-                if (sub) {
+                setChartSubtitle('mysql-repl-subtitle', () => {
                     const io  = m.replica_io_running  ? 'running' : 'stopped';
                     const sql = m.replica_sql_running ? 'running' : 'stopped';
                     const lag = secs === null ? 'n/a' : `${secs}s`;
@@ -818,8 +789,8 @@ export function addSampleToCharts(item, ts, {
                     else if (m.replica_io_state && !/waiting for (master|source) to send/i.test(m.replica_io_state)) {
                         extra = `  State: ${m.replica_io_state}`;
                     }
-                    sub.textContent = `IO: ${io}  SQL: ${sql}  Lag: ${lag}  Replicas: ${m.replica_count || 0}${extra}`;
-                }
+                    return `IO: ${io}  SQL: ${sql}  Lag: ${lag}  Replicas: ${m.replica_count || 0}${extra}`;
+                });
             }
         }
     }
@@ -827,7 +798,7 @@ export function addSampleToCharts(item, ts, {
     // Containers — one multi-series chart per metric type with app filter.
     // Always call the container pipeline so absent ticks stay time-aligned and
     // cards hide when no containers remain (even if Nginx keeps the section open).
-    if (s.apps?.containers?.length > 0) {
+    if (!charts && s.apps?.containers?.length > 0) {
         appsVisible = true;
             addContainerSample(
                 s.apps.containers,
@@ -837,12 +808,12 @@ export function addSampleToCharts(item, ts, {
                 maximum?.apps?.containers,
                 hasEnvelope,
             );
-    } else {
+    } else if (!charts) {
         markContainersAbsent(ts);
     }
 
     // PostgreSQL — create charts on first data
-    if (s.apps?.postgres) {
+    if (!charts && s.apps?.postgres) {
         const pg = s.apps.postgres;
         const minPG = minimum?.apps?.postgres;
         const maxPG = maximum?.apps?.postgres;
@@ -861,8 +832,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.pgConnStates) {
             pushFields(state.charts.pgConnStates, pg, minPG, maxPG, ['active_conns', 'idle_conns', 'idle_in_tx_conns', 'waiting_conns', 'max_conns']);
-            const sub = document.getElementById('pg-conn-subtitle');
-            if (sub) sub.textContent = `Active: ${pg.active_conns}  Idle: ${pg.idle_conns}  IdleTx: ${pg.idle_in_tx_conns}  Wait: ${pg.waiting_conns}`;
+            setChartSubtitle('pg-conn-subtitle', () => `Active: ${pg.active_conns}  Idle: ${pg.idle_conns}  IdleTx: ${pg.idle_in_tx_conns}  Wait: ${pg.waiting_conns}`);
         }
 
         // 2. Transactions per Second
@@ -875,8 +845,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.pgTPS) {
             pushFields(state.charts.pgTPS, pg, minPG, maxPG, ['tx_commit_ps', 'tx_rollback_ps']);
-            const sub = document.getElementById('pg-tps-subtitle');
-            if (sub) sub.textContent = `Commits/s: ${(pg.tx_commit_ps || 0).toFixed(1)}  Rollbacks/s: ${(pg.tx_rollback_ps || 0).toFixed(1)}`;
+            setChartSubtitle('pg-tps-subtitle', () => `Commits/s: ${(pg.tx_commit_ps || 0).toFixed(1)}  Rollbacks/s: ${(pg.tx_rollback_ps || 0).toFixed(1)}`);
         }
 
         // 3. Lock Waits & Deadlocks
@@ -889,8 +858,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.pgLocks) {
             pushFields(state.charts.pgLocks, pg, minPG, maxPG, ['waiting_conns', 'deadlocks_ps']);
-            const sub = document.getElementById('pg-locks-subtitle');
-            if (sub) sub.textContent = `Lock Waits: ${pg.waiting_conns}  Deadlocks/s: ${(pg.deadlocks_ps || 0).toFixed(2)}`;
+            setChartSubtitle('pg-locks-subtitle', () => `Lock Waits: ${pg.waiting_conns}  Deadlocks/s: ${(pg.deadlocks_ps || 0).toFixed(2)}`);
         }
 
         // 4. Row/Tuple Activity
@@ -906,8 +874,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.pgTuples) {
             pushFields(state.charts.pgTuples, pg, minPG, maxPG, ['tup_fetched_ps', 'tup_returned_ps', 'tup_inserted_ps', 'tup_updated_ps', 'tup_deleted_ps']);
-            const sub = document.getElementById('pg-tuples-subtitle');
-            if (sub) sub.textContent = `Fetched/s: ${(pg.tup_fetched_ps || 0).toFixed(1)}  Ins: ${(pg.tup_inserted_ps || 0).toFixed(1)}  Upd: ${(pg.tup_updated_ps || 0).toFixed(1)}  Del: ${(pg.tup_deleted_ps || 0).toFixed(1)}`;
+            setChartSubtitle('pg-tuples-subtitle', () => `Fetched/s: ${(pg.tup_fetched_ps || 0).toFixed(1)}  Ins: ${(pg.tup_inserted_ps || 0).toFixed(1)}  Upd: ${(pg.tup_updated_ps || 0).toFixed(1)}  Del: ${(pg.tup_deleted_ps || 0).toFixed(1)}`);
         }
 
         // 5. Disk I/O vs Memory (blocks)
@@ -920,8 +887,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.pgIO) {
             pushFields(state.charts.pgIO, pg, minPG, maxPG, ['blks_hit_ps', 'blks_read_ps']);
-            const sub = document.getElementById('pg-io-subtitle');
-            if (sub) sub.textContent = `Hit/s: ${(pg.blks_hit_ps || 0).toFixed(0)}  Read/s: ${(pg.blks_read_ps || 0).toFixed(0)}`;
+            setChartSubtitle('pg-io-subtitle', () => `Hit/s: ${(pg.blks_hit_ps || 0).toFixed(0)}  Read/s: ${(pg.blks_read_ps || 0).toFixed(0)}`);
         }
 
         // 6. Cache Hit Ratio
@@ -933,8 +899,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.pgCacheHit) {
             push(state.charts.pgCacheHit.data.datasets[0], pg.blks_hit_pct, minPG?.blks_hit_pct, maxPG?.blks_hit_pct);
-            const sub = document.getElementById('pg-cache-subtitle');
-            if (sub) sub.textContent = `Hit: ${(pg.blks_hit_pct || 0).toFixed(1)}%`;
+            setChartSubtitle('pg-cache-subtitle', () => `Hit: ${(pg.blks_hit_pct || 0).toFixed(1)}%`);
         }
 
         // 7. Table Health
@@ -947,8 +912,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.pgTableHealth) {
             pushFields(state.charts.pgTableHealth, pg, minPG, maxPG, ['dead_tuples', 'live_tuples']);
-            const sub = document.getElementById('pg-table-subtitle');
-            if (sub) sub.textContent = `Dead: ${(pg.dead_tuples || 0).toLocaleString()}  Live: ${(pg.live_tuples || 0).toLocaleString()}  Vacuums: ${pg.autovacuum_count || 0}`;
+            setChartSubtitle('pg-table-subtitle', () => `Dead: ${(pg.dead_tuples || 0).toLocaleString()}  Live: ${(pg.live_tuples || 0).toLocaleString()}  Vacuums: ${pg.autovacuum_count || 0}`);
         }
 
         // 8. Background Writer
@@ -961,8 +925,7 @@ export function addSampleToCharts(item, ts, {
         }
         if (state.charts.pgBgwriter) {
             pushFields(state.charts.pgBgwriter, pg, minPG, maxPG, ['buf_checkpoint_ps', 'buf_backend_ps']);
-            const sub = document.getElementById('pg-bgwriter-subtitle');
-            if (sub) sub.textContent = `Checkpoint: ${(pg.buf_checkpoint_ps || 0).toFixed(1)}/s  Backend: ${(pg.buf_backend_ps || 0).toFixed(1)}/s`;
+            setChartSubtitle('pg-bgwriter-subtitle', () => `Checkpoint: ${(pg.buf_checkpoint_ps || 0).toFixed(1)}/s  Backend: ${(pg.buf_backend_ps || 0).toFixed(1)}/s`);
         }
 
         // 9. Replication — only render when the server actually participates
@@ -979,20 +942,18 @@ export function addSampleToCharts(item, ts, {
             }
             if (state.charts.pgRepl) {
                 pushFields(state.charts.pgRepl, pg, minPG, maxPG, ['repl_lag_seconds', 'replica_count']);
-                const sub = document.getElementById('pg-repl-subtitle');
-                if (sub) {
+                setChartSubtitle('pg-repl-subtitle', () => {
                     if (pg.is_in_recovery) {
-                        sub.textContent = `Standby  Lag: ${(pg.repl_lag_seconds || 0).toFixed(2)}s / ${formatBytesShort(pg.repl_lag_bytes || 0)}`;
-                    } else {
-                        sub.textContent = `Primary  Replicas: ${pg.replica_count || 0}`;
+                        return `Standby  Lag: ${(pg.repl_lag_seconds || 0).toFixed(2)}s / ${formatBytesShort(pg.repl_lag_bytes || 0)}`;
                     }
-                }
+                    return `Primary  Replicas: ${pg.replica_count || 0}`;
+                });
             }
         }
     }
 
     // Custom metrics (dynamic charts per group, appended directly to grid)
-    if (s.apps?.custom) {
+    if (!charts && s.apps?.custom) {
         for (const [group, metrics] of Object.entries(s.apps.custom)) {
             appsVisible = true;
             if (!state.customCharts[group]) {
@@ -1045,16 +1006,14 @@ export function addSampleToCharts(item, ts, {
                 }
                 if (!state.loadingHistory) queueChartUpdate(entry.chart);
 
-                const sub = document.getElementById(`custom-${group}-subtitle`);
-                if (sub) {
-                    sub.textContent = metrics.map(m => `${m.name}: ${formatMetricNumber(m.value)}`).join('  ');
-                }
+                setChartSubtitle(`custom-${group}-subtitle`, () =>
+                    metrics.map(m => `${m.name}: ${formatMetricNumber(m.value)}`).join('  '));
             }
             seenCustom.add(group);
         }
     }
     // Hide custom cards not in this sample
-    {
+    if (!charts) updateChartUI('custom-cards', () => {
         Object.keys(state.customCharts || {}).forEach(k => {
             const el = document.getElementById(`card-custom-${k}`);
             const chart = state.customCharts[k]?.chart;
@@ -1065,12 +1024,13 @@ export function addSampleToCharts(item, ts, {
                 el?.classList.add('hidden');
             }
         });
-    }
+    });
 
     // Optional sections must contribute an explicit null tick when absent.
     // Otherwise Chart.js connects the last pre-outage value directly to the
     // first recovered value and visually erases the outage.
     const appendMissing = chart => {
+        if (charts && !charts.has(chart)) return;
         chart?.data?.datasets?.forEach(dataset => {
             if (!touchedDatasets.has(dataset) && dataset.data?.length > 0) {
                 appendEnvelopeGap(dataset, ts);
@@ -1082,7 +1042,7 @@ export function addSampleToCharts(item, ts, {
     Object.values(state.customCharts || {}).forEach(entry => appendMissing(entry?.chart));
 
     // Show/hide applications section
-    {
+    if (!charts) updateChartUI('applications-section', () => {
         const titleEl = document.getElementById('applications-title');
         const headerEl = document.getElementById('applications-header');
         const gridEl = document.getElementById('applications-grid');
@@ -1096,10 +1056,10 @@ export function addSampleToCharts(item, ts, {
             headerEl?.classList.add('hidden');
             gridEl?.classList.add('hidden');
         }
-    }
+    });
 
     // Feed split charts
-    addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope);
+    if (!charts) addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope);
 }
 
 // Mark every chart dirty. The chart controller coalesces calls into one
@@ -1113,17 +1073,14 @@ export function updateAllCharts() {
     queueAllChartUpdates();
 }
 
-// Redraw charts from the active buffer (used when selected devices change)
-export function redrawChartsFromBuffer() {
-    clearAllChartData();
-    state.dataBuffer.forEach(item => {
-        if (item._gap) {
-            addGapToCharts(item);
-            return;
-        }
-        addSampleToCharts(item, new Date(historyItemTimestamp(item)));
-    });
-    updateAllCharts();
+// Replay the active buffer. Device selectors pass chart keys so unrelated
+// datasets, shared gap metadata, and chart updates remain untouched.
+export function redrawChartsFromBuffer(chartKeys = null) {
+    const charts = chartKeys ? new Set(chartKeys.map(key => state.charts[key]).filter(Boolean)) : null;
+    clearAllChartData(charts);
+    renderHistoryItems(state.dataBuffer, charts);
+    if (charts) charts.forEach(queueChartUpdate);
+    else updateAllCharts();
 
     // Also update subtitles and gauges with the latest buffer item
     if (state.lastSample) {
@@ -1144,7 +1101,7 @@ export function trimChartsToTimeRange() {
             if (!Array.isArray(ds.data) || ds.data.length === 0) return;
             let i = 0;
             if (cutoffMs !== null) {
-                while (i < ds.data.length && ds.data[i].x && ds.data[i].x < cutoffMs) i++;
+                while (i < ds.data.length && ds.data[i].x != null && ds.data[i].x < cutoffMs) i++;
             }
             if (i > 0) trimEnvelopeData(ds, i);
         });
@@ -1182,14 +1139,18 @@ export function trimChartsToTimeRange() {
     }
 }
 
-export function clearAllChartData() {
-    state.historyGaps = [];
+export function clearAllChartData(charts = null) {
+    if (!charts) state.historyGaps = [];
     const clearChart = (chart) => {
         if (!chart?.data?.datasets) return;
         chart.data.datasets.forEach(ds => {
             if (Array.isArray(ds.data)) clearEnvelopeData(ds);
         });
     };
+    if (charts) {
+        charts.forEach(clearChart);
+        return;
+    }
     Object.values(state.charts).forEach(clearChart);
     // Also clear split charts
     Object.values(state.splitCharts).forEach(typeCharts => {
@@ -1284,13 +1245,20 @@ function historyPayloadStatus(response, samples) {
     return 'complete';
 }
 
-function renderHistoryItem(item) {
+function renderHistoryItem(item, charts = null) {
     if (!item) return;
     if (item._gap) {
-        addGapToCharts(item);
+        addGapToCharts(item, charts);
         return;
     }
-    addSampleToCharts(item, new Date(historyItemTimestamp(item)));
+    const timestamp = historyItemContext(item)?.timestamp ?? new Date(historyItemTimestamp(item)).getTime();
+    addSampleToCharts(item, timestamp, { charts });
+}
+
+function renderHistoryItems(items, charts = null) {
+    batchChartUI(() => {
+        for (const item of items) renderHistoryItem(item, charts);
+    });
 }
 
 function latestHistoryItem(items) {
@@ -1307,11 +1275,8 @@ function replaceHistoryBuffer(samples, resolution, response = null) {
     if (latest) updateSelectors(historyItemSample(latest));
 
     clearAllChartData();
-    state.dataBuffer = [];
-    processed.forEach(item => {
-        state.dataBuffer.push(item);
-        renderHistoryItem(item);
-    });
+    state.dataBuffer = processed;
+    renderHistoryItems(processed);
     rebuildHistoryPointContexts();
 
     return latest;
@@ -1474,7 +1439,7 @@ export function tryZoomFromBuffer(fromDate, toDate) {
         const t = new Date(historyItemTimestamp(item)).getTime();
         return !isNaN(t) && t >= fromMs && t <= toMs;
     });
-    visible.forEach(renderHistoryItem);
+    renderHistoryItems(visible);
     updateAllCharts();
     settleLocalHistoryView(fromDate, toDate, visible);
     return true;
@@ -1616,10 +1581,10 @@ export function insertGapsInHistory(data, resolutionStr = '1s') {
     return insertHistoryGaps(items, resolutionStr);
 }
 
-export function addGapToCharts(marker) {
+export function addGapToCharts(marker, charts = null) {
     const start = new Date(marker?.gap_start ?? marker?.ts ?? marker).getTime();
     const end = new Date(marker?.gap_end).getTime();
-    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+    if (!charts && Number.isFinite(start) && Number.isFinite(end) && end > start) {
         const gaps = state.historyGaps || (state.historyGaps = []);
         const previous = gaps[gaps.length - 1];
         if (previous && start <= previous.end) {
@@ -1629,10 +1594,11 @@ export function addGapToCharts(marker) {
         }
     }
 
-    const ts = new Date(Number.isFinite(start) ? start : marker);
-    if (!Number.isFinite(ts.getTime())) return;
+    const ts = Number.isFinite(start) ? start : new Date(marker).getTime();
+    if (!Number.isFinite(ts)) return;
     const addGap = (chart) => {
         if (!chart?.data?.datasets) return;
+        if (charts && !charts.has(chart)) return;
         chart.data.datasets.forEach(ds => {
             if (Array.isArray(ds.data)) appendEnvelopeGap(ds, ts);
         });
@@ -1682,7 +1648,7 @@ function updateDiskSelector(disks, type, selectionField, optionsField) {
         localStorage.setItem(`kula_sel_${type}`, state[selectionField]);
         const disk = diskMember(disks, state[selectionField]);
         sel.title = disk ? diskTitle(disk) : state[selectionField];
-        redrawChartsFromBuffer();
+        redrawChartsFromBuffer([type]);
     };
 }
 
@@ -1716,7 +1682,7 @@ export function updateSelectors(s) {
                     state.selectedNet = e.target.value;
                     if (selPps) selPps.value = state.selectedNet;
                     localStorage.setItem('kula_sel_net', state.selectedNet);
-                    redrawChartsFromBuffer();
+                    redrawChartsFromBuffer(['network', 'pps']);
                 };
             }
 
@@ -1735,7 +1701,7 @@ export function updateSelectors(s) {
                     state.selectedNet = e.target.value;
                     if (selNet) selNet.value = state.selectedNet;
                     localStorage.setItem('kula_sel_net', state.selectedNet);
-                    redrawChartsFromBuffer();
+                    redrawChartsFromBuffer(['network', 'pps']);
                 };
             }
         }
@@ -1771,7 +1737,7 @@ export function updateSelectors(s) {
                 sel.onchange = (e) => {
                     state.selectedDiskSpace = e.target.value;
                     localStorage.setItem('kula_sel_diskspace', state.selectedDiskSpace);
-                    redrawChartsFromBuffer();
+                    redrawChartsFromBuffer(['diskspace']);
                 };
             }
         }
@@ -1808,7 +1774,7 @@ export function updateSelectors(s) {
                         if (selVram) selVram.value = state.selectedGpuLoad;
                         if (selTemp) selTemp.value = state.selectedGpuLoad;
                         localStorage.setItem('kula_sel_gpuload', state.selectedGpuLoad);
-                        redrawChartsFromBuffer();
+                        redrawChartsFromBuffer(['gpuload', 'vram', 'gputemp']);
                     };
                 }
             });

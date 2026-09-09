@@ -567,7 +567,7 @@ func TestHistoryFrontendUsesSharedLifecycleAndCanonicalItems(t *testing.T) {
 	for _, required := range []string{
 		"new HistoryRequestController()",
 		"data.map(normalizeHistoryItem)",
-		"visible.forEach(renderHistoryItem)",
+		"renderHistoryItems(visible)",
 		"validAggregations.includes(selectedField)",
 		"historyPointBudget()",
 		"queueAllChartUpdates()",

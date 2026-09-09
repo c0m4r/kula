@@ -40,6 +40,47 @@ const originalCharts = Object.values(Chart.instances);
 const originalBuffer = state.dataBuffer;
 const cpu = state.charts.cpu;
 
+// History preparation should perform presentation work per chart, not per
+// observation. Count DOM mutations rather than enforcing host-dependent time.
+const replayObserver = new MutationObserver(() => {});
+const replayTimings = [];
+let replayMutations = 0;
+for (let run = 0; run < 5; run++) {
+    replayObserver.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+    const started = performance.now();
+    data.redrawChartsFromBuffer();
+    replayTimings.push(performance.now() - started);
+    replayMutations = Math.max(replayMutations, replayObserver.takeRecords().length);
+    replayObserver.disconnect();
+    await frame();
+}
+check(replayMutations < originalCharts.length * 10,
+    `History replay performed ${replayMutations} DOM mutations for ${originalCharts.length} charts`);
+check(state.dataBuffer === originalBuffer, 'History replay replaced canonical observations');
+replayTimings.sort((a, b) => a - b);
+const replayPerformance = { samples: originalBuffer.length, dom_mutations: replayMutations,
+    median_ms: +replayTimings[Math.floor(replayTimings.length / 2)].toFixed(2) };
+
+// Changing a filesystem must leave every unrelated chart's data intact.
+const mountSelector = document.getElementById('diskspace-selector');
+const originalMount = state.selectedDiskSpace;
+const otherMount = Array.from(mountSelector.options).find(option => option.value !== originalMount)?.value;
+check(otherMount, 'Fixture needs two filesystems to exercise device selection');
+const unrelatedDatasets = originalCharts.filter(chart => chart !== state.charts.diskspace)
+    .flatMap(chart => chart.data.datasets.map(dataset => ({ dataset, points: dataset.data })));
+const originalGaps = state.historyGaps;
+mountSelector.value = otherMount;
+mountSelector.dispatchEvent(new Event('change', { bubbles: true }));
+check(unrelatedDatasets.every(({ dataset, points }) => dataset.data === points),
+    'Changing filesystem replayed unrelated chart data');
+check(state.historyGaps === originalGaps, 'Changing filesystem replaced shared gap metadata');
+const selectedFS = originalBuffer.at(-1).data.disk.filesystems.find(fs => fs.mount === otherMount);
+check(state.charts.diskspace.data.datasets[0].data.at(-1).y === selectedFS.used_pct,
+    'Filesystem selection did not update the selected chart');
+mountSelector.value = originalMount;
+mountSelector.dispatchEvent(new Event('change', { bubbles: true }));
+await frame();
+
 // Hovering may synchronize the line and tooltip, but only an explicit pin is
 // allowed to consume space in the top history-information row. A drag's
 // synthetic click must not leave the shared crosshair pinned.
@@ -705,7 +746,15 @@ const diskReplacement = diskSample(2, [{ id: 'wwid:C', name: 'sdb', read_bps: 99
 data.updateSelectors(diskReplacement);
 check(state.selectedDiskIo === 'wwid:A', 'Replacement drive inherited an unavailable disk selection');
 await frame();
+for (const chart of Object.values(Chart.instances)) {
+    check(chart.options.parsing === false, 'A chart re-enabled data parsing');
+    for (const dataset of chart.data.datasets) {
+        check(dataset.data.every(point => Number.isFinite(point.x) &&
+            (point.y === null || Number.isFinite(point.y))), 'Unparsed chart data contains an invalid coordinate');
+    }
+}
 window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math.round(layoutMs),
+    history_replay: replayPerformance, scoped_device_replay: true, numeric_chart_points: true,
     retained_hours: span / 3600000, max_live_items: maxItems, gap_items: gapItemCount,
     data_opt_in: true, background_live_gauges: true, failure_preserves_history: true,
     horizontal_time_labels: true, visible_sampling_tier: true, custom_picker: true,

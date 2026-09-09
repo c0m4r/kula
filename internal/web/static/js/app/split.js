@@ -11,6 +11,7 @@ import { formatBytesShort, formatMetricNumber, formatPPS } from './format.js';
 import { i18n } from './i18n.js';
 import { queueChartUpdate } from './chart-controller.js';
 import { appendEnvelopeGap, appendEnvelopePoint, clearEnvelopeData, ensureSensorDatasets, hasEnvelopeData } from './chart-envelope.js';
+import { setChartHidden } from './chart-ui.js';
 
 let _redrawFromBuffer = null;
 let _rebuilding = false;
@@ -179,8 +180,6 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
 
     // Disk Temp
     if (state.splitDiskTemp && state.splitCharts.disktemp) {
-        const thermalsTitle = document.getElementById('thermals-title');
-        const thermalsGrid  = document.getElementById('thermals-grid');
         const pairs = [
             [colors.red, colors.redAlpha],
             [colors.orange, colors.orangeAlpha],
@@ -198,11 +197,10 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
             const hasSensors = Array.isArray(dev.sensors) && dev.sensors.length > 0;
             const hasTemp    = dev.temp > 0;
 
-            const card = document.getElementById(`card-split-disktemp-${diskDOMKey(diskKey(dev))}`);
-            if ((hasSensors || hasTemp) && card) {
-                card.classList.remove('hidden');
-                thermalsTitle?.classList.remove('hidden');
-                thermalsGrid?.classList.remove('hidden');
+            if (hasSensors || hasTemp) {
+                setChartHidden(`card-split-disktemp-${diskDOMKey(diskKey(dev))}`, false);
+                setChartHidden('thermals-title', false);
+                setChartHidden('thermals-grid', false);
             }
 
             const readings = hasSensors
@@ -238,8 +236,6 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
 
     // GPU
     if (state.splitGpu && s.gpu?.length > 0 && state.splitCharts.gpu) {
-        const thermalsTitle = document.getElementById('thermals-title');
-        const thermalsGrid  = document.getElementById('thermals-grid');
         for (const g of s.gpu) {
             const minGPU = _gpuMember(minimum?.gpu, g);
             const maxGPU = _gpuMember(maximum?.gpu, g);
@@ -247,29 +243,26 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
             if (!hasAny) continue;
 
             const safe = _sanitize(g.name);
-            const loadCard = document.getElementById(`card-split-gpuload-${safe}`);
-            const vramCard = document.getElementById(`card-split-vram-${safe}`);
-            const tempCard = document.getElementById(`card-split-gputemp-${safe}`);
 
             const loadChart = state.splitCharts.gpu[`gpuload_${g.name}`];
             if (loadChart?.data?.datasets && (g.load_pct > 0 || g.power_w > 0)) {
-                loadCard?.classList.remove('hidden');
+                setChartHidden(`card-split-gpuload-${safe}`, false);
                 push(loadChart.data.datasets[0], g.load_pct || 0, minGPU?.load_pct, maxGPU?.load_pct);
                 push(loadChart.data.datasets[1], g.power_w || 0, minGPU?.power_w, maxGPU?.power_w);
             }
 
             const vramChart = state.splitCharts.gpu[`vram_${g.name}`];
             if (vramChart?.data?.datasets && g.vram_total > 0 && g.vram_used > 0) {
-                vramCard?.classList.remove('hidden');
+                setChartHidden(`card-split-vram-${safe}`, false);
                 push(vramChart.data.datasets[0], g.vram_used || 0, minGPU?.vram_used, maxGPU?.vram_used);
                 vramChart.options.scales.y.max = g.vram_total > 0 ? g.vram_total : undefined;
             }
 
             const tempChart = state.splitCharts.gpu[`gputemp_${g.name}`];
             if (tempChart?.data?.datasets && g.temp > 0) {
-                tempCard?.classList.remove('hidden');
-                thermalsTitle?.classList.remove('hidden');
-                thermalsGrid?.classList.remove('hidden');
+                setChartHidden(`card-split-gputemp-${safe}`, false);
+                setChartHidden('thermals-title', false);
+                setChartHidden('thermals-grid', false);
                 push(tempChart.data.datasets[0], g.temp, minGPU?.temp, maxGPU?.temp);
             }
         }

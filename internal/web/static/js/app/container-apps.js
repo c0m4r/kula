@@ -10,6 +10,7 @@ import { i18n } from './i18n.js';
 import { pinSectionHeadForCards } from './section-utils.js';
 import { queueChartUpdate } from './chart-controller.js';
 import { appendEnvelopePoint, hasEnvelopeData } from './chart-envelope.js';
+import { updateChartUI } from './chart-ui.js';
 
 // Palette for assigning a stable color per container/app.
 const CONTAINER_COLOR_LIST = [
@@ -328,7 +329,7 @@ function alignedNullPrefix(chart, ts) {
     const out = new Array(len);
     for (let i = 0; i < len; i++) {
         const pt = peer?.data[i];
-        const x = pt && typeof pt === 'object' && pt.x != null ? pt.x : ts;
+        const x = Number(pt && typeof pt === 'object' && pt.x != null ? pt.x : ts);
         out[i] = { x, y: null };
     }
     return out;
@@ -730,6 +731,14 @@ function updateFilterButtonLabel() {
     countEl.textContent = n === total ? `(${total})` : `(${n}/${total})`;
 }
 
+function updateContainerUI() {
+    updateChartUI('container-metrics', () => {
+        ensureFilterUI();
+        syncContainerMetricsUI(state._containerLiveKeys || new Set());
+        updateMetricSubtitles();
+    });
+}
+
 /**
  * Process one sample's container list.
  * @param {object[]} containers
@@ -742,7 +751,6 @@ function updateFilterButtonLabel() {
  */
 export function addContainerSample(containers, ts, createAppChartCard, minContainers = [], maxContainers = [], hasEnvelope = false) {
     ensureFilterState();
-    ensureFilterUI();
 
     const list = containers || [];
     const tsMs = ts instanceof Date ? ts.getTime() : Number(ts);
@@ -757,8 +765,7 @@ export function addContainerSample(containers, ts, createAppChartCard, minContai
             appendAlignedTick(ts, liveByKey, {}, {}, false);
         }
         pruneDeadContainers(liveKeys, tsMs);
-        syncContainerMetricsUI(liveKeys);
-        updateMetricSubtitles();
+        updateContainerUI();
         return false;
     }
 
@@ -785,8 +792,7 @@ export function addContainerSample(containers, ts, createAppChartCard, minContai
 
     state._containerLiveKeys = liveKeys;
     state._containerLatestByKey = liveByKey;
-    syncContainerMetricsUI(liveKeys);
-    updateMetricSubtitles();
+    updateContainerUI();
     return true;
 }
 

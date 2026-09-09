@@ -55,6 +55,7 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
             responsive: true,
             maintainAspectRatio: false,
             normalized: true,
+            parsing: false,
             animation: false,
             interaction: { mode: 'index', intersect: false },
             spanGaps: state.joinMetrics,

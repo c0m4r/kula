@@ -170,6 +170,9 @@ legend and instance preservation, Data opt-in/opt-out, two accelerated hours of 
 horizontal time labels, visible sampling tiers, custom-range validation and time zone
 conversion, frozen custom ranges, sub-three-hour tier-0 aggregation/zoom, slow collection
 cadence, sensor reorder/disappearance, application gaps, and live language switching.
+History replay reports median preparation time and enforces a DOM-mutation budget proportional
+to chart count. Device-selection checks preserve unrelated datasets and shared gap metadata;
+all chart coordinates must remain valid for disabled Chart.js parsing.
 Timing is diagnostic; assertions check behavior rather than host-specific
 millisecond limits. The fixture uses temporary browser data and cleans it up on exit.
 
