@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- seeded mock-data PRNG; reproducibility is required and no security decision depends on it
 	"strings"
 	"time"
 
