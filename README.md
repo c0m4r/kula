@@ -393,10 +393,10 @@ All settings live in `config.yaml`. See [`config.example.yaml`](config.example.y
 # Build
 ./addonsh.build.sh
 
-# Build dev (Binary size: ~20MB)
+# Build dev (Binary size: ~21MB)
 CGO_ENABLED=0 go build -o kula ./cmd/kula/
 
-# Build prod (Binary size: ~14MB, xz: ~4MB)
+# Build prod (Binary size: ~15MB, xz: ~5MB)
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -buildvcs=false -o kula ./cmd/kula/
 ```
 
