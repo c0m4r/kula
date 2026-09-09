@@ -419,6 +419,11 @@ go test -race ./...
 # Run the full storage benchmark suite (default: 3s per bench)
 ./addons/benchmark.sh
 
+# Generate a repeatable realistic history fixture in an isolated directory
+KULA_DIRECTORY=/tmp/kula-mock go run ./cmd/gen-mock-data \
+  -config config.example.yaml -duration 6h -yes \
+  -seed 1263881281 -start 2026-09-07T00:00:00Z
+
 # Python scripts formatter and linters
 black addons/*.py
 pylint addons/*.py

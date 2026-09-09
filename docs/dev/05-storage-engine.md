@@ -177,8 +177,10 @@ and skipped. See [Codec](06-storage-codec.md) and `migration_test.go`.
 
 ## Mock data
 
-[`cmd/gen-mock-data/main.go`](../../cmd/gen-mock-data/main.go) generates realistic multi-day
-timeseries to stress storage performance and exercise tier rollups/wrap behavior at scale.
+[`cmd/gen-mock-data`](../../cmd/gen-mock-data/main.go) generates deterministic, correlated
+multi-day timeseries to stress storage performance and exercise tier rollups, counter resets,
+dynamic metric identities, and wrap behavior at scale. Its default profile includes labeled
+incident windows; see [Testing & QA](12-testing.md#realistic-mock-history) for usage and profiles.
 
 ## Tests & benchmarks
 

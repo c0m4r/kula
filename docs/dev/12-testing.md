@@ -82,8 +82,40 @@ The storage engine has a benchmark suite:
 benchstat old.txt new.txt             # compare two runs
 ```
 
-Generate large multi-day datasets to benchmark realistic tier rollups and wrap behavior with
-[`cmd/gen-mock-data`](../../cmd/gen-mock-data/main.go).
+### Realistic mock history
+
+[`cmd/gen-mock-data`](../../cmd/gen-mock-data/main.go) writes the complete metric schema into
+the configured tier store. It uses `collection.interval`, so generated timestamps and storage
+aggregation ratios remain consistent when testing a non-default collection rate.
+
+```bash
+# Repeatable six-hour fixture in an isolated directory.
+KULA_DIRECTORY=/tmp/kula-mock go run ./cmd/gen-mock-data \
+  -config config.example.yaml -duration 6h -yes \
+  -seed 1263881281 -start 2026-09-07T00:00:00Z
+
+# Seven days ending near now, with normal workload variation but no faults.
+KULA_DIRECTORY=/tmp/kula-steady go run ./cmd/gen-mock-data \
+  -config config.example.yaml -days 7 -profile steady -yes
+```
+
+The default `realistic` profile combines weekday/day-night traffic, nightly backups, thermal
+lag, memory/cache pressure, filesystem growth, monotonic counters, and correlated application
+activity. It also schedules and prints the exact windows for a traffic surge, disk saturation,
+memory leak, rolling deployment, packet loss, replication lag, mains outage, and reboot. These
+transitions exercise min/max rollups, counter resets, absent metric sections, persistent disk
+IDs, container identity changes, and variable record sizes. `-profile steady` retains the
+ordinary correlated workload but omits those fault transitions.
+
+When `applications.custom` contains chart definitions, the generator mirrors those group and
+metric names and chooses bounded, workload-correlated values using their names, units, and
+configured maxima. With no custom definitions it still encodes built-in request-pipeline and
+Go-runtime groups for storage/API coverage.
+
+The default seed is fixed. Set both `-seed` and `-start` to reproduce metric values and
+timestamps exactly. `-duration` is useful for short fixtures and overrides `-days`; `-yes`
+supports unattended runs. The generator does not clear its destination, and the bounded ring
+files may replace data already retained there, so use an isolated `KULA_DIRECTORY` for tests.
 
 Two focused history benchmarks are also available:
 
