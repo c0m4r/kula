@@ -13,6 +13,7 @@ jobs, and no GC pressure from unbounded growth.
 |------|------|
 | [`store.go`](../../internal/storage/store.go) | The tiered store manager — write path, aggregation, query, caching |
 | [`aggregation.go`](../../internal/storage/aggregation.go) | Exhaustive policy reducer, dynamic identity union, cascading rollups |
+| [`aggregation_plan.go`](../../internal/storage/aggregation_plan.go) | Immutable schema plans, direct output writes and per-call reduction buffers |
 | [`query_planner.go`](../../internal/storage/query_planner.go) | Fixed source-selection target, epoch-aligned output steps, query downsampling |
 | [`tier.go`](../../internal/storage/tier.go) | One ring-buffer file: header + records, wrap handling, chronological reads |
 | [`codec.go`](../../internal/storage/codec.go) | The binary record format (see [Codec](06-storage-codec.md)) |
@@ -93,6 +94,12 @@ weights cannot be recovered. Their stored means remain approximate; their indepe
 Min/Max envelopes remain usable. A schema-walking test rejects missing numeric policies or
 collection identities.
 
+Reducer plans compile the schema's field indices, policies, static statistic paths, and
+identity fields once. Reductions write directly into their own output graphs and reuse a
+temporary field-value buffer across siblings within each struct. Plans contain no mutable
+sample state, so concurrent history queries and rollups share only schema metadata. Dynamic
+keys keep the existing persisted `MeanStats` spelling; extrema do not build statistic paths.
+
 `HistoryResult.valid_aggregations` is the authoritative presentation contract. New complete
 envelopes carry `flagReducerV2` and advertise `data`, `min`, and `max`. Raw records and legacy
 rollups remain readable, but return `data` only; this prevents pre-policy Min/Max blocks already
@@ -155,11 +162,12 @@ locks so collection can continue. The scanner fixes its source extent at start, 
 appends, and detects overwritten unread ring bytes; an invalidated snapshot is retried once
 without publishing partial data. Cache publication checks the write generation so a
 concurrent write cannot be followed by insertion of an obsolete query result.
-On an AMD Ryzen 5 5600H with Go 1.26.7, the committed cold-query benchmark at 7,500 raw records
-measured about **121.6 ms**, **103.2 MB allocated**, and **660,624 allocations** per query
-(`-benchtime=3x`) with batched decoding. These are cumulative allocations, not peak live
-memory. Validate latency, collection-write delay, concurrency, and allocations on supported
-low-power targets before increasing the batch size or selection target.
+On an AMD Ryzen 5 5600H with Go 1.26.7, the cold-query benchmark at 7,500 raw records measured
+about **113 ms → 42 ms**, **103.2 MB → 33.4 MB allocated**, and **660,613 → 101,988 allocations**
+per query after compiling reducer plans and reusing field buffers (median of three
+`-benchtime=5x` runs). These are cumulative allocations, not peak live memory. Validate latency,
+collection-write delay, concurrency, and allocations on supported low-power targets before
+increasing the batch size or selection target.
 
 ## Migration
 

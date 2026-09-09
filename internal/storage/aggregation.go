@@ -1,11 +1,9 @@
 package storage
 
 import (
-	"fmt"
 	"math"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -166,99 +164,18 @@ func (s *Store) aggregateAggregated(samples []*AggregatedSample, dur time.Durati
 }
 
 func reduceSample(values []weightedValue, mode reductionMode, means *meanReduction) *collector.Sample {
+	values = matchingValues(values, reflect.TypeFor[collector.Sample]())
 	if len(values) == 0 {
 		return nil
 	}
-	reduced := reduceValue(reflect.TypeOf(collector.Sample{}), values, mode, "sample", "", means)
-	if !reduced.IsValid() {
-		return nil
-	}
-	sample := reduced.Interface().(collector.Sample)
-	return &sample
-}
-
-func reduceValue(typ reflect.Type, values []weightedValue, mode reductionMode, path, policy string, means *meanReduction) reflect.Value {
-	values = matchingValues(values, typ)
-	if len(values) == 0 {
-		return reflect.Zero(typ)
-	}
-
-	if typ == timeValueType {
-		return values[len(values)-1].value
-	}
-
-	switch typ.Kind() {
-	case reflect.Pointer:
-		elems := make([]weightedValue, 0, len(values))
-		for _, value := range values {
-			if !value.value.IsNil() {
-				elems = append(elems, weightedValue{value: value.value.Elem(), weight: value.weight, means: value.means})
-			}
-		}
-		if len(elems) == 0 {
-			return reflect.Zero(typ)
-		}
-		out := reflect.New(typ.Elem())
-		out.Elem().Set(reduceValue(typ.Elem(), elems, mode, path, policy, means))
-		return out
-
-	case reflect.Struct:
-		out := reflect.New(typ).Elem()
-		for i := 0; i < typ.NumField(); i++ {
-			field := typ.Field(i)
-			if !field.IsExported() {
-				continue
-			}
-			name := aggregationJSONName(field)
-			if name == "-" {
-				continue
-			}
-			fieldValues := make([]weightedValue, 0, len(values))
-			for _, value := range values {
-				fieldValues = append(fieldValues, weightedValue{
-					value:  value.value.Field(i),
-					weight: value.weight,
-					means:  value.means,
-				})
-			}
-			childPath := name
-			if path != "" {
-				childPath = path + "." + name
-			}
-			out.Field(i).Set(reduceValue(field.Type, fieldValues, mode, childPath, field.Tag.Get("agg"), means))
-		}
-		return out
-
-	case reflect.Slice:
-		return reduceSlice(typ, values, mode, path, means)
-
-	case reflect.Map:
-		return reduceMap(typ, values, mode, path, means)
-
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		return reduceNumber(typ, values, mode, policy, path, means)
-
-	case reflect.String:
-		// Empty metadata is commonly an unavailable reading, so retain the
-		// latest non-empty value within the bucket.
-		for i := len(values) - 1; i >= 0; i-- {
-			if values[i].value.String() != "" {
-				return values[i].value
-			}
-		}
-		return values[len(values)-1].value
-
-	default:
-		return values[len(values)-1].value
-	}
+	sample := &collector.Sample{}
+	sampleReducer(reflect.ValueOf(sample).Elem(), values, mode, "", means)
+	return sample
 }
 
 func matchingValues(values []weightedValue, typ reflect.Type) []weightedValue {
-	// Keep filtering side-effect free. reduceValue currently builds fresh
-	// slices, but mutating a caller's backing array here would make a future
-	// shared input silently reorder or discard values during recursive extrema.
+	// Filtering must not modify caller-owned buffers shared across reductions.
+	// Child plans already know their field types; only the root needs this check.
 	matchCount := 0
 	for _, value := range values {
 		if value.value.IsValid() && value.value.Type() == typ {
@@ -281,125 +198,10 @@ func matchingValues(values []weightedValue, typ reflect.Type) []weightedValue {
 	return matched
 }
 
-func reduceSlice(typ reflect.Type, values []weightedValue, mode reductionMode, path string, means *meanReduction) reflect.Value {
-	type group struct {
-		key    string
-		values []weightedValue
-	}
-
-	groups := make([]group, 0)
-	groupIndex := make(map[string]int)
-	for _, parent := range values {
-		for i := 0; i < parent.value.Len(); i++ {
-			item := parent.value.Index(i)
-			key, ok := aggregationIdentity(item)
-			if !ok {
-				key = fmt.Sprintf("#%d", i)
-			}
-			idx, exists := groupIndex[key]
-			if !exists {
-				idx = len(groups)
-				groupIndex[key] = idx
-				groups = append(groups, group{key: key})
-			}
-			groups[idx].values = append(groups[idx].values, weightedValue{value: item, weight: parent.weight, means: parent.means})
-		}
-	}
-
-	if len(groups) == 0 {
-		return reflect.Zero(typ)
-	}
-	out := reflect.MakeSlice(typ, 0, len(groups))
-	for _, group := range groups {
-		reduced := reduceValue(typ.Elem(), group.values, mode, path+"["+strconv.Quote(group.key)+"]", "", means)
-		out = reflect.Append(out, reduced)
-	}
-	return out
-}
-
-func reduceMap(typ reflect.Type, values []weightedValue, mode reductionMode, path string, means *meanReduction) reflect.Value {
-	keySet := make(map[string]reflect.Value)
-	for _, parent := range values {
-		if parent.value.IsNil() {
-			continue
-		}
-		iter := parent.value.MapRange()
-		for iter.Next() {
-			keySet[fmt.Sprint(iter.Key().Interface())] = iter.Key()
-		}
-	}
-	if len(keySet) == 0 {
-		return reflect.Zero(typ)
-	}
-
-	keys := make([]string, 0, len(keySet))
-	for key := range keySet {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	out := reflect.MakeMapWithSize(typ, len(keys))
-	for _, printableKey := range keys {
-		key := keySet[printableKey]
-		mapValues := make([]weightedValue, 0, len(values))
-		for _, parent := range values {
-			if parent.value.IsNil() {
-				continue
-			}
-			value := parent.value.MapIndex(key)
-			if value.IsValid() {
-				mapValues = append(mapValues, weightedValue{value: value, weight: parent.weight, means: parent.means})
-			}
-		}
-		out.SetMapIndex(key, reduceValue(typ.Elem(), mapValues, mode, path+"{"+strconv.Quote(printableKey)+"}", "", means))
-	}
-	return out
-}
-
-func aggregationIdentity(value reflect.Value) (string, bool) {
-	if value.Kind() == reflect.Pointer {
-		if value.IsNil() {
-			return "", false
-		}
-		value = value.Elem()
-	}
-	if value.Kind() != reflect.Struct {
-		return "", false
-	}
-
-	primary := make([]string, 0, 2)
-	fallback := make([]string, 0, 2)
-	primaryNonZero := false
-	fallbackNonZero := false
-	typ := value.Type()
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		policy := field.Tag.Get("agg")
-		if policy != aggIdentity && policy != aggIdentityFallback {
-			continue
-		}
-		fieldValue := value.Field(i)
-		part := field.Name + "=" + fmt.Sprint(fieldValue.Interface())
-		if policy == aggIdentity {
-			primary = append(primary, part)
-			primaryNonZero = primaryNonZero || !fieldValue.IsZero()
-		} else {
-			fallback = append(fallback, part)
-			fallbackNonZero = fallbackNonZero || !fieldValue.IsZero()
-		}
-	}
-	if len(primary) > 0 && primaryNonZero {
-		return strings.Join(primary, "\x1f"), true
-	}
-	return strings.Join(fallback, "\x1f"), len(fallback) > 0 && fallbackNonZero
-}
-
-func reduceNumber(typ reflect.Type, values []weightedValue, mode reductionMode, policy, path string, means *meanReduction) reflect.Value {
-	if mode == reduceData && (policy == aggMean || policy == aggMeanNonNegative) {
-		return numericMean(typ, values, policy == aggMeanNonNegative, path, means)
-	}
+func reduceNumber(out reflect.Value, values []weightedValue, mode reductionMode, policy string) {
 	if policy == aggIdentity || policy == aggIdentityFallback || mode == reduceData {
-		return values[len(values)-1].value
+		out.Set(values[len(values)-1].value)
+		return
 	}
 
 	var best reflect.Value
@@ -414,12 +216,12 @@ func reduceNumber(typ reflect.Type, values []weightedValue, mode reductionMode, 
 		}
 	}
 	if !found {
-		return values[len(values)-1].value
+		best = values[len(values)-1].value
 	}
-	return best
+	out.Set(best)
 }
 
-func numericMean(typ reflect.Type, values []weightedValue, nonNegative bool, path string, means *meanReduction) reflect.Value {
+func numericMean(out reflect.Value, values []weightedValue, nonNegative bool, path string, means *meanReduction) {
 	var sum, weights float64
 	for _, value := range values {
 		if stat, ok := value.means[path]; ok {
@@ -443,12 +245,12 @@ func numericMean(typ reflect.Type, values []weightedValue, nonNegative bool, pat
 	}
 	if weights == 0 {
 		means.stats[path] = meanAccumulator{}
-		return values[len(values)-1].value
+		out.Set(values[len(values)-1].value)
+		return
 	}
 
 	mean := sum / weights
-	out := reflect.New(typ).Elem()
-	switch typ.Kind() {
+	switch out.Kind() {
 	case reflect.Float32, reflect.Float64:
 		out.SetFloat(mean)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -459,7 +261,6 @@ func numericMean(typ reflect.Type, values []weightedValue, nonNegative bool, pat
 	if weights != means.weight || numericAsFloat(out) != mean {
 		means.stats[path] = meanAccumulator{Sum: sum, Weight: weights}
 	}
-	return out
 }
 
 func numericAsFloat(value reflect.Value) float64 {

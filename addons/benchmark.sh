@@ -197,7 +197,7 @@ PKG="kula/internal/storage"
 # ═══════════════════════════════════════════════════════════════════
 header "Codec — Encode / Decode"
 
-subheader "Sample serialisation (JSON marshal/unmarshal)"
+subheader "Sample serialisation (binary encode/decode)"
 divider
 pretty_run "$PKG" "BenchmarkEncodeSample|BenchmarkDecodeSample"
 divider
@@ -237,7 +237,7 @@ divider
 pretty_run "$PKG" "BenchmarkQueryRange_Small"
 divider
 
-subheader "Large range query (full 3 600 samples — triggers downsampler)"
+subheader "Repeated large range query (3 600 samples — mostly cache hits)"
 divider
 pretty_run "$PKG" "BenchmarkQueryRange_Large"
 divider
@@ -245,6 +245,11 @@ divider
 subheader "Query after ring buffer has wrapped multiple times"
 divider
 pretty_run "$PKG" "BenchmarkQueryRange_Wrapped"
+divider
+
+subheader "Uncached history at the 7 500-record source selection target"
+divider
+pretty_run "$PKG" "BenchmarkQueryRange_SourceBudget"
 divider
 
 # ═══════════════════════════════════════════════════════════════════
@@ -272,7 +277,12 @@ divider
 pretty_run "$PKG" "BenchmarkAggregateSamples"
 divider
 
-subheader "Inline downsampler (>800 samples → ~450 points)"
+subheader "Policy reducer only — raw and cascading envelopes"
+divider
+pretty_run "$PKG" "^BenchmarkAggregation$"
+divider
+
+subheader "Downsampling 3 600 samples — separate cold queries and cache hits"
 divider
 pretty_run "$PKG" "BenchmarkDownsampling"
 divider

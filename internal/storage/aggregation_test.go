@@ -51,6 +51,40 @@ func TestAggregationPoliciesReduceEveryNumericField(t *testing.T) {
 	assertAggregationFixtureNumbers(t, reflect.ValueOf(agg.Data), reflect.ValueOf(agg.Min), reflect.ValueOf(agg.Max), "sample")
 }
 
+func TestAggregationConcurrentResultOwnership(t *testing.T) {
+	for worker := range 8 {
+		t.Run(fmtRes(time.Duration(worker+1)*time.Second), func(t *testing.T) {
+			t.Parallel()
+			store := &Store{}
+			base := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+			raw := make([]*AggregatedSample, 6)
+			for i := range raw {
+				sample := aggregationFixture(base.Add(time.Duration(i) * time.Second))
+				setAggregationFixtureNumbers(reflect.ValueOf(sample), float64(worker*10+i))
+				if i%2 == 0 {
+					sample.Apps.Nginx = nil
+					sample.Apps.Custom = nil
+				}
+				raw[i] = &AggregatedSample{Timestamp: sample.Timestamp, Duration: time.Second, Data: sample}
+			}
+			original := cloneHistoryResult(&HistoryResult{Samples: raw})
+			expected := store.aggregateAggregated(raw, 0)
+			for range 10 {
+				result := store.aggregateAggregated(raw, 0)
+				if !reflect.DeepEqual(result, expected) {
+					t.Fatal("concurrent reduction changed the result")
+				}
+				for _, sample := range []*collector.Sample{result.Data, result.Min, result.Max} {
+					setAggregationFixtureNumbers(reflect.ValueOf(sample), 999)
+				}
+			}
+			if !reflect.DeepEqual(raw, original.Samples) {
+				t.Fatal("reducing or mutating a result changed the input samples")
+			}
+		})
+	}
+}
+
 func TestAggregationUnionsDynamicIdentities(t *testing.T) {
 	store := newTestStore(t)
 	defer func() { _ = store.Close() }()

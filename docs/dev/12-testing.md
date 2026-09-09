@@ -82,6 +82,13 @@ The storage engine has a benchmark suite:
 benchstat old.txt new.txt             # compare two runs
 ```
 
+`BenchmarkAggregation` isolates policy reduction from storage and caching, using both raw
+60-sample windows and cascades of five rollups. `BenchmarkDownsampling` includes minimal and
+all-section metric fixtures, each with separate `Cold` and `Cache` cases. Cold cases clear
+the query cache outside the timed region; cache cases warm the result and extend its TTL so
+they measure result cloning consistently. The older repeated `BenchmarkQueryRange_Small`,
+`Large`, and `Wrapped` cases mostly measure cache hits.
+
 ### Realistic mock history
 
 [`cmd/gen-mock-data`](../../cmd/gen-mock-data/main.go) writes the complete metric schema into
@@ -133,8 +140,12 @@ including complete 30-day views, sub-resolution observations, wrapped tiers, and
 between batches. Cross-batch reduction must preserve means, extrema, and contributor counts.
 
 The source-budget benchmark clears the query cache outside the timed region and reads 7,500
-raw records. On an AMD Ryzen 5 5600H with Go 1.26.7 it measured 129.0 ms/op, 100.4 MB/op, and
-634,577 allocs/op. The application-heavy 120-bucket JSON fixture measured:
+raw records. On an AMD Ryzen 5 5600H with Go 1.26.7, compiling reducer plans and reusing field
+buffers reduced the median from 112.8 to 41.7 ms/op, 103.2 to 33.4 MB/op, and 660,613 to
+101,988 allocs/op (three runs at `-benchtime=5x`). Cold 3,600-record queries measured 54.8 to
+20.1 ms/op for the minimal fixture and 244.3 to 77.4 ms/op with all metric sections present.
+These are cumulative allocations, not peak live memory. The application-heavy 120-bucket
+JSON fixture measured:
 
 | Shape | Encoded size | Parsed JSON nodes | Encode time | Encoder allocation |
 |---|---:|---:|---:|---:|

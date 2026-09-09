@@ -35,6 +35,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Inspect feature improvements
 - Implemented a unified rounding campaign while preserving full precision in storage and APIs
 - UI performance improvements
+- aggregation optimization
 
 ### Fixed
 

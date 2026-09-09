@@ -125,3 +125,60 @@ func TestAggregationCascadeOptionalPointersAndRounding(t *testing.T) {
 		t.Fatal("codec promoted legacy weight provenance")
 	}
 }
+
+func TestAggregationConsumesPersistedMeanPaths(t *testing.T) {
+	base := time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC)
+	first, second := aggregationFixture(base), aggregationFixture(base.Add(2*time.Second))
+	first.CPU.Total.Usage, second.CPU.Total.Usage = 10, 20
+	first.Apps.Nginx.ActiveConnections, second.Apps.Nginx.ActiveConnections = 11, 20
+	first.Apps.Containers[0].CPUPct, second.Apps.Containers[0].CPUPct = 12, 20
+	first.Disks.Devices[0].ID, second.Disks.Devices[0].ID = "stable", "stable"
+	first.Disks.Devices[0].Sensors[0].Value, second.Disks.Devices[0].Sensors[0].Value = 30, 50
+	first.Apps.Custom = map[string][]collector.CustomMetricValue{
+		"alpha":    {{Name: "latency", Value: 40}, {Name: "rate", Value: 50}},
+		`fans{"[]`: {{Name: `front]"`, Value: 60}},
+	}
+	second.Apps.Custom = map[string][]collector.CustomMetricValue{
+		"alpha":    {{Name: "rate", Value: 100}, {Name: "latency", Value: 80}},
+		`fans{"[]`: {{Name: `front]"`, Value: 120}},
+	}
+	// Literal keys from the existing storage contract: generating both the keys
+	// and the consuming plan together could hide a backwards-incompatible change.
+	stored := &AggregatedSample{
+		Timestamp: base, Duration: 4 * time.Second, Data: first, Min: first, Max: first,
+		AggregationVersion: currentAggregationVersion, MeanWeightsComplete: true,
+		MeanStats: map[string]meanAccumulator{
+			"sample.cpu.total.usage":                                           {Sum: 10, Weight: 1},
+			"sample.apps.nginx.active_conn":                                    {Sum: 21, Weight: 2},
+			`sample.apps.containers["ID=container-1"].cpu_pct`:                 {Sum: 24, Weight: 2},
+			`sample.disk.devices["ID=stable"].sensors["Name=composite"].value`: {Sum: 30, Weight: 1},
+			`sample.apps.custom{"alpha"}["Name=latency"].value`:                {Sum: 40, Weight: 1},
+			`sample.apps.custom{"alpha"}["Name=rate"].value`:                   {Sum: 100, Weight: 2},
+			`sample.apps.custom{"fans{\"[]"}["Name=front]\""].value`:           {Sum: 60, Weight: 1},
+		},
+	}
+	result := (&Store{}).aggregateAggregated([]*AggregatedSample{
+		roundTripMeanBucket(t, stored),
+		{Timestamp: second.Timestamp, Duration: 2 * time.Second, Data: second},
+	}, 0)
+	for _, check := range []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		{"fixed field", result.Data.CPU.Total.Usage, 50.0 / 3},
+		{"pointer integer", float64(result.Data.Apps.Nginx.ActiveConnections), 15},
+		{"fallback identity", result.Data.Apps.Containers[0].CPUPct, 16},
+		{"nested identity", result.Data.Disks.Devices[0].Sensors[0].Value, 130.0 / 3},
+		{"map identity", aggregationCustomValue(result.Data.Apps.Custom, "alpha", "latency"), 200.0 / 3},
+		{"reordered sibling", aggregationCustomValue(result.Data.Apps.Custom, "alpha", "rate"), 75},
+		{"quoted identity", aggregationCustomValue(result.Data.Apps.Custom, `fans{"[]`, `front]"`), 100},
+	} {
+		if math.Abs(check.got-check.want) > 1e-9 {
+			t.Errorf("%s mean = %v, want %v", check.name, check.got, check.want)
+		}
+	}
+	if got := result.MeanStats["sample.apps.nginx.active_conn"]; got != (meanAccumulator{Sum: 61, Weight: 4}) {
+		t.Fatalf("fractional integer statistics = %+v, want sum=61 weight=4", got)
+	}
+}

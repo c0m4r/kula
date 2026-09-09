@@ -1548,28 +1548,56 @@ func BenchmarkAggregateSamples(b *testing.B) {
 	}
 }
 
-// BenchmarkDownsampling benchmarks the inline downsampler in QueryRangeWithMeta
-// that runs whenever a query returns more than its requested point budget.
+// BenchmarkDownsampling separates actual decoding/reduction from cache-hit
+// cloning. Both fixtures contain one hour of data and request 450 points.
 func BenchmarkDownsampling(b *testing.B) {
-	store := newBenchStore(b, "100MB", 100*1024*1024)
-	defer func() { _ = store.Close() }()
-
-	// Seed with 3600 samples (1 hour at 1s res) for a 450-point query.
-	n := 3600
-	base := seedStore(b, store, n)
-	from := base
-	to := base.Add(time.Duration(n) * time.Second)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		result, err := store.QueryRangeWithMeta(from, to, 450)
-		if err != nil {
-			b.Fatalf("QueryRangeWithMeta: %v", err)
-		}
-		if len(result.Samples) == 0 {
-			b.Fatal("no samples returned")
-		}
+	for _, fixture := range []struct {
+		name   string
+		sample func(time.Time) *collector.Sample
+	}{
+		{"Minimal", makeSample},
+		{"AllSections", aggregationFixture},
+	} {
+		b.Run(fixture.name, func(b *testing.B) {
+			store := newBenchStore(b, "100MB", 100*1024*1024)
+			defer func() { _ = store.Close() }()
+			store.queryCacheTTL = time.Hour
+			from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			to := from.Add(3599 * time.Second)
+			for i := range 3600 {
+				if err := store.WriteSample(fixture.sample(from.Add(time.Duration(i) * time.Second))); err != nil {
+					b.Fatal(err)
+				}
+			}
+			query := func(b *testing.B) {
+				result, err := store.QueryRangeWithMeta(from, to, 450)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if !result.Downsampled || len(result.Samples) == 0 || len(result.Samples) > 450 {
+					b.Fatalf("downsampled=%v samples=%d, want 1..450 reduced points", result.Downsampled, len(result.Samples))
+				}
+			}
+			b.Run("Cold", func(b *testing.B) {
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					b.StopTimer()
+					store.queryCacheMu.Lock()
+					clear(store.queryCache)
+					store.queryCacheMu.Unlock()
+					b.StartTimer()
+					query(b)
+				}
+			})
+			b.Run("Cache", func(b *testing.B) {
+				query(b)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					query(b)
+				}
+			})
+		})
 	}
 }
 
