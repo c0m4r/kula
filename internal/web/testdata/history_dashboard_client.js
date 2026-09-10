@@ -255,6 +255,15 @@ check(document.getElementById('time-range-display').textContent === i18n.t('last
 check(state.charts.loadavg.data.datasets[0].label === i18n.t('1_min') &&
     state.charts.loadavg.data.datasets[0].label !== '1_min',
     'Loaded translations did not refresh chart legend labels');
+check(document.querySelector('[data-i18n="charts"]').textContent === i18n.t('charts') &&
+    i18n.t('charts') !== 'Charts' && i18n.t('selected_duration') !== 'Selected duration',
+    'Chart personalization or custom range text is not translated');
+check(document.getElementById('btn-apply-custom').textContent === i18n.t('apply_range') &&
+    document.getElementById('btn-cancel-custom').textContent === i18n.t('cancel'),
+    'Custom range button text is not translated');
+check(document.getElementById('sys-info').textContent.includes(i18n.t('source')) &&
+    document.getElementById('sys-info').textContent.includes(i18n.t('self')),
+    'Footer status text is not translated');
 await i18n.loadTranslations('en');
 i18n.applyTranslations();
 document.dispatchEvent(new Event('kula-i18n-changed'));

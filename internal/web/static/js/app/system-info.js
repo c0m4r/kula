@@ -6,8 +6,6 @@ import { formatBytesShort } from './format.js';
 
 const sectionDefinitions = [
     { id: 'overview', icon: 'server' },
-    { id: 'cpu', icon: 'cpu' },
-    { id: 'memory', icon: 'memory' },
     { id: 'storage', icon: 'storage' },
     { id: 'network', icon: 'network' },
     { id: 'devices', icon: 'devices' },
@@ -42,7 +40,8 @@ function humanize(key) {
         word => word.toUpperCase());
 }
 
-const label = key => i18n.translations[`si_${normalizedKey(key)}`] || humanize(key);
+const label = key => i18n.translations[`si_${normalizedKey(key)}`] ||
+    i18n.translations[normalizedKey(key)] || humanize(key);
 const number = (value, unit = '', digits = 1) => present(value) && finite(Number(value))
     ? `${Number(value).toLocaleString(i18n.currentLang, { maximumFractionDigits: digits })}${unit}` : '—';
 const bytes = value => present(value) && finite(Number(value)) ? formatBytesShort(Number(value)) : '—';
@@ -147,12 +146,6 @@ function select(source = {}, keys = []) {
     return selected;
 }
 
-function without(source = {}, keys = []) {
-    const omitted = new Set(keys);
-    return Object.fromEntries(Object.entries(source || {})
-        .filter(([key, value]) => !omitted.has(key) && present(value)));
-}
-
 function details(values = {}) {
     const list = node('dl', 'system-info-facts');
     for (const [key, value] of Object.entries(values || {})) {
@@ -180,28 +173,6 @@ function card(title, values, options = {}) {
     return item;
 }
 
-function meter(title, value, detail) {
-    const wrap = node('div', 'system-info-meter');
-    const row = node('div', 'system-info-meter-label');
-    row.append(node('span', '', title), node('strong', '', detail ?? percent(value)));
-    wrap.append(row);
-    if (finite(value)) {
-        const bounded = Math.max(0, Math.min(100, value));
-        const tone = bounded >= 90 ? ' is-critical' : bounded >= 75 ? ' is-warning' : '';
-        const bar = node('div', `system-info-progress${tone}`);
-        bar.setAttribute('role', 'progressbar');
-        bar.setAttribute('aria-label', title);
-        bar.setAttribute('aria-valuemin', '0');
-        bar.setAttribute('aria-valuemax', '100');
-        bar.setAttribute('aria-valuenow', String(bounded));
-        const fill = node('div', 'system-info-progress-fill');
-        fill.style.setProperty('--meter-value', `${bounded}%`);
-        bar.append(fill);
-        wrap.append(bar);
-    }
-    return wrap;
-}
-
 function expandable(key, title, child) {
     const wrap = node('details', 'system-info-expandable');
     wrap.dataset.key = key;
@@ -209,67 +180,22 @@ function expandable(key, title, child) {
     return wrap;
 }
 
-function appendExpandable(item, key, title, values) {
-    if (!values || !Object.values(values).some(present)) return false;
-    item.append(expandable(key, title, details(values)));
-    return true;
-}
-
-function table(columns, rows) {
-    const wrap = node('div', 'system-info-table-wrap');
-    const tableElement = node('table', 'system-info-table');
-    const head = node('thead');
-    const headingRow = node('tr');
-    for (const column of columns) {
-        const cell = node('th', '', label(column));
-        cell.scope = 'col';
-        headingRow.append(cell);
-    }
-    head.append(headingRow);
-    tableElement.append(head);
-    const body = node('tbody');
-    for (const row of rows) {
-        const rowElement = node('tr');
-        for (const column of columns) {
-            const cell = node('td');
-            if (column === 'mounts' && Array.isArray(row[column])) {
-                cell.append(mountPaths(row[column], `device-mounts-${row.name}`));
-            } else {
-                cell.textContent = displayValue(column, row[column]);
-            }
-            rowElement.append(cell);
-        }
-        body.append(rowElement);
-    }
-    tableElement.append(body);
-    wrap.append(tableElement);
-    return wrap;
-}
-
-function statPair(items) {
-    const wrap = node('div', 'system-info-stat-pair');
-    for (const [title, value] of items) {
-        const stat = node('div', 'system-info-stat');
-        stat.append(node('span', '', title), node('strong', '', value));
-        wrap.append(stat);
-    }
-    return wrap;
-}
-
 function callout(text) {
     return node('p', 'system-info-note system-info-wide', text);
 }
 
-function summaryCard(iconName, title, value, detail, usage, usageLabel = label('used')) {
-    const item = node('button', 'system-info-summary-card');
-    item.type = 'button';
-    item.dataset.summarySection = iconName;
-    item.addEventListener('click', () => activateSection(iconName, { focus: true }));
+function summaryCard(iconName, title, value, detail) {
+    const linked = sectionDefinitions.some(section => section.id === iconName);
+    const item = node(linked ? 'button' : 'article', `system-info-summary-card${linked ? ' is-link' : ''}`);
+    if (linked) {
+        item.type = 'button';
+        item.dataset.summarySection = iconName;
+        item.addEventListener('click', () => activateSection(iconName, { focus: true }));
+    }
     const top = node('div', 'system-info-summary-top');
     top.append(icon(iconName, 'system-info-summary-icon'), node('span', 'system-info-summary-title', title));
     item.append(top, node('strong', 'system-info-summary-value', value),
         node('span', 'system-info-summary-detail', detail));
-    if (finite(usage)) item.append(meter(usageLabel, usage));
     return item;
 }
 
@@ -277,8 +203,7 @@ function profile(data) {
     const system = data.system || {};
     const item = node('section', 'system-info-profile system-info-wide');
     const primary = node('div');
-    primary.append(node('span', 'system-info-profile-label', label('this_server')),
-        node('h4', '', system.hostname || label('unnamed_system')));
+    primary.append(node('h4', '', system.hostname || label('unnamed_system')));
     const description = [system.manufacturer, system.product].filter(present).join(' · ') ||
         label('hardware_identity_unavailable');
     primary.append(node('p', 'system-info-profile-description', description));
@@ -292,9 +217,14 @@ function profile(data) {
     }
     primary.append(chips);
     const side = node('div', 'system-info-profile-side');
-    side.append(node('span', '', label('uptime')),
-        node('strong', '', data.live?.sys?.uptime_human || '—'),
-        node('span', '', label('since_last_restart')));
+    for (const [name, value] of [
+        [label('kernel'), system.kernel],
+        [label('uptime'), data.live?.sys?.uptime_human],
+    ]) {
+        const fact = node('div', 'system-info-profile-fact');
+        fact.append(node('span', '', name), node('strong', '', value || '—'));
+        side.append(fact);
+    }
     item.append(primary, side);
     return item;
 }
@@ -318,17 +248,15 @@ function overview(data, grid) {
     const summaries = node('section', 'system-info-summary-grid system-info-wide');
     const coreCount = cpu.cores || cpu.logical_cpus;
     summaries.append(
-        summaryCard('cpu', label('processor'), cpu.details?.model_name || label('unavailable'),
+        summaryCard('cpu', label('processor'), cpu.model_name || label('unavailable'),
             [
                 coreCount ? `${number(coreCount, '', 0)} ${label('cores')}` : '',
                 cpu.logical_cpus ? `${number(cpu.logical_cpus, '', 0)} ${label('logical_cpus')}` : '',
-            ].filter(Boolean).join(' · '), live?.cpu?.total?.usage, label('cpu_usage')),
-        summaryCard('memory', label('memory'), bytes(live?.mem?.total),
-            live?.mem ? `${bytes(live.mem.used)} ${label('used').toLowerCase()} · ${bytes(live.mem.available)} ${label('available').toLowerCase()}`
-                : label('waiting_for_metrics'), live?.mem?.used_pct, label('memory_used')),
+            ].filter(Boolean).join(' · ')),
+        summaryCard('memory', i18n.t('ram'), bytes(live?.mem?.total),
+            ''),
         summaryCard('storage', label('main_storage'), bytes(filesystem?.usage?.total),
-            filesystem?.usage ? `${bytes(filesystem.usage.used)} ${label('used').toLowerCase()} · ${filesystem.mount}`
-                : label('storage_usage_unavailable'), filesystem?.usage?.used_pct, label('space_used')),
+            filesystem?.mount || label('storage_usage_unavailable')),
         summaryCard('network', label('network'), iface?.name || label('unavailable'),
             iface ? [
                 finite(iface.speed_mbps) ? number(iface.speed_mbps, ' Mb/s', 0) : '',
@@ -336,152 +264,6 @@ function overview(data, grid) {
             ].filter(Boolean).join(' · ') || label('link_details_unavailable') : label('no_interfaces')),
     );
     grid.append(summaries);
-
-    const system = data.system || {};
-    const identity = card(label('system_and_software'), {
-        os: system.os,
-        kernel: system.kernel,
-        architecture: system.architecture,
-        firmware: system.firmware,
-        hypervisor: system.hypervisor,
-    }, { icon: 'server' });
-    appendExpandable(identity, 'system-identifiers', label('system_identifiers'),
-        without(system, ['hostname', 'os', 'kernel', 'architecture', 'manufacturer', 'product', 'firmware', 'hypervisor']));
-    grid.append(identity);
-
-    const runtime = live ? card(label('current_activity'), {
-        clock_synced: live.sys?.clock_synced,
-        signed_in_users: live.sys?.user_count,
-        total_processes: live.proc?.total,
-        running_processes: live.proc?.running,
-        load_average: [live.lavg?.load1, live.lavg?.load5, live.lavg?.load15]
-            .filter(finite).map(value => number(value)).join(' / '),
-    }, { icon: 'activity' }) : card(label('current_activity'),
-        { status: label('waiting_for_metrics') }, { icon: 'activity' });
-    if (live) appendExpandable(runtime, 'runtime-details', label('technical_details'), {
-        threads: live.proc?.threads,
-        blocked_processes: live.proc?.blocked,
-        zombie_processes: live.proc?.zombie,
-        clock_source: live.sys?.clock_source,
-    });
-    grid.append(runtime);
-
-    const hardware = card(label('hardware_identity'), {
-        manufacturer: system.manufacturer,
-        product: system.product,
-        motherboard: [data.board?.manufacturer, data.board?.model].filter(present).join(' '),
-        bios_firmware: [data.bios?.vendor, data.bios?.version].filter(present).join(' '),
-    }, { wide: true, icon: 'hardware' });
-    appendExpandable(hardware, 'board-details', label('motherboard_details'), data.board);
-    appendExpandable(hardware, 'firmware-details', label('firmware_details'), data.bios);
-    grid.append(hardware);
-}
-
-function cpu(data, grid) {
-    const processor = data.cpu || {};
-    const source = processor.details || {};
-    const item = card(source.model_name || label('processor'), {
-        vendor: source.vendor,
-        physical_cores: processor.cores || undefined,
-        logical_cpus: processor.logical_cpus || undefined,
-        sockets: processor.sockets || undefined,
-        numa_nodes: source.numa_nodes,
-    }, { icon: 'cpu', subtitle: label('processor_overview') });
-    appendExpandable(item, 'processor-details', label('technical_details'),
-        without(source, ['features', 'model_name', 'vendor', 'numa_nodes']));
-    grid.append(item);
-
-    if (data.live) {
-        const usage = card(label('live_processor_activity'), null,
-            { icon: 'activity', subtitle: label('live_not_history') });
-        usage.append(meter(label('cpu_usage'), data.live.cpu?.total?.usage), statPair([
-            [label('user_apps'), percent(data.live.cpu?.total?.user)],
-            [label('system_work'), percent(data.live.cpu?.total?.system)],
-            [label('io_wait'), percent(data.live.cpu?.total?.iowait)],
-            [label('temperature'), finite(data.live.cpu?.temp) ? number(data.live.cpu.temp, ' °C') : '—'],
-        ]));
-        grid.append(usage);
-    }
-
-    const more = card(label('processor_details'), null,
-        { wide: true, icon: 'cpu', subtitle: label('processor_details_intro') });
-    let hasMore = false;
-    if (source.features) {
-        hasMore = true;
-        more.append(expandable('features', label('instruction_features'),
-            node('p', 'system-info-feature-list', source.features)));
-    }
-    if (processor.caches?.length) {
-        hasMore = true;
-        more.append(expandable('caches', `${label('caches')} · ${processor.caches.length}`,
-            table(['level', 'type', 'size', 'shared_cpus', 'line_size', 'ways'], processor.caches)));
-    }
-    if (processor.frequency?.length) {
-        const rows = processor.frequency.map(row => ({
-            ...row,
-            current_mhz: Number.isFinite(Number(row.current_khz)) ? number(Number(row.current_khz) / 1000) : undefined,
-            minimum_mhz: Number.isFinite(Number(row.minimum_khz)) ? number(Number(row.minimum_khz) / 1000) : undefined,
-            maximum_mhz: Number.isFinite(Number(row.maximum_khz)) ? number(Number(row.maximum_khz) / 1000) : undefined,
-        }));
-        hasMore = true;
-        more.append(expandable('frequency', `${label('frequency')} · ${rows.length}`,
-            table(['cpus', 'driver', 'governor', 'current_mhz', 'minimum_mhz', 'maximum_mhz'], rows)));
-    }
-    if (Object.keys(processor.vulnerabilities || {}).length) {
-        hasMore = true;
-        more.append(expandable('vulnerabilities', label('security_mitigations'),
-            details(processor.vulnerabilities)));
-    }
-    if (hasMore) grid.append(more);
-}
-
-function memory(data, grid) {
-    if (data.live) {
-        for (const [name, stats, iconName] of [
-            ['memory', data.live.mem, 'memory'],
-            ['swap', data.live.swap, 'swap'],
-        ]) {
-            const item = card(label(name), null, {
-                icon: iconName,
-                subtitle: name === 'memory' ? label('physical_memory') : label('overflow_memory'),
-            });
-            item.append(meter(label('used'), stats?.used_pct,
-                stats ? `${bytes(stats.used)} / ${bytes(stats.total)} · ${percent(stats.used_pct)}` : '—'),
-            statPair([
-                [label('total'), bytes(stats?.total)],
-                [label('available'), bytes(stats?.available ?? stats?.free)],
-            ]));
-            grid.append(item);
-        }
-    }
-
-    for (const [index, dimm] of (data.dimms || []).entries()) {
-        const title = dimm.label || dimm.slot || `${label('memory_module')} ${index + 1}`;
-        const primary = ['size_mib', 'size_kib', 'type', 'configured_speed_mts', 'manufacturer',
-            'part_number', 'status', 'source'];
-        const item = card(title, select(dimm, primary), {
-            icon: 'module',
-            subtitle: dimm.bank || label('installed_memory_module'),
-        });
-        appendExpandable(item, `dimm-${index}`, label('technical_details'),
-            without(dimm, [...primary, 'slot', 'label', 'bank']));
-        grid.append(item);
-    }
-    if (!data.dimms?.length) grid.append(callout(label('modules_unavailable')));
-
-    const fields = Object.fromEntries(Object.entries(data.memory || {}).map(([key, value]) => [
-        key,
-        /^\d+ kB$/.test(value) ? bytes(Number(value.split(' ')[0]) * 1024) : value,
-    ]));
-    if (Object.keys(fields).length) {
-        const accounting = card(label('memory_accounting'), null, {
-            wide: true,
-            icon: 'memory',
-            subtitle: label('memory_accounting_intro'),
-        });
-        accounting.append(expandable('memory-accounting', label('view_memory_breakdown'), details(fields)));
-        grid.append(accounting);
-    }
 }
 
 // A mount path is one value, even when it contains spaces or commas.
@@ -530,22 +312,7 @@ function filesystemList(filesystems) {
         if (present(filesystem.type)) meta.append(node('span', 'system-info-fs-type', filesystem.type));
         if (present(filesystem.device)) meta.append(node('code', 'system-info-path', filesystem.device));
         identity.append(head, meta);
-        const usage = node('div', 'system-info-filesystem-usage');
-        if (filesystem.usage) {
-            usage.append(meter(label('space_used'), filesystem.usage.used_pct,
-                `${bytes(filesystem.usage.used)} / ${bytes(filesystem.usage.total)}`));
-            const available = node('div', 'system-info-filesystem-available');
-            available.append(node('span', '', `${bytes(filesystem.usage.available)} ${label('available').toLowerCase()}`),
-                node('strong', '', percent(filesystem.usage.used_pct)));
-            usage.append(available);
-        } else {
-            usage.append(node('span', 'system-info-empty-usage', label('usage_unavailable')));
-        }
-        item.append(identity, usage);
-        if (present(filesystem.options)) {
-            item.append(expandable(`mount-options-${filesystem.mount}`, label('mount_options'),
-                node('code', 'system-info-mount-options', filesystem.options)));
-        }
+        item.append(identity);
         list.append(item);
     }
     return list;
@@ -602,7 +369,7 @@ function mountedStorage(filesystems) {
     return item;
 }
 
-function driveCard(disk, index) {
+function driveCard(disk) {
     const info = disk.details || {};
     const title = info.model || info.volume_name || disk.name;
     const item = card(title, {
@@ -615,21 +382,6 @@ function driveCard(disk, index) {
             mountPaths(disk.mounts, `drive-mounts-${disk.name}`));
         item.append(mounts);
     }
-    if (finite(disk.busy_pct)) item.append(meter(label('drive_activity'), disk.busy_pct));
-    if ([disk.read_bps, disk.write_bps, disk.reads_ps, disk.writes_ps].some(finite)) {
-        item.append(statPair([
-            [label('reading_now'), finite(disk.read_bps) ? `${bytes(disk.read_bps)}/s` : '—'],
-            [label('writing_now'), finite(disk.write_bps) ? `${bytes(disk.write_bps)}/s` : '—'],
-            [label('read_operations'), number(disk.reads_ps, '/s')],
-            [label('write_operations'), number(disk.writes_ps, '/s')],
-        ]));
-    }
-    appendExpandable(item, `drive-${index}`, label('technical_details'), {
-        ...without(info, ['model', 'volume_name', 'type']),
-        parent_device: disk.parent,
-        backing_devices: disk.slaves?.join(', '),
-        operations_in_flight: disk.in_flight,
-    });
     return item;
 }
 
@@ -639,30 +391,12 @@ function storage(data, grid) {
     const all = data.disks || [];
     const primary = all.filter(disk => disk.details?.type !== 'partition' && !disk.name.startsWith('loop'));
     const prominent = primary.length ? primary : all.slice(0, 1);
-    for (const disk of prominent) grid.append(driveCard(disk, all.indexOf(disk)));
+    for (const disk of prominent) grid.append(driveCard(disk));
     if (!all.length) grid.append(callout(label('no_storage_devices')));
 
-    const secondary = all.filter(disk => !prominent.includes(disk));
-    if (secondary.length) {
-        const item = card(label('partitions_and_virtual_devices'), null, {
-            wide: true,
-            icon: 'devices',
-            subtitle: label('secondary_storage_intro'),
-        });
-        item.append(expandable('secondary-storage', `${label('view_devices')} · ${secondary.length}`,
-            table(['name', 'type', 'capacity', 'parent', 'mounts'], secondary.map(disk => ({
-                name: disk.name,
-                type: disk.details?.type,
-                capacity: bytes(disk.size_bytes),
-                parent: disk.parent,
-                mounts: disk.mounts,
-            })))));
-        grid.append(item);
-    }
-    grid.append(callout(label('storage_note')));
 }
 
-function interfaceCard(iface, index) {
+function interfaceCard(iface) {
     const state = iface.details?.state;
     const item = card(iface.name, {
         ip_addresses: iface.addresses?.join('\n'),
@@ -673,168 +407,75 @@ function interfaceCard(iface, index) {
         subtitle: label(iface.name === 'lo' ? 'local_interface' : 'network_interface'),
         state,
     });
-    item.append(
-        meter(label('receiving_now'), iface.rx_pct,
-            finite(iface.rx_mbps) ? number(iface.rx_mbps, ' Mb/s') : label('waiting_for_rate')),
-        meter(label('sending_now'), iface.tx_pct,
-            finite(iface.tx_mbps) ? number(iface.tx_mbps, ' Mb/s') : label('waiting_for_rate')),
-    );
-    appendExpandable(item, `traffic-${index}`, label('traffic_totals_and_errors'), {
-        total_received: iface.rx_bytes === undefined ? undefined : bytes(iface.rx_bytes),
-        total_sent: iface.tx_bytes === undefined ? undefined : bytes(iface.tx_bytes),
-        receive_errors: iface.rx_errors,
-        send_errors: iface.tx_errors,
-        receive_drops: iface.rx_dropped,
-        send_drops: iface.tx_dropped,
-    });
-    appendExpandable(item, `interface-${index}`, label('interface_details'),
-        without(iface.details, ['state', 'driver']));
     return item;
 }
 
 function network(data, grid) {
     const all = data.network || [];
-    const activeInterfaces = all.filter(iface => iface.name !== 'lo' && iface.details?.state === 'up');
-    const prominent = activeInterfaces.length ? activeInterfaces :
-        all.filter(iface => iface.name !== 'lo').slice(0, 1);
-    for (const iface of prominent) grid.append(interfaceCard(iface, all.indexOf(iface)));
+    for (const iface of all) grid.append(interfaceCard(iface));
     if (!all.length) grid.append(callout(label('no_interfaces')));
 
-    const others = all.filter(iface => !prominent.includes(iface));
-    if (others.length) {
-        const item = card(label('other_network_interfaces'), null, {
-            wide: true,
-            icon: 'network',
-            subtitle: label('other_interfaces_intro'),
-        });
-        item.append(expandable('other-interfaces', `${label('view_interfaces')} · ${others.length}`,
-            table(['name', 'state', 'addresses', 'link_speed', 'driver'], others.map(iface => ({
-                name: iface.name,
-                state: translatedState(iface.details?.state),
-                addresses: iface.addresses?.join(', '),
-                link_speed: finite(iface.speed_mbps) ? number(iface.speed_mbps, ' Mb/s', 0) : undefined,
-                driver: iface.details?.driver,
-            })))));
-        grid.append(item);
+}
+
+function inventoryList() {
+    return node('ul', 'system-info-inventory-list system-info-wide');
+}
+
+function inventoryItem(iconName, title, subtitle, values, state) {
+    const item = node('li', 'system-info-inventory-item');
+    item.append(icon(iconName, 'system-info-card-icon'));
+    const body = node('div', 'system-info-inventory-body');
+    const heading = node('div', 'system-info-inventory-heading');
+    const titleWrap = node('div');
+    titleWrap.append(node('h4', '', title));
+    if (subtitle) titleWrap.append(node('p', '', subtitle));
+    heading.append(titleWrap);
+    if (present(state)) {
+        heading.append(node('span', `system-info-state ${isOnline(state) ? 'is-online' : isOffline(state) ? 'is-offline' : ''}`,
+            translatedState(state)));
     }
-    grid.append(callout(label('network_note')));
+    body.append(heading);
+    if (values && Object.values(values).some(present)) body.append(details(values));
+    item.append(body);
+    return item;
 }
 
 function devices(data, grid) {
+    const list = inventoryList();
     for (const [index, gpu] of (data.live?.gpu || []).entries()) {
-        const item = card(gpu.name || `${label('graphics_device')} ${index + 1}`, {
-            driver: gpu.driver,
-            temperature: finite(gpu.temp) ? number(gpu.temp, ' °C') : undefined,
-            power: finite(gpu.power_w) ? number(gpu.power_w, ' W') : undefined,
-        }, { icon: 'gpu', subtitle: label('graphics_device') });
-        item.append(meter(label('gpu_usage'), gpu.load_pct),
-            meter(label('video_memory'), gpu.vram_pct,
-                finite(gpu.vram_total) ? `${bytes(gpu.vram_used)} / ${bytes(gpu.vram_total)}` : '—'));
-        grid.append(item);
+        list.append(inventoryItem('gpu', gpu.name || `${label('graphics_device')} ${index + 1}`,
+            label('graphics_device'), { driver: gpu.driver }));
     }
-
     for (const [index, usb] of (data.usb || []).entries()) {
         const primary = ['manufacturer', 'speed_mbps', 'max_power'];
-        const item = card(usb.product || `${label('usb_device')} ${index + 1}`, select(usb, primary), {
-            icon: 'usb',
-            subtitle: usb.address ? `${label('port')} ${usb.address}` : label('usb_device'),
-        });
-        appendExpandable(item, `usb-${index}`, label('technical_details'),
-            without(usb, [...primary, 'product', 'address']));
-        grid.append(item);
+        list.append(inventoryItem('usb', usb.product || `${label('usb_device')} ${index + 1}`,
+            usb.address ? `${label('port')} ${usb.address}` : label('usb_device'), select(usb, primary)));
     }
-
-    if (data.pci?.length) {
-        const item = card(label('internal_pci_devices'), null, {
-            wide: true,
-            icon: 'pci',
-            subtitle: label('pci_devices_intro'),
-        });
-        const columns = [...new Set(data.pci.flatMap(row => Object.keys(row)))];
-        item.append(expandable('pci-devices', `${label('view_devices')} · ${data.pci.length}`,
-            table(columns, data.pci)));
-        grid.append(item);
+    for (const [index, pci] of (data.pci || []).entries()) {
+        list.append(inventoryItem('pci', pci.address || `${label('internal_pci_devices')} ${index + 1}`,
+            label('internal_pci_devices'), { driver: pci.driver }));
     }
-    if (!(data.live?.gpu?.length || data.usb?.length || data.pci?.length)) {
-        grid.append(callout(label('no_connected_devices')));
-    }
-}
-
-function temperatureReading(sensor) {
-    const value = Number(sensor.value);
-    const minimum = 0;
-    const maximum = 120;
-    const bounded = Math.max(minimum, Math.min(maximum, value));
-    const level = ((bounded - minimum) / (maximum - minimum)) * 100;
-    const tone = value >= 90 ? ' is-critical' : value >= 75 ? ' is-hot' : value >= 55 ? ' is-warm' : '';
-    const formatted = number(value, ` ${sensor.unit}`);
-    const reading = node('div', 'system-info-temperature-reading');
-    const gauge = node('div', `system-info-thermometer${tone}`);
-    gauge.setAttribute('role', 'meter');
-    gauge.setAttribute('aria-label', sensor.name);
-    gauge.setAttribute('aria-valuemin', String(minimum));
-    gauge.setAttribute('aria-valuemax', String(maximum));
-    gauge.setAttribute('aria-valuenow', String(value));
-    gauge.setAttribute('aria-valuetext', formatted);
-    const track = node('span', 'system-info-thermometer-track');
-    const fill = node('span', 'system-info-thermometer-fill');
-    fill.style.setProperty('--temperature-level', `${level}%`);
-    track.append(fill);
-    gauge.append(track, node('span', 'system-info-thermometer-bulb'));
-    reading.append(gauge, node('span', '', sensor.name), node('strong', '', formatted));
-    return reading;
+    if (list.children.length) grid.append(list);
+    else grid.append(callout(label('no_connected_devices')));
 }
 
 function sensors(data, grid) {
-    const grouped = new Map();
+    const list = inventoryList();
     for (const sensor of data.sensors || []) {
-        const list = grouped.get(sensor.device) || [];
-        list.push(sensor);
-        grouped.set(sensor.device, list);
+        list.append(inventoryItem('sensor', sensor.name, humanize(sensor.device), {
+            current_reading: number(sensor.value, ` ${sensor.unit}`),
+        }));
     }
-    for (const [device, sensorGroup] of grouped) {
-        const item = card(humanize(device), null, { icon: 'sensor', subtitle: label('sensor_group') });
-        const list = node('div', 'system-info-sensor-list');
-        for (const sensor of sensorGroup) {
-            const sensorUnit = String(sensor.unit || '').replaceAll(' ', '').toLowerCase();
-            if (finite(sensor.value) && ['°c', 'c'].includes(sensorUnit)) {
-                list.append(temperatureReading(sensor));
-                continue;
-            }
-            const reading = node('div', 'system-info-sensor-reading');
-            reading.append(node('span', '', sensor.name),
-                node('strong', '', number(sensor.value, ` ${sensor.unit}`)));
-            list.append(reading);
-        }
-        item.append(list);
-        grid.append(item);
-    }
-
     for (const [index, power] of (data.power || []).entries()) {
-        const primary = ['type', 'status', 'health', 'capacity_percent', 'manufacturer', 'model'];
-        const item = card(power.name || `${label('power_supply')} ${index + 1}`, select(power, primary), {
-            icon: 'power',
-            subtitle: label('power_supply'),
-            state: power.online,
-        });
-        const capacity = Number(power.capacity_percent);
-        if (Number.isFinite(capacity)) item.append(meter(label('charge_level'), capacity));
-        appendExpandable(item, `power-${index}`, label('energy_and_hardware_details'),
-            without(power, [...primary, 'name', 'online']));
-        grid.append(item);
+        const primary = ['status', 'capacity_percent'];
+        list.append(inventoryItem('power', power.name || `${label('power_supply')} ${index + 1}`,
+            label('power_supply'), select(power, primary), power.online));
     }
-    if (!grouped.size && !data.power?.length) grid.append(callout(label('no_sensors_or_power')));
+    if (list.children.length) grid.append(list);
+    else grid.append(callout(label('no_sensors_or_power')));
 }
 
-const renderers = { overview, cpu, memory, storage, network, devices, sensors };
-
-function sectionHeader() {
-    const header = node('header', 'system-info-section-header');
-    const text = node('div');
-    text.append(node('h3', '', label(active)), node('p', '', label(`${active}_intro`)));
-    header.append(text);
-    return header;
-}
+const renderers = { overview, storage, network, devices, sensors };
 
 function render() {
     if (!snapshot) return;
@@ -856,7 +497,7 @@ function render() {
     if (!grid.children.length) {
         grid.append(node('p', 'system-info-empty system-info-wide', label('unavailable')));
     }
-    section.append(sectionHeader(), grid);
+    section.append(grid);
     content.replaceChildren(section);
     content.setAttribute('aria-labelledby', `system-info-tab-${active}`);
     content.setAttribute('aria-busy', 'false');
@@ -1086,7 +727,7 @@ async function refresh() {
 
 export function initSystemInfo() {
     tabs();
-    el('btn-info').addEventListener('click', () => showSystemInfo());
+    el('btn-info').addEventListener('click', () => pageIsOpen() ? closeSystemInfo() : showSystemInfo());
     el('system-info-back').addEventListener('click', () => closeSystemInfo());
     el('system-info-refresh').addEventListener('click', refresh);
     window.addEventListener('popstate', () => {

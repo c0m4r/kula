@@ -85,8 +85,8 @@ export const i18n = {
             localStorage.setItem('kula_lang', lang);
             document.documentElement.lang = lang;
 
-            // Set direction for Arabic
-            document.documentElement.dir = (lang === 'ar') ? 'rtl' : 'ltr';
+            // Set direction for right-to-left locales.
+            document.documentElement.dir = ['ar', 'he', 'ur'].includes(lang) ? 'rtl' : 'ltr';
 
             // Highlight active language in dropdown
             this.updateActiveHighlight();

@@ -13,16 +13,20 @@ export function updateHeader(s) {
 
     // System info footer — with colored clock sync
     const sysInfo = [];
+    const text = key => escapeHTML(i18n.t(key));
     if (s.sys?.clock_synced !== undefined) {
         const synced = s.sys.clock_synced;
         const cls = synced ? 'clock-synced' : 'clock-not-synced';
-        const label = synced ? '✓ synced' : '✗ not synced';
-        sysInfo.push(`clock: <span class="${cls}">${label}</span>`);
+        const label = synced ? `✓ ${text('synced')}` : `✗ ${text('not_synced')}`;
+        sysInfo.push(`${text('clock')}: <span class="${cls}">${label}</span>`);
     }
-    if (s.sys?.clock_source) sysInfo.push('source: ' + escapeHTML(s.sys.clock_source));
-    if (s.sys?.entropy) sysInfo.push('entropy: ' + escapeHTML(s.sys.entropy));
-    if (s.sys?.user_count !== undefined) sysInfo.push('users: ' + escapeHTML(s.sys.user_count));
-    if (s.self) sysInfo.push('self: ' + s.self.cpu_pct.toFixed(1) + '% cpu, ' + formatBytesShort(s.self.mem_rss) + ' rss');
+    if (s.sys?.clock_source) sysInfo.push(`${text('source')}: ${escapeHTML(s.sys.clock_source)}`);
+    if (s.sys?.entropy) sysInfo.push(`${text('entropy')}: ${escapeHTML(s.sys.entropy)}`);
+    if (s.sys?.user_count !== undefined) sysInfo.push(`${text('users')}: ${escapeHTML(s.sys.user_count)}`);
+    if (s.self) {
+        sysInfo.push(`${text('self')}: ${s.self.cpu_pct.toFixed(1)}% ${text('cpu')}, ` +
+            `${formatBytesShort(s.self.mem_rss)} ${text('rss')}`);
+    }
     el('sys-info').innerHTML = sysInfo.map(text => `<span class="sys-info-item">${text}</span>`).join('<span class="sys-sep mobile-hidden">│</span>');
 }
 

@@ -1,6 +1,9 @@
 package i18n
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +77,60 @@ func TestHistoricalNavigationTranslations(t *testing.T) {
 	} {
 		if got := translator.T(key); got != want {
 			t.Errorf("T(%q) = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestCurrentUITranslationsCoverEveryLocale(t *testing.T) {
+	englishData, err := locales.ReadFile("locales/en.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var english map[string]string
+	if err := json.Unmarshal(englishData, &english); err != nil {
+		t.Fatal(err)
+	}
+
+	required := []string{
+		"si_back_dashboard", "si_page_title", "si_sections", "si_refresh_now", "si_overview",
+		"si_storage", "si_network", "si_devices", "si_sensors", "si_loading", "si_updated",
+		"si_refresh_failed", "si_load_failed", "si_unavailable", "si_unnamed_system", "uptime",
+		"charts", "show_chart_data_controls", "show_chart_tooltip_details", "show_all_series_envelopes",
+		"time_zone", "time_zone_local", "time_zone_utc", "use_local_time", "use_utc_time",
+		"quick_ranges", "today", "yesterday", "from", "to", "selected_duration", "cancel",
+		"apply_range", "synced", "not_synced", "source", "users", "self", "rss",
+	}
+
+	for _, lang := range SupportedLangs {
+		data, readErr := locales.ReadFile(fmt.Sprintf("locales/%s.json", lang))
+		if readErr != nil {
+			t.Errorf("%s: %v", lang, readErr)
+			continue
+		}
+		var translation map[string]string
+		if err := json.Unmarshal(data, &translation); err != nil {
+			t.Errorf("%s: %v", lang, err)
+			continue
+		}
+		for _, key := range required {
+			if strings.TrimSpace(translation[key]) == "" {
+				t.Errorf("%s: missing %q", lang, key)
+			}
+		}
+		for key := range english {
+			if strings.HasPrefix(key, "si_") && strings.TrimSpace(translation[key]) == "" {
+				t.Errorf("%s: missing active system-info key %q", lang, key)
+			}
+		}
+		for key := range translation {
+			if strings.HasPrefix(key, "si_") {
+				if _, active := english[key]; !active {
+					t.Errorf("%s: obsolete system-info key %q", lang, key)
+				}
+			}
+		}
+		if lang != "en" && translation["si_back_dashboard"] == english["si_back_dashboard"] {
+			t.Errorf("%s: system-info translations still fall back to English", lang)
 		}
 	}
 }

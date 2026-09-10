@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,22 +13,14 @@ import (
 	"kula/internal/collector"
 )
 
-// RefreshInterval bounds discovery work across all clients. Idle gaps discard
-// rate baselines, so reopening the panel never shows an average over old activity.
+// RefreshInterval bounds discovery work across all clients.
 const RefreshInterval = 5 * time.Second
 
-type counters struct {
-	identity string
-	values   []uint64
-}
-
 type Provider struct {
-	mu       sync.Mutex
-	proc     string
-	sys      string
-	cached   *Snapshot
-	previous map[string]counters
-	last     time.Time
+	mu     sync.Mutex
+	proc   string
+	sys    string
+	cached *Snapshot
 }
 
 func New() *Provider { return &Provider{proc: "/proc", sys: "/sys"} }
@@ -45,9 +36,7 @@ func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostn
 	}
 	s := &Snapshot{Timestamp: now}
 	s.System = p.attributes(filepath.Join(p.sys, "class/dmi/id"), map[string]string{
-		"manufacturer": "sys_vendor", "product": "product_name", "version": "product_version",
-		"serial": "product_serial", "uuid": "product_uuid", "family": "product_family",
-		"chassis_vendor": "chassis_vendor", "chassis_type": "chassis_type", "chassis_serial": "chassis_serial",
+		"manufacturer": "sys_vendor", "product": "product_name",
 	})
 	if arch == "" {
 		arch = runtime.GOARCH
@@ -57,43 +46,32 @@ func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostn
 		hostname, _ = os.Hostname()
 	}
 	s.System["hostname"] = hostname
-	if model := read(filepath.Join(p.sys, "firmware/devicetree/base/model")); model != "" {
-		s.System["device_tree_model"] = model
-	}
 	if exists(filepath.Join(p.sys, "firmware/efi")) {
 		s.System["firmware"] = "UEFI"
 	}
 	if hypervisor := read(filepath.Join(p.sys, "hypervisor/type")); hypervisor != "" {
 		s.System["hypervisor"] = hypervisor
 	}
-	s.Board = p.attributes(filepath.Join(p.sys, "class/dmi/id"), map[string]string{
-		"manufacturer": "board_vendor", "model": "board_name", "version": "board_version",
-		"serial": "board_serial", "asset_tag": "board_asset_tag",
-	})
-	s.BIOS = p.attributes(filepath.Join(p.sys, "class/dmi/id"), map[string]string{
-		"vendor": "bios_vendor", "version": "bios_version", "date": "bios_date", "release": "bios_release",
-	})
 	s.CPU = p.cpu()
-	s.Memory = keyValues(read(filepath.Join(p.proc, "meminfo")), ":")
-	s.DIMMs = p.dimms()
 	s.Filesystems = p.filesystems(sample)
-	next := make(map[string]counters)
-	elapsed := now.Sub(p.last).Seconds()
-	if p.last.IsZero() || elapsed > 3*RefreshInterval.Seconds() {
-		elapsed = 0
-	}
-	s.Disks = p.disks(s.Filesystems, next, elapsed)
-	s.Network = p.network(next, elapsed)
+	s.Disks = p.disks(s.Filesystems)
+	s.Network = p.network()
 	s.PCI, s.USB = p.devices()
 	s.Sensors = p.sensors()
 	s.Power = p.power()
 	if sample != nil {
 		ts := sample.Timestamp
 		s.MetricsTime = &ts
-		s.Live = &Live{CPU: sample.CPU, Memory: sample.Memory, Swap: sample.Swap,
-			System: sample.System, Load: sample.LoadAvg, Process: sample.Process, GPU: sample.GPU}
+		s.Live = &Live{
+			Memory: LiveMemory{Total: sample.Memory.Total},
+			System: LiveSystem{UptimeHuman: sample.System.UptimeHuman},
+			GPU:    make([]LiveGPU, 0, len(sample.GPU)),
+		}
+		for _, gpu := range sample.GPU {
+			s.Live.GPU = append(s.Live.GPU, LiveGPU{Name: gpu.Name, Driver: gpu.Driver})
+		}
 	}
-	p.previous, p.last, p.cached = next, now, s
+	p.cached = s
 	return s
 }
 
@@ -168,30 +146,4 @@ func linkName(path string) string {
 		return ""
 	}
 	return filepath.Base(target)
-}
-
-func sortedKeys(m map[string]bool) string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return strings.Join(keys, ", ")
-}
-
-// rates requires complete, monotonic counters and unchanged device identity.
-func (p *Provider) rates(key string, current counters, next map[string]counters, elapsed float64) []float64 {
-	next[key] = current
-	prev, ok := p.previous[key]
-	if !ok || elapsed <= 0 || prev.identity != current.identity || len(prev.values) != len(current.values) {
-		return nil
-	}
-	rates := make([]float64, len(current.values))
-	for i, v := range current.values {
-		if v < prev.values[i] {
-			return nil
-		}
-		rates[i] = float64(v-prev.values[i]) / elapsed
-	}
-	return rates
 }

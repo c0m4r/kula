@@ -222,28 +222,6 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     outline: none;
 }
 
-.system-info-section-header {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1.15rem;
-}
-
-.system-info-section-header h3 {
-    margin: 0;
-    font-size: clamp(1.4rem, 2vw, 1.7rem);
-    letter-spacing: -0.025em;
-}
-
-.system-info-section-header p {
-    max-width: 680px;
-    margin-top: 0.35rem;
-    color: var(--text-secondary);
-    font-size: 0.84rem;
-    line-height: 1.55;
-}
-
 .system-info-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -258,7 +236,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 .system-info-profile {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(250px, 0.6fr);
+    grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.6fr);
     gap: 1.5rem;
     overflow: hidden;
     padding: clamp(1.25rem, 2.5vw, 1.75rem);
@@ -267,16 +245,8 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     border-radius: var(--radius);
 }
 
-.system-info-profile-label {
-    color: var(--accent-cyan);
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-}
-
 .system-info-profile h4 {
-    margin: 0.35rem 0;
+    margin: 0 0 0.35rem;
     font-size: clamp(1.3rem, 2.6vw, 1.85rem);
     overflow-wrap: anywhere;
 }
@@ -309,18 +279,25 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 
 .system-info-profile-side {
     align-self: center;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, auto));
+    gap: 0.75rem 1.5rem;
     padding-inline-start: 1.5rem;
     border-inline-start: 1px solid var(--border-color);
 }
 
-.system-info-profile-side strong {
+.system-info-profile-fact {
+    min-width: 0;
+}
+
+.system-info-profile-fact strong {
     display: block;
     margin-top: 0.25rem;
     font-size: 1.15rem;
     overflow-wrap: anywhere;
 }
 
-.system-info-profile-side span {
+.system-info-profile-fact span {
     color: var(--text-secondary);
     font-size: 0.75rem;
 }
@@ -342,11 +319,15 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     border-radius: var(--radius-md);
     font: inherit;
     text-align: start;
+    cursor: default;
+}
+
+.system-info-summary-card.is-link {
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
 }
 
-.system-info-summary-card:hover {
+.system-info-summary-card.is-link:hover {
     background: var(--bg-card-hover);
     border-color: var(--accent-blue);
 }
@@ -476,6 +457,67 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 
 .system-info-card-heading .system-info-state {
     margin-inline-start: auto;
+}
+
+.system-info-inventory-list {
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    list-style: none;
+}
+
+.system-info-inventory-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.85rem;
+    align-items: start;
+    padding: 1rem 1.15rem;
+}
+
+.system-info-inventory-item + .system-info-inventory-item {
+    border-top: 1px solid var(--border-color);
+}
+
+.system-info-inventory-item:nth-child(even) {
+    background: var(--bg-hover);
+}
+
+.system-info-inventory-body {
+    min-width: 0;
+}
+
+.system-info-inventory-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.system-info-inventory-heading > div {
+    min-width: 0;
+}
+
+.system-info-inventory-heading h4 {
+    margin: 0;
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+}
+
+.system-info-inventory-heading p {
+    margin-top: 0.18rem;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    overflow-wrap: anywhere;
+}
+
+.system-info-inventory-heading .system-info-state {
+    margin-inline-start: auto;
+}
+
+.system-info-inventory-item .system-info-facts {
+    margin-top: 0.75rem;
 }
 
 .system-info-state.is-online {
@@ -776,10 +818,6 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 }
 
 .system-info-filesystem {
-    display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-    align-items: center;
-    gap: 0.4rem 2rem;
     min-width: 0;
     padding: 1rem 1.1rem;
 }
@@ -1033,40 +1071,6 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     to { background-position-x: -220%; }
 }
 
-.system-info-availability {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.8rem;
-    margin-top: 1.2rem;
-    padding: 1rem 1.1rem;
-    color: var(--text-secondary);
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    font-size: 0.75rem;
-    line-height: 1.5;
-}
-
-.system-info-availability strong {
-    display: block;
-    margin-bottom: 0.18rem;
-    color: var(--text-primary);
-    font-size: 0.78rem;
-}
-
-.system-info-availability-icon {
-    display: grid;
-    flex: 0 0 auto;
-    place-items: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    color: var(--accent-cyan);
-    border: 1px solid rgba(6, 182, 212, 0.35);
-    border-radius: 50%;
-    font-family: serif;
-    font-weight: 700;
-}
-
 @media (max-width: 900px) {
     .system-info-status {
         text-align: start;
@@ -1085,6 +1089,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
         border-inline-start: 0;
         border-top: 1px solid var(--border-color);
     }
+
 }
 
 @media (max-width: 640px) {
@@ -1123,11 +1128,6 @@ html.a11y-focus-outline #system-info-title:focus-visible {
         grid-template-columns: minmax(0, 1fr);
     }
 
-    .system-info-section-header {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
     .system-info-card {
         padding: 1rem;
     }
@@ -1135,10 +1135,6 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     .system-info-facts {
         grid-template-columns: minmax(90px, 0.7fr) minmax(0, 1.3fr);
         column-gap: 0.75rem;
-    }
-
-    .system-info-stat-pair {
-        gap: 0.5rem;
     }
 
     .system-info-filesystem {
