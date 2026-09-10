@@ -29,11 +29,13 @@ kula-scan [flags] <target-url>
 
 | Flag | Meaning |
 |------|---------|
+| `-target` | Target base URL, as an alternative to the positional `<target-url>` argument. |
 | `-username`, `-password` | Credentials to unlock authenticated checks (login, CSRF token, WebSocket auth). Optional. |
 | `-base-path` | Base path if Kula is mounted under one (e.g. `/kula`). Auto-detected from a path in the target URL. |
 | `-timeout` | Per-request timeout (default `10s`). |
 | `-insecure` | Skip TLS certificate verification (self-signed test instances). |
 | `-aggressive` | Enable disruptive checks (see below). |
+| `-dos-wait` | How long the `dos` probes wait for the server to reap a slow/idle connection (default `35s`). Raise it if the target uses longer read timeouts. |
 | `-fuzz` | Enable blind fault-injection fuzzing (see [Fuzzing](#fuzzing--fault-injection)). |
 | `-fuzz-iter` | Iterations per randomized fuzz probe (default 200). |
 | `-seed` | PRNG seed for fuzzing (0 = random; the chosen seed is reported so any finding is reproducible). |
@@ -169,7 +171,9 @@ opt-in via `-fuzz` and independent of `-aggressive` (combine them for the widest
   line, bypassing any client-side URL normalization (mirrors the `rawRequest` helper in the
   runtime tests).
 - WebSocket probes use `github.com/gorilla/websocket` — the same library the server uses.
-- Checks live in [`checks.go`](checks.go), [`checks_ws.go`](checks_ws.go), and
-  [`checks_aggressive.go`](checks_aggressive.go); the report/exit logic is in
+- Checks live in [`checks.go`](checks.go), [`checks_ws.go`](checks_ws.go),
+  [`checks_aggressive.go`](checks_aggressive.go), [`checks_bypass.go`](checks_bypass.go),
+  [`checks_dos.go`](checks_dos.go), [`checks_fuzz.go`](checks_fuzz.go), and
+  [`checks_tls.go`](checks_tls.go); the report/exit logic is in
   [`report.go`](report.go). Classification is unit-tested against secure and insecure mock
   servers in [`checks_test.go`](checks_test.go).

@@ -43,11 +43,14 @@ Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.
 | `websocket.js` | WebSocket connect, reconnect, live-queue drain |
 | `charts-init.js` | Chart.js instance creation; full dashboard init; app-chart teardown |
 | `charts-data.js` | Sample ingestion, chart updates, zoom sync, gap insertion, device selectors |
+| `container-apps.js` | Multi-series container charts (one per metric type) with the shared application filter |
+| `disk-identity.js` | Persistent disk-ID keys, member lookup, and unstable-name labelling for device selectors |
 | `chart-controller.js` | Chart registry, animation-frame batching, viewport culling, plot-width budgets |
 | `chart-ui.js` | Coalesces chart visibility, subtitles, and container controls during history replay |
 | `chart-interactions.js` | Pointer/keyboard pan and zoom, shared crosshair, and gesture-safe tooltips |
 | `chart-envelope.js` | Compact extrema arrays plus Min–Max and missing-interval chart bands |
 | `chart-accessibility.js` | Canvas names/summaries, keyboard point cursor, bounded semantic tables, and complete chart CSV |
+| `chart-card-actions.js` | Expand-button and hover/touch pause interactions shared by static and dynamic chart cards |
 | `format.js` | Metric and Local/UTC formatting, datetime conversion, and bucket-tooltip semantics |
 | `history-request.js` | Abortable, generation-safe latest-history-request controller |
 | `history-data.js` | Canonical history items, aggregation validity, missing-observation gaps, and Focus Mode API sections |
@@ -55,9 +58,11 @@ Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.
 | `gauges.js` | Bar gauges, sparkline backgrounds, live gauge updates |
 | `controls.js` | Pause/resume, layout toggle, time-range selection, history fetch |
 | `focus-mode.js` | Select/persist a subset of chart cards |
+| `section-utils.js` | Resolves section titles to their charts grid, including the Applications header wrapper |
 | `split.js` | Per-device/interface graph splitting |
 | `header.js` | Header bar + chart subtitle updates |
-| `settings.js` | Dark/light theme and persisted appearance/accessibility preferences |
+| `system-info.js` | System Info page: inventory request lifecycle and in-place live-value patching |
+| `settings.js` | Dark/light theme and the Customization menu (appearance, accessibility, chart data/tooltips/Min–Max bands, Local/UTC) with persisted preferences |
 | `alerts.js` | Alert evaluation (clock sync, low entropy, overload) + dropdown |
 | `i18n.js` | Fetches translations from `/api/i18n` and applies to the DOM |
 | `ollama.js` | AI assistant panel; SSE streaming from `/api/ollama/chat` |
@@ -162,6 +167,15 @@ in `charts-data.js`, create the chart dynamically on first data (`if (s.apps?.fo
 register the card ID in `charts-init.js`'s `destroyAppCharts()` for cleanup. See
 [Adding a Metric Type](14-adding-metrics.md#11-frontend-charts).
 
+### System Info page
+
+`system-info.js` renders the hardware inventory fetched from `GET /api/system-info` (see
+[Web Server & API](07-web-server-api.md#get-api-system-info)). It has its own request lifecycle:
+chart history, pause state, and the WebSocket buffer never supply its values. A poll that only
+changes a temperature or a byte count patches the few live widgets in place instead of rebuilding
+the page, so scroll position, text selection, hover state, and the mount search survive every
+refresh.
+
 ### Easter egg
 
 A Space Invaders clone (`game.html`/`game.js`, Press Start 2P font) is reachable from a header
@@ -176,7 +190,7 @@ Package: [`internal/tui`](../../internal/tui/), built with **Bubble Tea** + **Li
 | File | Role |
 |------|------|
 | [`tui.go`](../../internal/tui/tui.go) | Bubble Tea model: rolling metric rings, tab navigation, refresh loop |
-| [`view.go`](../../internal/tui/view.go) | The 7 tab views (Overview, CPU, Memory, Network, Disk, Processes, GPU) with progress bars and responsive layout |
+| [`view.go`](../../internal/tui/view.go) | The 7 tab views (Overview, CPU, Memory, Network, Storage, Processes, GPU) with progress bars and responsive layout |
 | [`styles.go`](../../internal/tui/styles.go) | Dark purple/slate theme with style caching for performance |
 
 `tui.RunHeadless(collector, refreshRate, osName, kernel, arch, version, showSystemInfo)` drives

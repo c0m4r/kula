@@ -1,4 +1,4 @@
-.TH KULA 1 "February 2026" "kula" "User Manuals"
+.TH KULA 1 "September 2026" "kula" "User Manuals"
 .SH NAME
 kula \- lightweight system monitoring daemon
 .SH SYNOPSIS
@@ -19,7 +19,11 @@ Starts the data collection daemon and web server.
 Starts the local Terminal User Interface (TUI) monitor.
 .TP
 .B hash-password
-Generates a bcrypt hash of a password, suitable for use in the configuration file.
+Generates an Argon2id hash of a password, suitable for use in the configuration file.
+.TP
+.B inspect
+Displays storage tier resolution, coverage, and file information.
+Pass \fB\-\-verbose\fR to also print the latest recorded metrics from each tier.
 .TP
 .B disks
 Lists available disks and partitions supported by Kula, with their persistent IDs.
@@ -30,8 +34,11 @@ do not restrict the listing. Virtual, logical and optical devices excluded by Ku
 disk collector are omitted.
 .SH OPTIONS
 .TP
-\fB\-\-config\fR \fCFILE\fP
+\fB\-\-config\fR \fIFILE\fP
 Path to the configuration file (default: config.yaml).
+.TP
+\fB\-\-version\fR, \fB\-v\fR
+Print the version and exit.
 .TP
 \fB\-\-help\fR
 Show the help message and exit.

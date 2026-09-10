@@ -101,8 +101,11 @@ Authorization: Bearer <session-token>
 
 ## Brute-force protection
 
-Login is rate-limited to **5 attempts per 5 minutes**, tracked **both per IP and per
-username**. Exceeding the limit temporarily locks out further attempts.
+Login is rate-limited over a **5-minute window** by two counters: **5 attempts per
+username *and* source IP**, and **15 attempts per source IP** overall. The per-account
+counter includes the IP precisely so that a flood of bad passwords aimed at one account
+throttles only the caller — it cannot lock that account out for everyone else. Exceeding
+either limit temporarily refuses further attempts.
 
 > **Reverse proxy caution.** Behind a proxy, configure `trust_proxy` correctly. Kula uses the
 > rightmost (most-trusted) IP in `X-Forwarded-For`. A misconfigured `trust_proxy` can let a

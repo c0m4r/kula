@@ -34,7 +34,7 @@ export KULA_PORT="27960"
 ./kula tui
 ```
 
-A self-contained terminal dashboard with tabs for Overview, CPU, Memory, Network, Disk,
+A self-contained terminal dashboard with tabs for Overview, CPU, Memory, Network, Storage,
 Processes, and GPU. See [Terminal UI](06-tui.md).
 
 ## Inspect the storage
@@ -43,7 +43,18 @@ Processes, and GPU. See [Terminal UI](06-tui.md).
 ./kula inspect
 ```
 
-Prints per-tier statistics — record counts, time ranges, and how full each ring-buffer is.
+Prints per-tier statistics — record counts, time ranges, how full each ring-buffer is, and the
+estimated coverage and time until each tier fills.
+
+## List your disks
+
+```bash
+./kula disks
+```
+
+Prints every disk and partition Kula can monitor with its persistent ID. Copy an ID into
+`collection.devices` to keep monitoring the same drive across reboots and kernel-name changes.
+See [Configuration](04-configuration.md).
 
 ## Check it's healthy
 

@@ -20,7 +20,7 @@ the binary via `//go:embed`, so there are no runtime assets to ship.
                        cmd/kula/main.go
                               │
           ┌───────────────────┼───────────────────────┐
-          │ serve             │ tui                    │ hash-password / inspect
+          │ serve             │ tui                    │ hash-password / inspect / disks
           ▼                   ▼                        ▼
    ┌─────────────┐      ┌───────────┐           one-shot helpers
    │  config     │      │  collector │
@@ -65,6 +65,7 @@ the binary via `//go:embed`, so there are no runtime assets to ship.
 | `internal/tui` | Bubble Tea terminal dashboard | [Frontend](10-frontend.md) |
 | `internal/i18n` | Embedded locale lookup with English fallback | [i18n](11-i18n.md) |
 | `internal/backup` | Cron-scheduled tier-file snapshots | [Backups](../user/12-backups.md) |
+| `internal/sysinfo` | Live hardware inventory for the System Info page and `/api/system-info` | [Web Dashboard](../user/05-web-dashboard.md) |
 | `cmd/kula` | Binary entrypoint + subcommands | [CLI Reference](../user/14-cli-reference.md) |
 | `cmd/kula-scan` | Out-of-tree black-box security scanner | [kula-scan](13-kula-scan.md) |
 | `cmd/gen-mock-data` | Generates multi-day mock timeseries for storage tests | [Testing](12-testing.md) |
@@ -96,9 +97,10 @@ Direct module dependencies (see [go.mod](../../go.mod)):
 | `github.com/charmbracelet/bubbletea` | TUI framework |
 | `github.com/charmbracelet/lipgloss` | TUI styling |
 | `github.com/charmbracelet/x/term` | Terminal raw mode (password masking) |
+| `github.com/charmbracelet/x/ansi` | TUI width-aware text truncation |
 | `gopkg.in/yaml.v3` | YAML config parsing |
 | `golang.org/x/crypto` | Argon2id |
-| `golang.org/x/sys` | syscalls (adjtimex, statfs) |
+| `golang.org/x/sys` | syscalls (adjtimex, low-level `/proc` reads) |
 | `github.com/landlock-lsm/go-landlock` | Landlock sandbox |
 | `github.com/lib/pq` | PostgreSQL driver |
 | `github.com/go-sql-driver/mysql` | MySQL driver |

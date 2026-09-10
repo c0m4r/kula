@@ -70,7 +70,7 @@ For contributors and people building on top of Kula.
 - **License:** [GNU AGPLv3](../LICENSE)
 - **Default dashboard:** http://localhost:27960
 
-> **Note on this documentation.** This `docs/` tree is generated from a full review of the
-> codebase at version `0.18.0`. Where exact byte layouts, flag bits, or limits are quoted,
-> they reflect the source as reviewed; always treat the code as the source of truth and the
+> **Note on this documentation.** This `docs/` tree documents the codebase at version `0.20.0`.
+> Where exact byte layouts, flag bits, or limits are quoted, they reflect the source as
+> reviewed; always treat the code as the source of truth, and the
 > project [wiki](https://github.com/c0m4r/kula/wiki) for the most current operational guides.

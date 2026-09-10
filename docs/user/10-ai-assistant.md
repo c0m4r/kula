@@ -1,13 +1,16 @@
 # AI Assistant
 
 Kula ships with an optional AI assistant powered by a **local** [Ollama](https://github.com/ollama/ollama)
-model. All inference runs on your own machine through the Ollama API — nothing is sent to any
-external service.
+model. All inference runs on your own machine through the local Ollama (or OpenAI-compatible)
+API — nothing is sent to any external service.
 
 ## Requirements
 
 - Ollama running locally (default `http://localhost:11434`).
 - A model pulled into Ollama (e.g. `ollama pull gemma3:4b`).
+
+Any other OpenAI-compatible server on the same host works too: the proxy probes Ollama's
+`/api/tags` first and falls back to `/v1/models` and `/v1/chat/completions`.
 
 ## Enable it
 
@@ -30,8 +33,10 @@ When enabled, a 🤖 button appears in the dashboard header.
 - **Multi-session conversations** — open independent chat threads and switch between them.
 - **Per-chart analysis** — click the 🤖 icon on any chart card to open a session pre-loaded
   with that chart's recent data as CSV, so you can ask "what's causing this spike?"
-- **Agentic tool calling** — the model can call a `get_metrics` tool to pull live metrics on
-  demand (up to 5 tool-call rounds per turn).
+- **Agentic tool calling** — the model can call a `get_metrics` tool to pull historical time
+  series for `cpu`, `memory`, `swap`, `load`, `network`, `disk_io`, `disk_space` or `gpu` on
+  demand (downsampled to about 100 points, default range the last hour; up to 5 tool-call
+  rounds per turn).
 - **Model selector** — switch between any locally-available Ollama model mid-session.
 - **Draggable & resizable panel** — drag by the header, resize from the bottom-right grip.
 - **Streaming responses** with markdown rendering.

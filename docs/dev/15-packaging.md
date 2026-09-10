@@ -14,18 +14,25 @@ run the builders."
 4. For each binary, assembles a `kula/` bundle containing the binary plus `CHANGELOG.md`,
    `VERSION`, `LICENSE`, `README.md`, `config.example.yaml`, `scripts/`, `bash-completion`,
    `init/`, and `man/`, and produces both a `.tar.gz` and a gzipped single binary.
-5. Generates `CHECKSUMS.sha256.txt` over the artifacts (used by the guided installer).
+5. Builds `.deb` and `.rpm` packages for amd64, arm64 and riscv64 from those binaries, then deletes
+   the uncompressed binaries (only the `.gz`/`.tar.gz`/`.deb`/`.rpm` files ship). When `snapcraft`
+   is installed, the `.snap` set is cross-built from source; a failed snap build only warns.
+6. Generates `CHECKSUMS.sha256.txt` over the artifacts (used by the guided installer).
+
+AUR files are deliberately not built there (the PKGBUILD pins the published GitHub source archive):
+run [`addons/build_aur.sh`](../../addons/build_aur.sh) after the release exists and re-upload
+`CHECKSUMS.sha256.txt`, which it updates.
 
 ## Per-format builders
 
 | Script | Output | Notes |
 |--------|--------|-------|
-| [`build.sh`](../../addons/build.sh) | raw binary / `dist/kula-linux-<ver>-<arch>` | `./build.sh cross` for all arches |
+| [`build.sh`](../../addons/build.sh) | `kula` (+ `kula-scan`, `gen-mock-data`) in the repo root, or `dist/kula-linux-<ver>-<arch>` with `cross` | `./build.sh cross` for all arches |
 | [`build_deb.sh`](../../addons/build_deb.sh) | `dist/kula-*.deb` | installs systemd unit + `kula` user |
 | [`build_rpm.sh`](../../addons/build_rpm.sh) | `dist/kula-*.rpm` | RHEL/Fedora family |
-| [`build_aur.sh`](../../addons/build_aur.sh) | `dist/aur/` | then `makepkg -si` |
-| [`build_snap.sh`](../../addons/build_snap.sh) | `dist/kula-*.snap` | needs snapcraft + LXD; `cross` for multi-arch |
-| [`build_appimage.sh`](../../addons/build_appimage.sh) | AppImage | portable single-file |
+| [`build_aur.sh`](../../addons/build_aur.sh) | `dist/kula-<ver>-aur/` (+ `.tar.gz`) | then `makepkg -si` |
+| [`build_snap.sh`](../../addons/build_snap.sh) | `dist/kula-*.snap` | needs snapcraft + LXD; `cross` for multi-arch, `--remote` via Launchpad |
+| [`build_appimage.sh`](../../addons/build_appimage.sh) | `dist/kula-<ver>-<arch>.AppImage` | portable single-file; without `appimagetool` only the AppDir is prepared |
 | [`docker/build.sh`](../../addons/docker/build.sh) | Docker image | multi-arch via buildx |
 
 ### Examples
@@ -33,18 +40,22 @@ run the builders."
 ```bash
 ./addons/build_deb.sh && ls -1 dist/kula-*.deb
 ./addons/build_rpm.sh && ls -1 dist/kula-*.rpm
-./addons/build_aur.sh && (cd dist/aur && makepkg -si)
+./addons/build_aur.sh && (cd "dist/kula-$(cat VERSION)-aur" && makepkg -si)
 ./addons/build_snap.sh            # host arch
 ./addons/build_snap.sh cross      # amd64/arm64/riscv64 locally
+./addons/build_appimage.sh        # host arch (or pass amd64/arm64/riscv64)
 ```
+
+`build_aur.sh` first asks whether to package the local checkout or the published GitHub source
+archive; only the remote path appends its checksums to `CHECKSUMS.sha256.txt`.
 
 ## Docker
 
 The image is a two-stage build ([`addons/docker/Dockerfile`](../../addons/docker/Dockerfile)):
 
-- **Builder:** pinned `golang:1.26.4` (by digest), `CGO_ENABLED=0`, multi-arch via
+- **Builder:** pinned `golang:1.26.7-trixie` (by digest), `CGO_ENABLED=0`, multi-arch via
   `ARG TARGETARCH`, `-trimpath -ldflags="-s -w" -buildvcs=false`, building only `./cmd/kula/`.
-- **Runtime:** pinned `alpine:3.21` (by digest) with an unprivileged `kula:kula` user.
+- **Runtime:** pinned `alpine:3.24.1` (by digest) with an unprivileged `kula:kula` user.
 
 ```bash
 ./addons/docker/build.sh

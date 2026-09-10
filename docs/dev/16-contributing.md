@@ -6,7 +6,7 @@ Thanks for your interest in Kula! Contributions are welcome.
 
 Per [`.github/CONTRIBUTING.md`](../../.github/CONTRIBUTING.md):
 
-> To contribute, open an issue or discussion on GitHub and share your idea.
+> To contribute just open an issue or discussion on github and let me know about your ideas.
 
 Starting with an issue or discussion lets the maintainer give direction before you invest time —
 especially for anything touching the storage codec, security, or the public API.
@@ -16,8 +16,8 @@ especially for anything touching the storage codec, security, or the public API.
 From [`AGENTS.md`](../../AGENTS.md):
 
 1. **Build:** `./addons/build.sh`
-2. **Test:** `./addons/check.sh` — runs `govulncheck`, `go vet`, `go test -v -race`, and
-   `golangci-lint`, in that order. **All four must pass** before a change is mergeable.
+2. **Test:** `./addons/check.sh` — runs `govulncheck`, `gofmt -l .`, `go vet`, `go test -v -race`,
+   and `golangci-lint`, in that order. **All must pass** before a change is mergeable.
 
 ## Workflow
 
@@ -26,7 +26,8 @@ From [`AGENTS.md`](../../AGENTS.md):
 3. Add/adjust tests (see [Testing & QA](12-testing.md)). New parsers should get a fuzz target;
    security-relevant changes should be covered by both unit tests and, where applicable,
    [kula-scan](13-kula-scan.md).
-4. Run `./addons/check.sh` until green.
+4. Run `./addons/check.sh` until green. Frontend/dashboard changes also need
+   `./addons/test-frontend-regressions.sh` (Node.js 22+ and Chromium/Chrome).
 5. If you touched Python helpers, run `black`, `pylint`, and `mypy --strict`.
 6. Open a PR using the [template](../../.github/pull_request_template.md).
 

@@ -103,10 +103,14 @@ monotonic counters and metadata retain their latest value, and Min/Max are per-s
 Dynamic devices and applications are matched by stable identity, so a missing member is not
 fabricated as zero. Legacy rollups remain readable but do not advertise Min/Max as valid.
 
+Scheduled backups are optional: `backup.enabled` copies the tier files into a timestamped
+directory under `<storage.directory>/backup` on a crontab schedule, with a configurable
+per-tier depth, retention window, and gzip compression.
+
 ### HTTP server
 
 The HTTP server on backend exposes a REST API and a WebSocket endpoint for live streaming. 
-Authentication is optional. When enabled, Kula uses Argon2id password hashing, secure session cookies, token-only session validation with sliding expiration, and hashed-at-rest session persistence. Authenticated API access can also use a bearer session token via the `Authorization` header.
+Authentication is optional. When enabled, Kula uses Argon2id password hashing, secure session cookies, token-only session validation with sliding expiration bounded by an absolute session lifetime (`session_max_lifetime`, 7 days by default), and hashed-at-rest session persistence. Authenticated API access can also use a bearer session token via the `Authorization` header.
 
 ### Dashboard
 
@@ -123,8 +127,10 @@ it connects via WebSocket for live updates and falls back to history API for lon
 - Configurable Y-axis bounds (Manual limits or Auto-detect)
 - Per-device selectors for Network, Disk I/O, and Thermal monitoring
 - Grid / stacked list layout toggle
-- Alert system for clock sync, low entropy, and system overload
+- Alert system for clock sync, low entropy, load above core count, and high CPU/memory/swap usage
 - Modern aesthetics with light/dark theme support
+- Customization menu for per-browser appearance, accessibility, and chart options
+- 26 UI languages with a header language selector
 - Optional AI assistant powered by a local Ollama model (see below)
 - Prometheus exporter endpoint for scraping into existing observability stacks
 
@@ -266,6 +272,9 @@ export KULA_PORT="27960"
 ./kula
 ```
 
+The default command is `serve` (`./kula serve`). Global flags are `-config <path>` to
+select another configuration file and `-version` (or `-v`) to print the version.
+
 ### TUI
 
 ```bash
@@ -274,7 +283,9 @@ export KULA_PORT="27960"
 
 The terminal monitor is designed for a fast live read rather than as a second
 web dashboard. Its overview keeps CPU, memory, traffic, storage pressure, host
-health, and short-term trends visible in a standard terminal.
+health, and short-term trends visible in a standard terminal. Numbered tabs
+switch between the Overview, CPU, Memory, Network, Storage, Processes, and GPU
+views.
 
 ### Inspect storage
 
@@ -398,7 +409,7 @@ All settings live in `config.yaml`. See [`config.example.yaml`](config.example.y
 ./addons/check.sh
 
 # Build
-./addonsh.build.sh
+./addons/build.sh
 
 # Build dev (Binary size: ~21MB)
 CGO_ENABLED=0 go build -o kula ./cmd/kula/

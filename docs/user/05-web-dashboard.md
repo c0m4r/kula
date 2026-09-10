@@ -5,17 +5,21 @@ on Chart.js with custom SVG gauges, connects over WebSocket for live updates, an
 to the history REST API for longer time ranges.
 
 Open it at `http://localhost:27960` (or your configured address). If `web.ui` is `false`, the
-dashboard is disabled and only `/metrics` and `/health` remain.
+dashboard is disabled and only `/metrics`, `/health` and `/status` remain.
 
 ## Layout
 
-- **Header** — hostname, current system and hardware info, Kula version, theme toggle,
-  language selector, and (when enabled) the AI assistant 🤖 button and the Space Invaders
+- **Header** — hostname, chart search, connection status, pause, the **System Info** 📡 page
+  button, the alerts 🔔 bell, theme toggle, Focus Mode 🎯, layout toggle, **Customization** ⚙️,
+  the language selector, and (when enabled) the AI assistant 🤖 button and the Space Invaders
   easter-egg button.
 - **Gauges** — at-a-glance circular gauges for the headline metrics (CPU, memory, etc.).
-- **Chart cards** — one card per metric group: CPU, Load, Memory, Swap, Network, Disk I/O,
-  Filesystems, Thermals, GPU, Processes, Battery, and any enabled Applications / Custom
-  metrics.
+- **Chart cards** — one card per metric group: CPU, Load, Memory, Swap, Network Throughput,
+  Packets / sec, Connections & Sockets, Disk I/O, Disk Space, Entropy, Self Monitoring,
+  Thermals, GPU (load, VRAM, temperature), Processes, a capacity/power chart per battery or UPS,
+  and any enabled Applications / Custom metrics.
+- **Footer** — clock sync, entropy, signed-in users and Kula's own CPU/RSS, the Kula version
+  (unless `global.show_version` is `false`), and a GitHub link.
 
 ## Features
 
@@ -23,41 +27,43 @@ dashboard is disabled and only `/metrics` and `/health` remain.
 
 Choose **System Info** (📡) in the header to open the dedicated current-inventory page. The
 at-a-glance view puts the server identity, uptime, CPU, memory, main storage, and primary network
-connection first. Lower-level identifiers, counters, mount options, and device tables are grouped
-under **Technical details** so they remain available without overwhelming the main view. Use
-**Back to dashboard** or the browser Back button to return to the charts.
+connection first. Lower-level identifiers, counters, and device tables are grouped behind the
+section tabs and expandable groups so they remain available without overwhelming the main view.
+Use **Back to dashboard** or the browser Back button to return to the charts.
 
 The page refreshes every five seconds while open and visible, including when charts are paused or
 viewing a historical range. Leaving it or hiding the browser tab stops requests. **Refresh now**
-retries immediately; server discovery is shared across clients for up to five seconds. The
-`#system-info` URL fragment makes the page navigable with browser Back and Forward.
+retries immediately and **Copy summary** copies the visible inventory as Markdown; server
+discovery is shared across clients for up to five seconds. The `#system-info` URL fragment makes
+the page navigable with browser Back and Forward.
 
-- **Overview**: OS, kernel, architecture, system/motherboard identity, BIOS/firmware,
-  uptime, clock synchronization, processes, and current resource usage.
-- **CPU**: processor model/features, physical cores, sockets, logical CPUs, NUMA nodes,
-  shared caches, frequency policies, temperatures, and kernel-reported mitigations.
-- **Memory**: RAM/swap usage, memory accounting, SMBIOS module slots, manufacturer,
-  part/serial numbers, capacity, type and speed, plus EDAC details/error counters when exposed.
-- **Storage**: physical and virtual drives, partitions, capacity, model/serial/WWID,
-  sector sizes, backing devices, I/O rates, busy percentage, and mounted filesystem usage.
-- **Network**: all visible interfaces, including virtual interfaces and loopback; addresses,
-  MAC, driver, MTU, state, link speed, separate receive/transmit rates and utilization,
-  and cumulative byte/error/drop counters.
-- **Devices**: current GPU metrics and PCI/USB inventory with device IDs and available drivers.
-- **Sensors & power**: readable temperatures, fans, voltages, current, power, humidity,
-  and battery/UPS/mains attributes.
+The page is split into **System**, **Storage**, **Network**, **Connected devices**, and
+**Sensors & power** tabs:
+
+- **System**: OS, kernel, architecture, hostname, system/motherboard identity, firmware type
+  (UEFI when applicable), uptime, and live CPU usage/load, memory, main storage, and primary
+  network summaries.
+- **Storage**: physical drives and their partitions, stacked/virtual devices grouped separately,
+  capacity, model or device-mapper name, drive class and HDD/SSD medium, associated mountpoints,
+  and space usage per mounted filesystem.
+- **Network**: every visible interface, including virtual interfaces and loopback, sorted by
+  kind; addresses, MAC, driver, MTU, link state, and link speed.
+- **Connected devices**: current GPU names and drivers, plus PCI/USB inventory with device IDs
+  and available drivers.
+- **Sensors & power**: readable temperatures, fans, voltages, current, power, humidity, and
+  power-supply/battery attributes (status, capacity, online state).
 
 The page reads `/proc` and `/sys` directly without requiring external utilities. Available
 details depend on the machine, drivers, permissions, and container namespaces. Missing
-readings appear as `—`; memory module records often require additional read permissions.
-SMBIOS and EDAC describe their own views of modules and are labeled by source.
+readings appear as `—`, and hardware the kernel never exposes is simply absent.
 
-Disk and network rates need two readings and reset after a long idle gap or device replacement.
-Network utilization requires a known link speed. I/O busy measures active time, not remaining
-drive bandwidth. Filesystem usage is shown per mount; shared volumes can appear on multiple
-backing drives, so their capacities should not be summed. Remote/FUSE mount usage is available
-when supplied by the configured collector. The displayed inventory and metric collection
-timestamps make stale readings visible, and request failures are reported on the page.
+The page reports current inventory plus the latest metric sample, never stored history. Drive and
+interface lists carry no live rates of their own — traffic, I/O, and busy values live in the
+dashboard charts. Filesystem space comes from the configured collector's latest sample, so
+remote/FUSE mounts show usage only when the collector supplies it, and usage is shown per mount.
+Shared volumes can appear on multiple backing drives, so their capacities should not be summed.
+The displayed inventory and metric collection timestamps make stale readings visible, and request
+failures are reported on the page.
 
 Inventory is held in memory and never written to history. Disable both the page and its API
 with `global.show_system_info: false`.
@@ -160,6 +166,10 @@ Network, Disk I/O, Disk space, Disk temperature, and GPU charts can show all dev
 chart or be **split** into one chart per device/interface. Toggle this per-chart with the
 split (⊟) button, or set defaults under `web.graphs.split`.
 
+Disk selectors follow the drive's persistent ID from sysfs, so history stays attached to the
+same physical drive when kernel names change. A drive without a persistent ID is labelled
+`name (unstable)` and its name-only history is kept separate from identified drives.
+
 ### Layout toggle
 
 Switch between a **grid** layout and a **stacked list** layout. Existing charts, history and
@@ -195,7 +205,25 @@ The dashboard raises in-UI alerts for:
 
 - **Clock not synchronized** — system time isn't synced to an NTP source.
 - **Low entropy** — the kernel entropy pool is depleted.
-- **System overload** — sustained high load.
+- **Load exceeds core count** — the 1-minute load average is above the CPU core count.
+- **High CPU / memory / swap usage** — the corresponding metric is above 95%.
+
+### Customization
+
+The ⚙️ button in the header opens the **Customization** menu:
+
+- **Appearance** — sticky top bar and gauge row visibility.
+- **Accessibility** — high contrast, text size (− / reset / +), reduce motion, underlined links,
+  and a strong focus outline.
+- **Charts** — chart data controls, detailed chart tooltips, Min–Max bands for all series, and
+  the display time zone (Local or UTC).
+- **Reset to defaults** restores the built-in values.
+
+Changes are stored in the browser, so they apply only to that browser. Operators can set the
+defaults for Appearance and Accessibility under `web.appearance` / `web.accessibility`
+(see [Configuration](04-configuration.md#web)); a browser only records the settings a visitor
+actually changed. Chart keyboard and accessibility behavior works whether or not the optional
+data controls are enabled.
 
 ### Theme & language
 

@@ -12,6 +12,7 @@ a shared middleware chain.
 |------|------|
 | [`server.go`](../../internal/web/server.go) | HTTP server, listeners, routing, middleware, templates, SRI, config endpoint |
 | [`history_sections.go`](../../internal/web/history_sections.go) | Optional history response section filtering |
+| [`system_info.go`](../../internal/web/system_info.go) | `/api/system-info` handler and hardware inventory response |
 | [`auth.go`](../../internal/web/auth.go) | Argon2id hashing, sessions, rate limiting, CSRF, Origin validation |
 | [`websocket.go`](../../internal/web/websocket.go) | WebSocket upgrade, broadcast, pause/resume, connection limits |
 | [`prometheus.go`](../../internal/web/prometheus.go) | `/metrics` exposition + bearer auth |
@@ -52,7 +53,7 @@ Routes are registered on an inner mux, then wrapped so everything is served unde
 | GET | `/ws` | WebSocket live stream | yes¹ |
 | GET | `/metrics` | Prometheus exposition | bearer (optional) |
 | GET | `/health`, `/status` | liveness (`200 kula is healthy`) | public |
-| GET | static: `/js/`, `/fonts/`, `/style.css`, `/kula.svg`, `/favicon.ico`, `/game.*` | embedded assets | — |
+| GET | static: `/js/`, `/fonts/`, `/style.css`, `/kula.svg`, `/favicon.ico`, `/game.*` (when `global.easter_egg`) | embedded assets | — |
 
 ¹ Protected by `AuthMiddleware` only when `web.auth.enabled` is true; otherwise open.
 
@@ -62,9 +63,9 @@ through `corsMiddleware → AuthMiddleware`.
 
 ## Middleware chain
 
-`securityMiddleware` (headers) → gzip (if `enable_compression`) → logging (`[API]`/`[WEB]`
-tagged) → CORS → auth/CSRF. Security headers, CSP nonce, and SRI behavior are detailed in
-[Security Model](08-security.md).
+gzip (if `enable_compression`) wraps `securityMiddleware` (headers); per route the chain is
+CORS → auth → CSRF → logging (`[API]`/`[WEB]` tagged) → handler. Security headers, CSP nonce, and
+SRI behavior are detailed in [Security Model](08-security.md).
 
 ## REST API details
 
@@ -75,18 +76,18 @@ Returns the latest `Sample` as JSON. `503 no data yet` before the first sample.
 ### `GET /api/system-info`
 
 Returns a current snapshot with `ts`, optional `metrics_ts` and `live`, and the inventory
-sections `system`, `board`, `bios`, `cpu`, `memory`, `dimms`, `disks`, `filesystems`, `network`,
-`pci`, `usb`, `sensors`, and `power`. Hardware attribute maps omit unreadable values;
-optional numeric fields are omitted when unknown. The response is available before the first
-metric collection; `live` and `metrics_ts` are then absent. `live` contains selected fields
-from `Collector.Latest()`, never storage. Time-range parameters do not select historical data.
+sections `system`, `cpu`, `disks`, `filesystems`, `network`, `pci`, `usb`, `sensors`, and
+`power`. Hardware attribute maps omit unreadable values; optional numeric fields are omitted
+when unknown. The response is available before the first metric collection; `live` and
+`metrics_ts` are then absent. `live` contains selected fields from `Collector.Latest()`, never
+storage. Time-range parameters do not select historical data.
 
 `internal/sysinfo.Provider` serializes discovery and shares an immutable snapshot for five
-seconds across clients. It starts no background workers. Disk/network rate baselines are
-discarded after idle gaps longer than 15 seconds, disappearing devices, identity changes,
-or decreasing counters. Network `rx_pct` and `tx_pct` use each direction's rate divided by
-the reported link speed; unknown speed leaves both absent. Disk `busy_pct` uses the delta
-of active milliseconds in sysfs block statistics.
+seconds across clients. It starts no background workers. Discovery is best effort: unreadable
+attributes are omitted rather than reported as measured zeros, filesystem space totals are
+taken from the latest collector sample instead of re-statting mounts, and every disk,
+filesystem, and interface carries a `tracked` flag saying whether the regular collector stores
+its history.
 
 Responses send `Cache-Control: no-store`. Disabled `global.show_system_info` returns 404;
 methods other than GET/HEAD return 405. Existing API authentication, base paths, and UI
@@ -152,8 +153,10 @@ and [DMTF SMBIOS specification, section 7.18](https://www.dmtf.org/sites/default
 
 Returns UI configuration: `auth_enabled`, `join_metrics`, OS/kernel/arch, hostname,
 `show_system_info`, `show_version`, theme, aggregation, per-graph bounds (`cpu_temp`,
-`disk_temp`, `network` with `mode`/`value`/`auto`-detected limit), split toggles, language
-config, `ollama_enabled`/`ollama_model`, custom-metric definitions, and (if shown) version.
+`disk_temp`, `network` with `mode`/`value`/`auto`-detected limit), split toggles, the
+server-side defaults behind the customization menu (`appearance`, `accessibility` including the
+`text_size_range`), language config, `ollama_enabled`/`ollama_model`, custom-metric definitions,
+and (if shown) version.
 
 `history` contains `collection_interval_ms` and `ranges: [{from,to}, ...]` for nonempty
 storage tiers. These are inexpensive interval envelopes derived from in-memory tier headers
@@ -180,15 +183,17 @@ JSON injection.
 - Enforces a **global** connection cap (`max_websocket_conns`, default 100) and a **per-IP** cap
   (`max_websocket_conns_per_ip`, default 5).
 - `Server.BroadcastSample(sample)` fans the latest sample out to all non-paused clients.
-- A **read pump** accepts JSON control commands: `{"command":"pause"}` and
-  `{"command":"resume"}` (the dashboard auto-pauses while you zoom). Incoming messages are read
+- A **read pump** accepts JSON control commands: `{"action":"pause"}` and
+  `{"action":"resume"}` (the dashboard auto-pauses while you zoom). Incoming messages are read
   with a 4096-byte limit and a 60-second deadline refreshed by pong handlers.
 - Unregister is guarded by `sync.Once` to avoid double-decrementing the connection counters.
 
 ## Prometheus (`/metrics`)
 
 [`prometheus.go`](../../internal/web/prometheus.go) renders all metrics in text exposition
-format, with all series prefixed `kula_` and per-device labels. Optional bearer-token auth
+format, with all series prefixed `kula_` and per-device labels. Disk series label `device` with
+the persistent ID (or `kernel:<name>` when none is available), and `kula_disk_info` reports the
+current `kernel_name` and `identity_source` alongside it. Optional bearer-token auth
 (constant-time compare). See [Prometheus Exporter](../user/11-prometheus.md) for the metric
 catalog.
 
@@ -201,8 +206,9 @@ catalog.
 - `handleOllamaModels` — lists locally available models.
 - `handleOllamaContext` — bootstraps a per-chart analysis session with recent data as CSV.
 
-All three apply prompt sanitization, model-name validation, rate limiting, and body/response
-size caps. See [AI Assistant](../user/10-ai-assistant.md) and [Security Model](08-security.md).
+All three apply per-IP rate limiting and response-size caps; the chat path additionally applies
+prompt sanitization, model-name validation, and a request-body cap. See
+[AI Assistant](../user/10-ai-assistant.md) and [Security Model](08-security.md).
 
 ## Templates, SRI & embedding
 

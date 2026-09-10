@@ -9,6 +9,8 @@
 # - KULA_UNIX_SOCKET overrides web.unix_socket
 # - KULA_MOUNTS_DETECTION overrides collection.mounts_detection
 # - KULA_BASE_PATH overrides web.base_path
+# - KULA_POSTGRES_PASSWORD overrides applications.postgres.password
+# - KULA_MYSQL_PASSWORD overrides applications.mysql.password
 
 # Global settings
 global:
@@ -22,6 +24,10 @@ global:
   default_theme: auto
   # Show the Space Invaders easter egg button in the web UI (default: true)
   easter_egg: true
+  # Optional http(s) URL that receives the Space Invaders final score as
+  # {"score": <n>}. Its origin is added to the CSP connect-src directive.
+  # Must not include credentials or a fragment (default: disabled)
+  game_score_url: ""
 
 # Data collection settings
 collection:
@@ -190,7 +196,8 @@ web:
   # Language settings for the web dashboard
   lang:
     # Default language ISO code (default: en)
-    # Available ISO codes: ar, de, en, es, fr, hi, ja, ko, pl, pt, zh
+    # Available ISO codes: ar, bn, cs, de, en, es, fr, he, hi, id, it, ja, ko,
+    # ms, nl, pl, pt, ro, ru, sv, th, tr, uk, ur, vi, zh
     default: en
     # Force the default language and hide the language selector (default: false)
     force: false

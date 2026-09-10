@@ -80,14 +80,23 @@ applications:
 **Discovery modes** (logged at startup):
 
 - **`socket`** — uses the container runtime API (Docker/Podman socket) for discovery, plus
-  cgroups v2 for metrics. Gives you container **names**.
-- **`cgroups`** — fallback when no socket is reachable; metrics only, no name mapping.
+  cgroups v2 for metrics; the cgroup is resolved through the container PID. Gives you container
+  **names**, and handles plain Docker/Podman scopes as well as Podman Quadlet units, rootless
+  services and custom slices.
+- **`cgroups`** — fallback when no socket is reachable; metrics only, no name mapping. Scans
+  Docker, Podman and Podman Quadlet cgroup layouts.
+- **`none`** — neither a runtime socket nor a cgroups v2 tree was found; container monitoring
+  stays disabled.
 
 The `socket_path` is auto-detected; set it explicitly for non-standard locations or rootless
 Podman. Leave the `containers` filter empty to monitor all running containers.
 
 **Metrics:** per-container CPU%, memory used/limit/%, network RX/TX bytes/s, disk read/write
-bytes/s.
+bytes/s. Each metric type gets its own multi-series chart (CPU, memory, network RX, network TX,
+disk read, disk write) with one series per container, plus an **Applications** filter in the
+section header that shows or hides individual containers (the selection is remembered per
+browser). The memory chart plots usage only; the used/limit summary is shown in the card
+subtitle.
 
 ---
 
@@ -177,13 +186,14 @@ applications:
     host: "127.0.0.1"
     port: 3306
     user: "kula_monitor"
-    password: ""
+    password: ""        # or set KULA_MYSQL_PASSWORD
     dbname: ""   # leave empty; global status is server-wide
 ```
 
 **Metrics:** threads (connected/running/cached), max connections, queries/select/insert/
-update/slow per second, InnoDB buffer-pool reads/s, row-lock waits, table-lock waits, plus
-replication state (IO/SQL running, seconds-behind, last IO/SQL errno, replicas connected).
+update/delete/slow per second, InnoDB buffer-pool reads/s and hit %, row-lock waits,
+table-lock waits, plus replication state (IO/SQL running, seconds-behind, last IO/SQL errno,
+IO state, replicas connected).
 
 > **Caveat on `Seconds_Behind_Source`:** this is the SQL thread's view of how far behind it is
 > on what it currently sees, *not* the true lag from the primary.

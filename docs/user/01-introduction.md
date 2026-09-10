@@ -38,6 +38,12 @@ Kula reads metrics every second (configurable) and tracks:
 | **Applications** | PostgreSQL, MySQL/MariaDB, nginx, Apache2 |
 | **Custom** | Anything you feed through the custom-metrics Unix socket |
 
+Alongside the stored metrics, the web dashboard has a **System Info** page (📡) that reports the
+current hardware inventory from `/proc` and `/sys`: system/motherboard identity, CPU model and
+core counts, drives and partitions, mounted filesystems, network interfaces, PCI/USB devices,
+sensors, and power supplies. It is served by the authenticated `/api/system-info` endpoint and
+never written to metric history; `global.show_system_info: false` disables the page and its API.
+
 ## How it works
 
 ```

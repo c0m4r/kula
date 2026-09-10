@@ -14,9 +14,12 @@ jobs, and no GC pressure from unbounded growth.
 | [`store.go`](../../internal/storage/store.go) | The tiered store manager — write path, aggregation, query, caching |
 | [`aggregation.go`](../../internal/storage/aggregation.go) | Exhaustive policy reducer, dynamic identity union, cascading rollups |
 | [`aggregation_plan.go`](../../internal/storage/aggregation_plan.go) | Immutable schema plans, direct output writes and per-call reduction buffers |
+| [`aggregation_codec.go`](../../internal/storage/aggregation_codec.go) | Record-level contributing-statistics trailer (weighted sums + seconds) |
 | [`query_planner.go`](../../internal/storage/query_planner.go) | Fixed source-selection target, epoch-aligned output steps, query downsampling |
+| [`history_stream.go`](../../internal/storage/history_stream.go) | Bounded batch reads, buckets merged across batch boundaries |
 | [`tier.go`](../../internal/storage/tier.go) | One ring-buffer file: header + records, wrap handling, chronological reads |
 | [`codec.go`](../../internal/storage/codec.go) | The binary record format (see [Codec](06-storage-codec.md)) |
+| [`disk_identity_codec.go`](../../internal/storage/disk_identity_codec.go) | Persistent disk IDs appended after the power-supply section |
 
 On disk, each tier is a file `tier_N.dat` in `storage.directory`.
 
@@ -38,6 +41,8 @@ At startup ([config](../../internal/config/config.go)) the tier hierarchy is val
 - Each higher resolution divisible by the lower one.
 - Ratio between adjacent tiers capped (max **300:1**) to bound aggregation-buffer memory.
 - Tier 0's resolution must equal `collection.interval`.
+- Tier 0's resolution must be an officially supported value (1s, 2s, 5s, 10s, 15s, 30s);
+  sub-second values are accepted for testing only.
 
 ## Write path
 
@@ -79,7 +84,9 @@ Strings and states retain the latest value (strings prefer the latest non-empty 
 and `Max` contain element-wise, per-series extrema for every numeric metric; they do not
 describe one simultaneous system state. Dynamic devices, sensors, filesystems, GPUs, power
 supplies, containers, and custom metrics are unioned and reduced only across observations where
-that identity exists, so appearance, disappearance, or reordering cannot invent a zero.
+that identity exists, so appearance, disappearance, or reordering cannot invent a zero. Disks
+identify by their persistent sysfs ID and use the kernel name only as a fallback, so a renamed
+device cannot merge two physical drives.
 
 Cascading rollups reuse inner envelopes and preserve effective contributing weights per
 metric. Sparse `MeanStats` entries contain a weighted sum and contributing seconds when a
@@ -117,7 +124,7 @@ On startup the store:
 
 ## Query path
 
-`QueryRange(from, to, points)` / `QueryRangeWithMeta(...)`:
+`QueryRange(from, to)` / `QueryRangeWithMeta(from, to, points)`:
 
 1. Classify retained tiers by whether they cover both requested edges. The retention-edge
    tolerance is one tier resolution; the live-edge tolerance is two resolutions to account for
@@ -179,7 +186,9 @@ and skipped. See [Codec](06-storage-codec.md) and `migration_test.go`.
 ## Inspection
 
 - `kula inspect` ([cmd/kula/main.go](../../cmd/kula/main.go) → `InspectTierFile`) prints per-tier
-  version, fill %, record count, oldest/newest timestamps, wrap flag, and time range.
+  version, fill %, record count, oldest/newest timestamps, wrap flag, time range, and a coverage
+  estimate. `--verbose` additionally prints the latest recorded metrics of each tier
+  (`InspectLatestTierSample`).
 - [`addons/inspect_tier.py`](../../addons/inspect_tier.py) is a standalone Python decoder of the
   same format — useful for offline analysis and as a cross-check on the Go codec.
 

@@ -73,19 +73,21 @@ if appCfg.Foo.Enabled && appCfg.Foo.StatusURL != "" {
 
 ## 6. Preamble flag — `internal/storage/codec.go`
 
-Add a new flag using the next free bit (bit 12):
+Add a new flag using the next free bit (bit 13):
 
 ```go
 const (
-    flagHasMin     uint16 = 1 << 0
-    flagHasMax     uint16 = 1 << 1
-    flagHasData    uint16 = 1 << 2
-    flagHasApps    uint16 = 1 << 3
-    flagReducerV2  uint16 = 1 << 4
-    flagHasApache2 uint16 = 1 << 8
-    flagHasMysql   uint16 = 1 << 9
-    flagHasPSU     uint16 = 1 << 10
-    flagHasFoo     uint16 = 1 << 12  // <-- NEW (never reuse a bit)
+    flagHasMin       uint16 = 1 << 0
+    flagHasMax       uint16 = 1 << 1
+    flagHasData      uint16 = 1 << 2
+    flagHasApps      uint16 = 1 << 3
+    flagReducerV2    uint16 = 1 << 4
+    flagHasApache2   uint16 = 1 << 8
+    flagHasMysql     uint16 = 1 << 9
+    flagHasPSU       uint16 = 1 << 10
+    flagHasMeanStats uint16 = 1 << 11
+    flagHasDiskIDs   uint16 = 1 << 12
+    flagHasFoo       uint16 = 1 << 13  // <-- NEW (never reuse a bit)
 )
 ```
 
@@ -100,8 +102,8 @@ flags |= flagHasFoo
 **Append** the new section after every existing section:
 
 ```
-nginx → containers → postgres → mysql → apache2 → custom → psu → foo
-                                                                 ^^^^^
+nginx → containers → postgres → mysql → apache2 → custom → psu → disk IDs → foo
+                                                                             ^^^^^
 ```
 
 ```go
@@ -122,7 +124,8 @@ section's *position* must never move).
 
 ## 8. Decode — `internal/storage/codec.go` (`decodeVariable`)
 
-Gate the section behind the flag, appended after PSU:
+Gate the section behind the flag, appended after the disk-ID section — the last section in the
+variable block:
 
 ```go
 if hasFoo {
@@ -143,7 +146,7 @@ Extract the flag in `decodeSample()` and thread it through `decodeVariable()`:
 
 ```go
 hasFoo := flags&flagHasFoo != 0
-vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasFoo)
+vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs, hasFoo)
 ```
 
 Update the `decodeVariable` signature and **all call sites (tests included)**.
@@ -176,9 +179,9 @@ branch is needed.
 
 ## 10. Python decoder — `addons/inspect_tier.py`
 
-- Add `FLAG_HAS_FOO = 1 << 12`.
+- Add `FLAG_HAS_FOO = 1 << 13`.
 - Extract `has_foo` from flags, pass to `_decode_variable()`.
-- Add the Foo decode block at the same trailing position (after PSU), gated `if has_foo:`.
+- Add the Foo decode block at the same trailing position (after disk IDs), gated `if has_foo:`.
   **This must mirror the Go codec exactly** or it will mis-decode.
 
 ## 11. Frontend charts — `internal/web/static/js/app/charts-data.js`
@@ -217,13 +220,14 @@ Add the config section with comments explaining prerequisites (and update the us
 | 9 | `flagHasMysql` | MySQL block present |
 | 10 | `flagHasPSU` | Power-supply section present |
 | 11 | `flagHasMeanStats` | Trailing contributing statistics |
-| 12 | — | **Next available** |
-| 5–7, 12–15 | — | Available |
+| 12 | `flagHasDiskIDs` | Persistent disk identities |
+| 13 | — | **Next available** |
+| 5–7, 14–15 | — | Available |
 
-Use bit 12 next. **Never reuse a bit.**
+Use bit 13 next. **Never reuse a bit.**
 
 Next: [Packaging & Release](15-packaging.md).
 
 Contributing mean statistics use preamble bit 11 and a record-level trailer after all
 Data/Min/Max blocks (`aggregation_codec.go`). Preserve that trailer when extending metrics;
-new metric sections use bit 12 next and still append within each variable block.
+new metric sections use bit 13 next and still append within each variable block.

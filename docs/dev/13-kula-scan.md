@@ -29,9 +29,11 @@ kula-scan [flags] <target-url>
 
 | Flag | Meaning |
 |------|---------|
+| `-target` | Target base URL as an alternative to the positional `<target-url>` argument |
 | `-username`, `-password` | Credentials to unlock authenticated checks (login, CSRF token, WS auth) |
 | `-base-path` | Base path if Kula is mounted under one (auto-detected from the URL path) |
 | `-timeout` | Per-request timeout (default `10s`) |
+| `-dos-wait` | How long DoS probes wait for a slow/idle connection to be reaped (default `35s`) |
 | `-insecure` | Skip TLS verification (self-signed test instances) |
 | `-aggressive` | Enable disruptive checks (real side effects — see below) |
 | `-fuzz` | Enable blind fault-injection fuzzing |

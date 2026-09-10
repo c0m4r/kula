@@ -52,7 +52,9 @@ scrape_configs:
 
 All metrics are prefixed `kula_`. The exporter covers the full collection surface:
 
-**CPU / load / processes:** `kula_cpu_sensor_temperature_celsius`, `kula_load_average_*`,
+**CPU / load / processes:** `kula_cpu_usage_percent`,
+`kula_cpu_{user,system,iowait,irq,softirq,steal}_percent`, `kula_cpu_cores`,
+`kula_cpu_temperature_celsius`, `kula_cpu_sensor_temperature_celsius`, `kula_load_average_*`,
 `kula_processes_running`, `kula_processes_sleeping`, `kula_processes_blocked`,
 `kula_processes_zombie`, `kula_processes_total`, `kula_threads_total`.
 
@@ -66,9 +68,10 @@ All metrics are prefixed `kula_`. The exporter covers the full collection surfac
 `kula_tcp_established`, `kula_tcp_errors_per_second`, `kula_tcp_resets_per_second`,
 `kula_sockets_tcp_in_use`, `kula_sockets_tcp_time_wait`, `kula_sockets_udp_in_use`.
 
-**Disk / filesystem:** `kula_disk_reads_per_second`, `kula_disk_writes_per_second`,
-`kula_disk_read_bytes_per_second`, `kula_disk_write_bytes_per_second`,
-`kula_disk_utilization_percent`, `kula_disk_temperature_celsius`, `kula_filesystem_size_bytes`,
+**Disk / filesystem:** `kula_disk_info`, `kula_disk_reads_per_second`,
+`kula_disk_writes_per_second`, `kula_disk_read_bytes_per_second`,
+`kula_disk_write_bytes_per_second`, `kula_disk_utilization_percent`,
+`kula_disk_temperature_celsius`, `kula_filesystem_size_bytes`,
 `kula_filesystem_used_bytes`, `kula_filesystem_available_bytes`,
 `kula_filesystem_used_percent`.
 
@@ -96,22 +99,38 @@ All metrics are prefixed `kula_`. The exporter covers the full collection surfac
   `kula_apache2_uptime_seconds`.
 - **PostgreSQL:** `kula_postgres_connections_*`, `kula_postgres_transactions_*_per_second`,
   `kula_postgres_tuples_*_per_second`, `kula_postgres_buffer_cache_hit_percent`,
-  `kula_postgres_blocks_*_per_second`, `kula_postgres_deadlocks_per_second`,
+  `kula_postgres_blocks_*_per_second`, `kula_postgres_buffers_*_per_second`,
+  `kula_postgres_deadlocks_per_second`,
   `kula_postgres_{dead,live}_tuples`, `kula_postgres_autovacuum_count`,
   `kula_postgres_database_size_bytes`, `kula_postgres_replication_lag_{bytes,seconds}`,
   `kula_postgres_replicas_connected`, `kula_postgres_is_in_recovery`.
 - **MySQL / MariaDB:** `kula_mysql_threads_{connected,running,cached}`,
-  `kula_mysql_max_connections`, `kula_mysql_{queries,select,insert,update,slow_queries}_per_second`,
-  `kula_mysql_innodb_buffer_pool_reads_per_second`, `kula_mysql_row_lock_waits_per_second`,
-  `kula_mysql_table_locks_waited_per_second`, and the `kula_mysql_replica_*` series.
+  `kula_mysql_max_connections`,
+  `kula_mysql_{queries,select,insert,update,delete,slow_queries}_per_second`,
+  `kula_mysql_innodb_buffer_pool_reads_per_second`,
+  `kula_mysql_innodb_buffer_pool_hit_percent`, `kula_mysql_row_lock_waits_per_second`,
+  `kula_mysql_table_locks_waited_per_second`, `kula_mysql_replicas_connected`, and the
+  `kula_mysql_replica_*` state series.
 - **Containers:** `kula_container_cpu_percent`, `kula_container_memory_{used,limit}_bytes`,
   `kula_container_memory_used_percent`, `kula_container_network_{rx,tx}_bytes_per_second`,
   `kula_container_disk_{read,write}_bytes_per_second`.
+- **Custom metrics:** `kula_custom_metric{source="...",name="..."}` — one series per
+  user-defined metric received on the custom-metrics socket (see
+  [Custom Metrics](09-custom-metrics.md)).
 
 Per-device metrics (network interfaces, disks, filesystems, GPUs, containers, sensors) carry
 appropriate labels.
 
-> This list reflects version `0.18.0`. For the authoritative, always-current set, scrape your
+Disk I/O and temperature metrics use the **persistent disk ID** as their `device` label value,
+so a drive's history follows it across reboots and kernel renames. `kula_disk_info` maps that
+ID to the drive's current kernel name:
+`kula_disk_info{device="...",kernel_name="sda",identity_source="wwid"} 1`. Disks without a
+usable identity fall back to `device="kernel:<name>"` and `identity_source="kernel"`. Filesystem
+metrics are unaffected — their `device` label remains the mount source (for example
+`/dev/sda1`). Upgrading to 0.20.0 starts new disk series under these label values, so update
+dashboards and alert rules that filter on old kernel-name values (for example `device="sda"`).
+
+> This list reflects version `0.20.0`. For the authoritative, always-current set, scrape your
 > instance and inspect the output, or see the wiki
 > [Prometheus metrics page](https://github.com/c0m4r/kula/wiki/Prometheus-metrics).
 

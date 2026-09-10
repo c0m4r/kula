@@ -30,6 +30,8 @@ It is **non-fatal**: on unsupported kernels the warning is logged and Kula runs 
 - Requires **kernel 5.13+** with Landlock enabled.
 - Kula checks the Landlock **ABI version** at startup and uses `BestEffort()` so it degrades
   gracefully on older kernels (applying whatever subset is available, or nothing).
+- Network confinement additionally needs **ABI v4+ (kernel 6.7+)**; below that only the
+  filesystem rules apply and the enforcement log says network protection is unsupported.
 
 ## Filesystem rules
 
@@ -40,16 +42,26 @@ It is **non-fatal**: on unsupported kernels the warning is logged and Kula runs 
 | config file | read-only |
 | storage directory | read-write |
 | `/etc/hosts`, `/etc/resolv.conf`, `/etc/nsswitch.conf` | read-only (for DNS) |
+| parent directory of `web.unix_socket` | read-write (when a Unix socket is configured) |
+| container runtime socket (`applications.containers.socket_path`, auto-detected when empty) | read-write (when containers are enabled) |
+| `applications.postgres.host` | read-write (Unix socket mode) |
+| `applications.mysql.host` | read-write (Unix socket file mode) |
 
 The read-write grant on the storage directory is what lets the storage engine, the custom-metrics
 socket, and the backup writer function under confinement.
 
 ## Network rules
 
-- **TCP bind** is allowed only on the configured web port (so the server can listen).
+Network rules require Landlock **ABI v4+** (Linux 6.7+); on older kernels the filesystem rules
+still apply, but no bind or connect rule does.
+
+- **TCP bind** is allowed only on the configured web port (so the server can listen). With
+  `web.unix_socket` set, no bind rule is added.
 - **TCP connect** is allowed only to the ports of the **enabled** application collectors —
-  conditionally added for nginx, Apache2, MySQL, PostgreSQL, and Ollama. The port is parsed from
-  each module's configured URL/host (defaulting to 80, or 443 for `https`).
+  conditionally added for nginx, Apache2, MySQL, PostgreSQL, and Ollama. Nginx and Apache2 parse
+  the port from their status URL (defaulting to 80, or 443 for `https`); PostgreSQL and MySQL
+  use their configured `port`; Ollama parses its URL and defaults to 11434. Containers need no
+  TCP rule because they are reached through the runtime socket instead.
 
 Because the connect rules are derived from your config at startup, enabling an application or
 changing its port automatically updates the allowed set — no manual sandbox tweaking. Each

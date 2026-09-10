@@ -39,13 +39,15 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
 
 ## Rate limiting
 
-- **Login:** 5 attempts per 5 minutes, tracked per IP **and** per username.
+- **Login:** 15 attempts per 5 minutes per IP, and 5 per IP+username pair (the per-account
+  counter is keyed on the pair, so one attacker cannot lock out an account for everyone).
 - **Ollama:** 10 chat requests/IP/minute; 60 metadata requests/IP/minute.
 
 ## CSRF protection
 
-- **Origin/Referer validation** on every non-`GET`/`HEAD`/`OPTIONS` request (`ValidateOrigin`).
-  Empty Origin headers are rejected (since 0.9.1). Listed `allowed_origins` also pass.
+- **Origin/Referer validation** on every non-`GET`/`HEAD`/`OPTIONS` request (`ValidateOrigin`,
+  when `origin_validation` is on). Empty Origin headers are rejected (since 0.9.1). Listed
+  `allowed_origins` also pass.
 - **Synchronizer token** pattern — a CSRF token delivered to the client and required in the
   `X-CSRF-Token` header on state-changing authenticated requests, validated constant-time.
 
@@ -62,8 +64,9 @@ When `web.security.headers` is on (default), responses carry:
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY` (when `frame_protection`)
 - `Content-Security-Policy` with a **fresh random nonce per request**:
-  `default-src 'self'; script-src 'self' 'nonce-<rand>'; style-src 'self' 'unsafe-inline';
-  frame-ancestors 'none'`
+  `default-src 'self'; script-src 'self' 'nonce-<rand>'; style-src 'self' 'unsafe-inline';`
+  plus `frame-ancestors 'none'` when `frame_protection` and `connect-src 'self' <url>` when
+  `game_score_url` is configured
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy: geolocation=(), microphone=(), camera=()`
 - `Strict-Transport-Security` (HSTS) when TLS or trusted `X-Forwarded-Proto: https` is present
@@ -107,14 +110,14 @@ Optional bearer token on `/metrics`, constant-time compared.
 ## Config & filesystem security
 
 - `KULA_POSTGRES_PASSWORD` is single-quoted and escaped (backslashes and single quotes) to
-  prevent libpq connection-string injection (since 0.15.1).
+  prevent libpq connection-string injection (since 0.16.0).
 - Storage directory created `0750`; session file `0600`.
 
 ## Server timeouts
 
-`ReadTimeout 30s`, `WriteTimeout 60s`, `IdleTimeout 120s`, plus a bounded `MaxHeaderBytes` —
-mitigating slowloris and header-bomb DoS. The rightmost (most-trusted) `X-Forwarded-For` IP is
-used when `trust_proxy` is set.
+`ReadTimeout 30s`, `WriteTimeout 60s`, `IdleTimeout 120s`, plus Go's default 1 MiB
+`MaxHeaderBytes` — mitigating slowloris and header-bomb DoS. The rightmost (most-trusted)
+`X-Forwarded-For` IP is used when `trust_proxy` is set.
 
 ## Governance & process
 

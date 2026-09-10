@@ -19,9 +19,9 @@ legacy v1 JSON records).
 │  [8:16]  Duration  (int64, nanoseconds)                   │
 │  [16:18] Flags     (uint16 bitmask)                       │
 ├──────────────────────────────────────────────────────────┤
-│  Fixed block (218 bytes) — CPU, memory, swap, TCP,        │
-│  process, self metrics (mostly float32). Always present,  │
-│  always the same size.                                    │
+│  Fixed block (218 bytes) — CPU, loadavg, memory, swap,    │
+│  TCP, process, system and self metrics. Always present    │
+│  at the same size (float32 and integer fields).           │
 ├──────────────────────────────────────────────────────────┤
 │  Variable section — sequential, order is the contract:    │
 │    1. Network interfaces (count + per-iface)              │
@@ -38,6 +38,7 @@ legacy v1 JSON records).
 │         e. Apache2     (1B version + 72/100B)             │
 │         f. Custom      (2B group count + variable)        │
 │    8. Power supplies  (version + count + variable)        │
+│    9. Disk IDs        (version + count + u16-length IDs)  │
 │                                                           │
 │       ← NEW sections go HERE, after every existing one.   │
 └──────────────────────────────────────────────────────────┘
@@ -56,7 +57,8 @@ const (
     flagHasMysql   uint16 = 1 << 9  // MySQL block present
     flagHasPSU     uint16 = 1 << 10 // power-supply section present
     flagHasMeanStats uint16 = 1 << 11 // record-level contributing statistics
-    // bits 5–7 and 12–15 are free for new metric types
+    flagHasDiskIDs   uint16 = 1 << 12 // persistent disk identities after power supplies
+    // bits 5–7 and 13–15 are free for new metric types
 )
 ```
 
@@ -71,7 +73,8 @@ const (
 | 9 | `flagHasMysql` | MySQL block present |
 | 10 | `flagHasPSU` | Power-supply section present |
 | 11 | `flagHasMeanStats` | Trailing contributing statistics |
-| 5–7, 12–15 | — | **Available** — use bit 12 next |
+| 12 | `flagHasDiskIDs` | Persistent disk identities, after power supplies |
+| 5–7, 13–15 | — | **Available** — use bit 13 next |
 
 `flagReducerV2` adds no payload bytes. It distinguishes new trustworthy envelopes from
 incomplete Min/Max blocks already present in older tier files, allowing the history API to
@@ -119,9 +122,10 @@ missing flag means "pretend this section doesn't exist and move on."
 1. **New metric type** → new flag bit + new section appended **after every existing section**.
    Old records lack the flag and skip it.
 2. **New fields on an existing type** → bump that section's **version-tagged presence byte**
-   (`0` = absent, `1` = v1/old size, `2` = v2/new size). The decoder reads the version byte and
-   dispatches to the right block layout. The section's *position* never changes, so old records
-   stay valid. PostgreSQL (`56/104B`) and Apache2 (`72/100B`) already use this.
+   (`0` = absent, `1` = v1/old size, `2`, `3`, … = successively larger blocks). The decoder reads
+   the version byte and dispatches to the right block layout. The section's *position* never
+   changes, so old records stay valid. PostgreSQL (`56/104/121B`) and Apache2 (`72/100B`) already
+   use this; MySQL grew the same way (`56/66/74B` plus its IO-state string).
 
 > **The Rule:** never insert a new section *between* existing ones, and never reuse a flag bit.
 > Append-only, flag-gated, version-tagged.

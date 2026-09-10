@@ -2,13 +2,13 @@
 
 ## Supported Versions
 
-Only latest release is supported. User have to upgrade to recieve any latest security updates.
+Only the latest release is supported. You have to upgrade to receive the latest security updates.
 
 Check [Releases](https://github.com/c0m4r/kula/releases) for the latest version.
 
 ## Reporting a Vulnerability
 
-Thank you for your effort in more secure web. I am all about security and I will gladly use your help to imporve my code.
+Thank you for helping make Kula more secure. I am all about security and I will gladly use your help to improve my code.
 
 Private vulnerability reporting is enabled in this repository. You can use Security tab to report.
 

@@ -12,12 +12,14 @@ tests, and an out-of-tree black-box scanner. The canonical gate is `./addons/che
 Runs, in order (all must pass):
 
 1. `govulncheck ./...` — known-vulnerability scan.
-2. `go vet ./...`.
-3. `go test -v -race ./...` — full suite with the race detector.
-4. `golangci-lint run ./...`.
+2. `gofmt -l .` — fails on any unformatted file.
+3. `go vet ./...`.
+4. `go test -v -race ./...` — full suite with the race detector.
+5. `golangci-lint run ./...`.
 
 CI runs the equivalent ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)) plus
-Semgrep ([`semgrep.yml`](../../.github/workflows/semgrep.yml)).
+Semgrep ([`semgrep.yml`](../../.github/workflows/semgrep.yml)); CI itself has no standalone
+`gofmt` step.
 
 ## Unit tests
 
@@ -63,6 +65,7 @@ Run mutation-based fuzzing across all targets:
 ```bash
 ./addons/fuzz.sh            # 30s per target, all targets
 ./addons/fuzz.sh 2m         # 2 minutes per target
+./addons/fuzz.sh -t 2m      # same as the bare duration argument
 ./addons/fuzz.sh 1m Decode  # only targets matching "Decode"
 ./addons/fuzz.sh -r 1m      # with the race detector
 ./addons/fuzz.sh -l         # list discovered targets
@@ -197,11 +200,11 @@ node internal/web/testdata/history_performance_test.mjs
 Its JSON result must report
 `status: "pass"`, fewer updated charts than registered charts, the same visible count for
 crosshair renders, working keyboard gestures, exact UTC tooltips, off-by-default Data controls,
-and a lazy 50-row table with CSV after opt-in. Both fixtures are required in CI.
-`./addons/check.sh` runs them when Node.js and a supported Chromium/Chrome executable are
-installed; otherwise it reports the skipped optional local dependency. CI explicitly sets up
-Node.js 22 and treats missing browsers as failures. Set `KULA_CHROMIUM`
-when the browser lives at a non-standard path.
+and a lazy 50-row table with CSV after opt-in. Run both fixtures together with
+[`addons/test-frontend-regressions.sh`](../../addons/test-frontend-regressions.sh), which needs
+Node.js 22+ and a Chromium/Chrome executable and reports the skipped optional local dependency
+when either is missing; neither `./addons/check.sh` nor CI runs them. Set `KULA_CHROMIUM` when
+the browser lives at a non-standard path.
 
 ## Runtime security tests
 

@@ -12,9 +12,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Added
 
 - Added a dedicated, user-friendly System Info page with at-a-glance resource summaries,
-  progressively disclosed technical details, and motherboard/firmware, CPU topology and caches,
-  memory modules, drive and filesystem usage, network utilization, PCI/USB devices,
-  sensors and power supplies; separate authenticated `/api/system-info` endpoint
+  progressively disclosed technical details, and system identity (manufacturer/product/firmware
+  type), CPU model and core counts, drive and filesystem usage, network interfaces, PCI/USB
+  devices, sensors and power supplies; separate authenticated `/api/system-info` endpoint
 - Persistent disk IDs from sysfs, stable disk selectors and `kula_disk_info` mappings
 - `kula disks` helper to list available disks and partitions with their persistent IDs
 - Live, Back, Forward and Zoom out navigation with shareable historical ranges

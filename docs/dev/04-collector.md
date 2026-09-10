@@ -25,9 +25,10 @@ Lifecycle:
 | File | Source | Produces |
 |------|--------|----------|
 | [`cpu.go`](../../internal/collector/cpu.go) | `/proc/stat`, `/proc/loadavg`, hwmon/thermal sysfs | CPU usage breakdown, load averages, CPU temps |
-| [`memory*`](../../internal/collector/) (in `system.go`/types) | `/proc/meminfo` | memory + swap |
+| [`memory*`](../../internal/collector/) (in `cpu.go`/types) | `/proc/meminfo` | memory + swap |
 | [`network.go`](../../internal/collector/network.go) | `/proc/net/dev`, `/proc/net/snmp`, `/proc/net/netstat`, `/proc/net/sockstat` | per-iface throughput, TCP errors/resets/retrans/established, sockets |
 | [`disk.go`](../../internal/collector/disk.go) | `/proc/diskstats`, `statfs`, hwmon | per-device I/O, filesystem usage, disk temps (skips virtual/LVM/loop) |
+| [`disk_identity.go`](../../internal/collector/disk_identity.go) | sysfs (`wwid`, `serial`, `uuid`), `kula disks` | persistent disk IDs and stable per-disk series keys |
 | [`system.go`](../../internal/collector/system.go) | hostname, `/proc/uptime`, entropy, `adjtimex`, utmp | uptime, entropy, clock sync, user count |
 | [`process.go`](../../internal/collector/process.go) | `/proc/<pid>/stat` | running/sleeping/blocked/zombie counts, threads |
 | [`self.go`](../../internal/collector/self.go) | `/proc/self/*` | Kula's own CPU%, RSS, open FDs |
@@ -47,10 +48,11 @@ Lifecycle:
 ## Data types
 
 All metric structs live in [`types.go`](../../internal/collector/types.go). The top-level
-`Sample` aggregates: `CPUStats`, `MemoryStats`, `NetworkStats`, `DiskStats`, `GPUStats`,
-`ContainerStats`, `PostgresStats`, `MysqlStats`, `Apache2Stats`, `NginxStats`,
-`PowerSupplyStats`, process/self stats, and an `ApplicationsStats` holder for the optional
-modules. Every struct carries JSON tags for the API and WebSocket payloads.
+`Sample` aggregates: `CPUStats`, `LoadAvg`, `MemoryStats`, `SwapStats`, `NetworkStats`,
+`DiskStats`, `SystemStats`, `GPUStats`, `ContainerStats`, `PostgresStats`, `MysqlStats`,
+`Apache2Stats`, `NginxStats`, `PowerSupplyStats`, process/self stats, and an
+`ApplicationsStats` holder for the optional modules. Every struct carries JSON tags for the
+API and WebSocket payloads.
 
 ## Conventions for sub-collectors
 

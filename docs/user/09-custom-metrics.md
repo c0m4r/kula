@@ -51,9 +51,10 @@ once data arrives.
 
 ## Example: a polling script
 
-A reference Python example ships at [`scripts/custom_example.py`](../../scripts/custom_example.py),
-and an NVIDIA exporter that feeds GPU data lives at
-[`scripts/nvidia-exporter.sh`](../../scripts/nvidia-exporter.sh).
+A reference Python example ships at [`scripts/custom_example.py`](../../scripts/custom_example.py).
+A separate NVIDIA exporter,
+[`scripts/nvidia-exporter.sh`](../../scripts/nvidia-exporter.sh), feeds the built-in GPU charts
+by writing `<storage.directory>/nvidia.log`; it does not use the custom-metrics socket.
 
 A minimal shell loop:
 
@@ -73,6 +74,10 @@ done
   there instead.
 - Group and metric names should be stable — they key the charts. Values may be integers or
   floats. Sending the same name twice in one message keeps only the last value.
+- Messages are newline-delimited JSON — one object per line, at most 64 KB per line. Only
+  metrics declared for a group in the config are stored; unknown names are ignored. The socket
+  is created with `0660` permissions (owner + group), and connections that stay idle for five
+  minutes are closed.
 - Custom metrics are stored alongside everything else in the tiered ring-buffer, so they have
   history and appear in downsampled views too.
 - **Staleness.** A group stops reporting once its producer goes quiet, leaving a gap on the

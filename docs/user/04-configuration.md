@@ -19,13 +19,14 @@ the file. These are handy for containers and quick tweaks:
 | Variable | Overrides | Notes |
 |----------|-----------|-------|
 | `KULA_DIRECTORY` | `storage.directory` | Where tier files are written |
-| `KULA_LOGLEVEL` | `web.logging.level` | `access`, `perf`, or `debug` |
+| `KULA_LOGLEVEL` | `web.logging.level` | `access`, `perf`, `debug`; empty disables logging |
 | `KULA_LISTEN` | `web.listen` | Bind address |
 | `KULA_PORT` | `web.port` | Bind port |
 | `KULA_UNIX_SOCKET` | `web.unix_socket` | Listen on a Unix socket instead of TCP |
 | `KULA_MOUNTS_DETECTION` | `collection.mounts_detection` | `auto`, `host`, or `self` |
 | `KULA_BASE_PATH` | `web.base_path` | URL sub-path prefix |
 | `KULA_POSTGRES_PASSWORD` | `applications.postgres.password` | Injected safely (escaped) |
+| `KULA_MYSQL_PASSWORD` | `applications.mysql.password` | MySQL password override |
 
 ---
 
@@ -38,12 +39,17 @@ global:
   show_version: true      # Show Kula version in UI
   default_theme: auto     # Web UI theme: light, dark, or auto
   easter_egg: true        # Show the Space Invaders button in the UI
+  game_score_url: ""      # Optional http(s) URL that receives the game's final score
 ```
 
 When `show_system_info` is `false`, OS/Kernel/Arch are reported as "Hidden", the System Info
 button is hidden, and `/api/system-info` returns 404. When enabled, the inventory includes
 readable hardware identifiers (such as serial numbers), network addresses, and mount details.
 The endpoint uses the same authentication setting as the rest of the dashboard.
+
+When `game_score_url` is set, the Space Invaders easter egg POSTs the final score as
+`{"score": <n>}` to that URL, and its origin is added to the `connect-src` CSP directive. The
+URL must use http or https and must not carry credentials or a fragment.
 
 ---
 
@@ -53,7 +59,10 @@ The endpoint uses the same authentication setting as the rest of the dashboard.
 collection:
   interval: 1s            # 1s, 2s, 5s, 10s, 15s, or 30s
   mounts_detection: auto  # auto | host | self
-  # devices: ["sda", "nvme0n1"]      # override auto-detected disks
+  # devices: ["wwid:eui.0011223344556677"]  # override auto-detected disks; prefer the
+  #                                   # persistent IDs printed by `kula disks`
+  #                                   # (legacy kernel names still work; a partition is
+  #                                   # "<disk-id>:part:<number>")
   # mountpoints: ["/", "/mnt/data"]  # override auto-detected filesystems
   # interfaces: ["eth0", "wlan0"]    # override auto-detected NICs
 ```
@@ -65,6 +74,11 @@ collection:
   - `self` — reads only `/proc/self/mounts` (container-level visibility).
 - The `devices`/`mountpoints`/`interfaces` lists let you pin exactly what is monitored,
   bypassing auto-discovery.
+- **`devices`** entries may be persistent disk IDs (as printed by `kula disks` or exposed as
+  `disk.devices[].id` in `/api/current`) or legacy kernel names. Kula tracks disks by hardware
+  identity, so a persistent ID follows the drive across reboots and renames, while a kernel name
+  selects whatever drive currently carries that name. Disks with no usable identifier, or with a
+  duplicate identifier, stay visible as unstable with a warning and kernel-name history.
 
 ---
 
@@ -173,7 +187,8 @@ matching origins, those origins pass `origin_validation`, and session cookies sw
   join_metrics: false        # connect across gaps in graphs (false = show gaps)
   default_aggregation: avg   # preferred historical operation: avg | min | max
   lang:
-    default: en              # ar de en es fr hi ja ko pl pt zh
+    default: en              # ISO code; available: ar bn cs de en es fr he hi id it
+                             # ja ko ms nl pl pt ro ru sv th tr uk ur vi zh
     force: false             # hide the language selector
   graphs:
     cpu_temp:  { max_mode: "off", max_value: 100 }   # Celsius
@@ -203,6 +218,31 @@ Min/Max values remain visible in the surrounding history band. Existing explicit
   `max_value` if detection fails.
 
 `split` toggles can also be flipped per-chart from the dashboard using the split (⊟) button.
+
+### `web.appearance`
+
+```yaml
+  appearance:
+    sticky_topbar: true   # keep the header and time/aggregation controls pinned while scrolling
+    gauges: true          # show the CPU/RAM/SWAP/load/network gauge row above the charts
+```
+
+### `web.accessibility`
+
+```yaml
+  accessibility:
+    high_contrast: false    # raise text, border and chart-grid contrast in both themes
+    reduce_motion: false    # disable transitions, animations and smooth scrolling
+    text_size: 100          # root font size as a percentage of the default (50-300)
+    underline_links: false  # underline links so they do not rely on color alone
+    focus_outline: false    # thick outline around the focused element for keyboard navigation
+```
+
+Both sections are server-side defaults only: each visitor can override them for their own
+browser from the customization menu in the dashboard header, and the override is remembered in
+that browser. Changing a value here moves everyone who never opted out. `reduce_motion` is also
+applied whenever the browser reports `prefers-reduced-motion`, regardless of this setting. A
+`text_size` outside 50-300 is rejected at config load time; the customization menu steps by 10.
 
 ### `web.logging`
 
@@ -270,6 +310,8 @@ applications:
   custom:
     # cpu_fans:
     #   - { name: fan1, unit: RPM, max: 5000 }
+  # custom_stale_after: 10s   # drop a custom chart group this long after its producer
+  #                           # stops pushing (default: derived from collection.interval)
   postgres:
     enabled: false
     host: "localhost"
