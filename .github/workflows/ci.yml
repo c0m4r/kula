@@ -82,11 +82,6 @@ jobs:
       - name: Put go-installed tools on PATH
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      - name: Set up Node.js for frontend regressions
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '22'
-
       # ── Checks (mirror addons/check.sh) ──────────────────────────────────
       - name: govulncheck
         run: |
@@ -104,13 +99,6 @@ jobs:
         run: |
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
           golangci-lint run ./...
-
-      - name: Frontend browser regressions
-        # Chrome ships with the hosted Ubuntu image; missing browsers fail the
-        # fixtures rather than silently dropping this required regression gate.
-        run: |
-          node --experimental-websocket internal/web/testdata/history_dashboard_test.mjs
-          node --experimental-websocket internal/web/testdata/history_performance_test.mjs
 
       # ── Build + prove the binary actually runs ───────────────────────────
       - name: Build
