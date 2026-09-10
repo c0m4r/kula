@@ -15,6 +15,7 @@ const sectionDefinitions = [
     { id: 'devices', icon: 'devices' },
     { id: 'sensors', icon: 'sensor' },
 ];
+const sectionIDs = new Set(sectionDefinitions.map(section => section.id));
 const routeHash = '#system-info';
 const pollInterval = 5000;
 let active = 'overview';
@@ -780,7 +781,15 @@ function sensors(data, grid) {
 
 /* ------------------------------------------------------------------ render */
 
-const renderers = { overview, storage, network, devices, sensors };
+function renderSection(section, data, grid) {
+    switch (section) {
+    case 'overview': overview(data, grid); break;
+    case 'storage': storage(data, grid); break;
+    case 'network': network(data, grid); break;
+    case 'devices': devices(data, grid); break;
+    case 'sensors': sensors(data, grid); break;
+    }
+}
 
 function render() {
     if (!snapshot) return;
@@ -801,7 +810,7 @@ function render() {
     renderedSection = active;
     const section = node('div', 'system-info-section');
     const grid = node('div', 'system-info-grid');
-    renderers[active](snapshot, grid);
+    renderSection(active, snapshot, grid);
     if (!grid.children.length) {
         grid.append(node('p', 'system-info-empty system-info-wide', label('unavailable')));
     }
@@ -945,7 +954,7 @@ function structureKey(data) {
 /* --------------------------------------------------------------- lifecycle */
 
 function activateSection(section, { focus = false, updateRoute = true } = {}) {
-    if (!renderers[section]) return;
+    if (!sectionIDs.has(section)) return;
     active = section;
     el('system-info-content').setAttribute('aria-labelledby', `system-info-tab-${active}`);
     for (const tab of el('system-info-tabs').children) {
@@ -973,7 +982,7 @@ function activateSection(section, { focus = false, updateRoute = true } = {}) {
 
 function sectionFromHash() {
     const match = /^#system-info\/([a-z]+)$/.exec(window.location.hash);
-    return match && renderers[match[1]] ? match[1] : sectionDefinitions[0].id;
+    return match && sectionIDs.has(match[1]) ? match[1] : sectionDefinitions[0].id;
 }
 
 function tabs() {
