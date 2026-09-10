@@ -23,7 +23,7 @@ export async function testSystemInfo() {
         disks: [{ name: 'nvme0n1', size_bytes: 2000000000000, details: { model: 'Example NVMe 2TB', serial: 'NVME-001', type: 'SSD / flash', logical_sector_bytes: '512' },
             slaves: [], mounts: ['/'], read_bps: 20971520, write_bps: 5242880, reads_ps: 240, writes_ps: 80, busy_pct: 18, in_flight: 2 }],
         filesystems: [{ device: '/dev/nvme0n1p2', mount: '/', type: 'ext4', options: 'rw,relatime', usage: { total: 2000000000000, used: 800000000000, available: 1100000000000, used_pct: 40 } }],
-        network: [{ name: 'eth0', details: { state: 'up', mac: '02:00:00:00:00:01', mtu: '1500', duplex: 'full', driver: 'igc' }, addresses: ['192.0.2.10/24', '2001:db8::10/64'], speed_mbps: 1000,
+        network: [{ name: 'eth0', details: { state: 'unknown', mac: '02:00:00:00:00:01', mtu: '1500', duplex: 'full', driver: 'igc' }, addresses: ['192.0.2.10/24', '2001:db8::10/64'], speed_mbps: 1000,
             rx_mbps: 125, tx_mbps: 42, rx_pct: 12.5, tx_pct: 4.2, rx_bytes: 9876543210, tx_bytes: 1234567890, rx_errors: 0, tx_errors: 0, rx_dropped: 0, tx_dropped: 0 },
             { name: 'lo', details: { state: 'unknown', mtu: '65536' }, addresses: ['127.0.0.1/8'], rx_mbps: 0, tx_mbps: 0 }],
         pci: [{ address: '0000:01:00.0', vendor_id: '0x8086', device_id: '0x1234', driver: 'igc', class: '0x020000' }],
@@ -35,6 +35,17 @@ export async function testSystemInfo() {
             sys: { uptime_human: '12d 4h 18m', clock_synced: true, clock_source: 'tsc', user_count: 2 },
             proc: { total: 241, threads: 1280, running: 2, blocked: 0, zombie: 0 }, lavg: { load1: 1.2, load5: 0.9, load15: 0.8 }, gpu: [] },
     };
+    const longMount = '/srv/projects/a-very-long-directory-name-with-no-breaks-' + 'archive'.repeat(18) + '/data, current';
+    fixture.filesystems.push(
+        { device: '/dev/nvme0n1p1', mount: '/boot/efi', type: 'vfat', options: 'rw,relatime',
+            usage: { total: 1073741824, used: 104857600, available: 968884224, used_pct: 9.8 } },
+        { device: 'nas.example:/archive', mount: longMount, type: 'nfs4', options: 'rw,relatime,vers=4.2' },
+        ...Array.from({ length: 18 }, (_, index) => ({ device: 'tmpfs', mount: `/run/services/service-${index}`, type: 'tmpfs', options: 'rw,nosuid,nodev',
+            usage: { total: 1073741824, used: 1048576, available: 1072693248, used_pct: 0.1 } })),
+    );
+    fixture.disks[0].mounts = ['/var/lib/data', '/', '/boot/efi', longMount, '/', '/srv/backups'];
+    fixture.disks.push({ name: 'nvme0n1p2', size_bytes: 2000000000000, parent: 'nvme0n1', details: { type: 'partition' },
+        mounts: [...fixture.disks[0].mounts] });
     window.setTimeout = (callback, ms, ...args) => {
         if (ms === 5000) { const id = ++timerID; scheduled.set(id, callback); return id; }
         return timeoutBefore(callback, ms, ...args);
@@ -66,6 +77,10 @@ export async function testSystemInfo() {
         check(content.textContent.includes('<img src=x') && !content.querySelector('img') && !window.inventoryXSS, 'Hardware strings can inject HTML');
         check(content.querySelector('[role="progressbar"][aria-label="CPU usage"]')?.getAttribute('aria-valuenow') === '37', 'System page used historical CPU usage');
         check(content.querySelectorAll('.system-info-summary-card').length === 4, 'At-a-glance summary is incomplete');
+        content.querySelectorAll('.system-info-summary-card')[2].click();
+        check(document.querySelector('[data-section="storage"]').getAttribute('aria-selected') === 'true',
+            'Storage summary does not open storage details');
+        select('overview');
         const cardIcons = [...content.querySelectorAll('.system-info-summary-icon, .system-info-card-icon')];
         check(cardIcons.length > 4 && cardIcons.every(item => item.querySelector('svg') && !item.textContent.trim()),
             'System cards still use text badges instead of graphical icons');
@@ -86,7 +101,57 @@ export async function testSystemInfo() {
         check(Boolean(temperatureGauge?.getAttribute('aria-valuenow') === '48' &&
             temperatureGauge.querySelector('.system-info-thermometer-fill')),
             'Temperature sensors do not have a graphical reading');
+        select('storage');
+        const mountCard = content.querySelector('.system-info-mounted-storage');
+        check(mountCard.querySelector('.system-info-path').textContent === '/', 'Root mount is not first');
+        check(!mountCard.querySelector('[data-key="runtime-mounts"]').open, 'Runtime mounts clutter the main storage list');
+        check([...mountCard.querySelectorAll('.system-info-filesystem')].filter(row => row.checkVisibility()).length === 3,
+            'Primary mounts are missing or runtime mounts are not collapsed');
+        check(mountCard.textContent.includes(longMount) && mountCard.textContent.includes('Usage unavailable'),
+            'Long paths or unmeasured remote mounts lost information');
+        const drivePaths = content.querySelector('.system-info-drive-mounts');
+        check(drivePaths.querySelectorAll('li').length === 5, 'Drive mounts were not deduplicated');
+        check([...drivePaths.querySelectorAll('li')].filter(row => row.checkVisibility()).length === 3,
+            'Long drive mount lists are not compact');
+        drivePaths.querySelector('details').open = true;
+        check([...drivePaths.querySelectorAll('code')].some(path => path.textContent === longMount),
+            'Mount paths containing commas are split or truncated');
+        const searchMounts = query => {
+            const input = document.getElementById('system-info-mount-search');
+            input.value = query;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        searchMounts('service-17');
+        check(mountCard.querySelectorAll('.system-info-filesystem').length === 1 &&
+            mountCard.querySelector('[data-key="runtime-mounts"]').open, 'Search does not reveal matching runtime mounts');
+        searchMounts('NFS4');
+        const searchInput = document.getElementById('system-info-mount-search');
+        searchInput.focus();
+        searchInput.setSelectionRange(1, 3);
+        const beforeMountRefresh = requests;
+        const [mountTimerID, mountTick] = scheduled.entries().next().value;
+        scheduled.delete(mountTimerID); mountTick();
+        await waitFor(() => requests > beforeMountRefresh && !refresh.disabled);
+        const refreshedSearch = document.getElementById('system-info-mount-search');
+        check(refreshedSearch.value === 'NFS4' && document.activeElement === refreshedSearch && refreshedSearch.selectionStart === 1 && refreshedSearch.selectionEnd === 3,
+            'Live refresh interrupts mount search');
+        check(content.querySelector('.system-info-mounted-storage').querySelectorAll('.system-info-filesystem').length === 1,
+            'Refresh loses the mount filter');
+        searchMounts('mount-that-does-not-exist');
+        check(content.textContent.includes('No mountpoints match your search.'), 'Empty mount search has no feedback');
+        searchMounts('');
+        select('cpu');
+        select('storage');
+        check(content.querySelector('.system-info-drive-mounts details').open, 'Mount expansion was lost when changing sections');
+        select('cpu');
+        const features = content.querySelector('details[data-key="features"]');
+        features.open = true;
+        select('memory');
+        select('cpu');
+        check(content.querySelector('details[data-key="features"]').open, 'Switching sections lost expanded details');
         select('network');
+        const unknownState = [...content.querySelectorAll('.system-info-state')].find(item => item.textContent === 'unknown');
+        check(unknownState && !unknownState.classList.contains('is-offline'), 'Unknown interface state is styled as offline');
         check(content.querySelectorAll('[role="progressbar"]').length === 2, 'Unknown link speed produced fake utilization bars');
         const beforeRefresh = requests;
         fixture.network[0].rx_mbps = 250;
@@ -102,6 +167,17 @@ export async function testSystemInfo() {
         await waitFor(() => !refresh.disabled);
         check(content.textContent.includes('250 Mb/s') && document.getElementById('system-info-status').textContent.includes('out of date'), 'Fetch failure silently presents stale information as live');
         fail = false;
+        fixture.live.mem.total = null;
+        refresh.click();
+        await waitFor(() => !refresh.disabled);
+        select('overview');
+        check(content.querySelectorAll('.system-info-summary-value')[1].textContent === '—', 'Missing memory is displayed as zero');
+        fixture.live.mem.total = 68719476736;
+        content.querySelector('[data-summary-section="storage"]').focus();
+        const [summaryTimerID, summaryTick] = scheduled.entries().next().value;
+        scheduled.delete(summaryTimerID); summaryTick();
+        await waitFor(() => !refresh.disabled);
+        check(document.activeElement?.dataset.summarySection === 'storage', 'Live refresh loses overview keyboard focus');
         pending = true; refresh.click();
         closeSystemInfo({ useHistory: false });
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -117,8 +193,10 @@ export async function testSystemInfo() {
         await waitFor(() => content.children.length);
         page.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         check(!page.classList.contains('hidden'), 'A page still behaves like a dismissible modal');
+        document.getElementById('system-info-back').focus();
         document.getElementById('system-info-back').click();
         await waitFor(() => page.classList.contains('hidden') && location.hash !== '#system-info');
+        check(document.activeElement === infoButton, 'Back navigation left keyboard focus inside the hidden page');
         check(!content.children.length && !infoButton.hasAttribute('aria-current'),
             'Back navigation did not leave the System Info page cleanly');
     } finally {

@@ -202,10 +202,18 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     box-shadow: inset 0 -2px 0 var(--accent-blue);
 }
 
-.system-info-tab-index {
+.system-info-tab-icon {
+    display: inline-flex;
     color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 0.65rem;
+}
+
+.system-info-tab-icon svg {
+    width: 1.1rem;
+    height: 1.1rem;
+}
+
+.system-info-tab[aria-selected="true"] .system-info-tab-icon {
+    color: var(--accent-blue);
 }
 
 .system-info-content {
@@ -224,7 +232,8 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 
 .system-info-section-header h3 {
     margin: 0;
-    font-size: 1.22rem;
+    font-size: clamp(1.4rem, 2vw, 1.7rem);
+    letter-spacing: -0.025em;
 }
 
 .system-info-section-header p {
@@ -323,11 +332,33 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 }
 
 .system-info-summary-card {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
-    padding: 1rem;
+    padding: 1.15rem;
+    color: var(--text-primary);
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.system-info-summary-card:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--accent-blue);
+}
+
+.system-info-summary-card .system-info-meter {
+    margin-top: auto;
+    padding-top: 1rem;
+}
+
+.system-info-page :is(button, summary, input):focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 3px;
 }
 
 .system-info-summary-top {
@@ -423,6 +454,10 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     align-items: center;
     gap: 0.7rem;
     margin-bottom: 1rem;
+}
+
+.system-info-card-heading > div {
+    min-width: 0;
 }
 
 .system-info-card-heading h4 {
@@ -643,6 +678,90 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     text-transform: uppercase;
 }
 
+.system-info-drive-mounts {
+    margin-top: 0.65rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.system-info-mount-label {
+    display: block;
+    margin-bottom: 0.45rem;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+}
+
+.system-info-path-list {
+    display: grid;
+    gap: 0.35rem;
+    list-style: none;
+}
+
+.system-info-path-list li {
+    min-width: 0;
+    padding: 0.4rem 0.6rem;
+    background: var(--bg-hover);
+    border-radius: 4px;
+}
+
+.system-info-path {
+    display: block;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    unicode-bidi: plaintext;
+}
+
+.system-info-mount-paths .system-info-expandable {
+    margin-top: 0.35rem;
+    border-top: 0;
+}
+
+.system-info-mount-paths summary {
+    padding-top: 0.4rem;
+}
+
+.system-info-mount-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.system-info-mount-search {
+    flex: 1;
+    min-width: 0;
+    max-width: 32rem;
+}
+
+.system-info-mount-search input {
+    width: 100%;
+    min-width: 0;
+    min-height: 2.75rem;
+    padding: 0.6rem 0.85rem;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: 0.8rem;
+}
+
+.system-info-mount-search input::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+}
+
+.system-info-mount-count {
+    margin-inline-start: auto;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}
+
 .system-info-filesystems,
 .system-info-sensor-list {
     display: grid;
@@ -650,39 +769,112 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 }
 
 .system-info-filesystems {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
-    align-items: start;
+    gap: 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
 }
 
 .system-info-filesystem {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 0.4rem 2rem;
     min-width: 0;
-    padding: 0.85rem;
+    padding: 1rem 1.1rem;
+}
+
+.system-info-filesystem + .system-info-filesystem {
+    border-top: 1px solid var(--border-color);
+}
+
+.system-info-filesystem:nth-child(even) {
     background: var(--bg-hover);
-    border-radius: var(--radius-sm);
+}
+
+.system-info-filesystem-identity,
+.system-info-filesystem-usage {
+    min-width: 0;
 }
 
 .system-info-filesystem-head {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
+    font-weight: 650;
 }
 
-.system-info-filesystem-head strong,
-.system-info-filesystem-head span {
-    overflow-wrap: anywhere;
+.system-info-filesystem-head .system-info-path {
+    font-size: 0.88rem;
 }
 
-.system-info-filesystem-head span,
-.system-info-filesystem-meta {
+.system-info-filesystem-meta,
+.system-info-filesystem-available,
+.system-info-empty-usage {
     color: var(--text-secondary);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
 }
 
 .system-info-filesystem-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.3rem 0.8rem;
-    margin-top: 0.35rem;
+    align-items: center;
+    gap: 0.35rem 0.6rem;
+    margin-top: 0.5rem;
+}
+
+.system-info-filesystem-meta .system-info-path {
+    font-size: 0.72rem;
+}
+
+.system-info-fs-type {
+    padding: 0.15rem 0.4rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+}
+
+.system-info-filesystem .system-info-meter {
+    max-width: none;
+    margin: 0;
+}
+
+.system-info-filesystem-available {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.3rem 1rem;
+    margin-top: 0.4rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.system-info-filesystem-available strong {
+    color: var(--text-primary);
+}
+
+.system-info-filesystem > .system-info-expandable {
+    grid-column: 1 / -1;
+    margin-top: 0;
+    border: 0;
+}
+
+.system-info-filesystem > .system-info-expandable > summary {
+    justify-content: flex-start;
+    gap: 0.45rem;
+    padding-top: 0.15rem;
+    font-size: 0.7rem;
+    font-weight: 400;
+}
+
+.system-info-mount-options {
+    display: block;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.system-info-runtime-mounts > summary {
+    padding-block: 1rem 0.25rem;
 }
 
 .system-info-sensor-list {
@@ -907,12 +1099,11 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     }
 
     .system-info-update {
-        align-items: stretch;
-        flex-direction: column;
+        justify-content: space-between;
     }
 
     .system-info-refresh {
-        width: 100%;
+        flex: 0 0 auto;
     }
 
     .system-info-tabs {
@@ -947,7 +1138,22 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     }
 
     .system-info-stat-pair {
+        gap: 0.5rem;
+    }
+
+    .system-info-filesystem {
         grid-template-columns: minmax(0, 1fr);
+        gap: 0.85rem;
+        padding: 0.85rem;
+    }
+
+    .system-info-mount-toolbar {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .system-info-mount-search {
+        flex-basis: 100%;
     }
 
     .system-info-summary-value,

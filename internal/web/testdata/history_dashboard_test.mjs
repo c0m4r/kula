@@ -142,12 +142,20 @@ try {
         for (const [name, width, height, section, light] of [
             ['overview-dark', 1440, 1000, 'overview', false],
             ['storage-light', 1440, 1000, 'storage', true],
+            ['storage-dark', 1440, 1000, 'storage', false],
+            ['storage-mobile', 390, 844, 'storage', false],
+            ['storage-narrow', 320, 740, 'storage', true],
             ['network-mobile', 390, 844, 'network', false],
         ]) {
             await call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 640 });
-            await evaluate(`document.body.classList.toggle('light-mode', ${light}); document.querySelector('[data-section="${section}"]').click(); ${section === 'overview' ? "window.scrollTo({top: 0, behavior: 'instant'})" : ''}`);
+            await evaluate(`document.body.classList.toggle('light-mode', ${light}); document.querySelector('[data-section="${section}"]').click(); window.scrollTo({top: 0, behavior: 'instant'});`);
             await delay(100);
             assert.ok(await evaluate('document.getElementById("system-info-content").scrollWidth <= document.getElementById("system-info-content").clientWidth + 1'), `${name} overflows`);
+            assert.ok(await evaluate(`(() => {
+                const tab = document.querySelector('.system-info-tab[aria-selected="true"]').getBoundingClientRect();
+                const nav = document.getElementById('system-info-tabs').getBoundingClientRect();
+                return tab.left >= nav.left - 1 && tab.right <= nav.right + 1;
+            })()`), `${name} hides the selected tab`);
             const shot = await call('Page.captureScreenshot', { format: 'png' });
             fs.writeFileSync(path.join(outputDir, `${name}.png`), Buffer.from(shot.data, 'base64'));
         }

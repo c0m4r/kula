@@ -5,13 +5,13 @@ import { i18n } from './i18n.js';
 import { formatBytesShort } from './format.js';
 
 const sectionDefinitions = [
-    { id: 'overview', index: '01' },
-    { id: 'cpu', index: '02' },
-    { id: 'memory', index: '03' },
-    { id: 'storage', index: '04' },
-    { id: 'network', index: '05' },
-    { id: 'devices', index: '06' },
-    { id: 'sensors', index: '07' },
+    { id: 'overview', icon: 'server' },
+    { id: 'cpu', icon: 'cpu' },
+    { id: 'memory', icon: 'memory' },
+    { id: 'storage', icon: 'storage' },
+    { id: 'network', icon: 'network' },
+    { id: 'devices', icon: 'devices' },
+    { id: 'sensors', icon: 'sensor' },
 ];
 const routeHash = '#system-info';
 let active = 'overview';
@@ -20,6 +20,9 @@ let timer = null;
 let request = null;
 let enabled = true;
 let dashboardScroll = 0;
+const expandedSections = new Map();
+let renderedSection = null;
+let storageQuery = '';
 
 const el = id => document.getElementById(id);
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -40,9 +43,9 @@ function humanize(key) {
 }
 
 const label = key => i18n.translations[`si_${normalizedKey(key)}`] || humanize(key);
-const number = (value, unit = '', digits = 1) => finite(Number(value))
+const number = (value, unit = '', digits = 1) => present(value) && finite(Number(value))
     ? `${Number(value).toLocaleString(i18n.currentLang, { maximumFractionDigits: digits })}${unit}` : '—';
-const bytes = value => finite(Number(value)) ? formatBytesShort(Number(value)) : '—';
+const bytes = value => present(value) && finite(Number(value)) ? formatBytesShort(Number(value)) : '—';
 const percent = value => number(value, '%');
 
 function node(tag, className, text) {
@@ -99,10 +102,14 @@ function isOnline(value) {
     return ['up', 'online', '1', 'connected'].includes(String(value ?? '').toLowerCase());
 }
 
+function isOffline(value) {
+    return ['down', 'offline', '0', 'disconnected'].includes(String(value ?? '').toLowerCase());
+}
+
 function translatedState(value) {
     const state = String(value ?? '').toLowerCase();
     if (isOnline(state)) return label('online');
-    if (['down', 'offline', '0', 'disconnected'].includes(state)) return label('offline');
+    if (isOffline(state)) return label('offline');
     return value;
 }
 
@@ -165,7 +172,7 @@ function card(title, values, options = {}) {
     if (options.subtitle) text.append(node('p', '', options.subtitle));
     heading.append(text);
     if (present(options.state)) {
-        heading.append(node('span', `system-info-state ${isOnline(options.state) ? 'is-online' : 'is-offline'}`,
+        heading.append(node('span', `system-info-state ${isOnline(options.state) ? 'is-online' : isOffline(options.state) ? 'is-offline' : ''}`,
             translatedState(options.state)));
     }
     item.append(heading);
@@ -223,7 +230,15 @@ function table(columns, rows) {
     const body = node('tbody');
     for (const row of rows) {
         const rowElement = node('tr');
-        for (const column of columns) rowElement.append(node('td', '', displayValue(column, row[column])));
+        for (const column of columns) {
+            const cell = node('td');
+            if (column === 'mounts' && Array.isArray(row[column])) {
+                cell.append(mountPaths(row[column], `device-mounts-${row.name}`));
+            } else {
+                cell.textContent = displayValue(column, row[column]);
+            }
+            rowElement.append(cell);
+        }
         body.append(rowElement);
     }
     tableElement.append(body);
@@ -246,7 +261,10 @@ function callout(text) {
 }
 
 function summaryCard(iconName, title, value, detail, usage, usageLabel = label('used')) {
-    const item = node('article', 'system-info-summary-card');
+    const item = node('button', 'system-info-summary-card');
+    item.type = 'button';
+    item.dataset.summarySection = iconName;
+    item.addEventListener('click', () => activateSection(iconName, { focus: true }));
     const top = node('div', 'system-info-summary-top');
     top.append(icon(iconName, 'system-info-summary-icon'), node('span', 'system-info-summary-title', title));
     item.append(top, node('strong', 'system-info-summary-value', value),
@@ -466,31 +484,122 @@ function memory(data, grid) {
     }
 }
 
+// A mount path is one value, even when it contains spaces or commas.
+function mountPaths(mounts, key) {
+    const paths = [...new Set(mounts.filter(present))].sort(compareMounts);
+    if (!paths.length) return node('span', '', '—');
+    const wrap = node('div', 'system-info-mount-paths');
+    const list = values => {
+        const items = node('ul', 'system-info-path-list');
+        for (const path of values) {
+            const item = node('li');
+            item.append(node('code', 'system-info-path', path));
+            items.append(item);
+        }
+        return items;
+    };
+    wrap.append(list(paths.slice(0, 3)));
+    if (paths.length > 3) {
+        wrap.append(expandable(key, `${label('more_mounts')} · ${number(paths.length - 3, '', 0)}`,
+            list(paths.slice(3))));
+    }
+    return wrap;
+}
+
+function compareMounts(a, b) {
+    if (a === b) return 0;
+    if (a === '/') return -1;
+    if (b === '/') return 1;
+    return a.localeCompare(b, i18n.currentLang, { numeric: true });
+}
+
+function runtimeMount(filesystem) {
+    // Keep the root filesystem visible even in a container or live system.
+    return filesystem.mount !== '/' &&
+        ['tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'nsfs', 'ramfs'].includes(filesystem.type);
+}
+
 function filesystemList(filesystems) {
     const list = node('div', 'system-info-filesystems');
     for (const filesystem of filesystems) {
         const item = node('article', 'system-info-filesystem');
+        const identity = node('div', 'system-info-filesystem-identity');
         const head = node('div', 'system-info-filesystem-head');
-        head.append(node('strong', '', filesystem.mount || label('unknown_mount')),
-            node('span', '', filesystem.usage
-                ? `${percent(filesystem.usage.used_pct)} ${label('used').toLowerCase()}`
-                : label('usage_unavailable')));
+        head.append(node('code', 'system-info-path', filesystem.mount || label('unknown_mount')));
         const meta = node('div', 'system-info-filesystem-meta');
-        for (const value of [
-            filesystem.device,
-            filesystem.type,
-            filesystem.usage ? `${bytes(filesystem.usage.available)} ${label('available').toLowerCase()}` : '',
-        ]) {
-            if (present(value)) meta.append(node('span', '', value));
-        }
-        item.append(head, meta);
+        if (present(filesystem.type)) meta.append(node('span', 'system-info-fs-type', filesystem.type));
+        if (present(filesystem.device)) meta.append(node('code', 'system-info-path', filesystem.device));
+        identity.append(head, meta);
+        const usage = node('div', 'system-info-filesystem-usage');
         if (filesystem.usage) {
-            item.append(meter(label('space_used'), filesystem.usage.used_pct,
+            usage.append(meter(label('space_used'), filesystem.usage.used_pct,
                 `${bytes(filesystem.usage.used)} / ${bytes(filesystem.usage.total)}`));
+            const available = node('div', 'system-info-filesystem-available');
+            available.append(node('span', '', `${bytes(filesystem.usage.available)} ${label('available').toLowerCase()}`),
+                node('strong', '', percent(filesystem.usage.used_pct)));
+            usage.append(available);
+        } else {
+            usage.append(node('span', 'system-info-empty-usage', label('usage_unavailable')));
+        }
+        item.append(identity, usage);
+        if (present(filesystem.options)) {
+            item.append(expandable(`mount-options-${filesystem.mount}`, label('mount_options'),
+                node('code', 'system-info-mount-options', filesystem.options)));
         }
         list.append(item);
     }
     return list;
+}
+
+function mountedStorage(filesystems) {
+    const item = card(label('mounted_storage'), null, {
+        wide: true, icon: 'filesystem', subtitle: label('mounted_storage_intro'),
+    });
+    item.classList.add('system-info-mounted-storage');
+    const toolbar = node('div', 'system-info-mount-toolbar');
+    const search = node('label', 'system-info-mount-search');
+    search.append(node('span', 'sr-only', label('search_mounts')));
+    const input = node('input');
+    input.type = 'search';
+    input.id = 'system-info-mount-search';
+    input.placeholder = label('search_mounts');
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.value = storageQuery;
+    search.append(input);
+    const count = node('span', 'system-info-mount-count');
+    count.setAttribute('role', 'status');
+    toolbar.append(search, count);
+    const results = node('div');
+    const sorted = [...filesystems].sort((a, b) => compareMounts(a.mount || '', b.mount || ''));
+    const update = () => {
+        const opened = [...results.querySelectorAll('details[open]')].map(details => details.dataset.key);
+        const query = storageQuery.trim().toLocaleLowerCase(i18n.currentLang);
+        const matches = sorted.filter(fs => !query || [fs.mount, fs.device, fs.type, fs.options]
+            .some(value => String(value || '').toLocaleLowerCase(i18n.currentLang).includes(query)));
+        count.textContent = `${query ? `${number(matches.length, '', 0)} / ` : ''}${number(sorted.length, '', 0)} ${label('mounts').toLowerCase()}`;
+        results.replaceChildren();
+        const primary = matches.filter(fs => !runtimeMount(fs));
+        const runtime = matches.filter(runtimeMount);
+        if (primary.length) results.append(filesystemList(primary));
+        if (runtime.length) {
+            const group = expandable('runtime-mounts',
+                `${label('system_runtime_mounts')} · ${number(runtime.length, '', 0)}`, filesystemList(runtime));
+            group.classList.add('system-info-runtime-mounts');
+            results.append(group);
+        }
+        if (!matches.length) results.append(node('p', 'system-info-empty', label('no_matching_mounts')));
+        for (const details of results.querySelectorAll('details')) {
+            details.open = opened.includes(details.dataset.key) || Boolean(query && details.dataset.key === 'runtime-mounts');
+        }
+    };
+    input.addEventListener('input', () => {
+        storageQuery = input.value;
+        update();
+    });
+    update();
+    item.append(toolbar, results);
+    return item;
 }
 
 function driveCard(disk, index) {
@@ -499,8 +608,13 @@ function driveCard(disk, index) {
     const item = card(title, {
         capacity: disk.size_bytes === undefined ? undefined : bytes(disk.size_bytes),
         drive_type: info.type,
-        mounted_at: disk.mounts?.join(', '),
     }, { icon: 'storage', subtitle: `/dev/${disk.name}` });
+    if (disk.mounts?.length) {
+        const mounts = node('div', 'system-info-drive-mounts');
+        mounts.append(node('span', 'system-info-mount-label', label('mounted_at')),
+            mountPaths(disk.mounts, `drive-mounts-${disk.name}`));
+        item.append(mounts);
+    }
     if (finite(disk.busy_pct)) item.append(meter(label('drive_activity'), disk.busy_pct));
     if ([disk.read_bps, disk.write_bps, disk.reads_ps, disk.writes_ps].some(finite)) {
         item.append(statPair([
@@ -520,23 +634,13 @@ function driveCard(disk, index) {
 }
 
 function storage(data, grid) {
+    if (data.filesystems?.length) grid.append(mountedStorage(data.filesystems));
+
     const all = data.disks || [];
     const primary = all.filter(disk => disk.details?.type !== 'partition' && !disk.name.startsWith('loop'));
     const prominent = primary.length ? primary : all.slice(0, 1);
     for (const disk of prominent) grid.append(driveCard(disk, all.indexOf(disk)));
     if (!all.length) grid.append(callout(label('no_storage_devices')));
-
-    if (data.filesystems?.length) {
-        const item = card(label('mounted_storage'), null, {
-            wide: true,
-            icon: 'filesystem',
-            subtitle: label('mounted_storage_intro'),
-        });
-        item.append(filesystemList(data.filesystems));
-        item.append(expandable('filesystem-details', label('filesystem_technical_details'),
-            table(['mount', 'device', 'type', 'options'], data.filesystems)));
-        grid.append(item);
-    }
 
     const secondary = all.filter(disk => !prominent.includes(disk));
     if (secondary.length) {
@@ -551,7 +655,7 @@ function storage(data, grid) {
                 type: disk.details?.type,
                 capacity: bytes(disk.size_bytes),
                 parent: disk.parent,
-                mounts: disk.mounts?.join(', '),
+                mounts: disk.mounts,
             })))));
         grid.append(item);
     }
@@ -735,8 +839,17 @@ function sectionHeader() {
 function render() {
     if (!snapshot) return;
     const content = el('system-info-content');
-    const opened = [...content.querySelectorAll('details[open]')].map(item => item.dataset.key);
-    const focused = document.activeElement?.closest('details')?.dataset.key;
+    if (renderedSection) {
+        expandedSections.set(renderedSection,
+            [...content.querySelectorAll('details[open]')].map(item => item.dataset.key));
+    }
+    const opened = expandedSections.get(active) || [];
+    const focused = renderedSection === active && content.contains(document.activeElement)
+        ? document.activeElement?.closest('details')?.dataset.key : null;
+    const focusedSearch = renderedSection === active && document.activeElement?.id === 'system-info-mount-search';
+    const selection = focusedSearch ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+    const focusedSummary = renderedSection === active ? document.activeElement?.dataset.summarySection : null;
+    renderedSection = active;
     const section = node('div', 'system-info-section');
     const grid = node('div', 'system-info-grid');
     renderers[active](snapshot, grid);
@@ -748,8 +861,16 @@ function render() {
     content.setAttribute('aria-labelledby', `system-info-tab-${active}`);
     content.setAttribute('aria-busy', 'false');
     for (const item of content.querySelectorAll('details')) {
-        item.open = opened.includes(item.dataset.key);
-        if (item.dataset.key === focused) item.querySelector('summary').focus({ preventScroll: true });
+        item.open = opened.includes(item.dataset.key) || Boolean(storageQuery.trim() && item.dataset.key === 'runtime-mounts');
+        if (item.dataset.key === focused && !focusedSearch) item.querySelector('summary').focus({ preventScroll: true });
+    }
+    if (focusedSearch) {
+        const input = el('system-info-mount-search');
+        input?.focus({ preventScroll: true });
+        input?.setSelectionRange(...selection);
+    }
+    if (focusedSummary) {
+        content.querySelector(`[data-summary-section="${focusedSummary}"]`)?.focus({ preventScroll: true });
     }
 }
 
@@ -772,11 +893,20 @@ function renderError() {
 function activateSection(section, { focus = false } = {}) {
     if (!renderers[section]) return;
     active = section;
+    el('system-info-content').setAttribute('aria-labelledby', `system-info-tab-${active}`);
     for (const tab of el('system-info-tabs').children) {
         const selected = tab.dataset.section === active;
         tab.setAttribute('aria-selected', String(selected));
         tab.tabIndex = selected ? 0 : -1;
         if (selected && focus) tab.focus();
+        if (selected) {
+            const bounds = tab.getBoundingClientRect();
+            const viewport = tab.parentElement.getBoundingClientRect();
+            // Reveal the tab horizontally without moving the page vertically.
+            const offset = bounds.left < viewport.left ? bounds.left - viewport.left - 8
+                : bounds.right > viewport.right ? bounds.right - viewport.right + 8 : 0;
+            if (offset) tab.parentElement.scrollBy({ left: offset, behavior: 'instant' });
+        }
     }
     if (snapshot) render();
 }
@@ -793,7 +923,7 @@ function tabs() {
         button.setAttribute('aria-controls', 'system-info-content');
         button.setAttribute('aria-selected', String(section.id === active));
         button.tabIndex = section.id === active ? 0 : -1;
-        button.append(node('span', 'system-info-tab-index', section.index),
+        button.append(icon(section.icon, 'system-info-tab-icon'),
             node('span', '', label(section.id)));
         button.addEventListener('click', () => activateSection(section.id));
         button.addEventListener('keydown', event => {
@@ -857,6 +987,7 @@ function stop() {
 
 function hideSystemInfo({ clear = true, restoreScroll = true } = {}) {
     const wasOpen = pageIsOpen();
+    const restoreFocus = wasOpen && el('system-info-page')?.contains(document.activeElement);
     stop();
     el('system-info-page')?.classList.add('hidden');
     el('system-info-page')?.setAttribute('aria-hidden', 'true');
@@ -867,9 +998,13 @@ function hideSystemInfo({ clear = true, restoreScroll = true } = {}) {
     el('btn-info')?.removeAttribute('aria-current');
     if (clear) {
         snapshot = null;
+        renderedSection = null;
+        expandedSections.clear();
+        storageQuery = '';
         el('system-info-content')?.replaceChildren();
         setStatus('');
     }
+    if (restoreFocus && enabled) el('btn-info')?.focus({ preventScroll: true });
     if (wasOpen && restoreScroll) {
         requestAnimationFrame(() => {
             window.scrollTo({ top: dashboardScroll, behavior: 'instant' });
