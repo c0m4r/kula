@@ -11,32 +11,50 @@ export async function testSystemInfo() {
     const fetchBefore = window.fetch, timeoutBefore = window.setTimeout, clearBefore = window.clearTimeout;
     const scheduled = new Map();
     let timerID = 1000000, requests = 0, fail = false, pending = false;
+    let copied = null;
+    const clipboardBefore = Object.getOwnPropertyDescriptor(navigator, 'clipboard') ||
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), 'clipboard');
     const fixture = {
         ts: new Date().toISOString(), metrics_ts: new Date().toISOString(),
-        system: { hostname: 'current-host', os: 'Debian GNU/Linux 13', kernel: '6.12.0-amd64', architecture: 'amd64', manufacturer: 'Example Systems', product: 'Rack Server R2' },
+        system: { hostname: 'current-host', os: 'Debian GNU/Linux 13', kernel: '6.12.0-amd64', architecture: 'amd64',
+            manufacturer: 'Example Systems', family: 'Rack Server', product: 'Rack Server R2' },
         cpu: { model_name: 'Example 16-Core Processor', logical_cpus: 32, cores: 16 },
-        disks: [{ name: 'nvme0n1', size_bytes: 2000000000000, details: { model: 'Example NVMe 2TB', type: 'Non-rotating' },
-            slaves: [], mounts: ['/'] }],
-        filesystems: [{ device: '/dev/nvme0n1p2', mount: '/', type: 'ext4', options: 'rw,relatime', usage: { total: 2000000000000, used: 800000000000, available: 1100000000000, used_pct: 40 } }],
-        network: [{ name: 'eth0', details: { state: 'unknown', driver: 'igc' }, addresses: ['192.0.2.10/24', '2001:db8::10/64'], speed_mbps: 1000 },
-            { name: 'lo', details: { state: 'unknown' }, addresses: ['127.0.0.1/8'] }],
-        pci: [{ address: '0000:01:00.0', driver: 'igc' }],
-        usb: [{ address: '1-1', product: 'USB Keyboard' }],
-        sensors: [{ device: 'coretemp', name: 'Package', value: 48, unit: '°C' }, { device: 'board', name: 'CPU fan', value: 1240, unit: 'RPM' }],
+        disks: [{ name: 'nvme0n1', size_bytes: 2000000000000, class: 'disk', medium: 'ssd', tracked: true,
+            details: { model: 'Example NVMe 2TB' }, mounts: ['/'] }],
+        filesystems: [{ device: '/dev/nvme0n1p2', mount: '/', type: 'ext4', tracked: true,
+            usage: { total: 2000000000000, used: 800000000000, available: 1100000000000, used_pct: 40 } }],
+        network: [{ name: 'eth0', kind: 'wired', tracked: true, mac: '02:00:00:00:00:01', mtu: 1500,
+            details: { state: 'unknown', driver: 'igc' }, addresses: ['192.0.2.10/24', '2001:db8::10/64'], speed_mbps: 1000 },
+            { name: 'lo', kind: 'local', tracked: false, details: { state: 'unknown' }, addresses: ['127.0.0.1/8'] }],
+        pci: [{ address: '0000:01:00.0', driver: 'igc', vendor: 'Intel', class: 'network', device_id: '8086:15f3' },
+            { address: '0000:00:1f.3', driver: 'snd_hda_intel', class: 'multimedia', device_id: '8086:51ca' }],
+        usb: [{ address: '1-1', product: 'USB Keyboard', class: 'input', manufacturer: 'Example Peripherals',
+            device_id: '1234:5678', speed_mbps: 12, max_power: '100mA' }],
+        sensors: [{ device: 'coretemp', name: 'Package', value: 48, unit: '°C', kind: 'temperature' },
+            { device: 'coretemp', name: 'Core 0', value: 46, unit: '°C', kind: 'temperature' },
+            { device: 'board', name: 'CPU fan', value: 1240, unit: 'RPM', kind: 'fan' }],
         power: [{ name: 'UPS', manufacturer: 'Example Power', status: 'Full', capacity_percent: '100' }],
-        live: { mem: { total: 68719476736 }, sys: { uptime_human: '12d 4h 18m' }, gpu: [] },
+        live: {
+            mem: { total: 68719476736, used: 34359738368, used_pct: 50 },
+            sys: { uptime_human: '12d 4h 18m', processes: 240 },
+            cpu: { usage_pct: 12.5, load1: 0.42, load5: 0.5, load15: 0.6 },
+            hottest: { device: 'coretemp', name: 'Package', value: 48, unit: '°C' },
+            gpu: [],
+        },
     };
     const longMount = '/srv/projects/a-very-long-directory-name-with-no-breaks-' + 'archive'.repeat(18) + '/data, current';
     fixture.filesystems.push(
-        { device: '/dev/nvme0n1p1', mount: '/boot/efi', type: 'vfat', options: 'rw,relatime',
+        { device: '/dev/nvme0n1p1', mount: '/boot/efi', type: 'vfat', tracked: true,
             usage: { total: 1073741824, used: 104857600, available: 968884224, used_pct: 9.8 } },
-        { device: 'nas.example:/archive', mount: longMount, type: 'nfs4', options: 'rw,relatime,vers=4.2' },
-        ...Array.from({ length: 18 }, (_, index) => ({ device: 'tmpfs', mount: `/run/services/service-${index}`, type: 'tmpfs', options: 'rw,nosuid,nodev',
+        { device: 'nas.example:/archive', mount: longMount, type: 'nfs4', tracked: false },
+        ...Array.from({ length: 18 }, (_, index) => ({ device: 'tmpfs', mount: `/run/services/service-${index}`, type: 'tmpfs',
             usage: { total: 1073741824, used: 1048576, available: 1072693248, used_pct: 0.1 } })),
     );
     fixture.disks[0].mounts = ['/var/lib/data', '/', '/boot/efi', longMount, '/', '/srv/backups'];
-    fixture.disks.push({ name: 'nvme0n1p2', size_bytes: 2000000000000, parent: 'nvme0n1', details: { type: 'partition' },
-        mounts: [...fixture.disks[0].mounts] });
+    fixture.disks.push({ name: 'nvme0n1p2', size_bytes: 2000000000000, parent: 'nvme0n1', class: 'partition',
+        tracked: false, details: {}, mounts: [...fixture.disks[0].mounts] });
+    fixture.disks.push({ name: 'dm-0', size_bytes: 1000000000000, class: 'virtual', tracked: false,
+        details: { volume_name: 'luks-example' }, mounts: [] });
     window.setTimeout = (callback, ms, ...args) => {
         if (ms === 5000) { const id = ++timerID; scheduled.set(id, callback); return id; }
         return timeoutBefore(callback, ms, ...args);
@@ -54,12 +72,24 @@ export async function testSystemInfo() {
     const content = document.getElementById('system-info-content'), infoButton = document.getElementById('btn-info');
     const refresh = document.getElementById('system-info-refresh');
     const select = name => document.querySelector(`[data-section="${name}"]`).click();
+    const tick = async () => {
+        const before = requests;
+        const [id, next] = scheduled.entries().next().value;
+        scheduled.delete(id);
+        next();
+        await waitFor(() => requests > before && !refresh.disabled);
+    };
     try {
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true, value: { writeText: async text => { copied = text; } },
+        });
         check(requests === 0, 'Inventory was fetched while closed');
         infoButton.click();
         await waitFor(() => content.textContent.includes('current-host'));
         check(!page.classList.contains('hidden') && home.classList.contains('hidden'), 'System info did not replace the dashboard page');
         check(location.hash === '#system-info' && infoButton.getAttribute('aria-current') === 'page', 'System info page is not reflected in navigation state');
+        check(home.hasAttribute('inert') && infoButton.getAttribute('aria-expanded') === 'true',
+            'The dashboard stays reachable behind the open System Info page');
         check(!document.getElementById('system-info-dialog'), 'Obsolete system info dialog is still present');
         check(!page.querySelector('.system-info-hero'), 'Obsolete system info hero is still present');
         check(!page.querySelector('.system-info-availability'), 'Obsolete availability message is still present');
@@ -69,22 +99,37 @@ export async function testSystemInfo() {
         check(!content.querySelector('img') && !window.inventoryXSS, 'Hardware strings can inject HTML');
         check(content.querySelectorAll('.system-info-summary-card').length === 4, 'At-a-glance summary is incomplete');
         check(!content.querySelector('.system-info-section-header'), 'System info section header is still present');
-        check(!content.querySelector('.system-info-meter, [role="progressbar"]'), 'Overview still displays live usage');
         check(!content.textContent.includes('This server') && !content.textContent.includes('Fast working memory used by running software'),
             'Removed overview labels are still displayed');
         check(content.querySelector('.system-info-profile-side')?.textContent.includes('12d 4h 18m') &&
             content.querySelector('.system-info-profile-side')?.textContent.includes('6.12.0-amd64'),
             'Kernel or uptime is missing from the hostname profile');
+        check(content.textContent.includes('Example Systems · Rack Server · Rack Server R2'),
+            'Hardware identity does not combine vendor, family and product');
         check(!content.querySelector('.system-info-card'), 'Redundant System Info card is still displayed');
         check(!document.querySelector('[data-section="cpu"]') && !document.querySelector('[data-section="memory"]'),
             'CPU or memory tab is still present');
+        // Liveness: the at-a-glance cards report the newest sample, marked as such.
+        check(content.querySelector('[data-live="cpu"]')?.textContent.includes('13%') &&
+            content.querySelector('[data-live="cpu"]')?.textContent.includes('0.42'),
+            'Processor card does not show the current load');
+        check(content.querySelectorAll('.system-info-summary-value')[1].textContent === '64.0 GB',
+            'Installed memory is not reported');
+        check(content.querySelector('[data-live="mem"] [role="progressbar"]')?.getAttribute('aria-valuenow') === '50',
+            'Memory card does not show current utilisation');
         content.querySelectorAll('.system-info-summary-card')[2].click();
         check(document.querySelector('[data-section="storage"]').getAttribute('aria-selected') === 'true',
             'Storage summary does not open storage details');
+        check(location.hash === '#system-info/storage', 'Section change is not reflected in the address');
         select('overview');
+        check(location.hash === '#system-info', 'Returning to the first section did not restore the plain route');
         const cardIcons = [...content.querySelectorAll('.system-info-summary-icon, .system-info-card-icon')];
         check(cardIcons.length === 4 && cardIcons.every(item => item.querySelector('svg') && !item.textContent.trim()),
             'System cards still use text badges instead of graphical icons');
+        const linkable = [...content.querySelectorAll('.system-info-summary-card')];
+        check(linkable.filter(card => card.tagName === 'BUTTON' && card.querySelector('.system-info-summary-chevron')).length === 2 &&
+            linkable.filter(card => card.tagName === 'ARTICLE' && !card.querySelector('.system-info-summary-chevron')).length === 2,
+            'Interactive and static summary cards are not distinguishable');
         const scrollBeforeSectionChange = window.scrollY;
         select('network');
         await new Promise(resolve => requestAnimationFrame(resolve));
@@ -95,13 +140,44 @@ export async function testSystemInfo() {
             check(!/undefined|NaN|\[object Object\]/.test(content.textContent), `Invalid display in ${section}`);
             check(content.scrollWidth <= content.clientWidth + 1, `Horizontal overflow in ${section}`);
         }
-        check(content.querySelector('.system-info-inventory-list')?.tagName === 'UL' &&
-            content.querySelectorAll('.system-info-inventory-item').length === 3 &&
-            !content.querySelector('.system-info-card'), 'Sensors and power supplies are not rendered as a list');
+        for (const level of ['H2', 'H3']) {
+            check(content.querySelector(level.toLowerCase()) || document.querySelector(`#system-info-page ${level.toLowerCase()}`),
+                `Heading level ${level} missing from the outline`);
+        }
+        // Sensors are grouped per device and labelled by kind, never by a repeated caption.
+        select('sensors');
+        check(content.querySelectorAll('.system-info-inventory-item').length === 4, 'Sensors and power supplies are not rendered as a list');
+        check(content.querySelector('.system-info-inventory-list')?.tagName === 'UL', 'Sensor rows are not a list');
+        check(content.querySelectorAll('.system-info-sensor-group').length === 3 &&
+            [...content.querySelectorAll('.system-info-group-heading h3')].some(heading => heading.textContent === 'CPU'),
+            'Sensors are not grouped by device with a friendly name');
+        check(content.querySelectorAll('.system-info-sensor-live').length === 3 &&
+            content.textContent.includes('Temperature') && content.textContent.includes('Fan'),
+            'Sensor kinds are not labelled');
+        check(!content.textContent.includes('Current reading'),
+            'The per-row "Current reading" caption is still repeated');
+        check(content.querySelector('.system-info-inventory-item.is-warm') === null,
+            'A 48 °C sensor is flagged as hot');
+        // Devices are grouped by class, described by vendor, and searchable.
         select('devices');
-        check(content.querySelector('.system-info-inventory-list')?.tagName === 'UL' &&
-            content.querySelectorAll('.system-info-inventory-item').length === 2 &&
-            !content.querySelector('.system-info-card'), 'Connected devices are not rendered as a list');
+        check(content.querySelectorAll('.system-info-inventory-item').length === 3 &&
+            content.querySelector('.system-info-inventory-list')?.tagName === 'UL',
+            'Connected devices are not rendered as a list');
+        check([...content.querySelectorAll('.system-info-group-heading h3, .system-info-device-group summary h3')]
+            .some(heading => heading.textContent.includes('Network controller')),
+            'PCI functions are not grouped by device class');
+        check(content.textContent.includes('Intel') && content.textContent.includes('8086:15f3'),
+            'PCI vendor or bus identifier is missing');
+        const searchDevices = query => {
+            const input = document.getElementById('system-info-device-search');
+            input.value = query;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        searchDevices('keyboard');
+        check(content.querySelectorAll('.system-info-inventory-item').length === 1, 'Device search does not filter');
+        searchDevices('no-such-device');
+        check(content.textContent.includes('No devices match your search.'), 'Empty device search has no feedback');
+        searchDevices('');
         select('storage');
         const mountCard = content.querySelector('.system-info-mounted-storage');
         check(mountCard.querySelector('.system-info-path').textContent === '/', 'Root mount is not first');
@@ -109,6 +185,15 @@ export async function testSystemInfo() {
         check([...mountCard.querySelectorAll('.system-info-filesystem')].filter(row => row.checkVisibility()).length === 3,
             'Primary mounts are missing or runtime mounts are not collapsed');
         check(mountCard.textContent.includes(longMount), 'Long mount paths lost information');
+        // Storage finally answers "how full is it".
+        const rootUsage = mountCard.querySelector('.system-info-filesystem [role="progressbar"]');
+        check(rootUsage?.getAttribute('aria-valuenow') === '40', 'Filesystem utilisation is not reported');
+        check(mountCard.textContent.includes('745.1 GB') && mountCard.textContent.includes('1.0 TB'),
+            'Filesystem used and free space are not reported');
+        check(mountCard.textContent.includes('Capacity is not measured for this mount'),
+            'A filesystem without usage does not explain the gap');
+        check([...mountCard.querySelectorAll('.system-info-chip.is-tracking')].some(chip => chip.classList.contains('is-untracked')),
+            'Mounts outside the collection set are not marked');
         const drivePaths = content.querySelector('.system-info-drive-mounts');
         check(drivePaths.querySelectorAll('li').length === 5, 'Drive mounts were not deduplicated');
         check([...drivePaths.querySelectorAll('li')].filter(row => row.checkVisibility()).length === 3,
@@ -116,6 +201,12 @@ export async function testSystemInfo() {
         drivePaths.querySelector('details').open = true;
         check([...drivePaths.querySelectorAll('code')].some(path => path.textContent === longMount),
             'Mount paths containing commas are split or truncated');
+        // Physical drives are cards; partitions and mapped devices stay collapsed.
+        const stacked = content.querySelector('.system-info-stacked');
+        const topLevelDrives = [...content.querySelectorAll('.system-info-drive')].filter(card => !stacked?.contains(card));
+        check(topLevelDrives.length === 1 && stacked && !stacked.open,
+            'Stacked devices are not separated from physical drives');
+        check(stacked.textContent.includes('Virtual & stacked devices'), 'Stacked device group is unlabelled');
         const searchMounts = query => {
             const input = document.getElementById('system-info-mount-search');
             input.value = query;
@@ -128,12 +219,19 @@ export async function testSystemInfo() {
         const searchInput = document.getElementById('system-info-mount-search');
         searchInput.focus();
         searchInput.setSelectionRange(1, 3);
-        const beforeMountRefresh = requests;
-        const [mountTimerID, mountTick] = scheduled.entries().next().value;
-        scheduled.delete(mountTimerID); mountTick();
-        await waitFor(() => requests > beforeMountRefresh && !refresh.disabled);
+        // A poll that only moves measured values must patch them in place rather
+        // than rebuild the page and disturb the operator.
+        const anchor = mountCard.querySelector('.system-info-filesystem');
+        fixture.live.mem.used = 40000000000;
+        fixture.live.mem.used_pct = 58;
+        fixture.sensors[0].value = 71;
+        await tick();
+        check(content.querySelector('.system-info-mounted-storage') === mountCard &&
+            content.querySelector('.system-info-mounted-storage .system-info-filesystem') === anchor,
+            'A live-only refresh rebuilt the page instead of patching values');
         const refreshedSearch = document.getElementById('system-info-mount-search');
-        check(refreshedSearch.value === 'NFS4' && document.activeElement === refreshedSearch && refreshedSearch.selectionStart === 1 && refreshedSearch.selectionEnd === 3,
+        check(refreshedSearch.value === 'NFS4' && document.activeElement === refreshedSearch &&
+            refreshedSearch.selectionStart === 1 && refreshedSearch.selectionEnd === 3,
             'Live refresh interrupts mount search');
         check(content.querySelector('.system-info-mounted-storage').querySelectorAll('.system-info-filesystem').length === 1,
             'Refresh loses the mount filter');
@@ -142,21 +240,40 @@ export async function testSystemInfo() {
         searchMounts('');
         select('storage');
         check(content.querySelector('.system-info-drive-mounts details').open, 'Mount expansion was lost when changing sections');
+        select('sensors');
+        const packageRow = [...content.querySelectorAll('.system-info-inventory-item')]
+            .find(row => row.querySelector('h4')?.textContent === 'Package');
+        check(packageRow?.querySelector('.system-info-sensor-live')?.textContent.includes('71'),
+            'Sensor readings are not updated in place');
+        check(packageRow.classList.contains('is-warm'), 'A warm sensor is not flagged');
         select('network');
+        check(content.textContent.includes('02:00:00:00:00:01') && content.textContent.includes('1500'),
+            'Interface MAC address or MTU is missing');
         const unknownState = [...content.querySelectorAll('.system-info-state')].find(item => item.textContent === 'unknown');
         check(unknownState && !unknownState.classList.contains('is-offline'), 'Unknown interface state is styled as offline');
         check(!content.querySelector('[role="progressbar"]') && !content.textContent.includes('Receiving now'),
             'Network live activity is still displayed');
-        const beforeRefresh = requests;
         fixture.network[0].rx_mbps = 250;
-        const [id, tick] = scheduled.entries().next().value;
-        scheduled.delete(id); tick();
-        await waitFor(() => requests > beforeRefresh && !refresh.disabled);
+        await tick();
         check(!content.textContent.includes('250 Mb/s'), 'Live interface utilization is still displayed');
         check(document.querySelector('[data-section="network"]').getAttribute('aria-selected') === 'true', 'Refresh lost selected section');
         document.querySelector('[data-section="network"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
         check(document.querySelector('[data-section="devices"]').getAttribute('aria-selected') === 'true', 'Arrow keys do not move between system info tabs');
+        // Sections are addressable.
+        location.hash = '#system-info/sensors';
+        window.dispatchEvent(new PopStateEvent('popstate'));
+        await waitFor(() => document.querySelector('[data-section="sensors"]').getAttribute('aria-selected') === 'true');
         select('network');
+        // The whole inventory is one click away from a support ticket.
+        copied = null;
+        document.getElementById('system-info-copy').click();
+        await waitFor(() => copied);
+        check(copied.includes('current-host') && copied.includes('6.12.0-amd64') &&
+            copied.includes('Example NVMe 2TB') && copied.includes('/dev/nvme0n1p1'),
+            'Copied summary is missing inventory');
+        const copyStatus = () => document.getElementById('system-info-status').textContent;
+        for (let i = 0; i < 100 && !copyStatus().includes('copied'); i++) await new Promise(resolve => setTimeout(resolve, 10));
+        check(copyStatus().includes('copied'), `Copy gave no confirmation: ${JSON.stringify(copyStatus())}`);
         fail = true; refresh.click();
         await waitFor(() => !refresh.disabled);
         check(document.getElementById('system-info-status').textContent.includes('out of date'), 'Fetch failure silently presents stale information as live');
@@ -168,15 +285,15 @@ export async function testSystemInfo() {
         check(content.querySelectorAll('.system-info-summary-value')[1].textContent === '—', 'Missing memory is displayed as zero');
         fixture.live.mem.total = 68719476736;
         content.querySelector('[data-summary-section="storage"]').focus();
-        const [summaryTimerID, summaryTick] = scheduled.entries().next().value;
-        scheduled.delete(summaryTimerID); summaryTick();
-        await waitFor(() => !refresh.disabled);
+        await tick();
         check(document.activeElement?.dataset.summarySection === 'storage', 'Live refresh loses overview keyboard focus');
         pending = true; refresh.click();
         closeSystemInfo({ useHistory: false });
         await new Promise(resolve => setTimeout(resolve, 0));
         check(page.classList.contains('hidden') && !home.classList.contains('hidden') && !scheduled.size && !content.children.length,
             'Leaving the page did not abort requests, clear readings, and restore the dashboard');
+        check(!home.hasAttribute('inert') && infoButton.getAttribute('aria-expanded') === 'false',
+            'Leaving the page left the dashboard inert');
         pending = false;
         document.dispatchEvent(new CustomEvent('kula-config-ready', { detail: { show_system_info: false } }));
         infoButton.click();
@@ -201,6 +318,7 @@ export async function testSystemInfo() {
     } finally {
         closeSystemInfo({ useHistory: false });
         window.fetch = fetchBefore; window.setTimeout = timeoutBefore; window.clearTimeout = clearBefore;
+        if (clipboardBefore) Object.defineProperty(navigator, 'clipboard', clipboardBefore);
         document.dispatchEvent(new CustomEvent('kula-config-ready', { detail: { show_system_info: true } }));
     }
     // Optional visual QA uses the same deterministic hardware fixture.

@@ -37,6 +37,7 @@ func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostn
 	s := &Snapshot{Timestamp: now}
 	s.System = p.attributes(filepath.Join(p.sys, "class/dmi/id"), map[string]string{
 		"manufacturer": "sys_vendor", "product": "product_name",
+		"family": "product_family",
 	})
 	if arch == "" {
 		arch = runtime.GOARCH
@@ -59,13 +60,25 @@ func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostn
 	s.PCI, s.USB = p.devices()
 	s.Sensors = p.sensors()
 	s.Power = p.power()
+	markTracked(s, sample)
 	if sample != nil {
 		ts := sample.Timestamp
 		s.MetricsTime = &ts
 		s.Live = &Live{
-			Memory: LiveMemory{Total: sample.Memory.Total},
-			System: LiveSystem{UptimeHuman: sample.System.UptimeHuman},
-			GPU:    make([]LiveGPU, 0, len(sample.GPU)),
+			Memory: LiveMemory{
+				Total:   sample.Memory.Total,
+				Used:    sample.Memory.Used,
+				UsedPct: sample.Memory.UsedPercent,
+			},
+			System: LiveSystem{UptimeHuman: sample.System.UptimeHuman, Processes: sample.Process.Total},
+			CPU: LiveCPU{
+				UsagePct: sample.CPU.Total.Usage,
+				Load1:    sample.LoadAvg.Load1,
+				Load5:    sample.LoadAvg.Load5,
+				Load15:   sample.LoadAvg.Load15,
+			},
+			Hottest: warmest(s.Sensors),
+			GPU:     make([]LiveGPU, 0, len(sample.GPU)),
 		}
 		for _, gpu := range sample.GPU {
 			s.Live.GPU = append(s.Live.GPU, LiveGPU{Name: gpu.Name, Driver: gpu.Driver})
@@ -73,6 +86,51 @@ func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostn
 	}
 	p.cached = s
 	return s
+}
+
+// markTracked links inventory entries to the devices and mounts the regular
+// collector actually stores history for. The page uses this to tell an operator
+// which hardware is being monitored and which is merely visible.
+func markTracked(s *Snapshot, sample *collector.Sample) {
+	if sample == nil {
+		return
+	}
+	devices := make(map[string]bool, len(sample.Disks.Devices))
+	for _, device := range sample.Disks.Devices {
+		devices[device.Name] = true
+	}
+	for i := range s.Disks {
+		s.Disks[i].Tracked = devices[s.Disks[i].Name]
+	}
+	mounts := make(map[string]bool, len(sample.Disks.FileSystems))
+	for _, filesystem := range sample.Disks.FileSystems {
+		mounts[filesystem.MountPoint] = true
+	}
+	for i := range s.Filesystems {
+		s.Filesystems[i].Tracked = mounts[s.Filesystems[i].Mount]
+	}
+	interfaces := make(map[string]bool, len(sample.Network.Interfaces))
+	for _, iface := range sample.Network.Interfaces {
+		interfaces[iface.Name] = true
+	}
+	for i := range s.Network {
+		s.Network[i].Tracked = interfaces[s.Network[i].Name]
+	}
+}
+
+// warmest reports the hottest temperature the kernel currently exposes, so the
+// overview can answer "is anything running hot" without opening the sensor tab.
+func warmest(sensors []Sensor) *LiveSensor {
+	var best *LiveSensor
+	for _, sensor := range sensors {
+		if sensor.Kind != SensorTemperature {
+			continue
+		}
+		if best == nil || sensor.Value > best.Value {
+			best = &LiveSensor{Device: sensor.Device, Name: sensor.Name, Value: sensor.Value, Unit: sensor.Unit}
+		}
+	}
+	return best
 }
 
 // Kernel pseudo-files have no useful Stat size. Bound reads, including proc

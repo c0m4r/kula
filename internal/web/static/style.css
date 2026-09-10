@@ -2,7 +2,11 @@
    Kula Dashboard Styles
    ============================================================ */
 
-/* ---- System information page ---- */
+/* ---- System information page ----
+   Inventory and measured values share one grid. Descriptive text sits at a
+   0.75rem floor: the previous 0.6rem metadata was unreadable on phones, and the
+   contrast work below is only useful if the type is legible in the first place. */
+
 .dashboard.system-info-active .time-controls,
 .dashboard.system-info-active .time-custom-section,
 .dashboard.system-info-active .chart-search-input,
@@ -80,7 +84,8 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 0.85rem;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.85rem;
     min-width: 0;
 }
 
@@ -159,6 +164,18 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     animation: spin 0.9s linear infinite;
 }
 
+#system-info-copy {
+    color: var(--text-secondary);
+    background: transparent;
+    border-color: var(--border-color);
+}
+
+#system-info-copy:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+    border-color: var(--text-muted);
+}
+
 .system-info-tabs {
     display: flex;
     gap: 0.4rem;
@@ -222,6 +239,10 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     outline: none;
 }
 
+.system-info-section {
+    min-width: 0;
+}
+
 .system-info-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -233,6 +254,13 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     grid-column: 1 / -1;
 }
 
+.system-info-page :is(button, summary, input):focus-visible,
+.system-info-page [data-copy]:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 3px;
+}
+
+/* ---- identity ---- */
 .system-info-profile {
     position: relative;
     display: grid;
@@ -245,7 +273,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     border-radius: var(--radius);
 }
 
-.system-info-profile h4 {
+.system-info-profile h3 {
     margin: 0 0 0.35rem;
     font-size: clamp(1.3rem, 2.6vw, 1.85rem);
     overflow-wrap: anywhere;
@@ -273,7 +301,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     background: var(--bg-hover);
     border: 1px solid var(--border-color);
     border-radius: 999px;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     line-height: 1.25;
 }
 
@@ -302,6 +330,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     font-size: 0.75rem;
 }
 
+/* ---- at a glance ---- */
 .system-info-summary-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -322,24 +351,32 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     cursor: default;
 }
 
+/* Only cards with a destination are interactive. They say so with a chevron and
+   a hover lift, so the two kinds of card are never mistaken for each other. */
 .system-info-summary-card.is-link {
     cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+
+.system-info-summary-card.is-link .system-info-summary-chevron {
+    margin-inline-start: auto;
+    color: var(--text-muted);
+    transition: color 0.15s, transform 0.15s;
+}
+
+.system-info-summary-card.is-link .system-info-summary-chevron svg {
+    width: 1rem;
+    height: 1rem;
 }
 
 .system-info-summary-card.is-link:hover {
     background: var(--bg-card-hover);
     border-color: var(--accent-blue);
+    transform: translateY(-1px);
 }
 
-.system-info-summary-card .system-info-meter {
-    margin-top: auto;
-    padding-top: 1rem;
-}
-
-.system-info-page :is(button, summary, input):focus-visible {
-    outline: 2px solid var(--accent-blue);
-    outline-offset: 3px;
+.system-info-summary-card.is-link:hover .system-info-summary-chevron {
+    color: var(--accent-blue);
 }
 
 .system-info-summary-top {
@@ -385,7 +422,8 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 }
 
 .system-info-card-icon[data-icon="activity"],
-.system-info-card-icon[data-icon="power"] {
+.system-info-card-icon[data-icon="power"],
+.system-info-card-icon[data-icon="bolt"] {
     color: var(--accent-green);
     background: rgba(16, 185, 129, 0.09);
     border-color: rgba(16, 185, 129, 0.22);
@@ -395,6 +433,13 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     color: var(--accent-orange);
     background: rgba(249, 115, 22, 0.09);
     border-color: rgba(249, 115, 22, 0.23);
+}
+
+.system-info-card-icon[data-icon="fan"],
+.system-info-card-icon[data-icon="droplet"] {
+    color: var(--accent-cyan);
+    background: rgba(6, 182, 212, 0.09);
+    border-color: rgba(6, 182, 212, 0.22);
 }
 
 .system-info-summary-title {
@@ -414,14 +459,29 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 
 .system-info-summary-detail {
     display: block;
-    min-height: 2.7em;
     margin-top: 0.35rem;
     color: var(--text-secondary);
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     line-height: 1.35;
     overflow-wrap: anywhere;
 }
 
+.system-info-summary-live {
+    display: block;
+    margin-top: 0.35rem;
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.4;
+}
+
+.system-info-summary-card > .system-info-live,
+.system-info-summary-card > .system-info-meter {
+    margin-top: auto;
+    padding-top: 0.9rem;
+}
+
+/* ---- generic card ---- */
 .system-info-card {
     min-width: 0;
     padding: 1.2rem;
@@ -441,7 +501,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     min-width: 0;
 }
 
-.system-info-card-heading h4 {
+.system-info-card-heading h3 {
     margin: 0;
     font-size: 0.95rem;
     line-height: 1.35;
@@ -451,14 +511,20 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 .system-info-card-heading p {
     margin-top: 0.16rem;
     color: var(--text-muted);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     overflow-wrap: anywhere;
 }
 
-.system-info-card-heading .system-info-state {
+.system-info-card-heading .system-info-state,
+.system-info-card-heading .system-info-chip {
     margin-inline-start: auto;
 }
 
+.system-info-card-heading .system-info-state + .system-info-chip {
+    margin-inline-start: 0.4rem;
+}
+
+/* ---- inventory lists ---- */
 .system-info-inventory-list {
     overflow: hidden;
     margin: 0;
@@ -508,7 +574,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 .system-info-inventory-heading p {
     margin-top: 0.18rem;
     color: var(--text-muted);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     overflow-wrap: anywhere;
 }
 
@@ -528,6 +594,25 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 
 .system-info-state.is-offline {
     color: var(--text-muted);
+}
+
+.system-info-chip.is-tracking::before {
+    content: '';
+    width: 0.42rem;
+    height: 0.42rem;
+    margin-inline-end: 0.4rem;
+    background: var(--text-muted);
+    border-radius: 50%;
+}
+
+.system-info-chip.is-tracking.is-tracked {
+    color: var(--accent-green);
+    background: rgba(16, 185, 129, 0.09);
+    border-color: rgba(16, 185, 129, 0.28);
+}
+
+.system-info-chip.is-tracking.is-tracked::before {
+    background: var(--accent-green);
 }
 
 .system-info-facts {
@@ -562,86 +647,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     white-space: pre-line;
 }
 
-.system-info-meter {
-    width: 100%;
-    max-width: 32rem;
-    margin: 1rem 0;
-}
-
-.system-info-meter:last-child {
-    margin-bottom: 0;
-}
-
-.system-info-meter-label {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    font-size: 0.78rem;
-    line-height: 1.45;
-}
-
-.system-info-meter-label span {
-    min-width: 0;
-    color: var(--text-secondary);
-    overflow-wrap: anywhere;
-}
-
-.system-info-meter-label strong {
-    font-weight: 600;
-    text-align: end;
-    overflow-wrap: anywhere;
-}
-
-.system-info-progress {
-    height: 0.48rem;
-    overflow: hidden;
-    margin-top: 0.5rem;
-    background: var(--gauge-bg);
-    border-radius: 999px;
-}
-
-.system-info-progress-fill {
-    width: var(--meter-value, 0%);
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
-    border-radius: inherit;
-    transition: width 0.25s ease;
-}
-
-.system-info-progress.is-warning .system-info-progress-fill {
-    background: linear-gradient(90deg, var(--accent-yellow), var(--accent-orange));
-}
-
-.system-info-progress.is-critical .system-info-progress-fill {
-    background: linear-gradient(90deg, var(--accent-orange), var(--accent-red));
-}
-
-.system-info-stat-pair {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.65rem;
-    margin-top: 0.9rem;
-}
-
-.system-info-stat {
-    min-width: 0;
-    padding: 0.75rem;
-    background: var(--bg-hover);
-    border-radius: var(--radius-sm);
-}
-
-.system-info-stat span {
-    display: block;
-    margin-bottom: 0.25rem;
-    color: var(--text-muted);
-    font-size: 0.68rem;
-}
-
-.system-info-stat strong {
-    font-size: 0.82rem;
-    overflow-wrap: anywhere;
-}
-
+/* ---- expandable groups ---- */
 .system-info-expandable {
     margin-top: 0.8rem;
     border-top: 1px solid var(--border-color);
@@ -654,7 +660,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     gap: 1rem;
     padding: 0.85rem 0 0;
     color: var(--text-secondary);
-    font-size: 0.76rem;
+    font-size: 0.78rem;
     font-weight: 600;
     list-style: none;
     cursor: pointer;
@@ -680,46 +686,70 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     margin-bottom: 0.85rem;
 }
 
-.system-info-feature-list {
-    color: var(--text-secondary);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    line-height: 1.75;
-    overflow-wrap: anywhere;
-}
-
-.system-info-table-wrap {
-    max-width: 100%;
-    overflow-x: auto;
-}
-
-.system-info-table {
+/* ---- usage meters ---- */
+.system-info-meter {
     width: 100%;
-    border-collapse: collapse;
-    font-size: 0.76rem;
-    text-align: start;
+    max-width: 32rem;
+    min-width: 0;
+    margin: 0;
 }
 
-.system-info-table th,
-.system-info-table td {
-    min-width: 90px;
-    max-width: 340px;
-    padding: 0.7rem 0.75rem;
-    border-bottom: 1px solid var(--border-color);
-    text-align: start;
-    vertical-align: top;
+.system-info-meter.is-empty {
+    max-width: none;
+}
+
+.system-info-empty-usage {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.system-info-progress {
+    height: 0.48rem;
+    overflow: hidden;
+    background: var(--gauge-bg);
+    border-radius: 999px;
+}
+
+.system-info-progress-fill {
+    inline-size: var(--meter-value, 0%);
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
+    border-radius: inherit;
+    transition: inline-size 0.25s ease;
+}
+
+.system-info-progress.is-warning .system-info-progress-fill {
+    background: linear-gradient(90deg, var(--accent-yellow), var(--accent-orange));
+}
+
+.system-info-progress.is-critical .system-info-progress-fill {
+    background: linear-gradient(90deg, var(--accent-orange), var(--accent-red));
+}
+
+.system-info-meter-label {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.2rem 1rem;
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.45;
+}
+
+.system-info-meter-label span {
+    min-width: 0;
+    color: var(--text-secondary);
     overflow-wrap: anywhere;
 }
 
-.system-info-table th {
-    color: var(--text-secondary);
-    background: var(--bg-hover);
-    font-size: 0.68rem;
-    font-weight: 650;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
+.system-info-meter-label strong {
+    font-weight: 600;
+    text-align: end;
+    overflow-wrap: anywhere;
 }
 
+/* ---- storage: drives ---- */
 .system-info-drive-mounts {
     margin-top: 0.65rem;
     padding-top: 0.75rem;
@@ -730,12 +760,14 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     display: block;
     margin-bottom: 0.45rem;
     color: var(--text-secondary);
-    font-size: 0.76rem;
+    font-size: 0.78rem;
 }
 
 .system-info-path-list {
     display: grid;
     gap: 0.35rem;
+    margin: 0;
+    padding: 0;
     list-style: none;
 }
 
@@ -766,6 +798,29 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     padding-top: 0.4rem;
 }
 
+/* Stacked devices sit inside their own collapsible group, so the nested grid
+   must not inherit the outer two-column split. */
+.system-info-stacked {
+    display: block;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+}
+
+.system-info-stacked > summary {
+    padding: 0.9rem 0;
+}
+
+.system-info-stacked[open] > summary {
+    margin-bottom: 0.35rem;
+}
+
+.system-info-stacked .system-info-grid {
+    margin-bottom: 0.5rem;
+}
+
+/* ---- storage: mounted filesystems ---- */
 .system-info-mount-toolbar {
     display: flex;
     align-items: center;
@@ -804,13 +859,8 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     font-variant-numeric: tabular-nums;
 }
 
-.system-info-filesystems,
-.system-info-sensor-list {
-    display: grid;
-    gap: 0.75rem;
-}
-
 .system-info-filesystems {
+    display: grid;
     gap: 0;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
@@ -818,8 +868,12 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 }
 
 .system-info-filesystem {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.75rem 1.5rem;
+    align-items: center;
     min-width: 0;
-    padding: 1rem 1.1rem;
+    padding: 0.9rem 1.1rem;
 }
 
 .system-info-filesystem + .system-info-filesystem {
@@ -836,6 +890,10 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 }
 
 .system-info-filesystem-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
     font-weight: 650;
 }
 
@@ -843,23 +901,18 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     font-size: 0.88rem;
 }
 
-.system-info-filesystem-meta,
-.system-info-filesystem-available,
-.system-info-empty-usage {
-    color: var(--text-secondary);
-    font-size: 0.75rem;
-}
-
 .system-info-filesystem-meta {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.35rem 0.6rem;
-    margin-top: 0.5rem;
+    margin-top: 0.4rem;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
 }
 
-.system-info-filesystem-meta .system-info-path {
-    font-size: 0.72rem;
+.system-info-filesystem-meta .system-info-device {
+    font-size: 0.75rem;
 }
 
 .system-info-fs-type {
@@ -867,173 +920,139 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     border: 1px solid var(--border-color);
     border-radius: 4px;
     font-family: var(--font-mono);
-    font-size: 0.68rem;
-}
-
-.system-info-filesystem .system-info-meter {
-    max-width: none;
-    margin: 0;
-}
-
-.system-info-filesystem-available {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 0.3rem 1rem;
-    margin-top: 0.4rem;
-    font-variant-numeric: tabular-nums;
-}
-
-.system-info-filesystem-available strong {
-    color: var(--text-primary);
-}
-
-.system-info-filesystem > .system-info-expandable {
-    grid-column: 1 / -1;
-    margin-top: 0;
-    border: 0;
-}
-
-.system-info-filesystem > .system-info-expandable > summary {
-    justify-content: flex-start;
-    gap: 0.45rem;
-    padding-top: 0.15rem;
-    font-size: 0.7rem;
-    font-weight: 400;
-}
-
-.system-info-mount-options {
-    display: block;
-    color: var(--text-secondary);
-    font-family: var(--font-mono);
     font-size: 0.75rem;
-    line-height: 1.6;
-    overflow-wrap: anywhere;
 }
 
 .system-info-runtime-mounts > summary {
     padding-block: 1rem 0.25rem;
 }
 
-.system-info-sensor-list {
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+/* ---- network ---- */
+.system-info-interface .system-info-facts dd {
+    font-variant-numeric: tabular-nums;
 }
 
-.system-info-sensor-reading {
-    min-width: 0;
-    padding: 0.8rem;
-    background: var(--bg-hover);
-    border-radius: var(--radius-sm);
-}
-
-.system-info-sensor-reading span {
-    display: block;
-    margin-bottom: 0.3rem;
-    color: var(--text-secondary);
-    font-size: 0.7rem;
-    overflow-wrap: anywhere;
-}
-
-.system-info-sensor-reading strong {
-    font-family: var(--font-mono);
-    font-size: 0.95rem;
-    overflow-wrap: anywhere;
-}
-
-.system-info-temperature-reading {
+/* ---- devices ---- */
+.system-info-device-groups {
     display: grid;
-    grid-template-columns: 2.1rem minmax(0, 1fr);
-    grid-template-rows: auto auto;
-    gap: 0.2rem 0.75rem;
-    align-items: center;
-    min-height: 5.3rem;
-    padding: 0.75rem;
-    background: var(--bg-hover);
+    gap: 0.35rem;
+}
+
+.system-info-device-group,
+.system-info-sensor-group {
+    min-width: 0;
+}
+
+.system-info-device-group {
+    margin-top: 0;
+    padding: 0 1.15rem 1.15rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.system-info-device-group > summary {
+    padding: 1rem 0 0;
+    font-size: 0.82rem;
+}
+
+.system-info-device-group[open] > summary {
+    margin-bottom: 1rem;
+}
+
+.system-info-device-group > summary h3 {
+    margin: 0;
+    font-size: 0.82rem;
+    font-weight: 650;
+}
+
+.system-info-device-group .system-info-inventory-list {
     border-radius: var(--radius-sm);
 }
 
-.system-info-temperature-reading > span {
-    align-self: end;
-    color: var(--text-secondary);
-    font-size: 0.7rem;
-    overflow-wrap: anywhere;
+.system-info-group-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    padding-inline-start: 0.15rem;
 }
 
-.system-info-temperature-reading > strong {
-    align-self: start;
+.system-info-group-heading h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 650;
+}
+
+.system-info-device-name {
+    padding: 0.12rem 0.4rem;
+    color: var(--text-muted);
+    background: var(--bg-hover);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
+
+/* ---- sensors ---- */
+.system-info-sensor-group {
+    margin-bottom: 1.1rem;
+}
+
+.system-info-sensor-live {
+    margin-inline-start: auto;
     font-family: var(--font-mono);
     font-size: 1rem;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
-.system-info-thermometer {
-    --temperature-color: var(--accent-cyan);
-    position: relative;
-    grid-row: 1 / 3;
-    justify-self: center;
-    width: 1.25rem;
-    height: 4rem;
+.system-info-inventory-item.is-warm .system-info-sensor-live {
+    color: var(--accent-yellow);
 }
 
-.system-info-thermometer-track {
-    position: absolute;
-    inset: 0.15rem 0.34rem 0.7rem;
-    overflow: hidden;
-    background: var(--gauge-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 999px 999px 0 0;
+.system-info-inventory-item.is-hot .system-info-sensor-live {
+    color: var(--accent-orange);
 }
 
-.system-info-thermometer-fill {
-    position: absolute;
-    inset-inline: 0;
-    bottom: 0;
-    height: var(--temperature-level, 0%);
-    background: var(--temperature-color);
-    border-radius: inherit;
-    transition: height 0.25s ease, background 0.25s ease;
+.system-info-inventory-item.is-critical .system-info-sensor-live {
+    color: var(--accent-red);
 }
 
-.system-info-thermometer-bulb {
-    position: absolute;
-    inset-inline-start: 0;
-    bottom: 0;
-    width: 1.25rem;
-    height: 1.25rem;
-    background: var(--temperature-color);
-    border: 0.22rem solid color-mix(in srgb, var(--temperature-color) 28%, var(--bg-card));
-    border-radius: 50%;
-    box-shadow: 0 0 9px color-mix(in srgb, var(--temperature-color) 42%, transparent);
+.system-info-inventory-item.is-hot .system-info-card-icon,
+.system-info-inventory-item.is-critical .system-info-card-icon {
+    color: var(--accent-red);
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.28);
 }
 
-.system-info-thermometer.is-warm {
-    --temperature-color: var(--accent-yellow);
-}
-
-.system-info-thermometer.is-hot {
-    --temperature-color: var(--accent-orange);
-}
-
-.system-info-thermometer.is-critical {
-    --temperature-color: var(--accent-red);
-}
-
+/* ---- notes, empty states, loading ---- */
 .system-info-note {
     display: flex;
-    align-items: flex-start;
-    gap: 0.65rem;
+    flex-direction: column;
+    gap: 0.4rem;
     padding: 0.9rem 1rem;
     color: var(--text-secondary);
     background: rgba(59, 130, 246, 0.07);
     border: 1px solid rgba(59, 130, 246, 0.18);
     border-radius: var(--radius-sm);
-    font-size: 0.75rem;
+    font-size: 0.78rem;
     line-height: 1.5;
 }
 
-.system-info-note::before {
+.system-info-note p {
+    margin: 0;
+    padding-inline-start: 1.9rem;
+    position: relative;
+}
+
+.system-info-note p:first-child::before {
     content: 'i';
+    position: absolute;
+    inset-inline-start: 0;
+    top: -0.1rem;
     display: grid;
-    flex: 0 0 auto;
     place-items: center;
     width: 1.25rem;
     height: 1.25rem;
@@ -1041,8 +1060,13 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     border: 1px solid rgba(59, 130, 246, 0.35);
     border-radius: 50%;
     font-family: serif;
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     font-weight: 700;
+}
+
+.system-info-note-hint {
+    color: var(--text-muted);
+    font-size: 0.75rem;
 }
 
 .system-info-empty {
@@ -1071,6 +1095,19 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     to { background-position-x: -220%; }
 }
 
+/* ---- copy affordance ---- */
+.system-info-copyable,
+.system-info-path[data-copy],
+.system-info-device[data-copy] {
+    cursor: copy;
+}
+
+.system-info-page .system-info-path[data-copy]:hover,
+.system-info-page .system-info-device[data-copy]:hover {
+    color: var(--accent-cyan);
+}
+
+/* ---- responsive ---- */
 @media (max-width: 900px) {
     .system-info-status {
         text-align: start;
@@ -1085,47 +1122,74 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     }
 
     .system-info-profile-side {
-        padding: 1rem 0 0;
+        padding-inline-start: 0;
+        padding-top: 1.1rem;
         border-inline-start: 0;
         border-top: 1px solid var(--border-color);
     }
-
 }
 
 @media (max-width: 640px) {
     .system-info-page {
-        padding: 1rem 0.8rem 2.5rem;
+        padding: clamp(1rem, 4vw, 1.5rem) 0.9rem 3rem;
     }
 
     .system-info-toolbar {
-        align-items: stretch;
-        flex-direction: column;
-        margin-top: 0;
+        flex-wrap: wrap;
     }
 
     .system-info-update {
-        justify-content: space-between;
+        justify-content: flex-start;
     }
 
     .system-info-refresh {
-        flex: 0 0 auto;
+        min-height: 2.25rem;
+        padding: 0.45rem 0.7rem;
+        font-size: 0.75rem;
     }
 
+    /* Five tabs never fit a phone. Rather than hiding two of them behind a
+       horizontal scroll with no affordance, wrap them into a visible grid. */
     .system-info-tabs {
-        margin-inline: -0.8rem;
-        padding-inline: 0.8rem;
-        border-inline: 0;
-        border-radius: 0;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.3rem;
+        overflow: visible;
     }
 
     .system-info-tab {
-        flex: 0 0 auto;
+        flex-direction: column;
+        gap: 0.25rem;
+        min-height: 0;
+        padding: 0.5rem 0.35rem;
+        font-size: 0.72rem;
+        line-height: 1.25;
+        text-align: center;
+        white-space: normal;
     }
 
     .system-info-grid,
-    .system-info-summary-grid,
     .system-info-loading-grid {
         grid-template-columns: minmax(0, 1fr);
+    }
+
+    .system-info-summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.6rem;
+    }
+
+    .system-info-summary-card {
+        padding: 0.9rem;
+    }
+
+    .system-info-summary-value {
+        min-height: 0;
+        font-size: 0.92rem;
+    }
+
+    .system-info-summary-detail,
+    .system-info-summary-live {
+        font-size: 0.75rem;
     }
 
     .system-info-card {
@@ -1133,14 +1197,22 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     }
 
     .system-info-facts {
-        grid-template-columns: minmax(90px, 0.7fr) minmax(0, 1.3fr);
-        column-gap: 0.75rem;
+        grid-template-columns: minmax(0, 1fr);
+        column-gap: 0;
+    }
+
+    .system-info-facts dd {
+        padding-top: 0;
+        border-top: 0;
+    }
+
+    .system-info-facts dt {
+        padding-bottom: 0;
     }
 
     .system-info-filesystem {
         grid-template-columns: minmax(0, 1fr);
-        gap: 0.85rem;
-        padding: 0.85rem;
+        align-items: start;
     }
 
     .system-info-mount-toolbar {
@@ -1149,14 +1221,28 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     }
 
     .system-info-mount-search {
-        flex-basis: 100%;
+        max-width: none;
     }
 
-    .system-info-summary-value,
-    .system-info-summary-detail {
-        min-height: 0;
+    .system-info-mount-count {
+        margin-inline-start: 0;
+    }
+
+    .system-info-device-group {
+        padding: 0 0.85rem 0.85rem;
+    }
+
+    .system-info-inventory-item {
+        padding: 0.9rem 0.85rem;
     }
 }
+
+@media (max-width: 380px) {
+    .system-info-summary-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
 
 @font-face {
     font-family: 'Inter';

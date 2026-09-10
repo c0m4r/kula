@@ -93,7 +93,8 @@
                 <button id="btn-pause" class="btn-icon" title="Pause/Resume">⏸</button>
                 <!-- Current system and hardware inventory -->
                 <button id="btn-info" class="btn-icon btn-info" data-i18n-title="system_info"
-                    title="System Info" aria-controls="system-info-page">📡</button>
+                    data-i18n-aria-label="system_info" title="System Info" aria-controls="system-info-page"
+                    aria-expanded="false" aria-label="System Info"><span aria-hidden="true">📡</span></button>
                 <!-- Alert bell -->
                 <div class="alert-container" id="alert-container">
                     <button id="btn-alerts" class="btn-icon btn-alert" data-i18n-title="alerts" title="Alerts">
@@ -572,6 +573,13 @@
                     </button>
                     <div class="system-info-update">
                         <span id="system-info-status" class="system-info-status" role="status" aria-live="polite"></span>
+                        <button id="system-info-copy" class="system-info-refresh" type="button">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M9 9h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"></path>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            <span data-i18n="si_copy_summary">Copy summary</span>
+                        </button>
                         <button id="system-info-refresh" class="system-info-refresh" type="button">
                             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"></path>
