@@ -15,7 +15,8 @@ import {
     syncZoom,
     updateAllCharts,
 } from './charts-data.js';
-import { toggleAlertDropdown, toggleInfoDropdown } from './alerts.js';
+import { toggleAlertDropdown } from './alerts.js';
+import { initSystemInfo } from './system-info.js';
 import {
     syncPauseState,
     togglePause,
@@ -379,7 +380,7 @@ async function init() {
     document.getElementById('btn-pause').addEventListener('click', togglePause);
     document.getElementById('btn-layout').addEventListener('click', toggleLayout);
     document.getElementById('btn-alerts').addEventListener('click', toggleAlertDropdown);
-    document.getElementById('btn-info').addEventListener('click', toggleInfoDropdown);
+    initSystemInfo();
     document.getElementById('btn-time-menu').addEventListener('click', (e) => {
         e.stopPropagation();
         const list = document.getElementById('time-presets-list');
@@ -473,10 +474,6 @@ async function init() {
         if (state.alertDropdownOpen && !e.target.closest('#alert-container')) {
             state.alertDropdownOpen = false;
             document.getElementById('alert-dropdown').classList.add('hidden');
-        }
-        if (state.infoDropdownOpen && !e.target.closest('#info-container')) {
-            state.infoDropdownOpen = false;
-            document.getElementById('info-dropdown').classList.add('hidden');
         }
         if (state.timeDropdownOpen && !e.target.closest('.time-presets')) {
             state.timeDropdownOpen = false;

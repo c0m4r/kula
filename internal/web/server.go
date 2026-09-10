@@ -28,6 +28,7 @@ import (
 	"kula/internal/config"
 	"kula/internal/i18n"
 	"kula/internal/storage"
+	"kula/internal/sysinfo"
 )
 
 //go:embed static
@@ -39,6 +40,7 @@ type Server struct {
 	gameScoreURL    string
 	gameScoreOrigin string
 	collector       *collector.Collector
+	systemInfo      *sysinfo.Provider
 	store           *storage.Store
 	auth            *AuthManager
 	hub             *wsHub
@@ -70,6 +72,7 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 		gameScoreURL:    gameScoreURL,
 		gameScoreOrigin: gameScoreOrigin,
 		collector:       c,
+		systemInfo:      sysinfo.New(),
 		store:           s,
 		auth:            NewAuthManager(cfg.Auth, storageDir, cfg.TrustProxy, cfg.Security),
 		hub:             newWSHub(),
@@ -353,6 +356,7 @@ func (s *Server) buildHandler() http.Handler {
 	// API routes
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("/api/current", s.handleCurrent)
+	apiMux.HandleFunc("/api/system-info", s.handleSystemInfo)
 	apiMux.HandleFunc("/api/history", s.handleHistory)
 	apiMux.HandleFunc("/api/config", s.handleConfig)
 	apiMux.HandleFunc("/api/login", s.handleLogin)

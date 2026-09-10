@@ -107,13 +107,3 @@ export function toggleAlertDropdown() {
         dropdown.classList.add('hidden');
     }
 }
-
-export function toggleInfoDropdown() {
-    state.infoDropdownOpen = !state.infoDropdownOpen;
-    const dropdown = document.getElementById('info-dropdown');
-    if (state.infoDropdownOpen) {
-        dropdown.classList.remove('hidden');
-    } else {
-        dropdown.classList.add('hidden');
-    }
-}

@@ -1885,7 +1885,7 @@ function applyAggregationValidity(validAggregations) {
             params.delete('agg');
             const query = params.toString();
             const url = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
-            window.history.replaceState(null, '', url);
+            window.history.replaceState(window.history.state, '', url);
         }
     }
 

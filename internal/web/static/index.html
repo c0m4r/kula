@@ -37,6 +37,7 @@
     <link rel="modulepreload" href="js/app/container-apps.js" integrity="{{sri `js/app/container-apps.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/charts-data.js" integrity="{{sri `js/app/charts-data.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/header.js" integrity="{{sri `js/app/header.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/system-info.js" integrity="{{sri `js/app/system-info.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/gauges.js" integrity="{{sri `js/app/gauges.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/alerts.js" integrity="{{sri `js/app/alerts.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/websocket.js" integrity="{{sri `js/app/websocket.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
@@ -90,40 +91,9 @@
                 <span id="connection-status" class="status-dot connected" title="Connected"></span>
                 <!-- Pause/Resume -->
                 <button id="btn-pause" class="btn-icon" title="Pause/Resume">⏸</button>
-                <!-- Info dropdown -->
-                <div class="alert-container" id="info-container">
-                    <button id="btn-info" class="btn-icon btn-info" data-i18n-title="system_info"
-                        title="System Info">📡</button>
-                    <div id="info-dropdown" class="alert-dropdown hidden">
-                        <div class="alert-dropdown-header" data-i18n="system_info">System Info</div>
-                        <div class="alert-list">
-                            <div class="alert-item" id="row-os">
-                                <div class="alert-item-body">
-                                    <div class="alert-item-title" data-i18n="os">OS</div>
-                                    <div class="alert-item-detail" id="sys-os"></div>
-                                </div>
-                            </div>
-                            <div class="alert-item" id="row-kernel">
-                                <div class="alert-item-body">
-                                    <div class="alert-item-title" data-i18n="kernel">Kernel</div>
-                                    <div class="alert-item-detail" id="sys-kernel"></div>
-                                </div>
-                            </div>
-                            <div class="alert-item" id="row-arch">
-                                <div class="alert-item-body">
-                                    <div class="alert-item-title" data-i18n="architecture">Architecture</div>
-                                    <div class="alert-item-detail" id="sys-arch"></div>
-                                </div>
-                            </div>
-                            <div class="alert-item">
-                                <div class="alert-item-body">
-                                    <div class="alert-item-title" data-i18n="uptime">Uptime</div>
-                                    <div class="alert-item-detail" id="uptime"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <!-- Current system and hardware inventory -->
+                <button id="btn-info" class="btn-icon btn-info" data-i18n-title="system_info"
+                    title="System Info" aria-controls="system-info-page">📡</button>
                 <!-- Alert bell -->
                 <div class="alert-container" id="alert-container">
                     <button id="btn-alerts" class="btn-icon btn-alert" data-i18n-title="alerts" title="Alerts">
@@ -368,7 +338,7 @@
         </form>
         </div><!-- /.sticky-topbar -->
 
-
+        <main id="dashboard-home">
         <!-- Gauges row -->
         <section class="gauges-row" id="gauges-row">
             <div class="gauge-card" id="gauge-cpu">
@@ -589,6 +559,41 @@
                 <a href="https://github.com/c0m4r/kula" target="_blank" rel="noopener noreferrer">GitHub</a>
             </div>
         </footer>
+        </main>
+
+        <main id="system-info-page" class="system-info-page hidden" aria-labelledby="system-info-title">
+            <div class="system-info-shell">
+                <h2 id="system-info-title" class="sr-only" tabindex="-1" data-i18n="si_page_title">About this system</h2>
+
+                <div class="system-info-toolbar">
+                    <button id="system-info-back" class="system-info-back" type="button">
+                        <span aria-hidden="true">←</span>
+                        <span data-i18n="si_back_dashboard">Back to dashboard</span>
+                    </button>
+                    <div class="system-info-update">
+                        <span id="system-info-status" class="system-info-status" role="status" aria-live="polite"></span>
+                        <button id="system-info-refresh" class="system-info-refresh" type="button">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"></path>
+                            </svg>
+                            <span data-i18n="si_refresh_now">Refresh now</span>
+                        </button>
+                    </div>
+                </div>
+
+                <nav id="system-info-tabs" class="system-info-tabs" role="tablist"
+                    data-i18n-aria-label="si_sections" aria-label="System information sections"></nav>
+                <div id="system-info-content" class="system-info-content" role="tabpanel" tabindex="0"></div>
+
+                <aside class="system-info-availability">
+                    <span class="system-info-availability-icon" aria-hidden="true">i</span>
+                    <div>
+                        <strong data-i18n="si_availability_title">Some details may not be available</strong>
+                        <p data-i18n="si_availability">What you see depends on this machine's hardware, drivers, and access permissions. Missing readings are shown as —.</p>
+                    </div>
+                </aside>
+            </div>
+        </main>
     </div>
 
     <!-- AI Assistant Panel -->

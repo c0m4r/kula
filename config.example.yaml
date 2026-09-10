@@ -14,7 +14,7 @@
 global:
   # Overwrite reports hostname (default: system hostname)
   hostname: ""
-  # Toggle display of OS, Kernel, and Architecture (default: true)
+  # Show OS/kernel/architecture and the current hardware inventory page/API (default: true)
   show_system_info: true
   # Toggle display of Kula version (default: true)
   show_version: true

@@ -47,6 +47,13 @@ stores them in a built-in tiered ring-buffer storage engine, and serves them thr
 
 Note: Monitoring NVIDIA GPUs might require additional setup. Check [GPU monitoring](https://github.com/c0m4r/kula/wiki/GPU-monitoring).
 
+The dashboard's **System Info** button opens a dedicated current-hardware page: motherboard and
+firmware, CPU topology and caches, memory modules, drives and filesystem usage, network
+addresses and utilization, PCI/USB devices, sensors, and power supplies. A friendly summary
+comes first, while low-level identifiers and counters stay available under technical details.
+It refreshes while open and works independently of chart history. See
+[System Info](docs/user/05-web-dashboard.md#system-info).
+
 ---
 
 ## 🪩 How It Works

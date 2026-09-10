@@ -62,6 +62,10 @@ const server = http.createServer((req, res) => {
         }
         if (relative === 'api/history') return sendJSON(history(url));
         if (relative === 'audit-client.js') { res.setHeader('Content-Type', 'text/javascript'); return res.end(client); }
+        if (relative === 'audit-system-info.js') {
+            res.setHeader('Content-Type', 'text/javascript');
+            return res.end(source(variant, 'internal/web/testdata/system_info_client.js'));
+        }
         if (relative === '' || relative === 'index.html') {
             let html = source(variant, 'internal/web/static/index.html').toString();
             html = html.replace(/\{\{if \.BasePath\}\}[\s\S]*?\{\{end\}\}/g, `<base href="/${variant}/">`)
@@ -131,6 +135,26 @@ try {
     assert.ok(ready, 'Dashboard fixture timed out');
     const result = await evaluate('window.result');
     assert.equal(result.status, 'pass');
+    if (process.env.KULA_SYSTEM_INFO_SCREENSHOTS) {
+        const outputDir = process.env.KULA_SYSTEM_INFO_SCREENSHOTS;
+        fs.mkdirSync(outputDir, { recursive: true });
+        await evaluate('window.openSystemInfoQA()');
+        for (const [name, width, height, section, light] of [
+            ['overview-dark', 1440, 1000, 'overview', false],
+            ['storage-light', 1440, 1000, 'storage', true],
+            ['network-mobile', 390, 844, 'network', false],
+        ]) {
+            await call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 640 });
+            await evaluate(`document.body.classList.toggle('light-mode', ${light}); document.querySelector('[data-section="${section}"]').click(); ${section === 'overview' ? "window.scrollTo({top: 0, behavior: 'instant'})" : ''}`);
+            await delay(100);
+            assert.ok(await evaluate('document.getElementById("system-info-content").scrollWidth <= document.getElementById("system-info-content").clientWidth + 1'), `${name} overflows`);
+            const shot = await call('Page.captureScreenshot', { format: 'png' });
+            fs.writeFileSync(path.join(outputDir, `${name}.png`), Buffer.from(shot.data, 'base64'));
+        }
+        await evaluate('document.getElementById("system-info-back").click()');
+        assert.ok(await evaluate('document.getElementById("system-info-page").classList.contains("hidden")'),
+            'Back did not close system info');
+    }
     console.log(JSON.stringify(result));
 } finally {
     socket?.close();

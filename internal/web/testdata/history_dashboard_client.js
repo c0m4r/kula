@@ -753,7 +753,8 @@ for (const chart of Object.values(Chart.instances)) {
             (point.y === null || Number.isFinite(point.y))), 'Unparsed chart data contains an invalid coordinate');
     }
 }
-window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math.round(layoutMs),
+await (await import('./audit-system-info.js')).testSystemInfo();
+window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math.round(layoutMs), system_info: true,
     history_replay: replayPerformance, scoped_device_replay: true, numeric_chart_points: true,
     retained_hours: span / 3600000, max_live_items: maxItems, gap_items: gapItemCount,
     data_opt_in: true, background_live_gauges: true, failure_preserves_history: true,

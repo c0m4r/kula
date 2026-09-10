@@ -34,13 +34,16 @@ the file. These are handy for containers and quick tweaks:
 ```yaml
 global:
   hostname: ""            # Override reported hostname (default: system hostname)
-  show_system_info: true  # Show OS / Kernel / Architecture in UI
+  show_system_info: true  # Show OS/kernel/architecture and current hardware inventory
   show_version: true      # Show Kula version in UI
   default_theme: auto     # Web UI theme: light, dark, or auto
   easter_egg: true        # Show the Space Invaders button in the UI
 ```
 
-When `show_system_info` is `false`, OS/Kernel/Arch are reported as "Hidden".
+When `show_system_info` is `false`, OS/Kernel/Arch are reported as "Hidden", the System Info
+button is hidden, and `/api/system-info` returns 404. When enabled, the inventory includes
+readable hardware identifiers (such as serial numbers), network addresses, and mount details.
+The endpoint uses the same authentication setting as the rest of the dashboard.
 
 ---
 

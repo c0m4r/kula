@@ -9,7 +9,7 @@ dashboard is disabled and only `/metrics` and `/health` remain.
 
 ## Layout
 
-- **Header** — hostname, system info (OS / kernel / arch), Kula version, theme toggle,
+- **Header** — hostname, current system and hardware info, Kula version, theme toggle,
   language selector, and (when enabled) the AI assistant 🤖 button and the Space Invaders
   easter-egg button.
 - **Gauges** — at-a-glance circular gauges for the headline metrics (CPU, memory, etc.).
@@ -18,6 +18,49 @@ dashboard is disabled and only `/metrics` and `/health` remain.
   metrics.
 
 ## Features
+
+### System Info
+
+Choose **System Info** (📡) in the header to open the dedicated current-inventory page. The
+at-a-glance view puts the server identity, uptime, CPU, memory, main storage, and primary network
+connection first. Lower-level identifiers, counters, mount options, and device tables are grouped
+under **Technical details** so they remain available without overwhelming the main view. Use
+**Back to dashboard** or the browser Back button to return to the charts.
+
+The page refreshes every five seconds while open and visible, including when charts are paused or
+viewing a historical range. Leaving it or hiding the browser tab stops requests. **Refresh now**
+retries immediately; server discovery is shared across clients for up to five seconds. The
+`#system-info` URL fragment makes the page navigable with browser Back and Forward.
+
+- **Overview**: OS, kernel, architecture, system/motherboard identity, BIOS/firmware,
+  uptime, clock synchronization, processes, and current resource usage.
+- **CPU**: processor model/features, physical cores, sockets, logical CPUs, NUMA nodes,
+  shared caches, frequency policies, temperatures, and kernel-reported mitigations.
+- **Memory**: RAM/swap usage, memory accounting, SMBIOS module slots, manufacturer,
+  part/serial numbers, capacity, type and speed, plus EDAC details/error counters when exposed.
+- **Storage**: physical and virtual drives, partitions, capacity, model/serial/WWID,
+  sector sizes, backing devices, I/O rates, busy percentage, and mounted filesystem usage.
+- **Network**: all visible interfaces, including virtual interfaces and loopback; addresses,
+  MAC, driver, MTU, state, link speed, separate receive/transmit rates and utilization,
+  and cumulative byte/error/drop counters.
+- **Devices**: current GPU metrics and PCI/USB inventory with device IDs and available drivers.
+- **Sensors & power**: readable temperatures, fans, voltages, current, power, humidity,
+  and battery/UPS/mains attributes.
+
+The page reads `/proc` and `/sys` directly without requiring external utilities. Available
+details depend on the machine, drivers, permissions, and container namespaces. Missing
+readings appear as `—`; memory module records often require additional read permissions.
+SMBIOS and EDAC describe their own views of modules and are labeled by source.
+
+Disk and network rates need two readings and reset after a long idle gap or device replacement.
+Network utilization requires a known link speed. I/O busy measures active time, not remaining
+drive bandwidth. Filesystem usage is shown per mount; shared volumes can appear on multiple
+backing drives, so their capacities should not be summed. Remote/FUSE mount usage is available
+when supplied by the configured collector. The displayed inventory and metric collection
+timestamps make stale readings visible, and request failures are reported on the page.
+
+Inventory is held in memory and never written to history. Disable both the page and its API
+with `global.show_system_info: false`.
 
 ### Time range & history
 
@@ -175,6 +218,7 @@ The headline endpoints:
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /api/current` | The latest sample |
+| `GET /api/system-info` | Current system/hardware inventory and utilization |
 | `GET /api/history?from=&to=&points=&sections=` | Time-range history (downsampled; optional section selection) |
 | `GET /api/config` | UI configuration (theme, langs, graph bounds, custom metrics) |
 | `GET /ws` | WebSocket live stream |

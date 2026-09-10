@@ -10,6 +10,7 @@ import { applyTheme } from './settings.js';
 import { applySplitFromConfig } from './split.js';
 import { apiUrl } from './api.js';
 import { i18n } from './i18n.js';
+import { closeSystemInfo } from './system-info.js';
 
 export function checkAuth() {
     fetch(apiUrl('/api/auth/status'))
@@ -61,24 +62,6 @@ export function fetchConfig() {
                     const el = document.getElementById(id);
                     if (el) el.classList.add('hidden');
                 });
-            }
-            if (cfg.show_system_info === false) {
-                ['row-os', 'row-kernel', 'row-arch'].forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el) el.classList.add('hidden');
-                });
-            }
-            if (cfg.os) {
-                const osEl = document.getElementById('sys-os');
-                if (osEl) osEl.textContent = cfg.os;
-            }
-            if (cfg.kernel) {
-                const kernelEl = document.getElementById('sys-kernel');
-                if (kernelEl) kernelEl.textContent = cfg.kernel;
-            }
-            if (cfg.arch) {
-                const archEl = document.getElementById('sys-arch');
-                if (archEl) archEl.textContent = cfg.arch;
             }
             if (cfg.hostname) {
                 const hostnameEl = document.getElementById('hostname');
@@ -161,6 +144,7 @@ export function handleLogin(e) {
 }
 
 export function handleLogout() {
+    closeSystemInfo({ useHistory: false });
     const headers = {};
     if (state.csrfToken) {
         headers['X-CSRF-Token'] = state.csrfToken;

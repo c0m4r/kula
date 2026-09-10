@@ -103,7 +103,7 @@ export function updateUrl(state) {
 
     const qs = params.toString();
     const newUrl = window.location.pathname + (qs ? '?' + qs : '') + window.location.hash;
-    window.history.replaceState(null, '', newUrl);
+    window.history.replaceState(window.history.state, '', newUrl);
 }
 
 function cloneViewport(viewport) {

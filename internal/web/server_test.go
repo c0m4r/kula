@@ -630,8 +630,8 @@ func TestHistoryFrontendUsesSharedLifecycleAndCanonicalItems(t *testing.T) {
 			t.Errorf("history interaction UI is missing %q", interaction)
 		}
 	}
-	if count := strings.Count(string(indexHTML), `aria-live="polite"`); count != 2 {
-		t.Errorf("ARIA polite live regions = %d, want pin and history-status announcements", count)
+	if count := strings.Count(string(indexHTML), `aria-live="polite"`); count != 3 {
+		t.Errorf("ARIA polite live regions = %d, want pin, history-status, and system-info announcements", count)
 	}
 }
 

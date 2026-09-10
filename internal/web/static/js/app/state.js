@@ -44,7 +44,6 @@ export const state = {
     historyRequestGeneration: 0,
     alerts: [],
     alertDropdownOpen: false,
-    infoDropdownOpen: false,
     timeDropdownOpen: false,
     aggDropdownOpen: false,
     layoutMode: localStorage.getItem('kula_layout') || 'grid',

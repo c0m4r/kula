@@ -39,6 +39,7 @@ Routes are registered on an inner mux, then wrapped so everything is served unde
 |--------|-------|---------|------|
 | GET | `/`, `/index.html` | dashboard SPA | — |
 | GET | `/api/current` | latest sample (`Collector.Latest()`) | yes¹ |
+| GET/HEAD | `/api/system-info` | current hardware inventory and utilization | yes¹ |
 | GET | `/api/history` | time-range history | yes¹ |
 | GET | `/api/config` | UI config (theme, langs, graph bounds, custom metrics, ollama) | yes¹ |
 | POST | `/api/login` | login | public |
@@ -70,6 +71,31 @@ tagged) → CORS → auth/CSRF. Security headers, CSP nonce, and SRI behavior ar
 ### `GET /api/current`
 
 Returns the latest `Sample` as JSON. `503 no data yet` before the first sample.
+
+### `GET /api/system-info`
+
+Returns a current snapshot with `ts`, optional `metrics_ts` and `live`, and the inventory
+sections `system`, `board`, `bios`, `cpu`, `memory`, `dimms`, `disks`, `filesystems`, `network`,
+`pci`, `usb`, `sensors`, and `power`. Hardware attribute maps omit unreadable values;
+optional numeric fields are omitted when unknown. The response is available before the first
+metric collection; `live` and `metrics_ts` are then absent. `live` contains selected fields
+from `Collector.Latest()`, never storage. Time-range parameters do not select historical data.
+
+`internal/sysinfo.Provider` serializes discovery and shares an immutable snapshot for five
+seconds across clients. It starts no background workers. Disk/network rate baselines are
+discarded after idle gaps longer than 15 seconds, disappearing devices, identity changes,
+or decreasing counters. Network `rx_pct` and `tx_pct` use each direction's rate divided by
+the reported link speed; unknown speed leaves both absent. Disk `busy_pct` uses the delta
+of active milliseconds in sysfs block statistics.
+
+Responses send `Cache-Control: no-store`. Disabled `global.show_system_info` returns 404;
+methods other than GET/HEAD return 405. Existing API authentication, base paths, and UI
+enablement apply. Discovery uses the existing read-only `/proc` and `/sys` sandbox rules;
+OS metadata is supplied from startup configuration. No storage schema/codec changes occur.
+
+Sources: [Linux block statistics](https://docs.kernel.org/block/stat.html),
+[network sysfs ABI](https://github.com/torvalds/linux/blob/master/Documentation/ABI/testing/sysfs-class-net),
+and [DMTF SMBIOS specification, section 7.18](https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.9.0.pdf).
 
 ### `GET /api/history?from=&to=&points=&sections=`
 
