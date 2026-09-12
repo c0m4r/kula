@@ -483,7 +483,7 @@ async function init() {
             state.aggDropdownOpen = false;
             document.getElementById('agg-presets-list').classList.remove('open');
         }
-        if (!e.target.closest('.btn-icon') && !e.target.closest('.chart-settings-dropdown')) {
+        if (!e.target.closest('.chart-settings-dropdown')) {
             document.querySelectorAll('.chart-settings-dropdown').forEach(d => d.classList.add('hidden'));
         }
     });

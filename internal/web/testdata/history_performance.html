@@ -158,6 +158,30 @@
                 firstCard.querySelectorAll('.chart-data-table tbody tr').length === 50 &&
                 Boolean(firstCard.querySelector('.chart-data-download'));
 
+            // Offscreen charts still need mutation bookkeeping while drawing is deferred.
+            const offscreen = charts.at(-1);
+            offscreen.toggleDataVisibility(500);
+            for (let tick = 0; tick < 60; tick++) {
+                offscreen.data.datasets.forEach(data => {
+                    const last = data.data.at(-1);
+                    data.data.push({ x: last.x + 1000, y: last.y });
+                    data.data.splice(0, 1);
+                    data.$kulaEnvelope.push(last.y - 5, last.y + 5);
+                    data.$kulaEnvelope.splice(0, 2);
+                });
+                chartUpdates.mark(offscreen);
+                chartUpdates.flush();
+                if (offscreen._dataChanges.length !== 0) throw new Error('Offscreen mutation journal grew');
+            }
+            if (counts.get(offscreen) !== 0) throw new Error('Offscreen bookkeeping triggered a full update');
+            if (offscreen.getDataVisibility(440) || !offscreen.getDataVisibility(500)) {
+                throw new Error('Offscreen bookkeeping lost point visibility');
+            }
+            offscreen.update('none');
+            if (offscreen.getDatasetMeta(0).data.length !== series.length) {
+                throw new Error('Revealed chart retained stale elements');
+            }
+
             const result = {
                 status: keyboardGesture && accessibleAlternatives && timezoneTooltip && defaultDataControlsOff && optInIsLazy && window.innerHeight > 0 && updatedCharts > 0 &&
                     updatedCharts < charts.length && renderedCharts === updatedCharts
