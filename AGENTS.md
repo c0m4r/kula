@@ -72,6 +72,20 @@ per-application reducer branches.
   obsolete `si_*` keys. Adding, renaming or removing a UI string means editing **all** locale
   files.
 
+### Dashboard chart lifecycle
+
+- Off-screen charts defer layout and drawing, but must drain Chart.js mutation records during
+  controller flushes. `chart-controller.js` calls the vendored private `_updateHiddenIndices()`
+  method to preserve hidden-point indices when data is trimmed; do not simply clear
+  `_dataChanges`. Recheck this contract when upgrading Chart.js.
+- Split-card Graph Bounds menus reuse `main.js`'s shared outside-click handler. Do not add
+  per-card document listeners that retain discarded cards. Keep opening and menu interactions
+  from dismissing the dropdown, and preserve dismissal on unrelated bubbling icon clicks.
+- Run `./addons/test-frontend-regressions.sh` when changing viewport culling, split-card
+  teardown/dropdowns, or the vendored Chart.js version. It covers mutation retention, point
+  visibility after trimming, and split-card listener/instance cleanup. These browser fixtures
+  require Node.js 22+ and Chromium/Chrome and are **not** run by `./addons/check.sh` or CI.
+
 ### Build and lint
 
 - **CGO-free** (`CGO_ENABLED=0`). Do not introduce cgo dependencies.

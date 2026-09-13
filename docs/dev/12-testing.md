@@ -187,6 +187,9 @@ cadence, sensor reorder/disappearance, application gaps, and live language switc
 History replay reports median preparation time and enforces a DOM-mutation budget proportional
 to chart count. Device-selection checks preserve unrelated datasets and shared gap metadata;
 all chart coordinates must remain valid for disabled Chart.js parsing.
+Three network split/join cycles check that document click listeners do not accumulate and the
+Chart.js instance count returns to baseline. Each cycle also checks that Graph Bounds opens
+and dismisses on both a body click and an unrelated theme-button click.
 Timing is diagnostic; assertions check behavior rather than host-specific
 millisecond limits. The fixture uses temporary browser data and cleans it up on exit.
 
@@ -200,7 +203,14 @@ node internal/web/testdata/history_performance_test.mjs
 Its JSON result must report
 `status: "pass"`, fewer updated charts than registered charts, the same visible count for
 crosshair renders, working keyboard gestures, exact UTC tooltips, off-by-default Data controls,
-and a lazy 50-row table with CSV after opt-in. Run both fixtures together with
+and a lazy 50-row table with CSV after opt-in. The fixture also appends and trims points on an
+off-screen chart for 60 simulated updates. Each controller flush must leave zero retained
+Chart.js mutation records without a full chart update, and a hidden point must move from index
+500 to 440 after trimming. A subsequent full update must retain the expected element count.
+These assertions cover the controller's dependency on Chart.js's private `_updateHiddenIndices()`
+method; run them when upgrading the vendored library.
+
+Run both fixtures together with
 [`addons/test-frontend-regressions.sh`](../../addons/test-frontend-regressions.sh), which needs
 Node.js 22+ and a Chromium/Chrome executable and reports the skipped optional local dependency
 when either is missing; neither `./addons/check.sh` nor CI runs them. Set `KULA_CHROMIUM` when

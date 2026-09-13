@@ -93,11 +93,18 @@ The live cadence estimate uses a bounded median of observed live timestamp diffe
 supported slower collectors are not permanently treated as one-second sources. Reconnects
 reset that estimate; historical responses never supply its timestamp baseline.
 
-`chart-controller.js` batches updates in animation frames and defers off-screen charts using
-IntersectionObserver. It reads all visibility rectangles before drawing. Cursor changes use
-`render()`; metric/scale changes use `update('none')`. Grid/list changes resize existing
-instances without refetching history, preserving legend selections and data. `format.js`
-reuses a bounded formatter cache; tick measurement samples eight labels.
+`chart-controller.js` batches updates in animation frames and uses IntersectionObserver to
+defer layout and drawing for off-screen charts. It reads all visibility rectangles before
+drawing. Cursor changes use `render()`; metric/scale changes use `update('none')`. Grid/list
+changes resize existing instances without refetching history, preserving legend selections
+and data. `format.js` reuses a bounded formatter cache; tick measurement samples eight labels.
+
+During each flush, dirty off-screen charts still call the vendored Chart.js private
+`_updateHiddenIndices()` method. It drains the `_dataChanges` mutation records and adjusts
+hidden-point indices after inserts and trims without running layout or drawing. Charts remain
+dirty so their deferred update runs when they enter the viewport. Clearing the records directly
+would lose point-visibility bookkeeping. Revalidate this private-method contract with the browser
+regressions whenever Chart.js is upgraded.
 
 History loads, local zooms, and aggregation changes ingest their samples in a synchronous
 `batchChartUI` call. It commits only the last presentation update for each key, retaining
@@ -135,6 +142,13 @@ preset/custom label rather than reapplying the initial five-minute placeholder. 
 tick labels reserve explicit skip padding. The custom picker derives precision from the
 collection interval and refreshes selectable tier-header retention ranges when opened;
 outside pointer/click actions dismiss its unapplied draft.
+
+Split-card Graph Bounds menus use the shared document outside-click handler in `main.js`.
+Opening buttons and interactions inside the menu stop click propagation; outside clicks that
+reach the document, including unrelated icon clicks, dismiss the menus. `split.js` keeps menu
+listeners on the card rather than adding a document listener for every rebuild. Split teardown
+destroys the registered chart instances and removes their cards, allowing the discarded DOM and
+its listeners to be collected.
 
 Each canvas has a visible-heading accessible name, summary and keyboard controls. Enter pins a
 point, arrows step through pinned observations, Home/End selects endpoints and Escape clears
