@@ -154,6 +154,42 @@ for (const fixture of [
 if (savedGraphBounds === null) localStorage.removeItem('kula_graphs_max');
 else localStorage.setItem('kula_graphs_max', savedGraphBounds);
 
+// Rebuilding split cards must not leave document listeners holding removed cards.
+const addDocumentListener = document.addEventListener;
+const removeDocumentListener = document.removeEventListener;
+let splitClickListeners = 0;
+document.addEventListener = function(type, ...args) {
+    if (type === 'click') splitClickListeners++;
+    return addDocumentListener.call(this, type, ...args);
+};
+document.removeEventListener = function(type, ...args) {
+    if (type === 'click') splitClickListeners--;
+    return removeDocumentListener.call(this, type, ...args);
+};
+try {
+    for (let cycle = 0; cycle < 3; cycle++) {
+        document.getElementById('btn-split-network').click();
+        const card = document.querySelector('[data-split-type="network"]:has(.chart-settings-dropdown)');
+        card.querySelector('button[title="Graph Bounds"]').click();
+        check(!card.querySelector('.chart-settings-dropdown').classList.contains('hidden'),
+            'Split graph bounds did not open');
+        document.getElementById('btn-theme').click();
+        check(card.querySelector('.chart-settings-dropdown').classList.contains('hidden'),
+            'Unrelated icon click did not close split graph bounds');
+        card.querySelector('button[title="Graph Bounds"]').click();
+        document.body.click();
+        check(card.querySelector('.chart-settings-dropdown').classList.contains('hidden'),
+            'Outside click did not close split graph bounds');
+        document.getElementById('btn-split-network').click();
+        await frame();
+    }
+} finally {
+    document.addEventListener = addDocumentListener;
+    document.removeEventListener = removeDocumentListener;
+}
+check(splitClickListeners === 0, 'Split rebuild retained document click listeners');
+check(Object.values(Chart.instances).length === originalCharts.length, 'Split rebuild retained chart instances');
+
 // A local raw-data zoom must retain a known interior outage rather than mark
 // the new view complete merely because its outer bounds fit the buffer.
 const localFrom = new Date('2026-09-04T16:00:00Z');

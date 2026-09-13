@@ -701,12 +701,6 @@ function _addSettingsDropdown(header, actions, graphId, type) {
         // Rebuild split charts for this type to apply the new Y-axis bound
         _rebuildSplitType(type);
     });
-
-    document.addEventListener('click', (e) => {
-        if (!dropdown.classList.contains('hidden') && !dropdown.contains(e.target) && e.target !== sBtn) {
-            dropdown.classList.add('hidden');
-        }
-    });
 }
 
 function _rebuildSplitType(type) {

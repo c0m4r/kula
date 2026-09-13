@@ -157,7 +157,12 @@ export class ChartUpdateController {
                 this.dirty.delete(chart);
                 continue;
             }
-            if (!this.isVisible(chart)) continue;
+            if (!this.isVisible(chart)) {
+                // Chart.js retains mutation records until update(). Maintain
+                // point-index visibility without layout or drawing.
+                chart._updateHiddenIndices?.();
+                continue;
+            }
             visible.push([chart, mode]);
         }
 
