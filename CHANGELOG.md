@@ -56,6 +56,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
   WebSocket errors on logout
 - Increased `storage.tiers[].max_size` now takes effect without discarding history;
   shrinking an existing tier still requires manual action
+- fix: bound offscreen chart state and release split cards (#50)
 
 ### Security
 
