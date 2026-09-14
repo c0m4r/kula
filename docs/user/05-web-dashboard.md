@@ -191,6 +191,8 @@ occurred at the same instant. Avg is duration-weighted for sampled gauges and ra
 counters and fixed capacity/metadata values retain their latest observation. Existing
 `web.default_aggregation` settings remain the preferred operation whenever the response
 supports it; fresh installs default to Avg.
+Unavailable readings, such as unknown MySQL replication lag, remain gaps in every aggregation.
+Filesystem tooltip percentages and byte counts use the same selected aggregation.
 
 For validated aggregate history, the principal series has a restrained Min–Max band. Enable
 **Show Min–Max bands for all series** in Customization for additional bands. Every series keeps

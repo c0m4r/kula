@@ -801,6 +801,7 @@ for (const chart of Object.values(Chart.instances)) {
 // Exercise the additive compatibility contract through the real fetch,
 // aggregation buttons, rendering, split charts, notices and export paths.
 const compatibilityFetch = window.fetch;
+const gibibyte = 1024 ** 3;
 window.fetch = async (url, options) => {
     const response = await compatibilityFetch(url, options);
     if (!String(url).includes('/api/history?')) return response;
@@ -813,6 +814,12 @@ window.fetch = async (url, options) => {
         item.data.net.tcp.curr_estab = 3;
         item.min.net.tcp.curr_estab = 2;
         item.max.net.tcp.curr_estab = item.extrema_profile === 'legacy' ? 2 : 4;
+        for (const [block, used] of [[item.data, 20], [item.min, 10], [item.max, 80]]) {
+            const filesystem = block.disk.filesystems.find(fs => fs.mount === '/');
+            Object.assign(filesystem, { used: used * gibibyte, total: 100 * gibibyte, used_pct: used });
+            block.apps.mysql = { replica_io_running: true, replica_sql_running: false,
+                replica_seconds_behind: -1, replica_count: 0 };
+        }
     });
     return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
 };
@@ -841,6 +848,32 @@ data.redrawChartsFromBuffer();
 const splitPoints = state.splitCharts.network.net_eth0.data.datasets[0].data;
 check(splitPoints.some(point => point.extremaSource === 'unavailable' && point.y === null), 'Split chart plotted unsupported legacy extrema');
 check(splitPoints.some(point => point.extremaSource === 'current' && Number.isFinite(point.y)), 'Split chart lost current extrema');
+
+// Unavailable replication lag remains a gap in every aggregation. Filesystem
+// tooltips use the same selected block as the percentage, including split cards.
+const { formatBytesShort } = await import('./js/app/format.js');
+state.selectedDiskSpace = '/';
+for (const split of [false, true]) {
+    splitModule.applySplitFromConfig({ disk_space: split });
+    for (const [aggregation, used] of [['avg', 20], ['min', 10], ['max', 80]]) {
+        document.querySelector(`#agg-presets-list [data-agg="${aggregation}"]`).click();
+        const lag = state.charts.mysqlRepl.data.datasets[0];
+        check(lag.data.length > 0 && lag.data.every(point => point.y === null),
+            `${aggregation} plotted unavailable MySQL lag`);
+        check(!lag.$kulaEnvelope, `${aggregation} retained unavailable MySQL lag extrema`);
+        const chart = split ? state.splitCharts.diskspace['diskspace_/'] : state.charts.diskspace;
+        const dataset = chart.data.datasets[0];
+        const point = dataset.data.find(point => point.extremaSource === 'current');
+        check(point?.y === used && point.used === used * gibibyte && point.total === 100 * gibibyte,
+            `${aggregation} filesystem tooltip metadata differs from the selected block (split=${split})`);
+        const label = chart.options.plugins.tooltip.callbacks.label({ raw: point,
+            parsed: { y: point.y }, dataset });
+        check(label.includes(`${used.toFixed(1)}%`) &&
+            label.includes(`${formatBytesShort(used * gibibyte)} / ${formatBytesShort(100 * gibibyte)}`),
+            `${aggregation} filesystem tooltip mixed representative and extrema values (split=${split})`);
+    }
+}
+splitModule.applySplitFromConfig({ disk_space: false });
 document.querySelector('#agg-presets-list [data-agg="avg"]').click();
 await frame();
 check(state.charts.connections.data.datasets[3].data.filter(point => !point.extremaUnavailable).some(point => point.y === 3),
@@ -854,6 +887,7 @@ window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math
     horizontal_time_labels: true, visible_sampling_tier: true, custom_picker: true,
     calendar_range: true, tooltip_details_opt_in: true, crosshair_drag_safe: true,
     shaded_measurement_gaps: true, historical_device_selection: true, stable_disk_identity: true,
-    gesture_request_isolation: true, minimum_zoom_points: 12, legacy_metric_compatibility: true, errors };
+    gesture_request_isolation: true, minimum_zoom_points: 12, legacy_metric_compatibility: true,
+    unavailable_replication_lag: true, filesystem_aggregation_tooltips: true, errors };
 check(errors.length === 0, errors.join('; '));
 window.ready = true;

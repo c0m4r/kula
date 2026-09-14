@@ -149,7 +149,31 @@ test('unknown and missing compatibility profiles cannot fall back to copied extr
     const [malicious] = annotateHistoryItems([{ ...sample, extrema_profile: 'legacy' }], {
         extrema_profiles: { legacy: ['__proto__.polluted', 'constructor.prototype.polluted'] },
     });
-    assert.deepEqual(historyItemExtrema(malicious).maximum, {});
+    assert.deepEqual(Object.keys(historyItemExtrema(malicious).maximum), []);
+    assert.equal({}.polluted, undefined);
+});
+
+test('partial extrema profiles copy only own scalar fields into dictionaries without prototypes', () => {
+    const block = Object.assign(Object.create({ inherited: 99 }), {
+        cpu: { total: Object.assign(Object.create({ steal: 99 }), { usage: 5, user: 2, system: 3 }) },
+        mem: { used: 100 },
+        net: { connections: 10 },
+        ...JSON.parse('{"__proto__":{"polluted":1},"constructor":{"prototype":{"polluted":1}}}'),
+    });
+    const [item] = annotateHistoryItems([{ ts: new Date(1000).toISOString(), extrema_profile: 'legacy',
+        data: {}, min: block, max: block }], { extrema_profiles: { legacy: [
+        'cpu.total.usage', 'cpu.total.user', 'cpu.total.steal', 'inherited',
+        'mem', 'net.*', '__proto__.polluted', 'constructor.prototype.polluted',
+    ] } });
+    const { minimum, maximum } = historyItemExtrema(item);
+    for (const projected of [minimum, maximum]) {
+        assert.deepEqual(JSON.parse(JSON.stringify(projected)), { cpu: { total: { usage: 5, user: 2 } } });
+        for (const object of [projected, projected.cpu, projected.cpu.total]) {
+            assert.equal(Object.getPrototypeOf(object), null);
+        }
+    }
+    assert.notEqual(minimum.cpu.total, maximum.cpu.total);
+    assert.equal(block.cpu.total.system, 3, 'projection leaves the source intact');
     assert.equal({}.polluted, undefined);
 });
 
@@ -432,6 +456,21 @@ test('unparsed chart points preserve zero and normalize missing or nonfinite rea
     appendEnvelopePoint(dataset, new Date(NaN), 99, 98, 100);
     assert.equal(dataset.data.length, 6, 'invalid timestamps never reach an unparsed scale');
     assert.equal(dataset.$kulaValueCount, 1);
+});
+
+test('unavailable readings cannot be restored from extrema in charts, bands, or CSV', () => {
+    for (const aggregation of ['avg', 'min', 'max']) {
+        const dataset = { label: 'Seconds Behind', data: [] };
+        appendEnvelopePoint(dataset, 1000, 0, 0, 0, null, aggregation, 'current');
+        appendEnvelopePoint(dataset, 2000, null, -1, -1, null, aggregation, 'current');
+        appendEnvelopePoint(dataset, 3000, 5, 2, 8, null, aggregation, 'current');
+        assert.equal(dataset.data[0].y, 0, 'zero lag remains an observation');
+        assert.equal(dataset.data[1].y, null, 'the unavailable lag remains a gap');
+        assert.deepEqual(dataset.$kulaEnvelope, [0, 0, null, null, 2, 8]);
+        assert.equal(dataset.$kulaValueCount, 2);
+        const csv = chartCSV({ data: { datasets: [dataset] } });
+        assert(csv.split('\r\n').includes('"1970-01-01T00:00:02.000Z","","",""'), 'CSV leaves the unavailable reading and extrema blank');
+    }
 });
 
 test('new dynamic series are null-aligned to retained peer timestamps', () => {

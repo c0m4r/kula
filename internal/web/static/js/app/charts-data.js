@@ -420,7 +420,9 @@ export function addSampleToCharts(item, ts, {
             s.disk.filesystems.forEach(f => { used += f.used || 0; total += f.total || 0; });
             if (total > 0) usedPct = (used / total) * 100;
         }
-        push(state.charts.diskspace.data.datasets[0], usedPct, minFS?.used_pct, maxFS?.used_pct, { used, total });
+        const details = aggregation === 'min' ? minFS : aggregation === 'max' ? maxFS : { used, total };
+        push(state.charts.diskspace.data.datasets[0], usedPct, minFS?.used_pct, maxFS?.used_pct,
+            details ? { used: details.used, total: details.total } : null);
     }
 
     // Processes

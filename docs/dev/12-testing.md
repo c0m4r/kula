@@ -53,6 +53,9 @@ allowlist, preserve rounded legacy extrema across decode batches, and reject pro
 lossy Data-only coarse records. Frontend and browser tests cover mixed legacy/current
 history, unavailable connection/device extrema, selector visibility, split charts, chart
 explanations and CSV provenance. Section filtering and cached metadata retain ownership.
+Regression cases also reject inherited properties and nested wildcards in partial profiles,
+keep unavailable replication lag out of lines, bands and CSV, and check that filesystem
+tooltip byte counts follow Avg/Min/Max in both single and split charts.
 
 ## Fuzzing
 

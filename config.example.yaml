@@ -161,6 +161,8 @@ web:
   # support all three; legacy binary rollups support selected CPU, load, used
   # memory and used swap extrema. Unsupported Min/Max values appear as gaps.
   # Existing history is read without rewriting tier files; raw points use data.
+  # Unavailable readings remain gaps in every aggregation; filesystem tooltip
+  # percentages and byte counts follow the selected aggregation together.
   default_aggregation: avg
  
   # Default look of the web dashboard.

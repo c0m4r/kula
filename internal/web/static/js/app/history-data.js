@@ -181,19 +181,31 @@ export function historyItemExtrema(item, validAggregations = ['data']) {
     } else {
         fields = validAggregations.includes('min') && validAggregations.includes('max') ? ['*'] : [];
     }
-    const project = block => {
-        if (!block || fields.length === 0) return null;
+    const defineField = (target, field, value) => Object.defineProperty(target, field, {
+        value,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+    });
+    const project = (block, paths = fields) => {
+        if (!block || paths.length === 0) return null;
         if (fields.includes('*')) return block;
-        const output = {};
-        for (const path of fields) {
-            const parts = path.split('.');
-            if (parts.some(part => !/^[a-z][a-z0-9_]*$/i.test(part) || ['constructor', 'prototype', '__proto__'].includes(part))) continue;
-            let value = block;
-            for (const part of parts) value = value?.[part];
-            if (typeof value !== 'number' || !Number.isFinite(value)) continue;
-            let target = output;
-            for (const part of parts.slice(0, -1)) target = target[part] ||= {};
-            target[parts.at(-1)] = value;
+        // Walk only own properties and build dictionaries without prototypes.
+        // Partial paths select scalar leaves, never inherited properties or
+        // whole sections, even when a profile contains a nested wildcard.
+        const output = Object.create(null);
+        for (const [field, value] of Object.entries(block)) {
+            if (!/^[a-z][a-z0-9_]*$/i.test(field) || ['constructor', 'prototype', '__proto__'].includes(field)) continue;
+            if (typeof value === 'number' && Number.isFinite(value) && paths.includes(field)) {
+                defineField(output, field, value);
+            } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+                const prefix = `${field}.`;
+                const children = paths.filter(path => path.startsWith(prefix)).map(path => path.slice(prefix.length));
+                if (children.length > 0) {
+                    const child = project(value, children);
+                    if (Object.keys(child).length > 0) defineField(output, field, child);
+                }
+            }
         }
         return output;
     };

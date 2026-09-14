@@ -83,6 +83,11 @@ selects the validated field value or a null gap. Split and application charts us
 path. Bands, detailed tooltips, chart notices and CSV retain the same availability; mixed
 legacy/current histories do not hide valid newer extrema. CSV adds source columns where
 needed and leaves unavailable numeric values blank.
+Partial profiles copy only allowlisted own scalar properties into objects without prototypes;
+inherited properties and nested wildcards cannot expose additional fields. Callers normalize
+unavailable readings to null before point ingestion, which also discards their extrema so
+Min/Max, bands and CSV cannot restore a sentinel as a measurement. Filesystem tooltip byte
+counts come from the selected aggregation block in both single and split charts.
 Response provenance is shared between observations and indexed by timestamp for tooltips.
 Tier `0` is not synonymous with raw output: `downsampled` responses still refetch on zoom and
 retain valid Min/Max controls, including below three hours. The share URL preserves an allowed

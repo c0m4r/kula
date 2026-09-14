@@ -169,12 +169,13 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
             const maxFS = _memberBy(maximum?.disk?.filesystems, 'mount', fs.mount);
             const chart = state.splitCharts.diskspace[`diskspace_${fs.mount}`];
             if (chart?.data?.datasets) {
+                const details = aggregation === 'min' ? minFS : aggregation === 'max' ? maxFS : fs;
                 push(
                     chart.data.datasets[0],
                     fs.used_pct || 0,
                     minFS?.used_pct,
                     maxFS?.used_pct,
-                    { used: fs.used || 0, total: fs.total || 0 },
+                    details ? { used: details.used, total: details.total } : null,
                 );
             }
         }

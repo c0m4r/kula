@@ -105,6 +105,8 @@ fabricated as zero. Existing binary history needs no migration: a compatibility 
 legacy Min/Max for supported CPU, load, used-memory and used-swap fields. Unsupported series
 or intervals appear as gaps when Min/Max is selected, with an explanation on the chart.
 Newly collected extrema remain available even in views that also contain older history.
+Unavailable readings remain gaps in every aggregation, and filesystem tooltip percentages
+and byte counts use the same selected aggregation.
 
 Scheduled backups are optional: `backup.enabled` copies the tier files into a timestamped
 directory under `<storage.directory>/backup` on a crontab schedule, with a configurable

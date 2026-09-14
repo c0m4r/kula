@@ -32,7 +32,9 @@ export function appendEnvelopePoint(dataset, x, y, minimum, maximum, extra = nul
     x = x instanceof Date ? x.getTime() : x;
     if (!finiteNumber(x)) return;
     const observed = finiteNumber(y);
-    const range = envelopeRange(minimum, maximum);
+    // Callers normalize unavailable readings (including negative sentinels)
+    // to null. Their envelope must not restore a value or a band.
+    const range = observed ? envelopeRange(minimum, maximum) : null;
     if (aggregation === 'min') y = range?.[0];
     if (aggregation === 'max') y = range?.[1];
     y = finiteNumber(y) ? y : null;
