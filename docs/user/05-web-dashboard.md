@@ -177,10 +177,16 @@ legend selections are preserved; switching does not refetch history.
 
 ### Aggregation selector
 
-The dashboard shows aggregation choices only when `/api/history` declares them valid across
-every displayed metric in the response. New or recomputed policy-reducer buckets offer Avg,
-Min, and Max; unbucketed raw points and legacy rollups offer representative data only. Min and
-Max are per-series extrema within each bucket, so values across different lines need not have
+The dashboard shows aggregation choices when the response supports them for at least some
+series. New or recomputed policy-reducer buckets offer Avg, Min, and Max. Existing binary
+history also offers Min/Max for CPU usage (total, user, system, I/O wait and steal), load
+averages, used memory and used swap. Other legacy fields, including connections, applications,
+devices and temperatures, lack reliable extrema. Selecting Min/Max leaves those series or
+intervals blank and displays an explanation. Avg restores their stored representative values;
+old averages retain their historical semantics. No repair or tier-file rewrite is needed.
+Unbucketed raw points have no extrema. A view containing both old and new history retains
+the available operations for each bucket; new extrema are not hidden by legacy intervals.
+Min and Max are per-series extrema within each bucket, so values across different lines need not have
 occurred at the same instant. Avg is duration-weighted for sampled gauges and rates; monotonic
 counters and fixed capacity/metadata values retain their latest observation. Existing
 `web.default_aggregation` settings remain the preferred operation whenever the response
@@ -189,8 +195,11 @@ supports it; fresh installs default to Avg.
 For validated aggregate history, the principal series has a restrained Min–Max band. Enable
 **Show Min–Max bands for all series** in Customization for additional bands. Every series keeps
 its extrema for Min/Max selection and Data/CSV, regardless of band visibility.
-The dashboard never draws a band from legacy or otherwise untrusted envelopes. Selected
-single-device and split charts pair extrema by stable device identity; an all-device derived
+Bands and Data/CSV use the same field restrictions as Min/Max selection. Where availability
+varies, exports include a Min/Max source column (`legacy`, `mixed`, `current`, or `unavailable`);
+unavailable numeric values remain blank. Legacy and mixed buckets are identified in detailed
+tooltips and chart notes. Selected single-device and split charts pair extrema by stable
+device identity; an all-device derived
 sum stays line-only because component extrema may have occurred at different times.
 
 ### Gap handling

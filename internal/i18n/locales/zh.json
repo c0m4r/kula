@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "较早的历史：仅支持的序列提供最小值/最大值。",
+    "history_extrema_unavailable": "某些序列或时间段没有可用的最小值/最大值。",
+    "extrema_source": "最小值/最大值来源",
     "sign_in": "登录",
     "username": "用户名",
     "password": "密码",

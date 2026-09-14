@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Sejarah lama: Min/Maks hanya tersedia untuk siri yang disokong.",
+    "history_extrema_unavailable": "Min/Maks tidak tersedia untuk sesetengah siri atau selang masa.",
+    "extrema_source": "Sumber Min/Maks",
     "sign_in": "Log Masuk",
     "username": "Nama Pengguna",
     "password": "Kata Laluan",

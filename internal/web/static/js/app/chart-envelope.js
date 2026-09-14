@@ -25,12 +25,16 @@ function envelopeRange(minimum, maximum) {
  * Append a chart point and, when supplied, its trustworthy extrema. Extrema
  * use one flat array (min,max,min,max,...) rather than two Chart.js datasets.
  */
-export function appendEnvelopePoint(dataset, x, y, minimum, maximum, extra = null) {
+export function appendEnvelopePoint(dataset, x, y, minimum, maximum, extra = null, aggregation = 'avg', profile = null) {
     if (!dataset) return;
     // Chart.js parsing is disabled. Its time/linear scales require numeric
     // milliseconds and finite values, with explicit nulls for missing data.
     x = x instanceof Date ? x.getTime() : x;
     if (!finiteNumber(x)) return;
+    const observed = finiteNumber(y);
+    const range = envelopeRange(minimum, maximum);
+    if (aggregation === 'min') y = range?.[0];
+    if (aggregation === 'max') y = range?.[1];
     y = finiteNumber(y) ? y : null;
     if (!Array.isArray(dataset.data)) dataset.data = [];
 
@@ -38,11 +42,12 @@ export function appendEnvelopePoint(dataset, x, y, minimum, maximum, extra = nul
     const point = extra && typeof extra === 'object'
         ? { x, y, ...extra }
         : { x, y };
+    if (profile && observed) point.extremaSource = range ? profile : 'unavailable';
+    if (observed && !range && aggregation !== 'avg') point.extremaUnavailable = true;
     hasEnvelopeData(dataset);
     dataset.data.push(point);
     if (point.y != null) dataset.$kulaValueCount++;
 
-    const range = envelopeRange(minimum, maximum);
     if (!Array.isArray(dataset[ENVELOPE_KEY]) && range) {
         dataset[ENVELOPE_KEY] = new Array(oldLength * 2).fill(null);
     }

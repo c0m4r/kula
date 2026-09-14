@@ -568,7 +568,7 @@ func TestHistoryFrontendUsesSharedLifecycleAndCanonicalItems(t *testing.T) {
 		"new HistoryRequestController()",
 		"data.map(normalizeHistoryItem)",
 		"renderHistoryItems(visible)",
-		"validAggregations.includes(selectedField)",
+		"historyItemExtrema(historyItem, validAggregations)",
 		"historyPointBudget()",
 		"queueAllChartUpdates()",
 		"state.timeRange === null && state.customFrom && state.customTo",
@@ -709,8 +709,8 @@ func TestHistoricalChartsUseCompactTrustworthyEnvelopes(t *testing.T) {
 	}
 	source := string(chartsData)
 	for _, required := range []string{
-		"validAggregations.includes('min')",
-		"validAggregations.includes('max')",
+		"historyItemExtrema(historyItem, validAggregations)",
+		"const hasEnvelope = !!minimum && !!maximum;",
 		"appendEnvelopePoint(",
 		"trimEnvelopeData(",
 		"clearEnvelopeData(",

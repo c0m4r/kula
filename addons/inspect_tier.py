@@ -838,6 +838,13 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
     off = 18
 
     result: Dict[str, Any] = {
+        # Presentation provenance only; no bytes are added to the record.
+        "extrema_profile": (
+            "none" if flags & 7 != 7 else
+            "current" if flags & FLAG_REDUCER_V2 else
+            "none" if flags & (FLAG_HAS_MEAN_STATS | FLAG_HAS_DISK_IDS) else
+            "legacy"
+        ),
         "timestamp": (
             datetime.datetime.fromtimestamp(ts_ns / 1e9).astimezone().isoformat()
             if ts_ns > 0

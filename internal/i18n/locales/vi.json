@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Lịch sử cũ: Min/Max chỉ có sẵn cho các chuỗi được hỗ trợ.",
+    "history_extrema_unavailable": "Min/Max không có sẵn cho một số chuỗi hoặc khoảng thời gian.",
+    "extrema_source": "Nguồn Min/Max",
     "sign_in": "Đăng nhập",
     "username": "Tên người dùng",
     "password": "Mật khẩu",

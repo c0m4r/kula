@@ -403,6 +403,7 @@ func TestDecodePostgresV1Block(t *testing.T) {
 	pg := target.Apps.Postgres
 	if pg == nil {
 		t.Fatal("expected Postgres to be non-nil")
+		return
 	}
 	if pg.ActiveConns != 5 || pg.IdleConns != 10 || pg.MaxConns != 100 {
 		t.Errorf("connection fields: active=%d idle=%d max=%d", pg.ActiveConns, pg.IdleConns, pg.MaxConns)
@@ -461,6 +462,7 @@ func TestDecodeMysqlV1Block(t *testing.T) {
 	my := dec.Data.Apps.Mysql
 	if my == nil {
 		t.Fatal("expected Mysql to be non-nil after round-trip")
+		return
 	}
 	if my.ThreadsConnected != 5 || my.ThreadsRunning != 2 || my.ThreadsCached != 3 {
 		t.Errorf("thread fields: connected=%d running=%d cached=%d",
@@ -567,6 +569,7 @@ func TestDecodeApache2V1Block(t *testing.T) {
 	ap := target.Apps.Apache2
 	if ap == nil {
 		t.Fatal("expected Apache2 to be non-nil")
+		return
 	}
 	if ap.BusyWorkers != 3 || ap.IdleWorkers != 7 {
 		t.Errorf("workers: busy=%d idle=%d", ap.BusyWorkers, ap.IdleWorkers)
@@ -993,6 +996,7 @@ func TestDecodePostgresV2Block(t *testing.T) {
 	got := target.Apps.Postgres
 	if got == nil {
 		t.Fatal("expected Postgres to be non-nil")
+		return
 	}
 	if got.ActiveConns != 5 || got.IdleConns != 10 || got.MaxConns != 100 {
 		t.Errorf("connection fields: active=%d idle=%d max=%d",
@@ -1043,6 +1047,7 @@ func TestDecodePostgresV3Block(t *testing.T) {
 	got := decoded.Data.Apps.Postgres
 	if got == nil {
 		t.Fatal("expected Postgres to be non-nil after round-trip")
+		return
 	}
 	if !got.IsInRecovery {
 		t.Error("IsInRecovery did not round-trip")
@@ -1102,6 +1107,7 @@ func TestDecodeMysqlV2Block(t *testing.T) {
 	got := decoded.Data.Apps.Mysql
 	if got == nil {
 		t.Fatal("expected Mysql to be non-nil after round-trip")
+		return
 	}
 	if !got.ReplicaIORunning || !got.ReplicaSQLRunning {
 		t.Errorf("replica thread flags didn't round-trip: io=%v sql=%v",
@@ -1163,6 +1169,7 @@ func TestDecodeMysqlV3Block(t *testing.T) {
 	got := decoded.Data.Apps.Mysql
 	if got == nil {
 		t.Fatal("expected Mysql to be non-nil after round-trip")
+		return
 	}
 	if got.LastIOErrno != 1236 || got.LastSQLErrno != 0 {
 		t.Errorf("errno fields didn't round-trip: io=%d sql=%d", got.LastIOErrno, got.LastSQLErrno)
@@ -1237,6 +1244,7 @@ func TestDecodeMysqlV3Block(t *testing.T) {
 	gotV2 := target.Apps.Mysql
 	if gotV2 == nil {
 		t.Fatal("expected Mysql non-nil from v2 record")
+		return
 	}
 	if !gotV2.ReplicaIORunning || gotV2.ReplicaCount != 1 {
 		t.Errorf("v2 fields didn't decode: %+v", gotV2)

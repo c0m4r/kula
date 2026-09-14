@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Oudere historie: Min/Max zijn alleen beschikbaar voor ondersteunde reeksen.",
+    "history_extrema_unavailable": "Min/Max zijn niet beschikbaar voor sommige reeksen of intervallen.",
+    "extrema_source": "Bron van Min/Max",
     "sign_in": "Inloggen",
     "username": "Gebruikersnaam",
     "password": "Wachtwoord",

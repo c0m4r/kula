@@ -101,7 +101,10 @@ To maximize efficiency, Kula employs a multi-tiered architecture that intelligen
 Rollups use explicit per-field policies: sampled gauges and rates are duration-weighted,
 monotonic counters and metadata retain their latest value, and Min/Max are per-series extrema.
 Dynamic devices and applications are matched by stable identity, so a missing member is not
-fabricated as zero. Legacy rollups remain readable but do not advertise Min/Max as valid.
+fabricated as zero. Existing binary history needs no migration: a compatibility layer exposes
+legacy Min/Max for supported CPU, load, used-memory and used-swap fields. Unsupported series
+or intervals appear as gaps when Min/Max is selected, with an explanation on the chart.
+Newly collected extrema remain available even in views that also contain older history.
 
 Scheduled backups are optional: `backup.enabled` copies the tier files into a timestamped
 directory under `<storage.directory>/backup` on a crontab schedule, with a configurable

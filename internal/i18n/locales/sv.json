@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Äldre historik: Min/Max är endast tillgängliga för serier som stöds.",
+    "history_extrema_unavailable": "Min/Max saknas för vissa serier eller tidsintervall.",
+    "extrema_source": "Källa för Min/Max",
     "sign_in": "Logga in",
     "username": "Användarnamn",
     "password": "Lösenord",

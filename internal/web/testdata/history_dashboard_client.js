@@ -798,6 +798,54 @@ for (const chart of Object.values(Chart.instances)) {
             (point.y === null || Number.isFinite(point.y))), 'Unparsed chart data contains an invalid coordinate');
     }
 }
+// Exercise the additive compatibility contract through the real fetch,
+// aggregation buttons, rendering, split charts, notices and export paths.
+const compatibilityFetch = window.fetch;
+window.fetch = async (url, options) => {
+    const response = await compatibilityFetch(url, options);
+    if (!String(url).includes('/api/history?')) return response;
+    const payload = await response.json();
+    payload.valid_aggregations = ['data'];
+    payload.available_aggregations = ['data', 'min', 'max'];
+    payload.extrema_profiles = { legacy: ['cpu.total.usage', 'cpu.total.user', 'mem.used'], current: ['*'] };
+    payload.samples.forEach((item, index) => {
+        item.extrema_profile = index < payload.samples.length / 2 ? 'legacy' : 'current';
+        item.data.net.tcp.curr_estab = 3;
+        item.min.net.tcp.curr_estab = 2;
+        item.max.net.tcp.curr_estab = item.extrema_profile === 'legacy' ? 2 : 4;
+    });
+    return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
+};
+state.timeRange = null;
+state.customFrom = new Date('2026-09-05T07:00:00Z');
+state.customTo = new Date('2026-09-05T10:00:00Z');
+await data.fetchCustomHistory(state.customFrom, state.customTo);
+document.querySelector('#agg-presets-list [data-agg="max"]').click();
+await frame();
+check(!document.getElementById('agg-presets-list').classList.contains('hidden'), 'Legacy compatibility hid aggregation choices');
+const legacyCPU = state.charts.cpu.data.datasets[4].data.find(point => point.extremaSource === 'legacy');
+check(legacyCPU && Number.isFinite(legacyCPU.y), 'Legacy CPU maximum was unavailable');
+const connectionPoints = state.charts.connections.data.datasets[3].data;
+check(connectionPoints.some(point => point.extremaSource === 'unavailable' && point.y === null), 'Copied legacy TCP extrema were plotted');
+check(connectionPoints.some(point => point.extremaSource === 'current' && point.y === 4), 'Current TCP extrema were hidden by older buckets');
+state.charts.connections.canvas.closest('.chart-card').scrollIntoView({ behavior: 'instant', block: 'center' });
+for (let attempt = 0; attempt < 100 && !document.querySelector('#card-connections .chart-aggregation-note'); attempt++) {
+    await frame();
+}
+check(document.querySelector('#card-connections .chart-aggregation-note')?.textContent === i18n.t('history_extrema_unavailable'),
+    'Unavailable series have no chart explanation');
+const compatibilityCSV = (await import('./js/app/chart-accessibility.js')).chartCSV(state.charts.connections);
+check(compatibilityCSV.includes('unavailable') && compatibilityCSV.includes('current'), 'CSV lost per-interval extrema availability');
+if (!state.splitNet) document.getElementById('btn-split-network').click();
+data.redrawChartsFromBuffer();
+const splitPoints = state.splitCharts.network.net_eth0.data.datasets[0].data;
+check(splitPoints.some(point => point.extremaSource === 'unavailable' && point.y === null), 'Split chart plotted unsupported legacy extrema');
+check(splitPoints.some(point => point.extremaSource === 'current' && Number.isFinite(point.y)), 'Split chart lost current extrema');
+document.querySelector('#agg-presets-list [data-agg="avg"]').click();
+await frame();
+check(state.charts.connections.data.datasets[3].data.filter(point => !point.extremaUnavailable).some(point => point.y === 3),
+    'Avg did not restore representative history');
+window.fetch = compatibilityFetch;
 await (await import('./audit-system-info.js')).testSystemInfo();
 window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math.round(layoutMs), system_info: true,
     history_replay: replayPerformance, scoped_device_replay: true, numeric_chart_points: true,
@@ -806,6 +854,6 @@ window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math
     horizontal_time_labels: true, visible_sampling_tier: true, custom_picker: true,
     calendar_range: true, tooltip_details_opt_in: true, crosshair_drag_safe: true,
     shaded_measurement_gaps: true, historical_device_selection: true, stable_disk_identity: true,
-    gesture_request_isolation: true, minimum_zoom_points: 12, errors };
+    gesture_request_isolation: true, minimum_zoom_points: 12, legacy_metric_compatibility: true, errors };
 check(errors.length === 0, errors.join('; '));
 window.ready = true;

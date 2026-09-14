@@ -226,6 +226,9 @@ function tableColumns(chart) {
         if (hasFiniteEnvelope(dataset, 1)) {
             columns.push({ dataset, index, kind: 'maximum', label });
         }
+        if (dataset.data?.some(point => point.extremaSource && point.extremaSource !== 'current')) {
+            columns.push({ dataset, index, kind: 'extrema_source', label });
+        }
     });
     return columns;
 }
@@ -238,7 +241,9 @@ function seriesValues(column) {
         const timestamp = pointTimestamp(point);
         if (!Number.isFinite(timestamp)) return;
         let value = pointValue(point);
-        if (column.kind !== 'value') {
+        if (column.kind === 'extrema_source') {
+            value = point.extremaSource || 'unavailable';
+        } else if (column.kind !== 'value') {
             const offset = column.kind === 'minimum' ? 0 : 1;
             const candidate = column.dataset[ENVELOPE_KEY]?.[pointIndex * 2 + offset];
             value = finiteNumber(candidate) ? candidate : null;
@@ -282,6 +287,7 @@ export function chartTableModel(chart, { limit = TABLE_ROW_LIMIT } = {}) {
 }
 
 function columnHeading(column, options) {
+    if (column.kind === 'extrema_source') return `${column.label} — ${translated(options, 'extrema_source')}`;
     if (column.kind === 'minimum') return `${column.label} — ${translated(options, 'minimum')}`;
     if (column.kind === 'maximum') return `${column.label} — ${translated(options, 'maximum')}`;
     return column.label;
@@ -305,8 +311,9 @@ export function chartCSV(chart, options = {}) {
     const lines = [headers.map(csvCell).join(',')];
     model.rows.forEach(row => {
         const fields = [formatTimestamp(options, row.timestamp)];
-        row.cells.forEach(cell => {
-            fields.push(finiteNumber(cell.value) ? metricNumber(options, cell.value) : '');
+        row.cells.forEach((cell, index) => {
+            fields.push(model.columns[index].kind === 'extrema_source' ? cell.value :
+                (finiteNumber(cell.value) ? metricNumber(options, cell.value) : ''));
         });
         lines.push(fields.map(csvCell).join(','));
     });
@@ -395,7 +402,8 @@ function renderTable(chart) {
         tr.appendChild(timeCell);
         row.cells.forEach((cell, index) => {
             const td = document.createElement('td');
-            td.textContent = formatValue(chart, model.columns[index].dataset, cell.value, options);
+            td.textContent = model.columns[index].kind === 'extrema_source' ? cell.value :
+                formatValue(chart, model.columns[index].dataset, cell.value, options);
             tr.appendChild(td);
         });
             body.appendChild(tr);
@@ -430,8 +438,33 @@ export function updateChartAccessibility(chart) {
     if (!access) return;
     syncChartDataControls(chart);
     updateLabels(chart);
+    updateAggregationNotice(chart, access);
     access.summary.textContent = chartSummaryText(chart, access.options);
     renderTable(chart);
+}
+
+function updateAggregationNotice(chart, access) {
+    const datasets = visibleDatasets(chart);
+    const minimum = chart.scales?.x?.min, maximum = chart.scales?.x?.max;
+    const hasPoint = predicate => datasets.some(({ dataset }) => dataset.data?.some(point =>
+        (!finiteNumber(minimum) || point.x >= minimum) &&
+        (!finiteNumber(maximum) || point.x <= maximum) && predicate(point)));
+    const key = hasPoint(point => point.extremaUnavailable)
+        ? 'history_extrema_unavailable'
+        : hasPoint(point => point.extremaSource === 'legacy' || point.extremaSource === 'mixed')
+            ? 'history_legacy_extrema' : null;
+    let notice = access.card.querySelector('.chart-aggregation-note');
+    if (!key) {
+        notice?.remove();
+        return;
+    }
+    if (!notice) {
+        notice = document.createElement('p');
+        notice.className = 'chart-aggregation-note';
+        access.card.appendChild(notice);
+    }
+    const text = translated(access.options, key);
+    if (notice.textContent !== text) notice.textContent = text;
 }
 
 export function announceChartCursor(chart, timestamp) {
@@ -582,6 +615,7 @@ export function attachChartAccessibility(chart, options = {}) {
         canvas.removeEventListener('focus', focus);
         chart.$kulaAccessibility?.button?.remove();
         chart.$kulaAccessibility?.panel?.remove();
+        card.querySelector('.chart-aggregation-note')?.remove();
         summary.remove();
         cursorStatus.remove();
         delete chart.$kulaAccessibility;

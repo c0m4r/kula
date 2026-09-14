@@ -180,6 +180,7 @@ export function historyTooltipLines(context, {
     mode = 'local',
     locale,
     aggregation = 'avg',
+    extremaSources = [],
     translate = key => key,
 } = {}) {
     if (!context) return [];
@@ -210,19 +211,26 @@ export function historyTooltipLines(context, {
         lines.push(`${translate('coverage')}: ${[coverage, rangeState].filter(Boolean).join(' · ')}`);
     }
 
-    const valid = Array.isArray(source?.validAggregations) ? source.validAggregations : ['data'];
-    const hasRange = valid.includes('min') && valid.includes('max');
+    const valid = Array.isArray(source?.availableAggregations) ? source.availableAggregations :
+        (Array.isArray(source?.validAggregations) ? source.validAggregations : ['data']);
+    const hasLegacy = extremaSources.some(value => value === 'legacy' || value === 'mixed');
+    const hasRange = valid.includes('min') && valid.includes('max') &&
+        (extremaSources.length === 0 || extremaSources.some(value => value !== 'unavailable'));
     if (aggregation === 'min' && valid.includes('min')) {
         lines.push(`${translate('representative')}: ${translate('bucket_minimum')}`);
     } else if (aggregation === 'max' && valid.includes('max')) {
         lines.push(`${translate('representative')}: ${translate('bucket_maximum')}`);
-    } else if (hasRange) {
+    } else if (hasRange && !hasLegacy) {
         lines.push(`${translate('representative')}: ${translate('policy_center')}`);
     } else {
         lines.push(`${translate('representative')}: ${translate('raw_or_stored_value')}`);
     }
     if (hasRange) {
         lines.push(`${translate('range_band')}: ${translate('bucket_minimum')}–${translate('bucket_maximum')}`);
+    }
+    if (extremaSources.includes('unavailable')) lines.push(translate('history_extrema_unavailable'));
+    if (hasLegacy) {
+        lines.push(translate('history_legacy_extrema'));
     }
     return lines;
 }

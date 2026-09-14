@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Riwayat lama: Min/Maks hanya tersedia untuk seri yang didukung.",
+    "history_extrema_unavailable": "Min/Maks tidak tersedia untuk beberapa seri atau interval.",
+    "extrema_source": "Sumber Min/Maks",
     "sign_in": "Masuk",
     "username": "Nama Pengguna",
     "password": "Kata Sandi",

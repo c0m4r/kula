@@ -3968,3 +3968,9 @@ html.a11y-focus-outline :focus-visible {
     outline: 3px solid var(--accent-yellow) !important;
     outline-offset: 2px;
 }
+.chart-aggregation-note {
+    margin: 0;
+    padding: 0.35rem 1rem 0.6rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}

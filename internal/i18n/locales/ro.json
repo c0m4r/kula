@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Istoric mai vechi: Min/Max sunt disponibile doar pentru seriile acceptate.",
+    "history_extrema_unavailable": "Min/Max nu sunt disponibile pentru unele serii sau intervale.",
+    "extrema_source": "Sursa Min/Max",
     "sign_in": "Autentificare",
     "username": "Nume de utilizator",
     "password": "Parolă",

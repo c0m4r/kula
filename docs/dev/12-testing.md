@@ -48,6 +48,12 @@ Storage tests cover sparse contributing statistics through multiple reductions, 
 trips, malformed metadata, old records and parity with the Python decoder. API tests retain
 the 31-day range cap even when more data exists on disk.
 
+Legacy compatibility fixtures encode the actual pre-policy binary layout, verify the scalar
+allowlist, preserve rounded legacy extrema across decode batches, and reject promotion of
+lossy Data-only coarse records. Frontend and browser tests cover mixed legacy/current
+history, unavailable connection/device extrema, selector visibility, split charts, chart
+explanations and CSV provenance. Section filtering and cached metadata retain ownership.
+
 ## Fuzzing
 
 Go-native fuzz targets (each with a committed seed corpus that also runs under plain

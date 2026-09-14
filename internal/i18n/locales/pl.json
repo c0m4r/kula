@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Starsza historia: Min/Max są dostępne tylko dla obsługiwanych serii.",
+    "history_extrema_unavailable": "Min/Max niedostępne dla niektórych serii lub przedziałów czasu.",
+    "extrema_source": "Źródło Min/Max",
     "sign_in": "Zaloguj się",
     "username": "Nazwa użytkownika",
     "password": "Hasło",

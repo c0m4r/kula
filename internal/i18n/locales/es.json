@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Historial anterior: Mín/Máx solo están disponibles para las series compatibles.",
+    "history_extrema_unavailable": "Mín/Máx no disponibles para algunas series o intervalos.",
+    "extrema_source": "Origen de Mín/Máx",
     "sign_in": "Iniciar sesión",
     "username": "Usuario",
     "password": "Password",

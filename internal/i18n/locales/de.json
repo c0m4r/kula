@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Ältere Historie: Min/Max sind nur für unterstützte Datenreihen verfügbar.",
+    "history_extrema_unavailable": "Min/Max sind für einige Datenreihen oder Zeiträume nicht verfügbar.",
+    "extrema_source": "Quelle für Min/Max",
     "sign_in": "Anmelden",
     "username": "Benutzername",
     "password": "Passwort",

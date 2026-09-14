@@ -35,6 +35,9 @@ func (s *Store) readHistory(tier *Tier, from, to time.Time, targetPoints int, re
 		selected := batch[:0]
 		clipRight := false
 		for _, sample := range batch {
+			if raw && sample.Min == nil && sample.Max == nil {
+				sample.ExtremaProfile = "raw"
+			}
 			if sample.Timestamp.After(to) {
 				start := sample.Timestamp.Add(-historySourceWidth(sample, resolution, raw))
 				if !to.After(from) || sample.Data == nil || !start.Before(to) {

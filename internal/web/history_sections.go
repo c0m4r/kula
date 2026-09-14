@@ -102,31 +102,34 @@ func selectSampleSections(sample *collector.Sample, sections historySectionSet) 
 }
 
 type sectionedHistorySample struct {
-	Timestamp   time.Time      `json:"ts"`
-	Duration    time.Duration  `json:"dur"`
-	Data        map[string]any `json:"data"`
-	Min         map[string]any `json:"min,omitempty"`
-	Max         map[string]any `json:"max,omitempty"`
-	BucketStart time.Time      `json:"bucket_start"`
-	BucketEnd   time.Time      `json:"bucket_end"`
-	SampleCount int            `json:"sample_count"`
-	Coverage    float64        `json:"coverage"`
+	Timestamp      time.Time      `json:"ts"`
+	Duration       time.Duration  `json:"dur"`
+	Data           map[string]any `json:"data"`
+	Min            map[string]any `json:"min,omitempty"`
+	Max            map[string]any `json:"max,omitempty"`
+	BucketStart    time.Time      `json:"bucket_start"`
+	BucketEnd      time.Time      `json:"bucket_end"`
+	SampleCount    int            `json:"sample_count"`
+	Coverage       float64        `json:"coverage"`
+	ExtremaProfile string         `json:"extrema_profile,omitempty"`
 }
 
 type sectionedHistoryResult struct {
-	Samples           []sectionedHistorySample `json:"samples"`
-	Tier              int                      `json:"tier"`
-	Resolution        string                   `json:"resolution"`
-	SourceResolution  string                   `json:"source_resolution"`
-	Downsampled       bool                     `json:"downsampled"`
-	RequestedFrom     time.Time                `json:"requested_from"`
-	RequestedTo       time.Time                `json:"requested_to"`
-	ActualFrom        *time.Time               `json:"actual_from,omitempty"`
-	ActualTo          *time.Time               `json:"actual_to,omitempty"`
-	Complete          bool                     `json:"complete"`
-	ExactComplete     bool                     `json:"exact_complete"`
-	ValidAggregations []string                 `json:"valid_aggregations"`
-	Sections          []string                 `json:"sections"`
+	Samples               []sectionedHistorySample `json:"samples"`
+	Tier                  int                      `json:"tier"`
+	Resolution            string                   `json:"resolution"`
+	SourceResolution      string                   `json:"source_resolution"`
+	Downsampled           bool                     `json:"downsampled"`
+	RequestedFrom         time.Time                `json:"requested_from"`
+	RequestedTo           time.Time                `json:"requested_to"`
+	ActualFrom            *time.Time               `json:"actual_from,omitempty"`
+	ActualTo              *time.Time               `json:"actual_to,omitempty"`
+	Complete              bool                     `json:"complete"`
+	ExactComplete         bool                     `json:"exact_complete"`
+	ValidAggregations     []string                 `json:"valid_aggregations"`
+	AvailableAggregations []string                 `json:"available_aggregations,omitempty"`
+	ExtremaProfiles       map[string][]string      `json:"extrema_profiles,omitempty"`
+	Sections              []string                 `json:"sections"`
 }
 
 func selectHistorySections(result *storage.HistoryResult, sections historySectionSet, ordered []string) *sectionedHistoryResult {
@@ -136,30 +139,49 @@ func selectHistorySections(result *storage.HistoryResult, sections historySectio
 			continue
 		}
 		samples = append(samples, sectionedHistorySample{
-			Timestamp:   sample.Timestamp,
-			Duration:    sample.Duration,
-			Data:        selectSampleSections(sample.Data, sections),
-			Min:         selectSampleSections(sample.Min, sections),
-			Max:         selectSampleSections(sample.Max, sections),
-			BucketStart: sample.BucketStart,
-			BucketEnd:   sample.BucketEnd,
-			SampleCount: sample.SampleCount,
-			Coverage:    sample.Coverage,
+			Timestamp:      sample.Timestamp,
+			Duration:       sample.Duration,
+			Data:           selectSampleSections(sample.Data, sections),
+			Min:            selectSampleSections(sample.Min, sections),
+			Max:            selectSampleSections(sample.Max, sections),
+			BucketStart:    sample.BucketStart,
+			BucketEnd:      sample.BucketEnd,
+			SampleCount:    sample.SampleCount,
+			Coverage:       sample.Coverage,
+			ExtremaProfile: sample.ExtremaProfile,
 		})
 	}
+	profiles := make(map[string][]string, len(result.ExtremaProfiles))
+	available := []string{"data"}
+	for profile, fields := range result.ExtremaProfiles {
+		profiles[profile] = []string{}
+		for _, field := range fields {
+			section, _, _ := strings.Cut(field, ".")
+			if field == "*" || sections.has(section) {
+				profiles[profile] = append(profiles[profile], field)
+				available = []string{"data", "min", "max"}
+			}
+		}
+	}
+	if result.ExtremaProfiles == nil {
+		profiles = nil
+		available = result.AvailableAggregations
+	}
 	return &sectionedHistoryResult{
-		Samples:           samples,
-		Tier:              result.Tier,
-		Resolution:        result.Resolution,
-		SourceResolution:  result.SourceResolution,
-		Downsampled:       result.Downsampled,
-		RequestedFrom:     result.RequestedFrom,
-		RequestedTo:       result.RequestedTo,
-		ActualFrom:        result.ActualFrom,
-		ActualTo:          result.ActualTo,
-		Complete:          result.Complete,
-		ExactComplete:     result.ExactComplete,
-		ValidAggregations: result.ValidAggregations,
-		Sections:          ordered,
+		Samples:               samples,
+		Tier:                  result.Tier,
+		Resolution:            result.Resolution,
+		SourceResolution:      result.SourceResolution,
+		Downsampled:           result.Downsampled,
+		RequestedFrom:         result.RequestedFrom,
+		RequestedTo:           result.RequestedTo,
+		ActualFrom:            result.ActualFrom,
+		ActualTo:              result.ActualTo,
+		Complete:              result.Complete,
+		ExactComplete:         result.ExactComplete,
+		ValidAggregations:     result.ValidAggregations,
+		AvailableAggregations: available,
+		ExtremaProfiles:       profiles,
+		Sections:              ordered,
 	}
 }

@@ -76,9 +76,11 @@ const (
 | 12 | `flagHasDiskIDs` | Persistent disk identities, after power supplies |
 | 5–7, 13–15 | — | **Available** — use bit 13 next |
 
-`flagReducerV2` adds no payload bytes. It distinguishes new trustworthy envelopes from
-incomplete Min/Max blocks already present in older tier files, allowing the history API to
-advertise operation validity without invalidating or rewriting retained history.
+`flagReducerV2` adds no payload bytes. It distinguishes complete policy-reducer envelopes
+from older Min/Max blocks. The history compatibility layer additionally exposes an audited
+scalar subset for legacy binary envelopes lacking the mean-statistics and disk-ID extensions.
+The decoded/query-only `extrema_profile` is never written into the positional codec and never
+promotes an old record to `flagReducerV2`. The Python inspector reports the same decoded profile.
 
 ## Contributing statistics extension
 

@@ -198,6 +198,7 @@ func TestQueryLatestUsesCache(t *testing.T) {
 	}
 	if last == nil {
 		t.Fatal("QueryLatest returned nil after WriteSample")
+		return
 	}
 	if last.Data.CPU.Total.Usage != 77.7 {
 		t.Errorf("QueryLatest CPU = %f, want 77.7", last.Data.CPU.Total.Usage)
@@ -251,6 +252,7 @@ func TestQueryLatestAfterRestartUsesWarmCache(t *testing.T) {
 	}
 	if latest == nil {
 		t.Fatal("QueryLatest after restart returned nil — warmLatestCache did not fire")
+		return
 	}
 	// The last written sample had CPU = 40.0 (i=4)
 	if latest.Data.CPU.Total.Usage != 40.0 {

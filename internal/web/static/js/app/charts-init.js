@@ -138,6 +138,7 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
                                     mode: state.timeZone,
                                     locale: i18n.currentLang,
                                     aggregation: state.currentAggregation,
+                                    extremaSources: items.map(item => item.raw?.extremaSource).filter(Boolean),
                                     translate: key => i18n.t(key),
                                 }),
                             ];

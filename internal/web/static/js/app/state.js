@@ -62,7 +62,7 @@ export const state = {
     cpuTempSensorNames: [],
     diskTempSensorNames: [],
     currentAggregation: localStorage.getItem('kula_aggregation') || 'avg',
-    validAggregations: ['data'], // response-advertised fields safe for every metric
+    validAggregations: ['data'], // available choices; bucket profiles restrict individual fields
     timeZone: localStorage.getItem('kula_time_zone') === 'utc' ? 'utc' : 'local',
     // One compact provenance record per timestamp. Tooltips look up this map
     // instead of copying bucket metadata onto every series in every chart.

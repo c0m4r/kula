@@ -92,6 +92,7 @@ func TestCurrentUITranslationsCoverEveryLocale(t *testing.T) {
 	}
 
 	required := []string{
+		"history_legacy_extrema", "history_extrema_unavailable", "extrema_source",
 		"si_back_dashboard", "si_page_title", "si_sections", "si_refresh_now", "si_overview",
 		"si_storage", "si_network", "si_devices", "si_sensors", "si_loading", "si_updated",
 		"si_refresh_failed", "si_load_failed", "si_unavailable", "si_unnamed_system", "uptime",

@@ -107,11 +107,22 @@ temporary field-value buffer across siblings within each struct. Plans contain n
 sample state, so concurrent history queries and rollups share only schema metadata. Dynamic
 keys keep the existing persisted `MeanStats` spelling; extrema do not build statistic paths.
 
-`HistoryResult.valid_aggregations` is the authoritative presentation contract. New complete
-envelopes carry `flagReducerV2` and advertise `data`, `min`, and `max`. Raw records and legacy
-rollups remain readable, but return `data` only; this prevents pre-policy Min/Max blocks already
-on disk from becoming trusted merely because Kula was upgraded. See
-[Adding a Metric Type](14-adding-metrics.md).
+`HistoryResult.valid_aggregations` retains the strict response-wide contract for existing
+clients. New complete envelopes carry `flagReducerV2`; any raw or legacy bucket restricts
+that list to `data`. Compatibility-aware clients use `available_aggregations` (the union of
+available choices), response `extrema_profiles`, and each bucket's `extrema_profile`.
+Profiles are `current` (all fields, `*`), `legacy`/`mixed` (an exact scalar allowlist), and
+`none` (no extrema). The allowlist in `history_compatibility.go` covers CPU total usage,
+user/system/I/O-wait/steal, load averages, used memory and used swap, including their used
+percentages. Copied gauges, temperature sentinels, devices and applications are excluded.
+
+The read-time layer makes no record-format changes. Only binary envelopes predating the
+mean-statistics and disk-ID extensions qualify as legacy. Incomplete modern envelopes and
+old JSON records fail closed; a missing reducer flag alone cannot certify them. Query
+fragments and batch merges propagate the intersection of input capabilities, including
+`none` from lossy coarse Data-only records. Legacy rounded means cannot expand their stored
+extrema. Mixed means remain approximate. The query-only profile is never serialized into
+tier records or used to set the reducer flag. See [Binary Codec](06-storage-codec.md).
 
 ## Restart recovery
 

@@ -46,7 +46,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Disk history and rates mixing physical drives when kernel device names change;
   old name-only history remains separate from new identified series
 - History aggregation, bucket boundaries and coverage across storage tiers, collection gaps
-  and missing metrics; older rollups remain approximate and untrusted Min/Max stay unavailable
+  and missing metrics; older rollups remain approximate
+- Avg/Min/Max controls hidden by legacy history: restore supported CPU, load, memory and
+  swap extrema through read-time compatibility without rewriting tier files; unsupported
+  extrema remain gaps, with availability notices and source details in tooltips and CSV exports
 - History caching and point limits, including sub-second requests and concurrent updates
 - Historical points, extrema and sensor identities lost during zoom, redraws or live updates;
   missing observations now retain line breaks and shaded gap indicators

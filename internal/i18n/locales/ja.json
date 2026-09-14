@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "古い履歴：最小値・最大値は対応する系列でのみ利用できます。",
+    "history_extrema_unavailable": "一部の系列または期間では最小値・最大値を利用できません。",
+    "extrema_source": "最小値・最大値の出典",
     "sign_in": "サインイン",
     "username": "ユーザー名",
     "password": "パスワード",

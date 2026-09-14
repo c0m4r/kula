@@ -287,6 +287,16 @@ func (s *Store) reduceHistoryBuckets(samples []*AggregatedSample, from, to time.
 		if sample == nil || sample.Data == nil || sourceResolution <= 0 {
 			continue
 		}
+		// Preserve the distinction between raw observations and lossy coarse
+		// Data-only records through fragments and cross-batch reductions.
+		if sample.Min == nil && sample.Max == nil {
+			annotated := *sample
+			sample = &annotated
+			sample.ExtremaProfile = "none"
+			if trustedRawSource {
+				sample.ExtremaProfile = "raw"
+			}
+		}
 
 		sourceWidth := historySourceWidth(sample, sourceResolution, trustedRawSource)
 		sourceStart := sample.Timestamp.Add(-sourceWidth)

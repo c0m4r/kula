@@ -175,6 +175,7 @@ func (s *Store) reconstructAggregationState() {
 		for _, as := range t0Samples {
 			if as.Timestamp.After(t1Newest) {
 				if as.Data != nil {
+					as.ExtremaProfile = "raw"
 					pending = append(pending, as)
 				}
 			}
@@ -227,6 +228,7 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 		Duration:           dur,
 		Data:               sample,
 		AggregationVersion: currentAggregationVersion,
+		ExtremaProfile:     "raw",
 	}
 
 	if len(s.tiers) > 0 {
@@ -345,6 +347,10 @@ type HistoryResult struct {
 	Complete          bool     `json:"complete"`
 	ExactComplete     bool     `json:"exact_complete"`
 	ValidAggregations []string `json:"valid_aggregations"`
+	// Availability is a union. Clients must check each bucket's profile;
+	// valid_aggregations keeps its strict contract for existing clients.
+	AvailableAggregations []string            `json:"available_aggregations,omitempty"`
+	ExtremaProfiles       map[string][]string `json:"extrema_profiles,omitempty"`
 }
 
 // validHistoryAggregations exposes extrema only when every returned bucket was
@@ -390,6 +396,13 @@ func cloneHistoryResult(result *HistoryResult) *HistoryResult {
 		cp.Samples[i] = cloneAggregatedSample(sample)
 	}
 	cp.ValidAggregations = append([]string(nil), result.ValidAggregations...)
+	cp.AvailableAggregations = append([]string(nil), result.AvailableAggregations...)
+	if result.ExtremaProfiles != nil {
+		cp.ExtremaProfiles = make(map[string][]string, len(result.ExtremaProfiles))
+		for profile, fields := range result.ExtremaProfiles {
+			cp.ExtremaProfiles[profile] = append([]string{}, fields...)
+		}
+	}
 	if result.ActualFrom != nil {
 		actualFrom := *result.ActualFrom
 		cp.ActualFrom = &actualFrom
@@ -576,7 +589,7 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 		result.Complete = candidate.complete && len(result.Samples) > 0
 		result.ExactComplete = result.ActualFrom != nil && result.ActualTo != nil &&
 			!result.ActualFrom.After(from) && !result.ActualTo.Before(to)
-		result.ValidAggregations = validHistoryAggregations(result.Samples)
+		annotateHistoryAggregations(result)
 
 		// Cache with a TTL of one tier-0 resolution. The cap is a safety bound:
 		// if it's reached we sweep expired entries first and, failing that, skip

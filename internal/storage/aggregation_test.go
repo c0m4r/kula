@@ -205,6 +205,7 @@ func TestAggregationWeightedCascadeMatchesDirectReduction(t *testing.T) {
 
 	if direct == nil || cascade == nil {
 		t.Fatal("direct or cascading reduction returned nil")
+		return
 	}
 	if math.Abs(direct.Data.CPU.Total.Usage-cascade.Data.CPU.Total.Usage) > 1e-9 {
 		t.Errorf("weighted cascade data = %v, direct = %v", cascade.Data.CPU.Total.Usage, direct.Data.CPU.Total.Usage)

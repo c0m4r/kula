@@ -74,6 +74,7 @@ func (s *Store) aggregateSamples(samples []*collector.Sample, dur time.Duration)
 			Duration:           perSample,
 			Data:               sample,
 			AggregationVersion: currentAggregationVersion,
+			ExtremaProfile:     "raw",
 		})
 	}
 	return s.aggregateAggregated(wrapped, dur)
@@ -83,8 +84,8 @@ func (s *Store) aggregateSamples(samples []*collector.Sample, dur time.Duration)
 // explicit policies on collector.Sample. Means are duration-weighted when the
 // inputs are already buckets; sparse statistics retain each field's effective
 // weight and unrounded sum when its contribution differs. Extrema
-// use the inner envelopes when they are trustworthy and always include Data as
-// a fallback for dynamic identities missing from a legacy envelope.
+// use the inner envelopes and include Data as a fallback for complete current
+// buckets. Legacy compatibility uses only its audited scalar envelopes.
 func (s *Store) aggregateAggregated(samples []*AggregatedSample, dur time.Duration) *AggregatedSample {
 	dataValues := make([]weightedValue, 0, len(samples))
 	minValues := make([]weightedValue, 0, len(samples)*2)
@@ -104,23 +105,29 @@ func (s *Store) aggregateAggregated(samples []*AggregatedSample, dur time.Durati
 			weight = sample.Duration.Seconds()
 		}
 		isRaw := sample.Min == nil && sample.Max == nil
+		legacyExtrema := sample.ExtremaProfile == "legacy" || sample.ExtremaProfile == "mixed"
 		data := reflect.ValueOf(sample.Data).Elem()
 		dataValues = append(dataValues, weightedValue{value: data, weight: weight, means: sample.MeanStats})
 		if !isRaw && !sample.MeanWeightsComplete {
 			completeWeights = false
 		}
 
-		// Data is redundant for complete envelopes, but including it is useful
-		// for old records whose dynamic Min/Max slices omitted an identity. It
-		// cannot change a correct numeric extremum.
+		// Complete current envelopes can also use Data as an identity fallback.
 		if sample.Min != nil {
 			minValues = append(minValues, weightedValue{value: reflect.ValueOf(sample.Min).Elem(), weight: 1})
 		}
-		minValues = append(minValues, weightedValue{value: data, weight: 1})
+		// Legacy means were rounded to two decimals and can lie outside their
+		// actual extrema. Only the audited scalar envelope is usable for those
+		// buckets; the Data fallback must not move its minimum or maximum.
+		if !legacyExtrema || sample.Min == nil {
+			minValues = append(minValues, weightedValue{value: data, weight: 1})
+		}
 		if sample.Max != nil {
 			maxValues = append(maxValues, weightedValue{value: reflect.ValueOf(sample.Max).Elem(), weight: 1})
 		}
-		maxValues = append(maxValues, weightedValue{value: data, weight: 1})
+		if !legacyExtrema || sample.Max == nil {
+			maxValues = append(maxValues, weightedValue{value: data, weight: 1})
+		}
 
 		if !isRaw && sample.AggregationVersion < currentAggregationVersion {
 			trustedExtrema = false
@@ -150,6 +157,10 @@ func (s *Store) aggregateAggregated(samples []*AggregatedSample, dur time.Durati
 	if trustedExtrema {
 		version = currentAggregationVersion
 	}
+	profile := mergedExtremaProfile(samples)
+	if profile != "current" {
+		version = 0
+	}
 
 	return &AggregatedSample{
 		Timestamp:           timestamp,
@@ -160,6 +171,7 @@ func (s *Store) aggregateAggregated(samples []*AggregatedSample, dur time.Durati
 		AggregationVersion:  version,
 		MeanStats:           means.stats,
 		MeanWeightsComplete: completeWeights,
+		ExtremaProfile:      profile,
 	}
 }
 

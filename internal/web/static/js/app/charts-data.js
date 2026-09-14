@@ -27,6 +27,7 @@ import {
     aggregationField,
     annotateHistoryItems,
     historyItemContext,
+    historyItemExtrema,
     historyItemSample,
     historyItemTimestamp,
     historySectionsForFocus,
@@ -151,17 +152,12 @@ export function addSampleToCharts(item, ts, {
     ts = ts instanceof Date ? ts.getTime() : ts;
     if (!Number.isFinite(ts)) return;
     const historyItem = normalizeHistoryItem(item);
-    let s = historyItemSample(historyItem);
+    const s = historyItemSample(historyItem);
     if (!s) return;
-    const selectedField = aggregationField(aggregation);
-    if (validAggregations.includes(selectedField) && historyItem[selectedField]) {
-        s = historyItem[selectedField];
-    }
-
-    const hasEnvelope = validAggregations.includes('min') &&
-        validAggregations.includes('max') && !!historyItem.min && !!historyItem.max;
-    const minimum = hasEnvelope ? historyItem.min : null;
-    const maximum = hasEnvelope ? historyItem.max : null;
+    // Representative data owns identities and chart visibility. Each point
+    // selects its own validated extrema; unavailable values become gaps.
+    const { minimum, maximum, profile } = historyItemExtrema(historyItem, validAggregations);
+    const hasEnvelope = !!minimum && !!maximum;
     const touchedDatasets = new Set();
     const wantsChart = chart => chart && (!charts || charts.has(chart));
 
@@ -174,6 +170,8 @@ export function addSampleToCharts(item, ts, {
             hasEnvelope ? minValue : null,
             hasEnvelope ? maxValue : null,
             extra,
+            aggregation,
+            profile,
         );
     };
     const pushFields = (chart, value, minValue, maxValue, fields) => {
@@ -807,6 +805,8 @@ export function addSampleToCharts(item, ts, {
                 minimum?.apps?.containers,
                 maximum?.apps?.containers,
                 hasEnvelope,
+                aggregation,
+                profile,
             );
     } else if (!charts) {
         markContainersAbsent(ts);
@@ -1059,7 +1059,7 @@ export function addSampleToCharts(item, ts, {
     });
 
     // Feed split charts
-    if (!charts) addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope);
+    if (!charts) addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope, aggregation, profile);
 }
 
 // Mark every chart dirty. The chart controller coalesces calls into one
@@ -1328,7 +1328,7 @@ function requestHistory(fromDate, toDate, points, apply, {
                     response.tier,
                     response.resolution,
                     response.complete,
-                    response.valid_aggregations,
+                    response.extrema_profiles ? response.available_aggregations ?? response.valid_aggregations : response.valid_aggregations,
                     response.source_resolution,
                     response.downsampled,
                 );

@@ -176,6 +176,34 @@ func TestHistorySectionsPreserveResponseMetadata(t *testing.T) {
 	}
 }
 
+func TestHistorySectionsFilterLegacyExtremaAvailability(t *testing.T) {
+	full := historyPayloadFixture(false)
+	full.ValidAggregations = []string{"data"}
+	full.AvailableAggregations = []string{"data", "min", "max"}
+	full.ExtremaProfiles = map[string][]string{"legacy": {"cpu.total.usage", "mem.used"}, "none": {}}
+	full.Samples[0].ExtremaProfile = "legacy"
+	for _, name := range []string{"cpu", "net"} {
+		sections, ordered, err := parseHistorySections(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected := selectHistorySections(full, sections, ordered)
+		wantFields, wantAvailable := []string{}, []string{"data"}
+		if name == "cpu" {
+			wantFields, wantAvailable = []string{"cpu.total.usage"}, []string{"data", "min", "max"}
+		}
+		if !reflect.DeepEqual(selected.ExtremaProfiles["legacy"], wantFields) || !reflect.DeepEqual(selected.AvailableAggregations, wantAvailable) {
+			t.Fatalf("%s: profiles=%v availability=%v", name, selected.ExtremaProfiles, selected.AvailableAggregations)
+		}
+		if selected.Samples[0].ExtremaProfile != "legacy" || !reflect.DeepEqual(selected.ValidAggregations, []string{"data"}) {
+			t.Fatal("section selection changed legacy provenance or the strict client contract")
+		}
+	}
+	if len(full.ExtremaProfiles["legacy"]) != 2 {
+		t.Fatal("section selection mutated cached metadata")
+	}
+}
+
 func BenchmarkHistoryPayloadEncoding(b *testing.B) {
 	sections, ordered, err := parseHistorySections("cpu,lavg,mem,swap,net,sys")
 	if err != nil {

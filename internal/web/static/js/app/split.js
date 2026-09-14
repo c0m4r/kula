@@ -112,7 +112,7 @@ export function updateSplitSelectors(s) {
 }
 
 // Called from addSampleToCharts in charts-data.js for every data point
-export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = false) {
+export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = false, aggregation = 'avg', profile = null) {
     const touchedDatasets = new Set();
     const push = (dataset, value, minValue, maxValue, extra = null) => {
         if (dataset) touchedDatasets.add(dataset);
@@ -123,6 +123,8 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
             hasEnvelope ? minValue : null,
             hasEnvelope ? maxValue : null,
             extra,
+            aggregation,
+            profile,
         );
     };
 

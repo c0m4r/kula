@@ -145,8 +145,15 @@ and [DMTF SMBIOS specification, section 7.18](https://www.dmtf.org/sites/default
   `valid_aggregations` lists the
   envelope fields that are valid across every metric in the response. Trusted policy-reducer
   buckets return `["data","min","max"]`; raw points and legacy rollups return `["data"]`.
-  Clients must honor this list because old tier files remain readable but their historical
-  Min/Max blocks are intentionally not trusted. At `perf`/`debug` log level the chosen tier,
+  Existing clients must honor this strict list. Compatibility-aware clients may instead use
+  `available_aggregations`, which lists operations available for at least some fields/buckets.
+  They must then check each sample's `extrema_profile` against the response's `extrema_profiles`
+  map: `current: ["*"]`, `legacy`/`mixed`: exact supported scalar JSON paths, `none: []`.
+  Unknown or missing profiles in this contract expose no extrema. Section filtering narrows
+  these paths and available operations; it preserves bucket profiles and the strict list.
+  No client may apply a partial profile to an entire sample or silently substitute Data for
+  unavailable Min/Max. See [Storage Engine](05-storage-engine.md#aggregation-semantics) for
+  legacy eligibility and field coverage. At `perf`/`debug` log level the chosen tier,
   effective resolution, sample count, and load time are logged.
 
 ### `GET /api/config`

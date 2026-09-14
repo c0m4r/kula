@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Starší historie: Min/Max jsou dostupné pouze pro podporované řady.",
+    "history_extrema_unavailable": "Min/Max nejsou dostupné pro některé řady nebo intervaly.",
+    "extrema_source": "Zdroj Min/Max",
     "sign_in": "Přihlásit se",
     "username": "Uživatelské jméno",
     "password": "Heslo",

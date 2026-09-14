@@ -370,7 +370,7 @@ function ensureSeriesForApp(app, ts) {
  * lengths stay aligned for Chart.js interaction.mode: 'index'.
  * Chart redraws are left to syncContainerMetricsUI so each chart repaints once.
  */
-function appendAlignedTick(ts, liveByKey, minByKey, maxByKey, hasEnvelope) {
+function appendAlignedTick(ts, liveByKey, minByKey, maxByKey, hasEnvelope, aggregation = 'avg', profile = null) {
     for (const m of CONTAINER_METRICS) {
         const chart = state.containerCharts?.[m.key];
         if (!chart) continue;
@@ -384,6 +384,9 @@ function appendAlignedTick(ts, liveByKey, minByKey, maxByKey, hasEnvelope) {
                 ct ? (ct[m.field] || 0) : null,
                 hasEnvelope ? minByKey[key]?.[m.field] : null,
                 hasEnvelope ? maxByKey[key]?.[m.field] : null,
+                null,
+                aggregation,
+                profile,
             );
         }
     }
@@ -749,7 +752,7 @@ function updateContainerUI() {
  * @param {boolean} hasEnvelope whether the response validates both extrema
  * @returns {boolean} true if any containers were present
  */
-export function addContainerSample(containers, ts, createAppChartCard, minContainers = [], maxContainers = [], hasEnvelope = false) {
+export function addContainerSample(containers, ts, createAppChartCard, minContainers = [], maxContainers = [], hasEnvelope = false, aggregation = 'avg', profile = null) {
     ensureFilterState();
 
     const list = containers || [];
@@ -787,7 +790,7 @@ export function addContainerSample(containers, ts, createAppChartCard, minContai
     }
 
     // One aligned tick for ALL known series (present → value, absent → null)
-    appendAlignedTick(ts, liveByKey, minByKey, maxByKey, hasEnvelope);
+    appendAlignedTick(ts, liveByKey, minByKey, maxByKey, hasEnvelope, aggregation, profile);
     pruneDeadContainers(liveKeys, tsMs);
 
     state._containerLiveKeys = liveKeys;

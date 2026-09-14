@@ -75,7 +75,14 @@ Failures retain the successful view and expose a failed status. Reconnection ref
 whole selected preset. Custom/zoomed intervals stay frozen while live gauges and status update.
 
 Every buffer observation uses the canonical `ts`, `data`, optional `min`/`max`, `dur`, and
-bucket-metadata shape. Rendering selects only operations allowed by `valid_aggregations`.
+bucket-metadata shape. `available_aggregations` controls the selector; per-bucket
+`extrema_profile` and shared `extrema_profiles` restrict individual scalar fields. Older
+API responses fall back to their strict `valid_aggregations` list. Unknown profiles expose
+no extrema. Representative data supplies identities and chart structure; point ingestion
+selects the validated field value or a null gap. Split and application charts use the same
+path. Bands, detailed tooltips, chart notices and CSV retain the same availability; mixed
+legacy/current histories do not hide valid newer extrema. CSV adds source columns where
+needed and leaves unavailable numeric values blank.
 Response provenance is shared between observations and indexed by timestamp for tooltips.
 Tier `0` is not synonymous with raw output: `downsampled` responses still refetch on zoom and
 retain valid Min/Max controls, including below three hours. The share URL preserves an allowed

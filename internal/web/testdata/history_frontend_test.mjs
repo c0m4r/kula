@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+
 async function importSource(relativePath) {
     const source = await readFile(new URL(relativePath, import.meta.url), 'utf8');
     const encoded = Buffer.from(source).toString('base64');
@@ -36,6 +37,7 @@ const {
     insertHistoryGaps,
     annotateHistoryItems,
     historyItemContext,
+    historyItemExtrema,
     historySectionsForFocus,
     normalizeHistoryItem,
     normalizeValidAggregations,
@@ -88,6 +90,68 @@ const {
     chartTimestamps,
     keyboardCursorTimestamp,
 } = await importSource('../static/js/app/chart-accessibility.js');
+
+test('legacy extrema are selected per field and retain provenance through export and trimming', () => {
+    const legacy = { ts: new Date(1000).toISOString(), extrema_profile: 'legacy',
+        data: { cpu: { total: { usage: 5 } }, net: { tcp: { curr_estab: 3 } } },
+        min: { cpu: { total: { usage: 1 } }, net: { tcp: { curr_estab: 2 } } },
+        max: { cpu: { total: { usage: 9 } }, net: { tcp: { curr_estab: 2 } } } };
+    const current = structuredClone(legacy);
+    current.ts = new Date(2000).toISOString();
+    current.extrema_profile = 'current';
+    current.max.net.tcp.curr_estab = 4;
+    const response = { valid_aggregations: ['data'], available_aggregations: ['data', 'min', 'max'],
+        extrema_profiles: { legacy: ['cpu.total.usage'], current: ['*'], none: [] } };
+    const items = annotateHistoryItems([legacy, current], response);
+    const cpu = { label: 'CPU', data: [] }, connections = { label: 'Connections', data: [] };
+    for (const item of items) {
+        const { minimum, maximum, profile } = historyItemExtrema(item, ['data', 'min', 'max']);
+        appendEnvelopePoint(cpu, Date.parse(item.ts), item.data.cpu.total.usage,
+            minimum?.cpu?.total?.usage, maximum?.cpu?.total?.usage, null, 'max', profile);
+        appendEnvelopePoint(connections, Date.parse(item.ts), item.data.net.tcp.curr_estab,
+            minimum?.net?.tcp?.curr_estab, maximum?.net?.tcp?.curr_estab, null, 'max', profile);
+    }
+    assert.deepEqual(cpu.data.map(point => point.y), [9, 9]);
+    assert.deepEqual(connections.data.map(point => point.y), [null, 4]);
+    assert.equal(connections.data[0].extremaUnavailable, true);
+    assert.equal(connections.data[0].extremaSource, 'unavailable');
+    assert.equal(cpu.data[0].extremaSource, 'legacy');
+    assert.deepEqual(connections.$kulaEnvelope, [null, null, 2, 4]);
+    assert.equal(legacy.max.net.tcp.curr_estab, 2, 'projection must not modify retained observations');
+    const chart = { data: { datasets: [cpu, connections] } };
+    const csv = chartCSV(chart);
+    assert.match(csv, /CPU — extrema source/);
+    assert.match(csv, /legacy/);
+    assert.match(csv, /unavailable/);
+    const lines = historyTooltipLines(historyItemContext(items[0]), {
+        aggregation: 'max', extremaSources: ['legacy', 'unavailable'],
+    });
+    assert(lines.includes('history_legacy_extrema'));
+    assert(lines.includes('history_extrema_unavailable'));
+    trimEnvelopeData(cpu, 1);
+    trimEnvelopeData(connections, 1);
+    assert.equal(connections.data[0].extremaSource, 'current');
+    assert.deepEqual(connections.$kulaEnvelope, [2, 4]);
+    assert.doesNotMatch(chartCSV(chart), /legacy|unavailable/);
+});
+
+test('unknown and missing compatibility profiles cannot fall back to copied extrema', () => {
+    const sample = { ts: new Date(1000).toISOString(), data: { value: 3 }, min: { value: 2 }, max: { value: 2 } };
+    for (const profile of ['none', 'unknown', undefined]) {
+        const [item] = annotateHistoryItems([{ ...sample, extrema_profile: profile }], {
+            valid_aggregations: ['data'], available_aggregations: ['data', 'min', 'max'],
+            extrema_profiles: { none: [] },
+        });
+        assert.equal(historyItemExtrema(item, ['data', 'min', 'max']).maximum, null);
+    }
+    assert.equal(historyItemExtrema(sample, ['data']).maximum, null);
+    assert.equal(historyItemExtrema(sample, ['data', 'min', 'max']).maximum, sample.max);
+    const [malicious] = annotateHistoryItems([{ ...sample, extrema_profile: 'legacy' }], {
+        extrema_profiles: { legacy: ['__proto__.polluted', 'constructor.prototype.polluted'] },
+    });
+    assert.deepEqual(historyItemExtrema(malicious).maximum, {});
+    assert.equal({}.polluted, undefined);
+});
 
 function deferred() {
     let resolve;

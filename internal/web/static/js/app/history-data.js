@@ -74,7 +74,17 @@ function responseSource(response) {
     const sourceResolution = typeof response.source_resolution === 'string'
         ? response.source_resolution
         : resolution;
+    const profiles = Object.create(null);
+    if (response.extrema_profiles && typeof response.extrema_profiles === 'object') {
+        for (const [name, fields] of Object.entries(response.extrema_profiles)) {
+            if (Array.isArray(fields)) profiles[name] = Object.freeze(fields.filter(field => typeof field === 'string'));
+        }
+    }
     return Object.freeze({
+        extremaProfiles: Object.freeze(profiles),
+        hasExtremaProfiles: hasOwn(response, 'extrema_profiles'),
+        availableAggregations: Object.freeze(normalizeValidAggregations(response.extrema_profiles
+            ? response.available_aggregations ?? response.valid_aggregations : response.valid_aggregations)),
         tier: Number.isInteger(tier) && tier >= 0 ? tier : null,
         resolution,
         sourceResolution,
@@ -147,6 +157,7 @@ export function annotateHistoryItems(items, response = null) {
                 sampleCount: count === null ? null : Math.trunc(count),
                 coverage: coverage === null ? null : Math.min(1, coverage),
                 source,
+                extremaProfile: typeof item.extrema_profile === 'string' ? item.extrema_profile : null,
             }),
         });
         return item;
@@ -155,6 +166,38 @@ export function annotateHistoryItems(items, response = null) {
 
 export function historyItemContext(item) {
     return item?.[historyContext] || null;
+}
+
+// Restrict extrema before any chart consumer sees them. Partial profiles use
+// exact scalar JSON paths; they never certify whole sections or collections.
+// Missing/unknown profiles fail closed. Older API responses retain the strict
+// response-wide contract, so cached clients and fixtures remain compatible.
+export function historyItemExtrema(item, validAggregations = ['data']) {
+    const context = historyItemContext(item);
+    const profile = context?.extremaProfile;
+    let fields;
+    if (context?.source?.hasExtremaProfiles || (profile !== null && profile !== undefined)) {
+        fields = context.source?.extremaProfiles?.[profile] || [];
+    } else {
+        fields = validAggregations.includes('min') && validAggregations.includes('max') ? ['*'] : [];
+    }
+    const project = block => {
+        if (!block || fields.length === 0) return null;
+        if (fields.includes('*')) return block;
+        const output = {};
+        for (const path of fields) {
+            const parts = path.split('.');
+            if (parts.some(part => !/^[a-z][a-z0-9_]*$/i.test(part) || ['constructor', 'prototype', '__proto__'].includes(part))) continue;
+            let value = block;
+            for (const part of parts) value = value?.[part];
+            if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+            let target = output;
+            for (const part of parts.slice(0, -1)) target = target[part] ||= {};
+            target[parts.at(-1)] = value;
+        }
+        return output;
+    };
+    return { minimum: project(item?.min), maximum: project(item?.max), profile };
 }
 
 function finiteTime(value) {

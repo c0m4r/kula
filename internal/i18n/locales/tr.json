@@ -1,4 +1,7 @@
 {
+    "history_legacy_extrema": "Eski geçmiş: Min/Maks yalnızca desteklenen seriler için kullanılabilir.",
+    "history_extrema_unavailable": "Bazı seriler veya zaman aralıkları için Min/Maks kullanılamıyor.",
+    "extrema_source": "Min/Maks kaynağı",
     "sign_in": "Giriş Yap",
     "username": "Kullanıcı Adı",
     "password": "Şifre",

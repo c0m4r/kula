@@ -115,10 +115,11 @@ type AggregatedSample struct {
 	// existing tier files. SampleCount is the exact number of records read from
 	// the selected source tier for this output bucket; Coverage is the fraction
 	// of the bucket duration represented by their summed observed duration.
-	BucketStart time.Time `json:"bucket_start"`
-	BucketEnd   time.Time `json:"bucket_end"`
-	SampleCount int       `json:"sample_count"`
-	Coverage    float64   `json:"coverage"`
+	BucketStart    time.Time `json:"bucket_start"`
+	BucketEnd      time.Time `json:"bucket_end"`
+	SampleCount    int       `json:"sample_count"`
+	Coverage       float64   `json:"coverage"`
+	ExtremaProfile string    `json:"extrema_profile,omitempty"`
 }
 
 // encPool holds reusable byte slices to make encodeSample allocation-free on
@@ -827,6 +828,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, err
 		}
 	}
+	a.ExtremaProfile = decodedExtremaProfile(a, flags)
 	return a, nil
 }
 
@@ -1696,5 +1698,7 @@ func encodeSampleV(a *AggregatedSample) ([]byte, error) {
 func decodeSampleJSON(data []byte) (*AggregatedSample, error) {
 	s := &AggregatedSample{}
 	err := json.Unmarshal(data, s)
+	// JSON predates the audited binary layout. Ignore query-only provenance.
+	s.ExtremaProfile = "none"
 	return s, err
 }
