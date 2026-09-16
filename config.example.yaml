@@ -257,7 +257,8 @@ web:
     session_timeout: 24h
     # Absolute cap on a session's life, measured from login. session_timeout only
     # bounds idle time and slides forward on every request, so without this a token
-    # used once a day never expires. 0 disables the cap.
+    # used once a day never expires. 0 disables the cap. When a live session
+    # expires, the dashboard returns to login and reloads its range after sign-in.
     session_max_lifetime: 168h # 7 days
     argon2:
       time: 3

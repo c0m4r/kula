@@ -116,6 +116,7 @@ per-tier depth, retention window, and gzip compression.
 
 The HTTP server on backend exposes a REST API and a WebSocket endpoint for live streaming. 
 Authentication is optional. When enabled, Kula uses Argon2id password hashing, secure session cookies, token-only session validation with sliding expiration bounded by an absolute session lifetime (`session_max_lifetime`, 7 days by default), and hashed-at-rest session persistence. Authenticated API access can also use a bearer session token via the `Authorization` header.
+An expired live session returns the dashboard to login; signing in reloads the selected history range.
 
 ### Dashboard
 

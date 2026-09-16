@@ -36,6 +36,49 @@ state.customTo = new Date('2026-09-05T10:00:00Z');
 state.customFrom = new Date('2026-09-04T10:00:00Z');
 await data.fetchCustomHistory(state.customFrom, state.customTo);
 await frame();
+
+// The server closes expired/revoked sessions with 1008. Return to login and
+// reject an in-flight history response, then restore the selected view after
+// signing in without reloading the page.
+const authFetch = window.fetch;
+let finishExpiredHistory;
+window.fetch = (url, options) => String(url).includes('/api/history?')
+    ? new Promise(resolve => { finishExpiredHistory = resolve; })
+    : authFetch(url, options);
+const expiredPayload = { samples: state.dataBuffer.slice(), tier: 1, resolution: '1m',
+    valid_aggregations: ['data', 'min', 'max'] };
+const expiredRequest = data.fetchCustomHistory(state.customFrom, state.customTo);
+check(finishExpiredHistory, 'Expiry fixture did not start a history request');
+const expiredSocket = state.ws;
+state.csrfToken = 'expired-token';
+expiredSocket.readyState = 3;
+expiredSocket.onclose({ code: 1008, reason: 'session expired' });
+check(!document.getElementById('login-overlay').classList.contains('hidden'),
+    'Expired session did not return to login');
+check(!state.ws && !state.connected && !state.reconnectTimer,
+    'Expired session continued reconnecting');
+check(!state.csrfToken && !state.loadingHistory && !state.dataBuffer.length && !state.liveQueue.length,
+    'Expired session retained authenticated state');
+finishExpiredHistory(new Response(JSON.stringify(expiredPayload)));
+await expiredRequest;
+check(!state.dataBuffer.length, 'A late history response restored expired session data');
+window.fetch = (url, options) => String(url).endsWith('/api/login')
+    ? Promise.resolve(new Response(JSON.stringify({ csrf_token: 'fresh-token' })))
+    : authFetch(url, options);
+document.getElementById('login-user').value = 'operator';
+document.getElementById('login-pass').value = 'fixture-password';
+document.getElementById('login-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+for (let i = 0; !state.ws && i < 500; i++) await pause(10);
+check(state.ws && state.ws !== expiredSocket && state.csrfToken === 'fresh-token',
+    'Signing in after expiry did not open a new session');
+state.ws.readyState = WebSocket.OPEN;
+state.ws.onopen();
+for (let i = 0; state.loadingHistory && i < 500; i++) await pause(10);
+check(state.historyLoaded && state.dataBuffer.length > 0 &&
+    document.getElementById('login-overlay').classList.contains('hidden'),
+    'Signing in after expiry did not restore the selected history');
+window.fetch = authFetch;
+await frame();
 const originalCharts = Object.values(Chart.instances);
 const originalBuffer = state.dataBuffer;
 const cpu = state.charts.cpu;
@@ -881,6 +924,7 @@ check(state.charts.connections.data.datasets[3].data.filter(point => !point.extr
 window.fetch = compatibilityFetch;
 await (await import('./audit-system-info.js')).testSystemInfo();
 window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math.round(layoutMs), system_info: true,
+    session_expiry_relogin: true,
     history_replay: replayPerformance, scoped_device_replay: true, numeric_chart_points: true,
     retained_hours: span / 3600000, max_live_items: maxItems, gap_items: gapItemCount,
     data_opt_in: true, background_live_gauges: true, failure_preserves_history: true,

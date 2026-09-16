@@ -17,9 +17,7 @@ export function checkAuth() {
         .then(r => r.json())
         .then(data => {
             if (data.auth_required && !data.authenticated) {
-                document.getElementById('login-overlay')?.classList.remove('hidden');
-                document.getElementById('dashboard').style.filter = 'blur(8px)';
-                document.getElementById('btn-logout')?.classList.add('hidden');
+                requireLogin();
             } else {
                 document.getElementById('login-overlay')?.classList.add('hidden');
                 document.getElementById('dashboard').style.filter = '';
@@ -39,6 +37,29 @@ export function checkAuth() {
                 connectWS();
             });
         }); // If auth check fails, try connecting anyway
+}
+
+// Session expiry and explicit logout share the same cleanup. Invalidate pending
+// responses before clearing data so a late request cannot restore the old view.
+export function requireLogin() {
+    cancelHistoryRequest();
+    disconnectWS();
+    closeSystemInfo({ useHistory: false });
+    state.csrfToken = null;
+    document.getElementById('btn-logout')?.classList.add('hidden');
+    document.getElementById('login-overlay')?.classList.remove('hidden');
+    document.getElementById('dashboard').style.filter = 'blur(8px)';
+    const userEl = document.getElementById('login-user');
+    if (userEl) userEl.value = '';
+    const passEl = document.getElementById('login-pass');
+    if (passEl) passEl.value = '';
+    document.getElementById('login-error')?.classList.add('hidden');
+
+    state.dataBuffer = [];
+    state.historyPointContexts.clear();
+    state.liveQueue = [];
+    clearAllChartData();
+    updateAllCharts();
 }
 
 export function fetchConfig() {
@@ -153,24 +174,6 @@ export function handleLogout() {
         method: 'POST',
         headers: headers
     })
-        .then(() => {
-            cancelHistoryRequest();
-            disconnectWS();
-            document.getElementById('btn-logout')?.classList.add('hidden');
-            document.getElementById('login-overlay')?.classList.remove('hidden');
-            document.getElementById('dashboard').style.filter = 'blur(8px)';
-            const userEl = document.getElementById('login-user');
-            if (userEl) userEl.value = '';
-            const passEl = document.getElementById('login-pass');
-            if (passEl) passEl.value = '';
-            document.getElementById('login-error')?.classList.add('hidden');
-
-            // Clear state
-            state.dataBuffer = [];
-            state.historyPointContexts.clear();
-            state.liveQueue = [];
-            clearAllChartData();
-            updateAllCharts();
-        })
+        .then(() => requireLogin())
         .catch(err => console.error('Logout error:', err));
 }

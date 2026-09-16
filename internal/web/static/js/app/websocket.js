@@ -7,6 +7,7 @@ import { state } from './state.js';
 import { pushLiveSample, fetchHistory, fetchCustomHistory } from './charts-data.js';
 import { wsUrl } from './api.js';
 import { normalizeHistoryItem } from './history-data.js';
+import { requireLogin } from './auth.js';
 
 export function connectWS() {
     if (state.ws && (state.ws.readyState === WebSocket.CONNECTING || state.ws.readyState === WebSocket.OPEN)) {
@@ -78,13 +79,19 @@ export function connectWS() {
         }
     };
 
-    ws.onclose = () => {
+    ws.onclose = event => {
         // Ignore a close from a socket that disconnectWS deliberately detached,
         // or that has since been replaced by a newer connection.
         if (state.ws !== ws) return;
         state.ws = null;
         state.connected = false;
         updateConnectionStatus(false);
+        if (event.code === 1008) {
+            // The server rechecks sessions during streaming and uses 1008 for
+            // expiry/revocation. Reconnecting cannot renew those credentials.
+            requireLogin();
+            return;
+        }
         scheduleReconnect();
     };
 

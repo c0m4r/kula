@@ -43,6 +43,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Fixed
 
+- Expired live sessions now return to login and cancel pending history loads; signing in
+  restores the selected range without reloading the page
 - Disk history and rates mixing physical drives when kernel device names change;
   old name-only history remains separate from new identified series
 - History aggregation, bucket boundaries and coverage across storage tiers, collection gaps

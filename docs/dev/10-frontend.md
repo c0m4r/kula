@@ -73,6 +73,9 @@ WebSocket samples enter `charts-data.js`; preset, custom, zoom and reconnect req
 one abortable `HistoryRequestController`. Only its current generation can replace history.
 Failures retain the successful view and expose a failed status. Reconnection refreshes the
 whole selected preset. Custom/zoomed intervals stay frozen while live gauges and status update.
+WebSocket close code 1008 signals session expiry or revocation: the dashboard cancels pending
+history, stops reconnecting, clears authenticated readings and returns to login. Successful
+login opens a fresh connection and reloads the selected preset or custom interval.
 
 Every buffer observation uses the canonical `ts`, `data`, optional `min`/`max`, `dur`, and
 bucket-metadata shape. `available_aggregations` controls the selector; per-bucket

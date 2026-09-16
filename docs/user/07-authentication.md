@@ -80,7 +80,9 @@ Generate each user's hash with `./kula hash-password`.
 - **Live connections are re-checked**: the dashboard WebSocket revalidates its session
   every 30 seconds and hangs up once it is gone, so an open tab cannot keep streaming past
   the absolute lifetime (or past a logout). An open dashboard counts as activity for the
-  sliding timeout, exactly like any other request.
+  sliding timeout, exactly like any other request. When the server closes an expired
+  session, the dashboard clears its readings and shows the login form. Signing in again
+  reloads the selected history range without a page refresh.
 - A cleanup goroutine purges expired sessions every 5 minutes.
 
 ### Cookie flags

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Go** — the version pinned in [go.mod](../../go.mod) (`go 1.26.7` at time of writing).
+- **Go** — the version pinned in [go.mod](../../go.mod) (`go 1.26.8` at time of writing).
 - Optional dev tools used by `check.sh`:
   - [`govulncheck`](https://golang.org/x/vuln/cmd/govulncheck)
   - [`golangci-lint`](https://golangci-lint.run/)

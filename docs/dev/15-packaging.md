@@ -53,7 +53,7 @@ archive; only the remote path appends its checksums to `CHECKSUMS.sha256.txt`.
 
 The image is a two-stage build ([`addons/docker/Dockerfile`](../../addons/docker/Dockerfile)):
 
-- **Builder:** pinned `golang:1.26.7-trixie` (by digest), `CGO_ENABLED=0`, multi-arch via
+- **Builder:** pinned `golang:1.26.8-trixie` (by digest), `CGO_ENABLED=0`, multi-arch via
   `ARG TARGETARCH`, `-trimpath -ldflags="-s -w" -buildvcs=false`, building only `./cmd/kula/`.
 - **Runtime:** pinned `alpine:3.24.1` (by digest) with an unprivileged `kula:kula` user.
 

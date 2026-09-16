@@ -69,7 +69,7 @@ const server = http.createServer((req, res) => {
         if (relative === '' || relative === 'index.html') {
             let html = source(variant, 'internal/web/static/index.html').toString();
             html = html.replace(/\{\{if \.BasePath\}\}[\s\S]*?\{\{end\}\}/g, `<base href="/${variant}/">`)
-                .replace(/\{\{if \.AuthEnabled\}\}[\s\S]*?\{\{end\}\}/g, '')
+                .replace(/\{\{if \.AuthEnabled\}\}([\s\S]*?)\{\{end\}\}/g, '$1')
                 .replace(/\{\{if \.EasterEgg\}\}[\s\S]*?\{\{end\}\}/g, '')
                 .replace(/window.KULA_BASE_PATH = \{\{\.BasePath\}\}/, `window.KULA_BASE_PATH = "/${variant}"`)
                 .replace(/\s*integrity="[^"]*"/g, '').replace(/\{\{[^}]*\}\}/g, '')
