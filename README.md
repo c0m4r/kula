@@ -189,9 +189,9 @@ rm -f ${KULA_INSTALL}
 ### Standalone
 
 ```bash
-wget https://github.com/c0m4r/kula/releases/download/0.20.0/kula-0.20.0-amd64.tar.gz
-echo "4c732fe3132f86e118c54b2979a772820e964f324d3f5c94956e1c4c17a863aa kula-0.20.0-amd64.tar.gz" | sha256sum -c || rm -f kula-0.20.0-amd64.tar.gz
-tar -xvf kula-0.20.0-amd64.tar.gz
+wget https://github.com/c0m4r/kula/releases/download/0.20.1/kula-0.20.1-amd64.tar.gz
+echo "2ac30eea63bf97d57db37e0cfaf058cfa5d9b6d48935785fe1876c9a0fbed4f8 kula-0.20.1-amd64.tar.gz" | sha256sum -c || rm -f kula-0.20.1-amd64.tar.gz
+tar -xvf kula-0.20.1-amd64.tar.gz
 cd kula
 ./kula
 ```
@@ -214,18 +214,18 @@ docker logs -f kula
 ### Debian / Ubuntu (.deb)
 
 ```bash
-wget https://github.com/c0m4r/kula/releases/download/0.20.0/kula-0.20.0-amd64.deb
-echo "95d9cf1b410b9a6fc547f32b1c2ce8707cc6e9917a6d39a7cc8e337881afac3d kula-0.20.0-amd64.deb" | sha256sum -c || rm -f kula-0.20.0-amd64.deb
-sudo dpkg -i kula-0.20.0-amd64.deb
+wget https://github.com/c0m4r/kula/releases/download/0.20.1/kula-0.20.1-amd64.deb
+echo "bc0fe393f111b4f97b5dbb0f42e262d9242fcdac4c6aa98d2b2272fcb126e0b1 kula-0.20.1-amd64.deb" | sha256sum -c || rm -f kula-0.20.1-amd64.deb
+sudo dpkg -i kula-0.20.1-amd64.deb
 journalctl -f -t kula
 ```
 
 ### RHEL / Fedora / CentOS / Rocky / Alma (.rpm)
 
 ```bash
-wget https://github.com/c0m4r/kula/releases/download/0.20.0/kula-0.20.0-x86_64.rpm
-echo "a6e5913bae3af12b0ed64c57a084e5a1b1bdf26e9f5a4cb24dfdda6aba45face kula-0.20.0-x86_64.rpm" | sha256sum -c || rm -f kula-0.20.0-x86_64.rpm
-sudo rpm -i kula-0.20.0-x86_64.rpm
+wget https://github.com/c0m4r/kula/releases/download/0.20.1/kula-0.20.1-x86_64.rpm
+echo "e8d0e388cb2bdeb74d4834710cc04c82ac1833cf44d27616c4dcb26a85d92fb5 kula-0.20.1-x86_64.rpm" | sha256sum -c || rm -f kula-0.20.1-x86_64.rpm
+sudo rpm -i kula-0.20.1-x86_64.rpm
 journalctl -f -t kula
 ```
 
@@ -325,7 +325,7 @@ See: [Prometheus metrics](https://github.com/c0m4r/kula/wiki/Prometheus-metrics)
 Disk I/O and temperature metrics use the persistent disk ID as the `device` label
 value. `kula_disk_info{device="...",kernel_name="sda",identity_source="wwid"} 1`
 maps that ID to the current kernel name. Unidentified disks use `device="kernel:sda"`
-and `identity_source="kernel"`. Upgrading to 0.20.0 starts new disk metric series;
+and `identity_source="kernel"`. Version 0.20.0 starts new disk metric series;
 update dashboards and alert rules that filter by old `device="sda"` values.
 
 ### Persistent disk identities
