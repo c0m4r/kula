@@ -7,31 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
-## [0.20.0] - TBA
+## [0.20.0] - 2026-09-18
 
 ### Added
 
-- Added a dedicated, user-friendly System Info page with at-a-glance resource summaries,
-  progressively disclosed technical details, and system identity (manufacturer/product/firmware
-  type), CPU model and core counts, drive and filesystem usage, network interfaces, PCI/USB
-  devices, sensors and power supplies; separate authenticated `/api/system-info` endpoint
-- Persistent disk IDs from sysfs, stable disk selectors and `kula_disk_info` mappings
-- `kula disks` helper to list available disks and partitions with their persistent IDs
+- System info page with `/api/system-info` endpoint
+- Persistent disk IDs from sysfs, stable disk selectors and `kula_disk_info` mappings (#46)
+- `kula disks` helper to list available disks and partitions with their persistent IDs (#46)
 - Live, Back, Forward and Zoom out navigation with shareable historical ranges
-- Drag-selection, Ctrl+wheel and touch pan/pinch, plus keyboard navigation and a shared
-  crosshair with timestamp pinning
+- Drag-selection, Ctrl+wheel and touch pan/pinch
+- Keyboard navigation and a shared crosshair with timestamp pinning
 - Min–Max bands and detailed history tooltips with exact timestamps and coverage
-- Local/UTC display and optional Data/CSV controls in Customization; chart keyboard and
-  accessibility controls remain available without enabling data export
+- Local/UTC display and optional Data/CSV controls in Customization
 
 ### Changed
 
-- Disk Prometheus `device` labels now use persistent IDs (or `kernel:<name>` when
-  unavailable); update queries that select kernel-name label values
-- Smoother chart rendering and lower-memory history queries, including full 30-day views
-  and smaller Focus Mode responses
-- Custom and zoomed ranges, including device selections, stay frozen while live status updates;
-  long live windows retain the selected history during refreshes and failures
+- Disk Prometheus `device` labels now use persistent IDs (#46)
+- Smoother chart rendering and lower-memory history queries
+- Custom and zoomed ranges, including device selections, stay frozen while live status updates
+- Long live windows retain the selected history during refreshes and failures
 - Zoom-in stops at 12 data points, excluding gaps, with a sampling-aware minimum duration
 - Fresh installs default to Avg with straight, unfilled lines and one principal Min–Max band
 - Grid/list changes preserve chart data and legend selections
@@ -39,12 +33,12 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Inspect feature improvements
 - Implemented a unified rounding campaign while preserving full precision in storage and APIs
 - UI performance improvements
-- aggregation optimization
+- Aggregation optimization
 
 ### Fixed
 
-- Expired live sessions now return to login and cancel pending history loads; signing in
-  restores the selected range without reloading the page
+- Expired live sessions now return to login and cancel pending history loads
+- Signing in restores the selected range without reloading the page
 - Disk history and rates mixing physical drives when kernel device names change;
   old name-only history remains separate from new identified series
 - History aggregation, bucket boundaries and coverage across storage tiers, collection gaps
