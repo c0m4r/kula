@@ -203,7 +203,10 @@ register the card ID in `charts-init.js`'s `destroyAppCharts()` for cleanup. See
 chart history, pause state, and the WebSocket buffer never supply its values. A poll that only
 changes a temperature or a byte count patches the few live widgets in place instead of rebuilding
 the page, so scroll position, text selection, hover state, and the mount search survive every
-refresh.
+refresh. The Storage, Network, Connected devices and Sensors tabs are gated on
+`show_system_details` from `kula-config-ready`: while it is false only the System tab is built,
+the storage and network summary cards are omitted, and a `#system-info/<section>` hash naming a
+hidden section falls back to the System tab.
 
 ### Easter egg
 

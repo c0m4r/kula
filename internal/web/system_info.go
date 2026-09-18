@@ -26,6 +26,7 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 	if s.collector != nil {
 		latest = s.collector.Latest()
 	}
-	info := s.systemInfo.Current(latest, s.cfg.OS, s.cfg.Kernel, s.cfg.Arch, s.global.Hostname)
+	info := s.systemInfo.Current(latest, s.cfg.OS, s.cfg.Kernel, s.cfg.Arch, s.global.Hostname,
+		s.global.ShowSystemDetails)
 	_ = json.NewEncoder(w).Encode(info)
 }

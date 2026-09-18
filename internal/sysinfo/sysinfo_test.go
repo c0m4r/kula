@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -50,7 +51,7 @@ func TestInventoryHardwareAndMissingFields(t *testing.T) {
 	write("sys/class/power_supply/BAT0/capacity", "0")
 	sample := &collector.Sample{Timestamp: time.Now(), Memory: collector.MemoryStats{Total: 1024},
 		System: collector.SystemStats{UptimeHuman: "2h 3m"}, GPU: []collector.GPUStats{{Name: "GPU", Driver: "test"}}}
-	s := p.Current(sample, "Test OS", "Test Kernel", "arm64", "host")
+	s := p.Current(sample, "Test OS", "Test Kernel", "arm64", "host", true)
 	if s.System["manufacturer"] != "Test Systems" || s.System["product"] != "Test Server" {
 		t.Fatalf("bad system identity: %+v", s.System)
 	}
@@ -89,7 +90,7 @@ func TestInventoryHardwareAndMissingFields(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() {
-			if got := p.Current(nil, "", "", "", ""); got != s {
+			if got := p.Current(nil, "", "", "", "", true); got != s {
 				t.Error("snapshot cache not shared")
 			}
 		})
@@ -97,10 +98,86 @@ func TestInventoryHardwareAndMissingFields(t *testing.T) {
 	wg.Wait()
 }
 
+// TestDetailsToggle covers global.show_system_details: with the option off the
+// snapshot still identifies the host, but storage, network, devices and sensors
+// are absent from it. The full discovery stays cached, so turning the option
+// back on does not wait for a refresh interval.
+func TestDetailsToggle(t *testing.T) {
+	p, write := fixture(t)
+	write("sys/class/dmi/id/product_name", "Test Server\n")
+	write("proc/cpuinfo", "processor : 0\nmodel name : Fixture CPU\n")
+	write("proc/self/mountinfo", "24 1 253:0 / / rw - ext4 /dev/sda1 rw\n")
+	write("sys/class/net/eno1/operstate", "up")
+	write("sys/class/hwmon/hwmon0/name", "chip")
+	write("sys/class/hwmon/hwmon0/temp1_input", "42000")
+	sample := &collector.Sample{Memory: collector.MemoryStats{Total: 2048},
+		Disks: collector.DiskStats{FileSystems: []collector.FileSystemInfo{{Device: "/dev/sda1", FSType: "ext4",
+			MountPoint: "/", Total: 100, Used: 25}}},
+		GPU: []collector.GPUStats{{Name: "Fixture GPU", Driver: "fixture-driver"}}}
+
+	full := p.Current(sample, "os", "kernel", "amd64", "host", true)
+	if len(full.Filesystems) != 1 || len(full.Network) != 1 || len(full.Sensors) != 1 ||
+		full.Live.Hottest == nil || len(full.Live.GPU) != 1 {
+		t.Fatalf("details-enabled snapshot is incomplete: %+v", full)
+	}
+	summary := p.Current(sample, "os", "kernel", "amd64", "host", false)
+	if summary.System["product"] != "Test Server" || summary.System["os"] != "os" ||
+		summary.CPU.ModelName != "Fixture CPU" || summary.Live == nil || summary.Live.Memory.Total != 2048 {
+		t.Fatalf("details-disabled snapshot lost host identity or live metrics: %+v", summary)
+	}
+	for name, section := range map[string]any{
+		"disks": summary.Disks, "filesystems": summary.Filesystems, "network": summary.Network,
+		"pci": summary.PCI, "usb": summary.USB, "sensors": summary.Sensors, "power": summary.Power,
+		"live.gpu": summary.Live.GPU,
+	} {
+		if reflect.ValueOf(section).Len() != 0 {
+			t.Fatalf("details-disabled snapshot still exposes %s: %+v", name, section)
+		}
+	}
+	for name, section := range map[string]bool{
+		"disks": summary.Disks == nil, "filesystems": summary.Filesystems == nil,
+		"network": summary.Network == nil, "pci": summary.PCI == nil, "usb": summary.USB == nil,
+		"sensors": summary.Sensors == nil, "power": summary.Power == nil, "live.gpu": summary.Live.GPU == nil,
+	} {
+		if section {
+			t.Fatalf("details-disabled %s is nil; sections must serialize as empty arrays", name)
+		}
+	}
+	if summary.Live.Hottest != nil {
+		t.Fatalf("details-disabled snapshot still reports the warmest sensor: %+v", summary.Live.Hottest)
+	}
+	if got := p.Current(nil, "", "", "", "", true); got != full {
+		t.Fatal("details-disabled request discarded the cached full discovery")
+	}
+	// The summary keeps the snapshot shape (empty sections instead of missing
+	// keys) but no value discovered from the hardware may survive in it.
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), "Test Server") || !strings.Contains(string(encoded), "Fixture CPU") {
+		t.Fatalf("details-disabled snapshot lost host identity: %s", encoded)
+	}
+	for _, detail := range []string{"eno1", "/dev/sda1", "chip", "hottest", "Fixture GPU", "fixture-driver"} {
+		if strings.Contains(string(encoded), detail) {
+			t.Fatalf("details-disabled snapshot still carries %q: %s", detail, encoded)
+		}
+	}
+	var sections map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &sections); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"disks", "filesystems", "network", "pci", "usb", "sensors", "power"} {
+		if string(sections[name]) != "[]" {
+			t.Fatalf("details-disabled %s serialized as %s, want []", name, sections[name])
+		}
+	}
+}
+
 func TestMissingInventoryDoesNotFabricateLiveValues(t *testing.T) {
 	p, write := fixture(t)
 	write("sys/class/net/test0/operstate", "down")
-	s := p.Current(nil, "", "", "", "")
+	s := p.Current(nil, "", "", "", "", true)
 	if s.Live != nil || s.MetricsTime != nil {
 		t.Fatal("fabricated readings before first sample")
 	}
@@ -188,7 +265,7 @@ func TestBlockDeviceClassificationAndTracking(t *testing.T) {
 	sample := &collector.Sample{Disks: collector.DiskStats{Devices: []collector.DiskDevice{
 		{ID: "wwid:1", Name: "nvme0n1"}, {ID: "wwid:2", Name: "sda"},
 	}}}
-	s := p.Current(sample, "os", "kernel", "amd64", "host")
+	s := p.Current(sample, "os", "kernel", "amd64", "host", true)
 	byName := map[string]Disk{}
 	for _, disk := range s.Disks {
 		byName[disk.Name] = disk
@@ -224,7 +301,7 @@ func TestFilesystemUsageAndTracking(t *testing.T) {
 	sample := &collector.Sample{Disks: collector.DiskStats{FileSystems: []collector.FileSystemInfo{
 		{Device: "/dev/mapper/data", FSType: "ext4", MountPoint: "/", Total: 1000, Used: 250, Available: 700, UsedPct: 25},
 	}}}
-	s := p.Current(sample, "os", "kernel", "amd64", "host")
+	s := p.Current(sample, "os", "kernel", "amd64", "host", true)
 	root := s.Filesystems[0]
 	if root.Usage == nil || root.Usage.Used != 250 || root.Usage.Available != 700 || root.Usage.UsedPct != 25 {
 		t.Fatalf("filesystem usage not exposed: %+v", root.Usage)
@@ -248,7 +325,7 @@ func TestInterfaceIdentityAndKind(t *testing.T) {
 	write("sys/class/net/docker0/operstate", "down")
 	write("sys/class/net/lo/operstate", "unknown")
 	sample := &collector.Sample{Network: collector.NetworkStats{Interfaces: []collector.NetInterface{{Name: "eno1"}}}}
-	s := p.Current(sample, "os", "kernel", "amd64", "host")
+	s := p.Current(sample, "os", "kernel", "amd64", "host", true)
 	kinds := map[string]string{}
 	for _, iface := range s.Network {
 		kinds[iface.Name] = iface.Kind
@@ -266,6 +343,17 @@ func TestInterfaceIdentityAndKind(t *testing.T) {
 		}
 		if iface.Name == "wlan0" && iface.Tracked {
 			t.Error("uncollected interface is marked as tracked")
+		}
+	}
+	// The inventory identifies interfaces by kernel name; IP and MAC addresses
+	// are not collected at all.
+	encoded, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{`"addresses"`, `"mac"`} {
+		if strings.Contains(string(encoded), banned) {
+			t.Fatalf("interface address data %s is still collected: %s", banned, encoded)
 		}
 	}
 }

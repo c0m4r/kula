@@ -31,6 +31,15 @@ let deviceQuery = '';
 let structure = '';
 let confirmation = null;
 
+// Host details stay hidden until the server confirms global.show_system_details,
+// so the storage, network, device and sensor sections are only offered once
+// that option is known to be on.
+let confirmedDetails = false;
+const detailSectionIDs = new Set(['storage', 'network', 'devices', 'sensors']);
+const visibleDefinitions = () => sectionDefinitions.filter(section =>
+    confirmedDetails || !detailSectionIDs.has(section.id));
+const sectionIsVisible = id => sectionIDs.has(id) && (confirmedDetails || !detailSectionIDs.has(id));
+
 const el = id => document.getElementById(id);
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const present = value => value !== '' && value !== null && value !== undefined;
@@ -327,18 +336,24 @@ function overview(data, grid) {
             icon: 'memory', title: label('ram'), value: bytes(data.live?.mem?.total),
             detail: label('installed_memory'), liveValue: 'mem-total', live: liveBox('mem'),
         }),
-        summaryCard({
-            icon: 'storage', title: label('main_storage'),
-            value: bytes(mainFilesystem(data)?.usage?.total),
-            detail: mainFilesystem(data)?.mount || label('storage_usage_unavailable'),
-            section: 'storage', live: liveBox('fs', mainFilesystem(data)?.mount),
-        }),
-        summaryCard({
-            icon: 'network', title: label('network'), value: primaryInterface(data)?.name || label('unavailable'),
-            detail: primaryInterface(data)?.addresses?.[0] || label('no_interfaces'),
-            section: 'network',
-        }),
     );
+    // Storage and network summaries are host details too: without them the
+    // overview reports the machine identity, processor and memory only.
+    if (confirmedDetails) {
+        summaries.append(
+            summaryCard({
+                icon: 'storage', title: label('main_storage'),
+                value: bytes(mainFilesystem(data)?.usage?.total),
+                detail: mainFilesystem(data)?.mount || label('storage_usage_unavailable'),
+                section: 'storage', live: liveBox('fs', mainFilesystem(data)?.mount),
+            }),
+            summaryCard({
+                icon: 'network', title: label('network'), value: primaryInterface(data)?.name || label('unavailable'),
+                detail: primaryInterface(data)?.kind ? interfaceKindLabel(primaryInterface(data)) : label('no_interfaces'),
+                section: 'network',
+            }),
+        );
+    }
     grid.append(summaries);
 }
 
@@ -506,8 +521,6 @@ function interfaceKindLabel(iface) {
 
 function interfaceCard(iface) {
     const item = card(iface.name, {
-        ip_addresses: iface.addresses?.join('\n'),
-        mac_address: iface.mac,
         mtu: iface.mtu,
         link_speed: finite(iface.speed_mbps) ? number(iface.speed_mbps, ' Mb/s', 0) : undefined,
         driver: iface.details?.driver,
@@ -782,6 +795,10 @@ function sensors(data, grid) {
 /* ------------------------------------------------------------------ render */
 
 function renderSection(section, data, grid) {
+    if (!sectionIsVisible(section)) {
+        overview(data, grid);
+        return;
+    }
     switch (section) {
     case 'overview': overview(data, grid); break;
     case 'storage': storage(data, grid); break;
@@ -954,7 +971,7 @@ function structureKey(data) {
 /* --------------------------------------------------------------- lifecycle */
 
 function activateSection(section, { focus = false, updateRoute = true } = {}) {
-    if (!sectionIDs.has(section)) return;
+    if (!sectionIsVisible(section)) return;
     active = section;
     el('system-info-content').setAttribute('aria-labelledby', `system-info-tab-${active}`);
     for (const tab of el('system-info-tabs').children) {
@@ -982,13 +999,14 @@ function activateSection(section, { focus = false, updateRoute = true } = {}) {
 
 function sectionFromHash() {
     const match = /^#system-info\/([a-z]+)$/.exec(window.location.hash);
-    return match && sectionIDs.has(match[1]) ? match[1] : sectionDefinitions[0].id;
+    return match && sectionIsVisible(match[1]) ? match[1] : sectionDefinitions[0].id;
 }
 
 function tabs() {
     const nav = el('system-info-tabs');
     nav.replaceChildren();
-    for (const section of sectionDefinitions) {
+    const definitions = visibleDefinitions();
+    for (const section of definitions) {
         const button = node('button', 'system-info-tab');
         button.type = 'button';
         button.id = `system-info-tab-${section.id}`;
@@ -1001,15 +1019,15 @@ function tabs() {
             node('span', '', label(section.id)));
         button.addEventListener('click', () => activateSection(section.id));
         button.addEventListener('keydown', event => {
-            const index = sectionDefinitions.findIndex(item => item.id === active);
+            const index = definitions.findIndex(item => item.id === active);
             let next = index;
-            if (event.key === 'ArrowRight') next = (index + 1) % sectionDefinitions.length;
-            else if (event.key === 'ArrowLeft') next = (index - 1 + sectionDefinitions.length) % sectionDefinitions.length;
+            if (event.key === 'ArrowRight') next = (index + 1) % definitions.length;
+            else if (event.key === 'ArrowLeft') next = (index - 1 + definitions.length) % definitions.length;
             else if (event.key === 'Home') next = 0;
-            else if (event.key === 'End') next = sectionDefinitions.length - 1;
+            else if (event.key === 'End') next = definitions.length - 1;
             else return;
             event.preventDefault();
-            activateSection(sectionDefinitions[next].id, { focus: true });
+            activateSection(definitions[next].id, { focus: true });
         });
         nav.append(button);
     }
@@ -1103,7 +1121,7 @@ function summaryText(data) {
     if (data.network?.length) {
         lines.push('', `## ${label('network')}`);
         for (const iface of data.network) {
-            lines.push(`- ${iface.name} (${interfaceKindLabel(iface)})${iface.addresses?.length ? `: ${iface.addresses.join(', ')}` : ''}`);
+            lines.push(`- ${iface.name} (${interfaceKindLabel(iface)})`);
         }
     }
     if (data.sensors?.length) {
@@ -1275,10 +1293,26 @@ export function initSystemInfo() {
     });
     document.addEventListener('kula-config-ready', event => {
         enabled = event.detail.show_system_info !== false;
+        // A payload that does not mention the option leaves host details as
+        // they are: only an explicit false takes them away.
+        if ('show_system_details' in event.detail) {
+            confirmedDetails = event.detail.show_system_details === true;
+        }
+        // A section can disappear on this event (or on a later one), so the
+        // active tab has to fall back to the first section it can still show.
+        if (!sectionIsVisible(active)) active = sectionDefinitions[0].id;
         el('btn-info').classList.toggle('hidden', !enabled);
-        if (!enabled) closeSystemInfo({ useHistory: false });
-        else if (window.location.hash.startsWith(routeHash) && !pageIsOpen()) {
-            showSystemInfo({ pushRoute: false });
+        if (!enabled) {
+            closeSystemInfo({ useHistory: false });
+        } else {
+            // Even a closed page shows its section menu on the next visit, so
+            // the tab list follows the option whether or not it is open now.
+            tabs();
+            if (window.location.hash.startsWith(routeHash) && !pageIsOpen()) {
+                showSystemInfo({ pushRoute: false });
+            } else if (pageIsOpen() && snapshot) {
+                render();
+            }
         }
     });
     document.addEventListener('kula-i18n-changed', () => {

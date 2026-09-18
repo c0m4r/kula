@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
+## [0.20.1] - 2026-09-18
+
+### Added
+
+- `global.show_system_details` (default `false`) gates the storage, network,
+  connected-device and sensor inventory on the System Info page
+
+### Changed
+
+- System info no longer collects or displays IP and MAC addresses
+
 ## [0.20.0] - 2026-09-18
 
 ### Added

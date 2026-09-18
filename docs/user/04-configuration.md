@@ -34,18 +34,25 @@ the file. These are handy for containers and quick tweaks:
 
 ```yaml
 global:
-  hostname: ""            # Override reported hostname (default: system hostname)
-  show_system_info: true  # Show OS/kernel/architecture and current hardware inventory
-  show_version: true      # Show Kula version in UI
-  default_theme: auto     # Web UI theme: light, dark, or auto
-  easter_egg: true        # Show the Space Invaders button in the UI
-  game_score_url: ""      # Optional http(s) URL that receives the game's final score
+  hostname: ""                 # Override reported hostname (default: system hostname)
+  show_system_info: true       # Show OS/kernel/architecture and current hardware inventory
+  show_system_details: false   # Also show storage, network, devices and sensors
+  show_version: true           # Show Kula version in UI
+  default_theme: auto          # Web UI theme: light, dark, or auto
+  easter_egg: true             # Show the Space Invaders button in the UI
+  game_score_url: ""           # Optional http(s) URL that receives the game's final score
 ```
 
 When `show_system_info` is `false`, OS/Kernel/Arch are reported as "Hidden", the System Info
 button is hidden, and `/api/system-info` returns 404. When enabled, the inventory includes
-readable hardware identifiers (such as serial numbers), network addresses, and mount details.
-The endpoint uses the same authentication setting as the rest of the dashboard.
+readable hardware identifiers (such as serial numbers) and mount details. The endpoint uses the
+same authentication setting as the rest of the dashboard.
+
+`show_system_details` is **off** by default and narrows that inventory. While it is disabled the
+System Info page reports only the host profile, processor, memory and uptime, and the Storage,
+Network, Connected devices and Sensors tabs, their overview summaries, the GPU and warmest-sensor
+readings, and the matching `/api/system-info` entries are omitted. IP and MAC addresses are never
+collected, regardless of this option.
 
 When `game_score_url` is set, the Space Invaders easter egg POSTs the final score as
 `{"score": <n>}` to that URL, and its origin is added to the `connect-src` CSP directive. The

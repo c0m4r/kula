@@ -29,10 +29,15 @@ type Config struct {
 type GlobalConfig struct {
 	Hostname       string `yaml:"hostname"`
 	ShowSystemInfo bool   `yaml:"show_system_info"`
-	ShowVersion    bool   `yaml:"show_version"`
-	DefaultTheme   string `yaml:"default_theme"`
-	EasterEgg      bool   `yaml:"easter_egg"`
-	GameScoreURL   string `yaml:"game_score_url"`
+	// ShowSystemDetails controls the storage, network, connected-device and
+	// sensor inventory in the system info page and its API. Disabled by
+	// default: those sections describe the host in more detail than OS,
+	// kernel and architecture alone.
+	ShowSystemDetails bool   `yaml:"show_system_details"`
+	ShowVersion       bool   `yaml:"show_version"`
+	DefaultTheme      string `yaml:"default_theme"`
+	EasterEgg         bool   `yaml:"easter_egg"`
+	GameScoreURL      string `yaml:"game_score_url"`
 }
 
 type CollectionConfig struct {
@@ -359,9 +364,11 @@ func DefaultConfig() *Config {
 	return &Config{
 		Global: GlobalConfig{
 			ShowSystemInfo: true,
-			ShowVersion:    true,
-			DefaultTheme:   "auto",
-			EasterEgg:      true,
+			// ShowSystemDetails defaults to false (zero value) so a fresh
+			// install exposes the host inventory only when asked for.
+			ShowVersion:  true,
+			DefaultTheme: "auto",
+			EasterEgg:    true,
 		},
 		Collection: CollectionConfig{
 			Interval:        time.Second,

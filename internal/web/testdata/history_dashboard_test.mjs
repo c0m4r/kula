@@ -51,6 +51,7 @@ const server = http.createServer((req, res) => {
         const sendJSON = value => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(value)); };
         if (relative === 'api/auth/status') return sendJSON({auth_required: false});
         if (relative === 'api/config') return sendJSON({ lang: { default: 'en' }, join_metrics: false,
+            show_system_info: true, show_system_details: true,
             history: { collection_interval_ms: 1000, ranges: [
                 { from: '2026-04-17T03:00:00Z', to: '2026-04-19T21:00:00Z' },
                 { from: '2026-09-01T00:00:00Z', to: new Date().toISOString() },

@@ -43,6 +43,8 @@ current hardware inventory from `/proc` and `/sys`: system/motherboard identity,
 core counts, drives and partitions, mounted filesystems, network interfaces, PCI/USB devices,
 sensors, and power supplies. It is served by the authenticated `/api/system-info` endpoint and
 never written to metric history; `global.show_system_info: false` disables the page and its API.
+Drives, filesystems, interfaces, devices and sensors are only reported when
+`global.show_system_details: true` is set, and IP and MAC addresses are never collected.
 
 ## How it works
 

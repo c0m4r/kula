@@ -77,6 +77,7 @@ The main role defaults are in `roles/kula/defaults/main.yaml`:
 
 ```yaml
 kula_show_system_info: true
+kula_show_system_details: false
 kula_show_version: true
 kula_port: 27960
 ```

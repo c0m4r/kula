@@ -18,6 +18,10 @@ global:
   hostname: ""
   # Show OS/kernel/architecture and the current hardware inventory page/API (default: true)
   show_system_info: true
+  # Also show the storage, network, connected-device and sensor inventory in the
+  # system info page/API. When false, only OS/kernel/architecture, CPU, memory
+  # and uptime are reported (default: false)
+  show_system_details: false
   # Toggle display of Kula version (default: true)
   show_version: true
   # Default theme for the web UI: light, dark, or auto (default: auto)

@@ -26,10 +26,11 @@ dashboard is disabled and only `/metrics`, `/health` and `/status` remain.
 ### System Info
 
 Choose **System Info** (📡) in the header to open the dedicated current-inventory page. The
-at-a-glance view puts the server identity, uptime, CPU, memory, main storage, and primary network
-connection first. Lower-level identifiers, counters, and device tables are grouped behind the
-section tabs and expandable groups so they remain available without overwhelming the main view.
-Use **Back to dashboard** or the browser Back button to return to the charts.
+at-a-glance view puts the server identity, uptime, CPU and memory first, followed by the main
+storage and primary network connection when host details are enabled. Lower-level identifiers,
+counters, and device tables are grouped behind the section tabs and expandable groups so they
+remain available without overwhelming the main view. Use **Back to dashboard** or the browser
+Back button to return to the charts.
 
 The page refreshes every five seconds while open and visible, including when charts are paused or
 viewing a historical range. Leaving it or hiding the browser tab stops requests. **Refresh now**
@@ -41,17 +42,23 @@ The page is split into **System**, **Storage**, **Network**, **Connected devices
 **Sensors & power** tabs:
 
 - **System**: OS, kernel, architecture, hostname, system/motherboard identity, firmware type
-  (UEFI when applicable), uptime, and live CPU usage/load, memory, main storage, and primary
-  network summaries.
+  (UEFI when applicable), uptime, and live CPU usage/load and memory, plus the main storage and
+  primary network summaries when host details are enabled.
 - **Storage**: physical drives and their partitions, stacked/virtual devices grouped separately,
   capacity, model or device-mapper name, drive class and HDD/SSD medium, associated mountpoints,
   and space usage per mounted filesystem.
 - **Network**: every visible interface, including virtual interfaces and loopback, sorted by
-  kind; addresses, MAC, driver, MTU, link state, and link speed.
+  kind; driver, MTU, link state, and link speed. IP and MAC addresses are not collected.
 - **Connected devices**: current GPU names and drivers, plus PCI/USB inventory with device IDs
   and available drivers.
 - **Sensors & power**: readable temperatures, fans, voltages, current, power, humidity, and
   power-supply/battery attributes (status, capacity, online state).
+
+Everything below the System tab is host detail and stays off until
+`global.show_system_details: true` is set. With the default `false`, only the System tab is
+offered and the overview reports the host profile, processor, memory and uptime; the Storage,
+Network, Connected devices and Sensors tabs, their summaries, and the matching API entries are
+absent.
 
 The page reads `/proc` and `/sys` directly without requiring external utilities. Available
 details depend on the machine, drivers, permissions, and container namespaces. Missing

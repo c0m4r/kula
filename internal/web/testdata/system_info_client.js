@@ -23,9 +23,9 @@ export async function testSystemInfo() {
             details: { model: 'Example NVMe 2TB' }, mounts: ['/'] }],
         filesystems: [{ device: '/dev/nvme0n1p2', mount: '/', type: 'ext4', tracked: true,
             usage: { total: 2000000000000, used: 800000000000, available: 1100000000000, used_pct: 40 } }],
-        network: [{ name: 'eth0', kind: 'wired', tracked: true, mac: '02:00:00:00:00:01', mtu: 1500,
-            details: { state: 'unknown', driver: 'igc' }, addresses: ['192.0.2.10/24', '2001:db8::10/64'], speed_mbps: 1000 },
-            { name: 'lo', kind: 'local', tracked: false, details: { state: 'unknown' }, addresses: ['127.0.0.1/8'] }],
+        network: [{ name: 'eth0', kind: 'wired', tracked: true, mtu: 1500,
+            details: { state: 'unknown', driver: 'igc' }, speed_mbps: 1000 },
+            { name: 'lo', kind: 'local', tracked: false, details: { state: 'unknown' } }],
         pci: [{ address: '0000:01:00.0', driver: 'igc', vendor: 'Intel', class: 'network', device_id: '8086:15f3' },
             { address: '0000:00:1f.3', driver: 'snd_hda_intel', class: 'multimedia', device_id: '8086:51ca' }],
         usb: [{ address: '1-1', product: 'USB Keyboard', class: 'input', manufacturer: 'Example Peripherals',
@@ -39,7 +39,7 @@ export async function testSystemInfo() {
             sys: { uptime_human: '12d 4h 18m', processes: 240 },
             cpu: { usage_pct: 12.5, load1: 0.42, load5: 0.5, load15: 0.6 },
             hottest: { device: 'coretemp', name: 'Package', value: 48, unit: '°C' },
-            gpu: [],
+            gpu: [{ name: 'Radeon Fixture', driver: 'amdgpu' }],
         },
     };
     const longMount = '/srv/projects/a-very-long-directory-name-with-no-breaks-' + 'archive'.repeat(18) + '/data, current';
@@ -160,9 +160,12 @@ export async function testSystemInfo() {
             'A 48 °C sensor is flagged as hot');
         // Devices are grouped by class, described by vendor, and searchable.
         select('devices');
-        check(content.querySelectorAll('.system-info-inventory-item').length === 3 &&
+        check(content.querySelectorAll('.system-info-inventory-item').length === 4 &&
             content.querySelector('.system-info-inventory-list')?.tagName === 'UL',
             'Connected devices are not rendered as a list');
+        check([...content.querySelectorAll('.system-info-inventory-item h4')]
+            .some(heading => heading.textContent === 'Radeon Fixture'),
+            'GPU inventory is not listed with the connected devices');
         check([...content.querySelectorAll('.system-info-group-heading h3, .system-info-device-group summary h3')]
             .some(heading => heading.textContent.includes('Network controller')),
             'PCI functions are not grouped by device class');
@@ -247,8 +250,9 @@ export async function testSystemInfo() {
             'Sensor readings are not updated in place');
         check(packageRow.classList.contains('is-warm'), 'A warm sensor is not flagged');
         select('network');
-        check(content.textContent.includes('02:00:00:00:00:01') && content.textContent.includes('1500'),
-            'Interface MAC address or MTU is missing');
+        check(content.textContent.includes('1500'), 'Interface MTU is missing');
+        check(!content.textContent.includes('addresses') && !/\b\d{1,3}(?:\.\d{1,3}){3}\b/.test(content.textContent) &&
+            !content.textContent.includes('02:00:00'), 'IP or MAC addresses are still displayed');
         const unknownState = [...content.querySelectorAll('.system-info-state')].find(item => item.textContent === 'unknown');
         check(unknownState && !unknownState.classList.contains('is-offline'), 'Unknown interface state is styled as offline');
         check(!content.querySelector('[role="progressbar"]') && !content.textContent.includes('Receiving now'),
@@ -295,6 +299,34 @@ export async function testSystemInfo() {
         check(!home.hasAttribute('inert') && infoButton.getAttribute('aria-expanded') === 'false',
             'Leaving the page left the dashboard inert');
         pending = false;
+        // global.show_system_details=False keeps the page, but drops the
+        // storage, network, device and sensor inventory from it.
+        document.dispatchEvent(new CustomEvent('kula-config-ready',
+            { detail: { show_system_info: true, show_system_details: false } }));
+        infoButton.click();
+        await waitFor(() => content.children.length);
+        // The tab list follows the new option immediately, the refreshed page a
+        // moment later, so also wait for the overview it re-renders.
+        await waitFor(() => content.querySelector('.system-info-summary-card'));
+        check(document.querySelectorAll('#system-info-tabs .system-info-tab').length === 1 &&
+            document.querySelector('[data-section="overview"]')?.getAttribute('aria-selected') === 'true',
+            'Host detail sections are still offered while details are disabled');
+        select('overview');
+        check(content.querySelectorAll('.system-info-summary-card').length === 2,
+            'Storage or network summary is still shown while details are disabled');
+        check(content.querySelectorAll('[data-live="fs"]').length === 0 && !content.textContent.includes('eth0') &&
+            !content.textContent.includes('Radeon Fixture'),
+            'Host details are still displayed while details are disabled');
+        document.dispatchEvent(new CustomEvent('kula-config-ready',
+            { detail: { show_system_info: true, show_system_details: true } }));
+        check(document.querySelectorAll('#system-info-tabs .system-info-tab').length === 5 &&
+            content.querySelectorAll('.system-info-summary-card').length === 4,
+            'Host details did not return when details were enabled again');
+        select('storage');
+        check(document.querySelector('[data-section="storage"]').getAttribute('aria-selected') === 'true' &&
+            content.querySelector('.system-info-mounted-storage'),
+            'Detail sections are unusable after being enabled again');
+        closeSystemInfo({ useHistory: false });
         document.dispatchEvent(new CustomEvent('kula-config-ready', { detail: { show_system_info: false } }));
         infoButton.click();
         check(page.classList.contains('hidden') && infoButton.classList.contains('hidden'), 'Hidden system information can still open');

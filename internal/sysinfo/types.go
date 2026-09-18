@@ -126,14 +126,16 @@ const (
 	KindLocal    = "local"
 )
 
+// Interface describes a network interface by kernel name only. IP addresses and
+// MAC addresses are deliberately not collected: the interface name, kind, link
+// state, MTU, and speed answer "is this host connected" without turning the
+// inventory into an address book of the machine.
 type Interface struct {
-	Name      string   `json:"name"`
-	Details   Details  `json:"details"`
-	Addresses []string `json:"addresses"`
-	SpeedMbps *uint64  `json:"speed_mbps,omitempty"`
-	MAC       string   `json:"mac,omitempty"`
-	MTU       int      `json:"mtu,omitempty"`
-	Kind      string   `json:"kind,omitempty"`
+	Name      string  `json:"name"`
+	Details   Details `json:"details"`
+	SpeedMbps *uint64 `json:"speed_mbps,omitempty"`
+	MTU       int     `json:"mtu,omitempty"`
+	Kind      string  `json:"kind,omitempty"`
 	// Tracked reports whether the regular collector stores this interface's history.
 	Tracked bool `json:"tracked"`
 }

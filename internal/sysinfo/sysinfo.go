@@ -25,15 +25,50 @@ type Provider struct {
 
 func New() *Provider { return &Provider{proc: "/proc", sys: "/sys"} }
 
-// Current returns an immutable snapshot shared by concurrent requests. Host
+// Current returns a read-only snapshot shared by concurrent requests. Host
 // labels are supplied by the server, which reads OS information before Landlock.
-func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostname string) *Snapshot {
+// When details is false the storage, network, connected-device and sensor
+// inventory is filtered out of the returned snapshot; the full discovery is
+// still cached, so enabling the option takes effect immediately.
+func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostname string, details bool) *Snapshot {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
-	if p.cached != nil && now.Sub(p.cached.Timestamp) < RefreshInterval {
+	if p.cached == nil || now.Sub(p.cached.Timestamp) >= RefreshInterval {
+		p.cached = p.discover(sample, osName, kernel, arch, hostname, now)
+	}
+	if details {
 		return p.cached
 	}
+	return p.cached.withoutDetails()
+}
+
+// withoutDetails copies the snapshot with every detail section emptied. The
+// cache keeps the full discovery, so a later request with details enabled is
+// answered without another sweep of /proc and /sys. Sections become empty
+// arrays rather than JSON null so the response shape stays stable for clients
+// that iterate them, and nothing discovered from the hardware survives — the
+// GPU names carried by the latest sample belong to the hidden connected-device
+// inventory too.
+func (s *Snapshot) withoutDetails() *Snapshot {
+	summary := *s
+	summary.Disks = []Disk{}
+	summary.Filesystems = []Filesystem{}
+	summary.Network = []Interface{}
+	summary.PCI = []Details{}
+	summary.USB = []Details{}
+	summary.Sensors = []Sensor{}
+	summary.Power = []Details{}
+	if summary.Live != nil {
+		live := *summary.Live
+		live.Hottest = nil
+		live.GPU = []LiveGPU{}
+		summary.Live = &live
+	}
+	return &summary
+}
+
+func (p *Provider) discover(sample *collector.Sample, osName, kernel, arch, hostname string, now time.Time) *Snapshot {
 	s := &Snapshot{Timestamp: now}
 	s.System = p.attributes(filepath.Join(p.sys, "class/dmi/id"), map[string]string{
 		"manufacturer": "sys_vendor", "product": "product_name",
@@ -84,7 +119,6 @@ func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostn
 			s.Live.GPU = append(s.Live.GPU, LiveGPU{Name: gpu.Name, Driver: gpu.Driver})
 		}
 	}
-	p.cached = s
 	return s
 }
 

@@ -160,21 +160,14 @@ func (p *Provider) filesystems(sample *collector.Sample) []Filesystem {
 
 func (p *Provider) network() []Interface {
 	result := []Interface{}
-	addresses := map[string][]string{}
-	hardware := map[string]net.Interface{}
+	mtus := map[string]int{}
 	ifaces, _ := net.Interfaces()
 	for _, iface := range ifaces {
-		hardware[iface.Name] = iface
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			addresses[iface.Name] = append(addresses[iface.Name], addr.String())
-		}
+		mtus[iface.Name] = iface.MTU
 	}
 	for _, path := range matches(filepath.Join(p.sys, "class/net/*")) {
 		name := filepath.Base(path)
-		i := Interface{Name: name, Addresses: []string{}}
-		i.Addresses = append(i.Addresses, addresses[name]...)
-		sort.Strings(i.Addresses)
+		i := Interface{Name: name}
 		i.Details = p.attributes(path, map[string]string{"state": "operstate"})
 		if driver := linkName(filepath.Join(path, "device/driver")); driver != "" {
 			i.Details["driver"] = driver
@@ -182,12 +175,7 @@ func (p *Provider) network() []Interface {
 		if speed := uintValue(read(filepath.Join(path, "speed"))); speed != nil && *speed > 0 && *speed < math.MaxUint32 {
 			i.SpeedMbps = speed
 		}
-		if iface, ok := hardware[name]; ok {
-			if len(iface.HardwareAddr) > 0 {
-				i.MAC = iface.HardwareAddr.String()
-			}
-			i.MTU = iface.MTU
-		}
+		i.MTU = mtus[name]
 		i.Kind = interfaceKind(path, name)
 		result = append(result, i)
 	}

@@ -88,6 +88,39 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Web.Accessibility = %+v, want every option off and text size %d by default",
 			cfg.Web.Accessibility, DefaultTextSize)
 	}
+	if cfg.Global.ShowSystemDetails {
+		t.Error("Global.ShowSystemDetails should be false by default")
+	}
+}
+
+// Host details stay opt-in, so a config file that predates the option keeps
+// them off, and only an explicit true turns them on.
+func TestLoadShowSystemDetails(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		yaml    string
+		details bool
+	}{
+		{"absent", "global:\n  show_system_info: true\n", false},
+		{"explicit", "global:\n  show_system_info: true\n  show_system_details: true\n", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(test.yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			if !cfg.Global.ShowSystemInfo {
+				t.Error("show_system_info was not read")
+			}
+			if cfg.Global.ShowSystemDetails != test.details {
+				t.Errorf("ShowSystemDetails = %v, want %v", cfg.Global.ShowSystemDetails, test.details)
+			}
+		})
+	}
 }
 
 // The appearance settings default to true, so an explicit `false` in the

@@ -49,9 +49,10 @@ Note: Monitoring NVIDIA GPUs might require additional setup. Check [GPU monitori
 
 The dashboard's **System Info** button opens a dedicated current-hardware page: motherboard and
 firmware, CPU topology and caches, memory modules, drives and filesystem usage, network
-addresses and utilization, PCI/USB devices, sensors, and power supplies. A friendly summary
-comes first, while low-level identifiers and counters stay available under technical details.
-It refreshes while open and works independently of chart history. See
+interfaces, PCI/USB devices, sensors, and power supplies. A friendly summary comes first, while
+low-level identifiers and counters stay available under technical details. It refreshes while
+open and works independently of chart history. Storage, network, devices and sensors require
+`global.show_system_details: true`; IP and MAC addresses are never collected. See
 [System Info](docs/user/05-web-dashboard.md#system-info).
 
 ---

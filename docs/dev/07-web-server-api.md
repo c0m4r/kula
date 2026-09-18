@@ -87,7 +87,13 @@ seconds across clients. It starts no background workers. Discovery is best effor
 attributes are omitted rather than reported as measured zeros, filesystem space totals are
 taken from the latest collector sample instead of re-statting mounts, and every disk,
 filesystem, and interface carries a `tracked` flag saying whether the regular collector stores
-its history.
+its history. Interface entries carry the kernel name, driver, kind, MTU, and speed; IP and MAC
+addresses are deliberately not collected. `Provider.Current` takes the `show_system_details`
+flag: with it off, `disks`, `filesystems`, `network`, `pci`, `usb`, `sensors`, `power` (and
+`live.hottest`, `live.gpu`) come back empty while `system`, `cpu`, and the remaining live
+metrics are unchanged. Hidden sections are empty JSON arrays, never `null`, so the response
+shape matches a full snapshot. The full discovery stays cached, so toggling the option never
+costs a refresh interval.
 
 Responses send `Cache-Control: no-store`. Disabled `global.show_system_info` returns 404;
 methods other than GET/HEAD return 405. Existing API authentication, base paths, and UI
@@ -159,8 +165,8 @@ and [DMTF SMBIOS specification, section 7.18](https://www.dmtf.org/sites/default
 ### `GET /api/config`
 
 Returns UI configuration: `auth_enabled`, `join_metrics`, OS/kernel/arch, hostname,
-`show_system_info`, `show_version`, theme, aggregation, per-graph bounds (`cpu_temp`,
-`disk_temp`, `network` with `mode`/`value`/`auto`-detected limit), split toggles, the
+`show_system_info`, `show_system_details`, `show_version`, theme, aggregation, per-graph bounds
+(`cpu_temp`, `disk_temp`, `network` with `mode`/`value`/`auto`-detected limit), split toggles, the
 server-side defaults behind the customization menu (`appearance`, `accessibility` including the
 `text_size_range`), language config, `ollama_enabled`/`ollama_model`, custom-metric definitions,
 and (if shown) version.
