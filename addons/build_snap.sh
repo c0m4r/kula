@@ -78,8 +78,33 @@ collect_snaps() {
     done
 }
 
+# Remove orphaned craft-state mounts left on snapcraft's managed LXD instances
+# by an interrupted build (crash, OOM kill, power loss). Snapcraft reuses these
+# instances across runs and normally unmounts everything on exit, so any
+# craft-state device still present before a build is orphaned. Its source is the
+# previous run's state dir under XDG_RUNTIME_DIR, which vanishes on reboot; LXD
+# then refuses to start the instance with "Missing source path ... for disk
+# disk-/tmp/craft-state".
+heal_stale_lxd_state_mounts() {
+    command -v lxc &>/dev/null || return 0
+    local inst device
+    while IFS= read -r inst; do
+        [[ "${inst}" == snapcraft-kula-* ]] || continue
+        while IFS= read -r device; do
+            [[ "${device}" == "disk-/tmp/craft-state" ]] || continue
+            echo "Removing orphaned craft-state mount from LXD instance ${inst}"
+            lxc config device remove --project snapcraft "${inst}" "${device}" >/dev/null
+        done < <(lxc config device list --project snapcraft "${inst}" 2>/dev/null)
+    done < <(lxc list --project snapcraft --format csv -c n 2>/dev/null)
+}
+
 # Clear any stale artifacts so collect_snaps only sees this run's output.
 rm -f kula_*.snap
+
+# Local builds reuse snapcraft's LXD instances; remote builds run on Launchpad.
+if [[ "${ARG}" != "--remote" ]]; then
+    heal_stale_lxd_state_mounts
+fi
 
 case "${ARG}" in
     --remote)

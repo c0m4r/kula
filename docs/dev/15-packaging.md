@@ -46,6 +46,12 @@ run [`addons/build_aur.sh`](../../addons/build_aur.sh) after the release exists 
 ./addons/build_appimage.sh        # host arch (or pass amd64/arm64/riscv64)
 ```
 
+`build_snap.sh` reuses snapcraft's managed LXD instances across runs. Before a local build it
+strips any orphaned `disk-/tmp/craft-state` mount left behind by an interrupted build (crash,
+OOM kill, power loss): its source is a per-run state dir under `XDG_RUNTIME_DIR` that disappears
+on reboot, after which LXD refuses to start the instance with "Missing source path".
+`--remote` builds skip this and run on Launchpad.
+
 `build_aur.sh` first asks whether to package the local checkout or the published GitHub source
 archive; only the remote path appends its checksums to `CHECKSUMS.sha256.txt`.
 
