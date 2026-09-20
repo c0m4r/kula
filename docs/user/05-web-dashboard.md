@@ -191,8 +191,10 @@ averages, used memory and used swap. Other legacy fields, including connections,
 devices and temperatures, lack reliable extrema. Selecting Min/Max leaves those series or
 intervals blank and displays an explanation. Avg restores their stored representative values;
 old averages retain their historical semantics. No repair or tier-file rewrite is needed.
-Unbucketed raw points have no extrema. A view containing both old and new history retains
-the available operations for each bucket; new extrema are not hidden by legacy intervals.
+Unbucketed raw points have no extrema, and a native-resolution response keeps that property
+even when its right edge had to be clipped to the requested range. A view containing both old
+and new history retains the available operations for each bucket; new extrema are not hidden by
+legacy intervals.
 Min and Max are per-series extrema within each bucket, so values across different lines need not have
 occurred at the same instant. Avg is duration-weighted for sampled gauges and rates; monotonic
 counters and fixed capacity/metadata values retain their latest observation. Existing

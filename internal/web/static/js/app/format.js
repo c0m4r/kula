@@ -213,8 +213,9 @@ export function historyTooltipLines(context, {
 
     const valid = Array.isArray(source?.availableAggregations) ? source.availableAggregations :
         (Array.isArray(source?.validAggregations) ? source.validAggregations : ['data']);
+    const extremaOffered = valid.includes('min') && valid.includes('max');
     const hasLegacy = extremaSources.some(value => value === 'legacy' || value === 'mixed');
-    const hasRange = valid.includes('min') && valid.includes('max') &&
+    const hasRange = extremaOffered &&
         (extremaSources.length === 0 || extremaSources.some(value => value !== 'unavailable'));
     if (aggregation === 'min' && valid.includes('min')) {
         lines.push(`${translate('representative')}: ${translate('bucket_minimum')}`);
@@ -228,7 +229,11 @@ export function historyTooltipLines(context, {
     if (hasRange) {
         lines.push(`${translate('range_band')}: ${translate('bucket_minimum')}–${translate('bucket_maximum')}`);
     }
-    if (extremaSources.includes('unavailable')) lines.push(translate('history_extrema_unavailable'));
+    // Raw windows do not offer Min/Max at all, so their missing envelopes are
+    // not a limitation worth reporting.
+    if (extremaOffered && extremaSources.includes('unavailable')) {
+        lines.push(translate('history_extrema_unavailable'));
+    }
     if (hasLegacy) {
         lines.push(translate('history_legacy_extrema'));
     }

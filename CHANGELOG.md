@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
+## [Unreleased]
+
+### Fixed
+
+- Avg/Min/Max availability flickering on raw history windows: clipping the right edge
+  no longer certifies synthesized extrema, so native-resolution responses consistently
+  stay `data`-only instead of depending on whether the lookahead scan saw a newer record
+- Raw history windows no longer report "Min/Max unavailable" in detailed tooltips when
+  the response never offered Min/Max aggregation
+
 ## [0.20.1] - 2026-09-18
 
 ### Added

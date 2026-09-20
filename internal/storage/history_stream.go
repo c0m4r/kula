@@ -14,6 +14,13 @@ func (s *Store) readHistory(tier *Tier, from, to time.Time, targetPoints int, re
 	var pending []*AggregatedSample
 	var count int
 	reducing := step > resolution
+	// A reduction is only meaningful for Min/Max availability when it groups a
+	// different amount of source data than the native tier already does. A
+	// native-resolution reduction forced by right-edge clipping alone still
+	// returns unbucketed raw observations, so its synthesized envelopes must
+	// not be certified: otherwise availability would depend on whether the
+	// lookahead scan happened to see a record past the requested end.
+	densityReduction := reducing
 	buckets := make(map[int64]*AggregatedSample)
 	add := func(batch []*AggregatedSample) {
 		for _, partial := range s.reduceHistoryBuckets(batch, from, to, targetPoints, resolution, raw, step) {
@@ -56,6 +63,9 @@ func (s *Store) readHistory(tier *Tier, from, to time.Time, targetPoints int, re
 			result.ActualTo = right
 		}
 		count += len(batch)
+		if count > targetPoints {
+			densityReduction = true
+		}
 		// A right-boundary record must be clipped even at native resolution:
 		// returning its original endpoint would put it outside the viewport.
 		if !reducing && (count > targetPoints || clipRight) {
@@ -86,6 +96,20 @@ func (s *Store) readHistory(tier *Tier, from, to time.Time, targetPoints int, re
 		setSourceBucketMetadata(pending, resolution, raw)
 		result.Samples = pending
 		step = resolution
+	}
+	if raw && reducing && step == resolution && !densityReduction {
+		// The native-step reduction exists only to clip the right boundary; the
+		// output is still a sequence of raw observations, which carry no stored
+		// extrema. Drop the envelopes the reducer derived from their Data.
+		for _, sample := range result.Samples {
+			if sample == nil {
+				continue
+			}
+			sample.Min = nil
+			sample.Max = nil
+			sample.AggregationVersion = 0
+			sample.ExtremaProfile = "none"
+		}
 	}
 	result.Resolution = fmtRes(step)
 	result.Downsampled = reducing

@@ -135,6 +135,18 @@ test('legacy extrema are selected per field and retain provenance through export
     assert.doesNotMatch(chartCSV(chart), /legacy|unavailable/);
 });
 
+test('raw windows do not report unavailable Min/Max that they never offered', () => {
+    const raw = { ts: new Date(1000).toISOString(), extrema_profile: 'none', data: { cpu: { total: { usage: 5 } } } };
+    const [item] = annotateHistoryItems([raw], {
+        valid_aggregations: ['data'], available_aggregations: ['data'], extrema_profiles: { none: [] },
+    });
+    const lines = historyTooltipLines(historyItemContext(item), {
+        aggregation: 'max', extremaSources: ['unavailable'],
+    });
+    assert(!lines.includes('history_extrema_unavailable'));
+    assert(lines.includes('representative: raw_or_stored_value'));
+});
+
 test('unknown and missing compatibility profiles cannot fall back to copied extrema', () => {
     const sample = { ts: new Date(1000).toISOString(), data: { value: 3 }, min: { value: 2 }, max: { value: 2 } };
     for (const profile of ['none', 'unknown', undefined]) {

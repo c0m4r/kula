@@ -150,3 +150,73 @@ func TestLegacyDataOnlyHistoryRemainsUnavailableAcrossBatches(t *testing.T) {
 		t.Fatalf("Data-only coarse history was promoted: %+v", result)
 	}
 }
+
+// A native-resolution reduction caused only by right-edge clipping still
+// returns raw observations. Certifying the envelopes the reducer derives from
+// their Data would make Min/Max availability depend on whether the lookahead
+// scan happened to see a record past `to`.
+func TestNativeRawRightClippingDoesNotCertifyExtrema(t *testing.T) {
+	store := newTestStore(t)
+	t.Cleanup(func() { _ = store.Close() })
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	for i := 1; i <= 3; i++ {
+		if err := store.WriteSample(makeSampleWithCPU(base.Add(time.Duration(i)*time.Second), float64(i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assertDataOnly := func(name string, to time.Time) {
+		t.Helper()
+		result, err := store.QueryRangeWithMeta(base, to, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(result.ValidAggregations, []string{"data"}) ||
+			!reflect.DeepEqual(result.AvailableAggregations, []string{"data"}) {
+			t.Fatalf("%s: advertised extrema: valid=%v available=%v",
+				name, result.ValidAggregations, result.AvailableAggregations)
+		}
+		for _, sample := range result.Samples {
+			if sample.Min != nil || sample.Max != nil || sample.ExtremaProfile != "none" {
+				t.Fatalf("%s: certified extrema: %+v", name, sample)
+			}
+		}
+	}
+
+	// Aligned end: the records pass through unbucketed.
+	assertDataOnly("aligned", base.Add(2*time.Second))
+
+	// `to` falls between records, so the last record is clipped even though the
+	// point budget never forces a reduction. Availability must not change.
+	assertDataOnly("clipped", base.Add(2500*time.Millisecond))
+}
+
+// A native-step reduction forced by the point budget groups several raw
+// observations, so its extrema stay certified and deterministic.
+func TestNativeRawDensityReductionCertifiesExtrema(t *testing.T) {
+	store := newTestStore(t)
+	t.Cleanup(func() { _ = store.Close() })
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	for _, offset := range []time.Duration{0, 200 * time.Millisecond, 800 * time.Millisecond} {
+		if err := store.WriteSample(makeSample(base.Add(offset))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := store.QueryRangeWithMeta(base, base.Add(time.Second), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Downsampled || result.Resolution != result.SourceResolution {
+		t.Fatalf("density reduction metadata = downsampled:%v %s/%s",
+			result.Downsampled, result.Resolution, result.SourceResolution)
+	}
+	if !slices.Contains(result.AvailableAggregations, "min") || len(result.Samples) == 0 {
+		t.Fatalf("density reduction hid extrema: available=%v samples=%d",
+			result.AvailableAggregations, len(result.Samples))
+	}
+	for _, sample := range result.Samples {
+		if sample.Min == nil || sample.Max == nil || sample.ExtremaProfile == "none" {
+			t.Fatalf("density-reduced bucket lost extrema: %+v", sample)
+		}
+	}
+}

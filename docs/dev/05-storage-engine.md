@@ -109,7 +109,10 @@ keys keep the existing persisted `MeanStats` spelling; extrema do not build stat
 
 `HistoryResult.valid_aggregations` retains the strict response-wide contract for existing
 clients. New complete envelopes carry `flagReducerV2`; any raw or legacy bucket restricts
-that list to `data`. Compatibility-aware clients use `available_aggregations` (the union of
+that list to `data`. A native-resolution reduction performed only to clip a right-boundary raw
+record still represents raw observations and keeps `data`-only availability, so Min/Max
+availability cannot depend on lookahead timing. Compatibility-aware clients use
+`available_aggregations` (the union of
 available choices), response `extrema_profiles`, and each bucket's `extrema_profile`.
 Profiles are `current` (all fields, `*`), `legacy`/`mixed` (an exact scalar allowlist), and
 `none` (no extrema). The allowlist in `history_compatibility.go` covers CPU total usage,
