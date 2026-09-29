@@ -451,7 +451,7 @@ cpu.update('none');
 const timeScale = cpu.scales.x;
 check(timeScale.ticks.some(tick => /AM|PM/.test(tick.label)), 'Spacing fixture did not use AM/PM labels');
 cpu.ctx.save();
-cpu.ctx.font = Chart.helpers.toFont(timeScale.options.ticks.font).string;
+cpu.ctx.font = timeScale._resolveTickFontOptions(0).string;
 for (let i = 1; i < timeScale.ticks.length; i++) {
     const previousWidth = cpu.ctx.measureText(timeScale.ticks[i - 1].label).width;
     const width = cpu.ctx.measureText(timeScale.ticks[i].label).width;

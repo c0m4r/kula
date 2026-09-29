@@ -89,6 +89,32 @@ There are companion scripts: [`addons/chartjs-updates.py`](../../addons/chartjs-
 [`addons/update.py`](../../addons/update.py) (compare the local `VERSION` with the latest GitHub
 release).
 
+The vendored Chart.js bundle is rebuilt with Node.js and npm, which building Kula does not need:
+
+```bash
+./addons/build-chartjs.sh           # rebuild from addons/chartjs/package-lock.json
+./addons/build-chartjs.sh --update  # bump chart.js, chartjs-plugin-zoom and esbuild first
+```
+
+npm runs with supply-chain guards, set in `addons/chartjs/.npmrc` and passed again on the command
+line so `npm_config_*` environment variables cannot weaken them:
+
+- `ignore-scripts=true`: no package install scripts run.
+- `min-release-age=14`: `--update` resolves only releases at least 14 days old.
+- Exact pins: `package.json` pins each direct dependency (`save-exact=true`), and the lockfile
+  pins every transitive one with a sha512 integrity hash.
+
+`npm ci` installs locked versions without applying `min-release-age`. Before anything is
+installed, `addons/chartjs/verify-lock.js` therefore checks every locked package, including the
+optional esbuild binaries for other platforms. Each must be an exact direct pin, come from
+`registry.npmjs.org` with sha512 integrity, and be published at least 14 days ago. A lockfile
+changed any other way fails the build. Run npm by hand in `addons/chartjs/` only; its `.npmrc`
+applies the same guards.
+
+Rebuilding from the lockfile reproduces `chartjs-bundle.min.js` byte for byte. After an update,
+run the browser regressions: the dashboard relies on a private Chart.js method (see
+[Frontend](10-frontend.md)).
+
 ## Go formatting & lint
 
 [`.golangci.yml`](../../.golangci.yml) enables the `gofmt` and `goimports` formatters, with

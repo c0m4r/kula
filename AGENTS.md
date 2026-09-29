@@ -15,6 +15,7 @@ runtime dependency.
 | Browser frontend regressions (needs node + Chromium) | `./addons/test-frontend-regressions.sh` |
 | Native fuzzing over every `Fuzz*` target | `./addons/fuzz.sh [duration] [filter]` |
 | Storage engine benchmarks | `./addons/benchmark.sh` |
+| Rebuild the vendored Chart.js bundle (needs node + npm) | `./addons/build-chartjs.sh [--update]` |
 
 `./addons/check.sh` runs, in order: `govulncheck` → `gofmt -l .` → `go vet ./...` →
 `go test -v -race ./...` → `golangci-lint`. govulncheck and golangci-lint print "Skipping" when
@@ -91,6 +92,15 @@ per-application reducer branches.
   `kula serve` in Chromium to check live streaming versus bucketed refreshes. These browser
   fixtures require Node.js 22+, Chromium/Chrome and Go. The separate Frontend workflow
   (`.github/workflows/frontend.yml`) runs each with its own timeout; `./addons/check.sh` does not.
+- `js/chartjs/chartjs-bundle.min.js` is generated from `addons/chartjs/` by
+  `./addons/build-chartjs.sh`; never hand-edit it. It registers only the line controller,
+  line/point elements, linear/time scales, Legend, Tooltip and zoom, with a native-`Date` time
+  adapter. Any other chart type, scale or plugin (e.g. Filler for `fill`) must be added to
+  `addons/chartjs/entry.js` and rebuilt. `TestChartBundle` pins the registered set.
+- npm is used only through `addons/build-chartjs.sh` (or by hand in `addons/chartjs/`, whose
+  `.npmrc` applies the same guards): `ignore-scripts=true`, `min-release-age=14`, exact pins.
+  `verify-lock.js` rejects any locked package that is unpinned, off-registry, lacks sha512
+  integrity or is under 14 days old; do not bypass it or add npm dependencies elsewhere.
 - `/api/history` metadata is a contract with the dashboard's live-refresh and aggregation logic.
   `TestHistoryResponsesMatchDashboardContract` (storage) feeds real responses to the frontend
   modules; add a scenario there when a change alters tiers, steps, clipping or extrema profiles.
@@ -115,6 +125,7 @@ per-application reducer branches.
 | Auth, sessions, CSRF | `internal/web/auth.go` |
 | AI proxy / Prometheus endpoint | `internal/web/ollama.go`, `internal/web/prometheus.go` |
 | Dashboard SPA | `internal/web/static/js/app/` |
+| Chart.js bundle contents, time-scale date adapter | `addons/chartjs/`, then `./addons/build-chartjs.sh` |
 | Terminal UI | `internal/tui/` |
 | Config schema and defaults | `internal/config/config.go` + `config.example.yaml` |
 | Filesystem / network confinement | `internal/sandbox/sandbox.go` |

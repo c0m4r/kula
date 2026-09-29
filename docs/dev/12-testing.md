@@ -46,6 +46,9 @@ writes/exec/network actually fail once Landlock is enforced.
 When Node.js is available, `server_test.go` runs `history_frontend_test.mjs`. It checks request
 cancellation and stale responses, envelope preservation, formatter reuse, missing-data breaks,
 viewport batching and culling, gestures, keyboard exploration and complete formula-safe CSV.
+It also runs `chart_bundle_test.mjs`. That test checks that the vendored Chart.js bundle registers
+only the dashboard's components and keeps time-axis ticks on local hours across a DST switch. It
+also covers the calendar math of the native `Date` adapter.
 `TestHistoryResponsesMatchDashboardContract` (storage) checks the `/api/history` contract from
 both sides. It queries real stores the way the dashboard does (unaligned millisecond bounds and
 its point budget): raw and 2s-bucketed five-minute views, a right-edge clip, an outage, an empty

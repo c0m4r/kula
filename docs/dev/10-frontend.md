@@ -9,8 +9,8 @@ the single binary.
 
 Source: [`internal/web/static/`](../../internal/web/static/), embedded via `//go:embed`.
 
-It is a dependency-light, framework-free single-page app built on **Chart.js** (bundled,
-vendored under `js/chartjs/`) with custom SVG/bar gauges. It connects over WebSocket for live
+It is a dependency-light, framework-free single-page app built on **Chart.js** (a trimmed
+bundle vendored under `js/chartjs/`) with custom SVG/bar gauges. It connects over WebSocket for live
 data and falls back to the history REST API for longer ranges.
 
 ### Asset layout
@@ -25,9 +25,22 @@ static/
 │   ├── Inter/              # UI font (OFL-1.1)
 │   └── Press_Start_2P/     # game font (OFL-1.1)
 └── js/
-    ├── chartjs/            # vendored Chart.js + zoom + date-fns adapter (min.js)
+    ├── chartjs/            # Chart.js bundle built by addons/build-chartjs.sh
     └── app/               # Kula's own ES6 modules
 ```
+
+### Chart.js bundle
+
+`js/chartjs/chartjs-bundle.min.js` is built from [`addons/chartjs/`](../../addons/chartjs/) by
+`./addons/build-chartjs.sh` and committed, so building Kula needs no Node.js. It registers only
+what the dashboard uses: the line controller, line and point elements, linear and time scales,
+Legend, Tooltip and chartjs-plugin-zoom. Hammer.js is left out because pan and pinch use Pointer
+Events. Anything else, such as another chart type or the Filler plugin behind `fill`, stays
+unavailable until it is registered in `entry.js` and the bundle is rebuilt.
+
+The time scale uses Kula's native `Date` adapter (`date-adapter.js`) instead of date-fns. Tick
+and tooltip labels come from `Intl` in `format.js`, so the scale only needs local-time calendar
+math: unit starts, steps and whole-unit differences.
 
 ### ES6 modules (`js/app/`)
 

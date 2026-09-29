@@ -406,8 +406,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 }
 
 .system-info-summary-icon[data-icon="memory"],
-.system-info-card-icon[data-icon="memory"],
-.system-info-card-icon[data-icon="module"] {
+.system-info-card-icon[data-icon="memory"] {
     color: var(--accent-purple);
     background: rgba(139, 92, 246, 0.1);
     border-color: rgba(139, 92, 246, 0.22);
@@ -1273,7 +1272,6 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     --accent-orange: #f97316;
     --accent-red: #ef4444;
     --accent-purple: #8b5cf6;
-    --accent-pink: #ec4899;
     --gauge-bg: rgba(30, 41, 59, 0.6);
     --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.4);
     --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.1);
@@ -1540,10 +1538,7 @@ body {
     opacity: 0.8;
 }
 
-.hostname,
-.sys-os,
-.sys-kernel,
-.sys-arch {
+.hostname {
     padding: 0.2rem 0.6rem;
     background: rgba(59, 130, 246, 0.15);
     border: 1px solid rgba(59, 130, 246, 0.3);
@@ -2566,11 +2561,6 @@ body.light-mode .range-calendar-month {
     }
 }
 
-.time-sep {
-    color: var(--text-muted);
-    font-size: 0.8rem;
-}
-
 .time-info {
     font-size: 0.8rem;
     color: var(--text-muted);
@@ -2850,10 +2840,6 @@ body.light-mode .range-calendar-month {
     box-shadow: var(--shadow-glow);
 }
 
-.chart-card.span-2 {
-    grid-column: span 2;
-}
-
 .chart-header {
     display: flex;
     justify-content: flex-start;
@@ -3098,10 +3084,6 @@ body.light-mode .range-calendar-month {
 /* ---- List Layout Mode ---- */
 .layout-list .charts-grid {
     grid-template-columns: 1fr;
-}
-
-.layout-list .chart-card.span-2 {
-    grid-column: span 1;
 }
 
 .layout-list .chart-body {
@@ -3471,16 +3453,8 @@ html.tv-mode.tv-idle * {
         grid-template-columns: repeat(2, 1fr);
     }
 
-    .chart-card.span-2 {
-        grid-column: span 2;
-    }
-
     .layout-list .charts-grid {
         grid-template-columns: 1fr;
-    }
-
-    .layout-list .chart-card.span-2 {
-        grid-column: span 1;
     }
 }
 
@@ -3491,10 +3465,6 @@ html.tv-mode.tv-idle * {
 
     .charts-grid {
         grid-template-columns: 1fr;
-    }
-
-    .chart-card.span-2 {
-        grid-column: span 1;
     }
 
     .alert-dropdown {
@@ -4465,7 +4435,6 @@ html.a11y-contrast body:not(.light-mode) {
     --accent-orange: #fb923c;
     --accent-red: #f87171;
     --accent-purple: #a78bfa;
-    --accent-pink: #f472b6;
     --gauge-bg: rgba(51, 65, 85, 0.8);
     --bg-hover: rgba(226, 232, 240, 0.2);
     --chart-grid: rgba(148, 163, 184, 0.45);
@@ -4492,7 +4461,6 @@ html.a11y-contrast body.light-mode {
     --accent-orange: #c2410c;
     --accent-red: #b91c1c;
     --accent-purple: #6d28d9;
-    --accent-pink: #be185d;
     --gauge-bg: rgba(203, 213, 225, 0.9);
     --bg-hover: rgba(15, 23, 42, 0.12);
     --chart-grid: rgba(51, 65, 85, 0.35);

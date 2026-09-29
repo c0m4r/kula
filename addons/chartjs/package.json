@@ -1,0 +1,11 @@
+{
+  "name": "kula-chartjs-bundle",
+  "private": true,
+  "type": "module",
+  "description": "Pinned inputs of Kula's vendored Chart.js bundle; build with addons/build-chartjs.sh",
+  "dependencies": {
+    "chart.js": "4.5.1",
+    "chartjs-plugin-zoom": "2.2.0",
+    "esbuild": "0.28.2"
+  }
+}

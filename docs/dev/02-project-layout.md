@@ -41,6 +41,8 @@ kula/
 │   ├── inspect_tier.py     # Standalone Python tier-file decoder
 │   ├── reverse_proxy.py    # Test proxy for the Unix-socket listener
 │   ├── go_modules_updates.py / update.py / chartjs-updates.py
+│   ├── build-chartjs.sh    # Rebuilds the vendored Chart.js bundle from chartjs/
+│   ├── chartjs/            # Chart.js bundle inputs: pinned packages, entry, Date adapter
 │   ├── ansible/            # Ansible deployment role
 │   ├── bash-completion/    # Bash completion script
 │   ├── docker/             # Dockerfile + compose + push scripts

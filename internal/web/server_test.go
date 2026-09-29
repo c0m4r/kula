@@ -64,6 +64,13 @@ func TestTemplateInjection(t *testing.T) {
 	if !strings.Contains(body, `integrity="`+sri+`"`) {
 		t.Errorf("HTML body missing injected SRI %s", sri)
 	}
+	// An unknown sri key renders an empty integrity, which browsers ignore.
+	if strings.Contains(body, `integrity=""`) {
+		t.Error("HTML body has a script without an SRI hash")
+	}
+	if bundle := s.sriHashes["js/chartjs/chartjs-bundle.min.js"]; bundle == "" || !strings.Contains(body, `integrity="`+bundle+`"`) {
+		t.Error("HTML body missing the Chart.js bundle SRI")
+	}
 }
 
 func TestGameTemplateInjection(t *testing.T) {
@@ -541,6 +548,18 @@ func TestHistoryFrontendRegressions(t *testing.T) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("history frontend tests failed: %v\n%s", err, output)
+	}
+}
+
+func TestChartBundle(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping Chart.js bundle tests")
+	}
+
+	output, err := exec.Command(node, "testdata/chart_bundle_test.mjs").CombinedOutput()
+	if err != nil {
+		t.Fatalf("Chart.js bundle tests failed: %v\n%s", err, output)
 	}
 }
 

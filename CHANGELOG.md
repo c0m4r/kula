@@ -20,6 +20,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 - The custom range picker uses one month calendar instead of two side-by-side
 - Retained history now limits only which days can be picked
+- Unused CSS/JS cleanup
+- The dashboard now loads one trimmed Chart.js bundle instead of three scripts
 
 ### Fixed
 

@@ -145,7 +145,6 @@
     let enemies = [];
     let enemyDir = 1;
     let enemySpeed = 0;
-    let enemyMoveTimer = 0;
     let enemyShootTimer = 0;
 
     // Bullets
@@ -340,7 +339,6 @@
         }
         const aliveCount = enemies.filter(e => e.alive).length;
         enemySpeed = 0.4 + level * 0.15 + (1 - aliveCount / (ENEMY_ROWS * ENEMY_COLS)) * 2;
-        enemyMoveTimer = 0;
         enemyShootTimer = 0;
     }
 

@@ -10,20 +10,18 @@ import os
 from typing import Optional, Dict, Any
 
 # Configuration
+# Both libraries ship in one bundle built by addons/build-chartjs.sh; its banner
+# lists their versions.
+BUNDLE = "internal/web/static/js/chartjs/chartjs-bundle.min.js"
 LIBS: Dict[str, Dict[str, Any]] = {
     "chart.js": {
         "npm_name": "chart.js",
-        "local_file": "internal/web/static/js/chartjs/chart.umd.min.js",
+        "local_file": BUNDLE,
         "version_regex": r"Chart\.js v([\d\.]+)",
-    },
-    "chartjs-adapter-date-fns": {
-        "npm_name": "chartjs-adapter-date-fns",
-        "local_file": "internal/web/static/js/chartjs/chartjs-adapter-date-fns.bundle.min.js",
-        "version_regex": r"chartjs-adapter-date-fns v([\d\.]+)",
     },
     "chartjs-plugin-zoom": {
         "npm_name": "chartjs-plugin-zoom",
-        "local_file": "internal/web/static/js/chartjs/chartjs-plugin-zoom.min.js",
+        "local_file": BUNDLE,
         "version_regex": r"chartjs-plugin-zoom v([\d\.]+)",
     },
 }
@@ -114,6 +112,7 @@ def main() -> None:
         print("\nAll Chart.js libraries are up to date.")
     else:
         print("\nAction required: Some libraries have updates available.")
+        print("Run ./addons/build-chartjs.sh --update to rebuild the bundle.")
 
 
 if __name__ == "__main__":

@@ -83,8 +83,6 @@ export const state = {
     selectedDiskTemp: localStorage.getItem('kula_sel_disktemp') || null,
     selectedDiskSpace: localStorage.getItem('kula_sel_diskspace') || null,
     selectedGpuLoad: localStorage.getItem('kula_sel_gpuload') || null,
-    selectedVram: localStorage.getItem('kula_sel_vram') || null,
-    selectedGpuTemp: localStorage.getItem('kula_sel_gputemp') || null,
     configMax: {}, // loaded from server /api/config
     lastHistoricalTs: null,
     splitNet: JSON.parse(localStorage.getItem('kula_split_net') || 'false'),
@@ -125,8 +123,6 @@ export const colors = {
     yellowAlpha: 'rgba(245, 158, 11, 0.15)',
     orangeAlpha: 'rgba(249, 115, 22, 0.15)',
     pinkAlpha: 'rgba(236, 72, 153, 0.15)',
-    tealAlpha: 'rgba(20, 184, 166, 0.15)',
-    limeAlpha: 'rgba(132, 204, 22, 0.15)',
 };
 
 // ---- Chart.js Global Config ----

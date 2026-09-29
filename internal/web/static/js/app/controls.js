@@ -667,7 +667,3 @@ export function syncCustomRangeUI(fromDate, toDate, { preserveDraft = false } = 
     display?.removeAttribute('data-i18n');
     if (display) display.textContent = `${fmt(fromDate)} → ${fmt(toDate)} · ${zone}`;
 }
-
-export function toLocalISOString(date) {
-    return formatDateTimeInput(date, 'local');
-}

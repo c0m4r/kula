@@ -231,7 +231,7 @@ func TestStaticAssetsServedMinified(t *testing.T) {
 	for _, minify := range []bool{true, false} {
 		cfg := config.WebConfig{UI: true, MinifyAssets: minify}
 		s := NewServer(cfg, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
-		for _, path := range []string{"js/app/main.js", "style.css", "js/chartjs/chart.umd.min.js"} {
+		for _, path := range []string{"js/app/main.js", "style.css", "js/chartjs/chartjs-bundle.min.js"} {
 			rec := httptest.NewRecorder()
 			s.handleStatic(rec, httptest.NewRequest(http.MethodGet, "/"+path, nil))
 			if rec.Code != http.StatusOK {
