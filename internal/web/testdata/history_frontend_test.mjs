@@ -58,6 +58,7 @@ const {
     parseDateTimeInput,
     parseTimeOfDay,
     stepTimeOfDay,
+    timeOfDayParts,
 } = await importSource('../static/js/app/format.js');
 const {
     ChartUpdateController,
@@ -426,15 +427,24 @@ test('the picker clock labels its dial and wheels on the UI language clock', () 
     assert.deepEqual([polish.hours[0], polish.hours[13], polish.separator, polish.name(14 * 3600000 + 300000)],
         ['00', '13', ':', '14:05']);
     assert.equal(clockFace('id').separator, '.');
-    assert.deepEqual(clockFace('ko').periods, ['오전', '오후']);
+    // Korean names the day period before the hour.
     assert.equal(clockFace('ko').periodFirst, true);
-    assert.deepEqual([clockFace('bn').hours[13], clockFace('bn').sixty[59]], ['১', '৫৯']);
+    // Day-period words and digits vary with the runtime's locale data, so the
+    // labels are compared with the time field's own text, not fixed strings.
     for (const lang of ['ar', 'bn', 'de', 'en', 'hi', 'id', 'ja', 'ko', 'ms', 'pl', 'ur', 'zh']) {
         const face = clockFace(lang);
+        const parts = time => timeOfDayParts(time, lang);
+        const text = (time, type) => parts(time).find(part => part.type === type)?.value;
+        const types = parts('16:05:09').map(part => part.type);
+        const twelve = types.includes('dayPeriod');
+        assert.deepEqual(face.periods, twelve ? [text('04:00:00', 'dayPeriod'), text('16:00:00', 'dayPeriod')] : null, lang);
+        assert.equal(face.periodFirst, twelve && types.indexOf('dayPeriod') < types.indexOf('hour'), lang);
+        assert.equal(face.separator, parts('16:05:09')[types.indexOf('minute') - 1].value, lang);
+        assert.equal(face.sixty[59], text('00:59:00', 'minute'), lang);
         assert.equal(face.hours.length, 24, lang);
-        assert.equal(new Set(face.hours).size, face.periods ? 12 : 24, lang);
+        assert.equal(new Set(face.hours).size, twelve ? 12 : 24, lang);
         assert.equal(new Set(face.sixty).size, 60, lang);
-        assert.ok(face.periods === null || face.periods.every(Boolean), lang);
+        assert.ok(!twelve || (face.periods.every(Boolean) && face.periods[0] !== face.periods[1]), lang);
     }
 });
 

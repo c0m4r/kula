@@ -267,14 +267,16 @@ export function stepTimeOfDay(value, caret, direction, locale) {
 // and whether they come first. `hours` holds 0–23 in order, `sixty` 00–59, and
 // `separator` the mark between hours and minutes.
 export function clockFace(locale) {
-    const named = formatter(locale, 'utc', { hour: 'numeric', minute: '2-digit' });
-    const twelve = ['h11', 'h12'].includes(named.resolvedOptions().hourCycle);
-    const hourOnly = formatter(locale, 'utc', { hour: twelve ? 'numeric' : '2-digit' });
     const part = (parts, type) => parts.find(item => item.type === type)?.value ?? '';
     const sample = timeOfDayParts('16:05:09', locale);
     const types = sample.map(item => item.type);
+    const twelve = types.includes('dayPeriod');
+    const named = formatter(locale, 'utc', { hour: 'numeric', minute: '2-digit' });
+    const hourOnly = formatter(locale, 'utc', { hour: twelve ? 'numeric' : '2-digit' });
     return {
-        periods: twelve ? [4, 16].map(hour => part(named.formatToParts(hour * 3600000), 'dayPeriod')) : null,
+        // The time field's own words: locale data differs between runtimes
+        // (Korean is "AM" in some and "오전" in others), and the two must match.
+        periods: twelve ? ['04:00:00', '16:00:00'].map(time => part(timeOfDayParts(time, locale), 'dayPeriod')) : null,
         periodFirst: twelve && types.indexOf('dayPeriod') < types.indexOf('hour'),
         hours: Array.from({ length: 24 }, (_, hour) => part(hourOnly.formatToParts(hour * 3600000), 'hour')),
         sixty: Array.from({ length: 60 }, (_, minute) =>
