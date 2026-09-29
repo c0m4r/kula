@@ -92,8 +92,12 @@ rollouts (`deploy.sh`, `kula.yaml`, the `roles/kula` role with a `config.yaml.j2
 
 ## Packaging helpers
 
-[`addons/packaging/`](../../addons/packaging/) holds size-trimming helpers (`remove_fonts.sh`,
-`remove_game.sh`) for constrained builds.
+[`addons/packaging/`](../../addons/packaging/) holds optional helpers for distro packagers and
+constrained builds, run against the source tree before building: `remove_fonts.sh` drops the
+bundled fonts in favor of system fonts, and `remove_game.sh` strips the Space Invaders easter
+egg along with its routes, tests and font. Each exits non-zero if its patterns no longer match
+the code. When the game or font wiring changes, rerun both on a scratch copy and pass
+`./addons/check.sh` there.
 
 ## Release checklist
 

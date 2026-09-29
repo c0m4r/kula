@@ -25,5 +25,14 @@ perl -i -0777 -pe 's/\nfunc TestGameScoreURLTemplateAndCSP\(t \*testing\.T\) \{.
 perl -i -0777 -pe 's/\nfunc TestInvalidGameScoreURLIsNotRendered\(t \*testing\.T\) \{.*?\n\}\n//s' "${PROJECT_ROOT}"/internal/web/server_test.go
 perl -i -0777 -pe 's/\nfunc TestGameScoreSubmissionRequestPolicy\(t \*testing\.T\) \{.*?\n\}\n//s' "${PROJECT_ROOT}"/internal/web/server_test.go
 
-# remove game files
+# remove game files and the game-only font
 rm -f "${PROJECT_ROOT}"/internal/web/static/game.*
+rm -rf "${PROJECT_ROOT}"/internal/web/static/fonts/Press_Start_2P
+
+# the substitutions above are silent no-ops once a pattern stops matching, so fail
+# loudly if an upstream change left game references behind
+if grep -n 'btn-game\|game\.html' "${PROJECT_ROOT}"/internal/web/static/index.html "${PROJECT_ROOT}"/internal/web/static/style.css \
+    || grep -n 'handleGame\|game\.html\|game\.js' "${PROJECT_ROOT}"/internal/web/server.go "${PROJECT_ROOT}"/internal/web/server_test.go; then
+    echo "remove_game.sh: game references remain (listed above); update the script" >&2
+    exit 1
+fi
