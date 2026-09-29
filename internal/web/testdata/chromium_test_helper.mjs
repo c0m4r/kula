@@ -58,7 +58,12 @@ export async function stopProcess(child, closed, graceMs = 5000) {
 }
 
 export async function launchChromium(browserPath, args, userDataDir, timeoutMs = 30000) {
-    const browser = spawn(browserPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // The test browser needs no desktop services, so keep it off D-Bus.
+    // Chromium 154 queries Bluetooth, NetworkManager and UPower over the system
+    // bus at startup, and on GitHub's Ubuntu runners, where systemd can start
+    // those services, it never exposed DevTools within the timeout.
+    const env = { ...process.env, DBUS_SESSION_BUS_ADDRESS: 'disabled:', DBUS_SYSTEM_BUS_ADDRESS: 'disabled:' };
+    const browser = spawn(browserPath, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
     const browserClosed = new Promise(resolve => browser.once('close', resolve));
     let output = '';
     const capture = chunk => {
