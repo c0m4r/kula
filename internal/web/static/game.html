@@ -12,9 +12,6 @@
 </head>
 
 <body>
-    <!-- Scanline CRT overlay -->
-    <div class="scanlines"></div>
-
     <!-- Back to dashboard -->
     <a href="./" class="back-link" id="back-link">← <span class="back-text">Dashboard</span></a>
 
@@ -37,6 +34,13 @@
             <span class="hud-value" id="hud-lives">♥♥♥</span>
         </div>
         <div class="hud-item hud-controls" id="hud-controls">
+            <button class="settings-btn" id="btn-settings" aria-label="Graphics Settings">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="fs-icon">
+                    <circle cx="12" cy="12" r="3" />
+                    <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+            </button>
             <button class="mute-btn" id="btn-mute" aria-label="Toggle Mute">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="fs-icon"
                     id="mute-icon">
@@ -64,6 +68,7 @@
                 <div class="control-row"><kbd>←</kbd> <kbd>→</kbd> Move</div>
                 <div class="control-row"><kbd>Space</kbd> Shoot</div>
                 <div class="control-row"><kbd>Esc</kbd> Pause</div>
+                <div class="control-row"><kbd>R</kbd> Restart <kbd>G</kbd> Graphics</div>
             </div>
             <div class="start-prompt blink" id="start-prompt">PRESS ENTER OR TAP TO START</div>
         </div>
@@ -73,6 +78,11 @@
     <div class="overlay hidden" id="pause-screen">
         <div class="overlay-content">
             <h2 class="pause-title">PAUSED</h2>
+            <div class="menu-actions">
+                <button type="button" class="menu-btn" id="btn-resume">RESUME</button>
+                <button type="button" class="menu-btn" id="btn-restart">RESTART</button>
+                <button type="button" class="menu-btn" id="btn-pause-settings">GRAPHICS</button>
+            </div>
             <div class="start-prompt blink" id="pause-prompt">PRESS ESC OR TAP TO RESUME</div>
         </div>
     </div>
@@ -99,6 +109,69 @@
         <div class="overlay-content">
             <h2 class="levelup-title">LEVEL <span id="levelup-num">2</span></h2>
             <div class="levelup-text">GET READY</div>
+        </div>
+    </div>
+
+    <!-- Graphics settings overlay -->
+    <div class="overlay hidden" id="settings-screen" role="dialog" aria-labelledby="settings-title">
+        <div class="overlay-content settings-panel">
+            <h2 class="settings-title" id="settings-title">GRAPHICS</h2>
+            <div class="settings-rows">
+                <div class="settings-row">
+                    <span class="settings-label">PRESET</span>
+                    <div class="settings-options" data-setting="preset">
+                        <button type="button" class="opt-btn" data-value="low">LOW</button>
+                        <button type="button" class="opt-btn" data-value="medium">MEDIUM</button>
+                        <button type="button" class="opt-btn" data-value="high">HIGH</button>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-label">RESOLUTION</span>
+                    <div class="settings-options" data-setting="resolution">
+                        <button type="button" class="opt-btn" data-value="retro">RETRO</button>
+                        <button type="button" class="opt-btn" data-value="sharp">SHARP</button>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-label">NEON GLOW</span>
+                    <div class="settings-options" data-setting="glow">
+                        <button type="button" class="opt-btn" data-value="off">OFF</button>
+                        <button type="button" class="opt-btn" data-value="on">ON</button>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-label">PARTICLES</span>
+                    <div class="settings-options" data-setting="particles">
+                        <button type="button" class="opt-btn" data-value="off">OFF</button>
+                        <button type="button" class="opt-btn" data-value="low">LOW</button>
+                        <button type="button" class="opt-btn" data-value="high">HIGH</button>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-label">STARFIELD</span>
+                    <div class="settings-options" data-setting="stars">
+                        <button type="button" class="opt-btn" data-value="off">OFF</button>
+                        <button type="button" class="opt-btn" data-value="low">LOW</button>
+                        <button type="button" class="opt-btn" data-value="high">HIGH</button>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-label">CRT SCANLINES</span>
+                    <div class="settings-options" data-setting="scanlines">
+                        <button type="button" class="opt-btn" data-value="off">OFF</button>
+                        <button type="button" class="opt-btn" data-value="on">ON</button>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-label">FPS COUNTER</span>
+                    <div class="settings-options" data-setting="fps">
+                        <button type="button" class="opt-btn" data-value="off">OFF</button>
+                        <button type="button" class="opt-btn" data-value="on">ON</button>
+                    </div>
+                </div>
+            </div>
+            <button type="button" class="menu-btn" id="btn-settings-close">CLOSE</button>
+            <div class="settings-hint">ESC OR G TO CLOSE</div>
         </div>
     </div>
 

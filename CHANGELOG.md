@@ -15,6 +15,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Download the chart as PNG image
 - CSS and JS assets auto-minification at startup with `web.minify_assets: true`
 - TV mode under Focus Mode
+- Space Invaders: graphics settings and restart option
 
 ### Changed
 
@@ -26,6 +27,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Fixed
 
 - The Focus Mode bar ("Select graphs…", Hide gauges, Done, Cancel) is now translated
+- Space Invaders: fixed game stability on firefox
 
 ## [0.20.3] - 2026-09-29
 

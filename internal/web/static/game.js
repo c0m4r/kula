@@ -27,8 +27,6 @@
     const ENEMY_PAD_X = 12;
     const ENEMY_PAD_Y = 10;
     const ENEMY_STEP_DOWN = 18;
-    const STAR_COUNT = isMobile ? 50 : 120;
-    const MAX_PARTICLES = isMobile ? 30 : 150;
     const POWERUP_SPEED = 1.8;
     const POWERUP_SIZE = 18;
     const POWERUP_DURATION = 8000; // ms
@@ -52,6 +50,47 @@
         SHIELD: { color: '#3b82f6', label: 'S', desc: 'Shield' },
     };
     const PU_TYPES = Object.keys(PU);
+
+    // -------------------------------------------------------
+    // Graphics settings
+    // -------------------------------------------------------
+    // Every option is a string enum persisted in localStorage.
+    const GFX_OPTIONS = {
+        resolution: ['retro', 'sharp'],
+        glow: ['off', 'on'],
+        particles: ['off', 'low', 'high'],
+        stars: ['off', 'low', 'high'],
+        scanlines: ['off', 'on'],
+        fps: ['off', 'on'],
+    };
+
+    // Presets leave the FPS counter alone. Low is the original mobile look
+    // and medium the original desktop look; high adds HiDPI rendering.
+    const GFX_PRESETS = {
+        low: { resolution: 'retro', glow: 'off', particles: 'low', stars: 'low', scanlines: 'off' },
+        medium: { resolution: 'retro', glow: 'on', particles: 'high', stars: 'high', scanlines: 'on' },
+        high: { resolution: 'sharp', glow: 'on', particles: 'high', stars: 'high', scanlines: 'on' },
+    };
+
+    const STAR_COUNTS = { off: 0, low: 50, high: 120 };
+    const PARTICLE_LIMITS = { off: 0, low: 30, high: 150 };
+    const MAX_RENDER_SCALE = 3;
+
+    function loadGfx() {
+        const settings = Object.assign({ fps: 'off' }, GFX_PRESETS[isMobile ? 'low' : 'medium']);
+        let saved = null;
+        try {
+            saved = JSON.parse(localStorage.getItem('kula_invaders_gfx') || 'null');
+        } catch (_) { /* corrupt or unavailable storage: keep the defaults */ }
+        if (saved && typeof saved === 'object') {
+            for (const key of Object.keys(GFX_OPTIONS)) {
+                if (GFX_OPTIONS[key].includes(saved[key])) settings[key] = saved[key];
+            }
+        }
+        return settings;
+    }
+
+    const gfx = loadGfx();
 
     // -------------------------------------------------------
     // Audio (Web Audio API — synthesized)
@@ -120,6 +159,12 @@
     const $btnFullscreen = document.getElementById('btn-fullscreen');
     const $btnMute = document.getElementById('btn-mute');
     const $muteIcon = document.getElementById('mute-icon');
+    const $btnSettings = document.getElementById('btn-settings');
+    const $settingsScreen = document.getElementById('settings-screen');
+    const $btnSettingsClose = document.getElementById('btn-settings-close');
+    const $btnResume = document.getElementById('btn-resume');
+    const $btnRestart = document.getElementById('btn-restart');
+    const $btnPauseSettings = document.getElementById('btn-pause-settings');
 
     // -------------------------------------------------------
     // State
@@ -131,6 +176,8 @@
     let highScore = parseInt(localStorage.getItem('kula_invaders_high') || '0', 10);
     let shootCooldown = 0;
     let lastEscPress = 0;
+    let levelupTimer = 0;
+    let settingsOpen = false;
 
     // Input
     const keys = {};
@@ -165,13 +212,19 @@
     // Scaling
     // -------------------------------------------------------
     let scale = 1;
+    let renderScale = 1; // canvas pixels per game unit
     function resize() {
         const isFS = !!document.fullscreenElement;
         const maxW = window.innerWidth * (isFS ? 0.98 : 0.92);
         const maxH = window.innerHeight * (isFS ? 0.98 : 0.88);
         scale = Math.min(maxW / GAME_W, maxH / GAME_H, isFS ? 2.5 : 1.2);
-        canvas.width = GAME_W;
-        canvas.height = GAME_H;
+        // Retro keeps the 800x600 backing store and lets CSS upscale it;
+        // sharp renders at the displayed size in device pixels.
+        renderScale = gfx.resolution === 'sharp'
+            ? Math.min(MAX_RENDER_SCALE, Math.max(1, scale * (window.devicePixelRatio || 1)))
+            : 1;
+        canvas.width = Math.round(GAME_W * renderScale);
+        canvas.height = Math.round(GAME_H * renderScale);
         canvas.style.width = (GAME_W * scale) + 'px';
         canvas.style.height = (GAME_H * scale) + 'px';
     }
@@ -179,12 +232,20 @@
     document.addEventListener('fullscreenchange', resize);
     resize();
 
+    // Neon glow through canvas shadows. shadowBlur ignores the transform, so
+    // it is scaled by hand to look the same at every resolution.
+    function setGlow(color, blur) {
+        if (gfx.glow !== 'on') return;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = blur * renderScale;
+    }
+
     // -------------------------------------------------------
     // Stars
     // -------------------------------------------------------
     function initStars() {
         stars = [];
-        for (let i = 0; i < STAR_COUNT; i++) {
+        for (let i = 0; i < STAR_COUNTS[gfx.stars]; i++) {
             stars.push({
                 x: Math.random() * GAME_W,
                 y: Math.random() * GAME_H,
@@ -270,10 +331,7 @@
 
         // Ship body
         ctx.fillStyle = '#3b82f6';
-        if (!isMobile) {
-            ctx.shadowColor = '#3b82f6';
-            ctx.shadowBlur = 12;
-        }
+        setGlow('#3b82f6', 12);
         ctx.beginPath();
         ctx.moveTo(cx, player.y - 4);
         ctx.lineTo(player.x + player.w + 2, player.y + player.h);
@@ -292,10 +350,7 @@
 
         // Engine glow
         ctx.fillStyle = `rgba(6, 182, 212, ${0.5 + Math.sin(Date.now() * 0.01) * 0.3})`;
-        if (!isMobile) {
-            ctx.shadowColor = '#06b6d4';
-            ctx.shadowBlur = 8;
-        }
+        setGlow('#06b6d4', 8);
         ctx.fillRect(cx - 4, player.y + player.h, 8, 4 + Math.sin(Date.now() * 0.02) * 2);
         ctx.shadowBlur = 0;
 
@@ -303,10 +358,7 @@
         if (shieldHP > 0) {
             const alpha = 0.15 + shieldHP * 0.08;
             ctx.strokeStyle = `rgba(59, 130, 246, ${alpha})`;
-            if (!isMobile) {
-                ctx.shadowColor = '#3b82f6';
-                ctx.shadowBlur = 10;
-            }
+            setGlow('#3b82f6', 10);
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.arc(cx, cy + 2, 28, 0, Math.PI * 2);
@@ -419,10 +471,7 @@
             if (!e.alive) continue;
             const color = ROW_COLORS[e.row] || '#ef4444';
             ctx.fillStyle = color;
-            if (!isMobile) {
-                ctx.shadowColor = color;
-                ctx.shadowBlur = 6;
-            }
+            setGlow(color, 6);
 
             const cx = e.x + e.w / 2;
             const cy = e.y + e.h / 2;
@@ -510,10 +559,7 @@
     function drawBullets() {
         // Player bullets — cyan glow
         ctx.fillStyle = '#06b6d4';
-        if (!isMobile) {
-            ctx.shadowColor = '#06b6d4';
-            ctx.shadowBlur = 8;
-        }
+        setGlow('#06b6d4', 8);
         for (const b of playerBullets) {
             ctx.fillRect(b.x, b.y, BULLET_W, BULLET_H);
             // Trail
@@ -525,10 +571,7 @@
         // Enemy bullets — colored glow
         for (const b of enemyBullets) {
             ctx.fillStyle = b.color || '#ef4444';
-            if (!isMobile) {
-                ctx.shadowColor = b.color || '#ef4444';
-                ctx.shadowBlur = 6;
-            }
+            setGlow(b.color || '#ef4444', 6);
             ctx.beginPath();
             ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
             ctx.fill();
@@ -545,7 +588,7 @@
     // Particles
     // -------------------------------------------------------
     function spawnExplosion(x, y, color) {
-        if (particles.length > MAX_PARTICLES) return;
+        if (particles.length >= PARTICLE_LIMITS[gfx.particles]) return;
         const count = 15 + Math.floor(Math.random() * 10);
         for (let i = 0; i < count; i++) {
             const angle = Math.random() * Math.PI * 2;
@@ -577,10 +620,7 @@
         for (const p of particles) {
             ctx.globalAlpha = p.life;
             ctx.fillStyle = p.color;
-            if (!isMobile) {
-                ctx.shadowColor = p.color;
-                ctx.shadowBlur = 4;
-            }
+            setGlow(p.color, 4);
             ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
         }
         ctx.globalAlpha = 1;
@@ -631,8 +671,7 @@
 
             // Outer glow
             ctx.fillStyle = info.color + '33';
-            ctx.shadowColor = info.color;
-            ctx.shadowBlur = 12;
+            setGlow(info.color, 12);
             ctx.beginPath();
             ctx.arc(0, 0, POWERUP_SIZE, 0, Math.PI * 2);
             ctx.fill();
@@ -718,17 +757,22 @@
     // -------------------------------------------------------
     // Game flow
     // -------------------------------------------------------
-    function gameOver() {
-        state = 'gameover';
-
+    // saveHighScore stores the current score if it beats the saved record and
+    // reports whether it did.
+    function saveHighScore() {
         const previousHigh = parseInt(localStorage.getItem('kula_invaders_high') || '0', 10);
-        let isNewHighScore = false;
-
         if (score > previousHigh && score > 0) {
             highScore = score;
             localStorage.setItem('kula_invaders_high', String(highScore));
-            isNewHighScore = true;
+            return true;
         }
+        return false;
+    }
+
+    function gameOver() {
+        state = 'gameover';
+
+        const isNewHighScore = saveHighScore();
 
         $finalScore.textContent = score;
         $finalHigh.textContent = highScore;
@@ -769,20 +813,38 @@
         $levelupScreen.classList.remove('hidden');
         SFX.levelUp();
         canvas.style.cursor = 'default';
-        setTimeout(() => {
+        clearTimeout(levelupTimer);
+        levelupTimer = setTimeout(() => {
             $levelupScreen.classList.add('hidden');
             initEnemies();
             playerBullets = [];
             enemyBullets = [];
             powerups = [];
-            state = 'playing';
+            if (settingsOpen) {
+                // Settings were opened during the banner: hold the new level paused.
+                state = 'paused';
+                $pauseScreen.classList.remove('hidden');
+            } else {
+                state = 'playing';
+                canvas.style.cursor = 'none';
+            }
             updateMobileControlsVisibility();
-            canvas.style.cursor = 'none';
         }, 2000);
+    }
+
+    // restartGame abandons a paused run, or skips the game over screen. An
+    // abandoned run still counts toward the local high score but is not
+    // submitted to the score endpoint.
+    function restartGame() {
+        if (state !== 'paused' && state !== 'gameover') return;
+        if (state === 'paused') saveHighScore();
+        startGame();
     }
 
     function startGame() {
         ensureAudio();
+        clearTimeout(levelupTimer);
+        releaseFocus();
         score = 0;
         level = 1;
         lives = 3;
@@ -799,6 +861,7 @@
         $startScreen.classList.add('hidden');
         $gameoverScreen.classList.add('hidden');
         $pauseScreen.classList.add('hidden');
+        $levelupScreen.classList.add('hidden');
         state = 'playing';
         updateMobileControlsVisibility();
         canvas.style.cursor = 'none';
@@ -862,6 +925,8 @@
         updateHUD();
     }
     function draw() {
+        // Resizing the canvas resets its state, so the scale is set per frame.
+        ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
         ctx.clearRect(0, 0, GAME_W, GAME_H);
 
         // Background gradient
@@ -889,10 +954,90 @@
         ctx.moveTo(0, GAME_H - 20);
         ctx.lineTo(GAME_W, GAME_H - 20);
         ctx.stroke();
+
+        if (gfx.scanlines === 'on') drawScanlines();
+        if (gfx.fps === 'on') drawFPS();
     }
 
-    function loop() {
-        update();
+    // CRT scanlines: one dark line every 3 canvas pixels. They are painted
+    // into the canvas because a full-page CSS overlay above the constantly
+    // redrawn canvas made the browser re-composite the whole page each frame,
+    // which dropped software-rendered Firefox from 60 to about 14 fps.
+    let scanlinePattern = null;
+    function drawScanlines() {
+        if (!scanlinePattern) {
+            const tile = document.createElement('canvas');
+            tile.width = 1;
+            tile.height = 3;
+            const tileCtx = tile.getContext('2d');
+            tileCtx.fillStyle = 'rgba(0, 0, 0, 0.03)';
+            tileCtx.fillRect(0, 0, 1, 1);
+            scanlinePattern = ctx.createPattern(tile, 'repeat');
+        }
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillStyle = scanlinePattern;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+    }
+
+    // -------------------------------------------------------
+    // FPS counter
+    // -------------------------------------------------------
+    // Frames per second over the last second, plus the longest frame in it:
+    // an average hides a single stall that the maximum shows.
+    let fps = 0;
+    let worstFrameMs = 0;
+    let fpsFrames = 0;
+    let fpsSince = performance.now();
+    let fpsLastFrame = fpsSince;
+    let fpsWorst = 0;
+
+    function tickFPS(now) {
+        fpsWorst = Math.max(fpsWorst, now - fpsLastFrame);
+        fpsLastFrame = now;
+        fpsFrames++;
+        if (now - fpsSince >= 1000) {
+            fps = Math.round(fpsFrames * 1000 / (now - fpsSince));
+            worstFrameMs = Math.round(fpsWorst);
+            fpsFrames = 0;
+            fpsWorst = 0;
+            fpsSince = now;
+        }
+    }
+
+    function drawFPS() {
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.8)';
+        ctx.font = '8px "Press Start 2P", monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(fps + ' FPS  MAX ' + worstFrameMs + 'MS', GAME_W - 8, GAME_H - 6);
+    }
+
+    // The game advances in fixed 60 Hz ticks whatever the display does: a
+    // slow frame runs the ticks it missed instead of slowing the game down,
+    // and a 120/144 Hz display does not speed it up.
+    const TICK_MS = 1000 / 60;
+    const MAX_CATCHUP_MS = 100; // longer stalls, such as a hidden tab, are dropped
+    let lastFrameTime = performance.now();
+    let tickDebt = 0;
+
+    function loop(now) {
+        tickFPS(now);
+        const elapsed = Math.min(Math.max(0, now - lastFrameTime), MAX_CATCHUP_MS);
+        lastFrameTime = now;
+        if (state === 'playing') {
+            tickDebt += elapsed;
+            // Frame timestamps jitter around the refresh interval; the 10%
+            // slack keeps a 60 Hz display at exactly one tick per frame, and
+            // the debt carried over keeps the average rate exact.
+            while (state === 'playing' && tickDebt >= TICK_MS * 0.9) {
+                update();
+                tickDebt -= TICK_MS;
+            }
+        } else {
+            tickDebt = 0;
+        }
         draw();
         requestAnimationFrame(loop);
     }
@@ -901,13 +1046,31 @@
     // Input
     // -------------------------------------------------------
     window.addEventListener('keydown', (e) => {
+        const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+        const shortcut = !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey;
+
+        // The settings panel behaves as a dialog: Tab, Enter and Space
+        // operate its buttons and the game ignores every other key.
+        if (settingsOpen) {
+            if (key === 'Escape' || (key === 'g' && shortcut)) {
+                e.preventDefault();
+                closeSettings();
+            }
+            return;
+        }
+
         keys[e.key] = true;
 
         if (e.key === 'Enter') {
             if (state === 'start' || state === 'gameover') {
+                // Keep Enter from also pressing a button that still has focus.
+                e.preventDefault();
                 startGame();
             }
         }
+
+        if (shortcut && key === 'r') restartGame();
+        if (shortcut && key === 'g') openSettings();
 
         if (e.key === 'Escape') {
             const now = Date.now();
@@ -968,8 +1131,8 @@
         window.addEventListener('pointerdown', (e) => {
             if (isMobile) tryEnterImmersiveMode();
             
-            // Only handle global taps if not clicking a button
-            if (e.target.closest('.mobile-btn') || e.target.closest('.hud-controls')) return;
+            // Only handle global taps if not clicking a button or the settings
+            if (settingsOpen || e.target.closest('.mobile-btn, .hud-controls, .menu-btn')) return;
 
             if (state === 'start' || state === 'gameover') {
                 startGame();
@@ -994,6 +1157,85 @@
                 toggleMute();
             });
         }
+
+        // Graphics settings
+        $btnSettings.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (settingsOpen) closeSettings();
+            else openSettings();
+        });
+        $btnSettingsClose.addEventListener('click', closeSettings);
+        $settingsScreen.addEventListener('click', (e) => {
+            const btn = e.target.closest('.opt-btn');
+            if (btn) chooseGfxOption(btn.closest('.settings-options').dataset.setting, btn.dataset.value);
+        });
+
+        // Pause menu
+        $btnResume.addEventListener('click', () => {
+            if (state === 'paused') togglePause();
+        });
+        $btnRestart.addEventListener('click', restartGame);
+        $btnPauseSettings.addEventListener('click', openSettings);
+    }
+
+    // -------------------------------------------------------
+    // Graphics settings panel
+    // -------------------------------------------------------
+    function chooseGfxOption(setting, value) {
+        if (setting === 'preset') {
+            if (!GFX_PRESETS[value]) return;
+            Object.assign(gfx, GFX_PRESETS[value]);
+        } else {
+            if (!GFX_OPTIONS[setting] || !GFX_OPTIONS[setting].includes(value)) return;
+            gfx[setting] = value;
+        }
+        try {
+            localStorage.setItem('kula_invaders_gfx', JSON.stringify(gfx));
+        } catch (_) { /* storage unavailable: the choice lasts until reload */ }
+        applyGfx();
+    }
+
+    // applyGfx makes the renderer and the settings panel follow gfx.
+    function applyGfx() {
+        if (stars.length !== STAR_COUNTS[gfx.stars]) initStars();
+        if (particles.length > PARTICLE_LIMITS[gfx.particles]) particles.length = PARTICLE_LIMITS[gfx.particles];
+        resize();
+
+        const preset = Object.keys(GFX_PRESETS).find(name =>
+            Object.keys(GFX_PRESETS[name]).every(k => GFX_PRESETS[name][k] === gfx[k])) || '';
+        for (const group of $settingsScreen.querySelectorAll('.settings-options')) {
+            const current = group.dataset.setting === 'preset' ? preset : gfx[group.dataset.setting];
+            for (const btn of group.querySelectorAll('.opt-btn')) {
+                btn.setAttribute('aria-pressed', String(btn.dataset.value === current));
+            }
+        }
+    }
+
+    // Opening the settings pauses a running game; the other overlays are
+    // hidden meanwhile so changes preview on the live canvas.
+    function openSettings() {
+        if (settingsOpen) return;
+        if (state === 'playing') togglePause();
+        settingsOpen = true;
+        document.body.classList.add('settings-open');
+        $settingsScreen.classList.remove('hidden');
+        const selected = $settingsScreen.querySelector('.opt-btn[aria-pressed="true"]');
+        (selected || $settingsScreen.querySelector('.opt-btn')).focus({ preventScroll: true });
+    }
+
+    function closeSettings() {
+        if (!settingsOpen) return;
+        settingsOpen = false;
+        document.body.classList.remove('settings-open');
+        $settingsScreen.classList.add('hidden');
+        releaseFocus();
+    }
+
+    // Keyboard play must not reach a HUD or menu button that kept focus after
+    // a click, or Space and Enter would press it again.
+    function releaseFocus() {
+        const el = document.activeElement;
+        if (el && el !== document.body && typeof el.blur === 'function') el.blur();
     }
 
     function toggleMute() {
@@ -1026,6 +1268,7 @@
     }
 
     function togglePause() {
+        if (settingsOpen) return;
         if (state === 'playing') {
             state = 'paused';
             $pauseScreen.classList.remove('hidden');
@@ -1034,6 +1277,7 @@
             state = 'playing';
             $pauseScreen.classList.add('hidden');
             canvas.style.cursor = 'none';
+            releaseFocus();
         }
         updateMobileControlsVisibility();
     }
@@ -1055,9 +1299,9 @@
     // -------------------------------------------------------
     // Init
     // -------------------------------------------------------
-    initStars();
+    applyGfx();
     updateHUD(true);
     updateMobileControlsVisibility();
-    loop();
+    loop(performance.now());
 
 })();

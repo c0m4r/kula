@@ -69,38 +69,6 @@ body {
         radial-gradient(ellipse at 50% 80%, rgba(6, 182, 212, 0.05) 0%, transparent 50%);
 }
 
-/* ---- CRT Scanlines ---- */
-.scanlines {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 1000;
-    background: repeating-linear-gradient(0deg,
-            rgba(0, 0, 0, 0.03) 0px,
-            rgba(0, 0, 0, 0.03) 1px,
-            transparent 1px,
-            transparent 3px);
-    animation: scanlineFlicker 0.1s infinite;
-}
-
-@media (max-width: 900px) {
-    .scanlines {
-        display: none !important;
-    }
-}
-
-@keyframes scanlineFlicker {
-
-    0%,
-    100% {
-        opacity: 1;
-    }
-
-    50% {
-        opacity: 0.97;
-    }
-}
-
 /* ---- Canvas ---- */
 #game-canvas {
     display: block;
@@ -438,6 +406,187 @@ kbd {
     letter-spacing: 0.2em;
 }
 
+/* ---- Menu Buttons (pause menu, settings) ---- */
+.menu-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.menu-btn {
+    font-family: var(--font-pixel);
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    color: var(--accent-cyan);
+    background: var(--bg-secondary);
+    border: 1px solid rgba(6, 182, 212, 0.4);
+    border-radius: var(--radius-sm);
+    padding: 0.8rem 1.2rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.menu-btn:hover,
+.menu-btn:focus-visible {
+    color: var(--bg-primary);
+    background: var(--accent-cyan);
+    box-shadow: 0 0 16px rgba(6, 182, 212, 0.5);
+    outline: none;
+}
+
+#btn-restart {
+    color: var(--accent-orange);
+    border-color: rgba(249, 115, 22, 0.4);
+}
+
+#btn-restart:hover,
+#btn-restart:focus-visible {
+    color: var(--bg-primary);
+    background: var(--accent-orange);
+    box-shadow: 0 0 16px rgba(249, 115, 22, 0.5);
+}
+
+/* ---- Graphics Settings ---- */
+/* A light backdrop, with the other overlays hidden, so changes preview on
+   the live canvas. */
+#settings-screen {
+    padding: 80px 16px 8px; /* keep the panel clear of the HUD */
+    background: rgba(10, 14, 23, 0.35);
+    backdrop-filter: none;
+}
+
+.settings-open .overlay:not(#settings-screen) {
+    display: none;
+}
+
+.settings-panel {
+    max-height: 100%;
+    overflow-y: auto;
+    touch-action: pan-y;
+    padding: 1.5rem 2rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg), 0 0 24px rgba(59, 130, 246, 0.1);
+}
+
+.settings-title {
+    font-family: var(--font-pixel);
+    font-size: 1.4rem;
+    color: var(--accent-purple);
+    text-shadow:
+        0 0 20px rgba(139, 92, 246, 0.6),
+        0 0 40px rgba(139, 92, 246, 0.3);
+    margin-bottom: 1.5rem;
+}
+
+.settings-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    margin-bottom: 1.5rem;
+}
+
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+}
+
+.settings-label {
+    font-family: var(--font-pixel);
+    font-size: 0.55rem;
+    color: var(--text-secondary);
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+}
+
+.settings-options {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.opt-btn {
+    font-family: var(--font-pixel);
+    font-size: 0.5rem;
+    min-width: 4.4rem;
+    padding: 0.5rem 0.6rem;
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.opt-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--accent-cyan);
+}
+
+.opt-btn:focus-visible {
+    outline: 2px solid var(--accent-yellow);
+    outline-offset: 2px;
+}
+
+.opt-btn[aria-pressed="true"] {
+    color: var(--bg-primary);
+    background: var(--accent-cyan);
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 10px rgba(6, 182, 212, 0.4);
+}
+
+.settings-hint {
+    font-family: var(--font-pixel);
+    font-size: 0.45rem;
+    color: var(--text-muted);
+    letter-spacing: 0.1em;
+    margin-top: 1rem;
+}
+
+/* Short screens such as landscape phones: three compact columns so the
+   whole panel fits without scrolling. */
+@media (max-height: 600px) and (min-width: 601px) {
+    .settings-panel {
+        padding: 0.75rem 1rem;
+    }
+
+    .settings-title {
+        font-size: 0.9rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .settings-rows {
+        display: grid;
+        grid-template-columns: repeat(3, auto);
+        gap: 0.7rem 1.25rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .settings-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.35rem;
+    }
+
+    .opt-btn {
+        min-width: 3.6rem;
+    }
+
+    .settings-panel .menu-btn {
+        padding: 0.6rem 1rem;
+    }
+
+    .settings-hint {
+        display: none;
+    }
+}
+
 .hidden {
     display: none !important;
 }
@@ -464,10 +613,20 @@ kbd {
     .controls-info {
         font-size: 0.7rem;
     }
+
+    .settings-panel {
+        padding: 1rem;
+    }
+
+    .settings-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.4rem;
+    }
 }
 
-/* ---- Fullscreen & Mute Buttons ---- */
-.fullscreen-btn, .mute-btn {
+/* ---- Fullscreen, Mute & Settings Buttons ---- */
+.fullscreen-btn, .mute-btn, .settings-btn {
     background: transparent;
     border: none;
     color: var(--accent-cyan);
@@ -479,7 +638,7 @@ kbd {
     transition: transform 0.2s;
 }
 
-.fullscreen-btn:hover, .mute-btn:hover {
+.fullscreen-btn:hover, .mute-btn:hover, .settings-btn:hover {
     transform: scale(1.1);
 }
 
@@ -661,9 +820,14 @@ kbd {
         padding: 0.4rem 1rem;
     }
 
+    .pause-btn {
+        top: 90px;
+    }
+
     .hud-controls {
         margin-left: auto;
-        flex-direction: column !important;
+        display: grid !important;
+        grid-template-columns: repeat(2, auto);
         gap: 0.2rem !important;
     }
     

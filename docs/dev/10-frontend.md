@@ -264,7 +264,38 @@ hidden section falls back to the System tab.
 ### Easter egg
 
 A Space Invaders clone (`game.html`/`game.js`, Press Start 2P font) is reachable from a header
-button when `global.easter_egg` is true.
+button when `global.easter_egg` is true. It is a classic (non-module) script and is not
+translated.
+
+- **Graphics settings** live in the `gfx` object. Every option is a string enum listed in
+  `GFX_OPTIONS`, and `GFX_PRESETS` holds low/medium/high. Low reproduces the original mobile look
+  and medium the original desktop look, so the defaults (low on touch devices, medium elsewhere)
+  render as before. `loadGfx()` validates each stored field of `kula_invaders_gfx` on its own, so
+  a corrupt or stale value falls back to the default for that field only. `applyGfx()` rebuilds
+  whatever depends on a setting (starfield, particle cap, canvas backing store) and syncs
+  `aria-pressed` on the panel's buttons.
+- **Sharp resolution** sizes the canvas backing store to the displayed size in device pixels
+  (`renderScale`, capped at `MAX_RENDER_SCALE`). `draw()` sets that scale as the transform each
+  frame, so game logic keeps using 800×600 units. `shadowBlur` ignores the transform, which is
+  why glow goes through `setGlow()`, which scales the blur.
+- **Settings and game state.** Opening the panel pauses a running game, and `settingsOpen` keeps
+  the level-up timer from resuming play underneath it. The `settings-open` body class hides the
+  other overlays so changes preview on the canvas. While the panel is open the keydown handler
+  ignores game keys, so Tab, Enter and Space operate the panel's buttons.
+- **Restart** (`restartGame()`) works from the pause menu or the game over screen. A paused run
+  goes through `saveHighScore()` but never reaches `game_score_url`. Only `gameOver()` submits.
+- **Fixed-rate game loop.** `loop()` draws once per animation frame but runs `update()` in fixed
+  60 Hz ticks (`TICK_MS`), carrying the leftover time forward. A slow frame therefore catches up
+  instead of putting the game in slow motion, and 120/144 Hz displays do not speed it up. A 10%
+  slack absorbs frame-timestamp jitter so a 60 Hz display gets exactly one tick per frame. Stalls
+  over `MAX_CATCHUP_MS` (a hidden tab) are dropped. Game timers (cooldowns, invincibility, enemy
+  fire) count ticks, so they keep their meaning.
+- **Scanlines** are a pattern fill painted onto the canvas by `drawScanlines()`, not a CSS overlay.
+  A full-page overlay above the constantly redrawn canvas made the browser re-composite the page
+  every frame. That dropped software-rendered Firefox from 60 to about 14 fps, and removing only
+  the overlay's flicker animation still left it near 35.
+- **FPS counter** counts animation frames over one-second windows and also shows the longest
+  frame in the window, so a single stall is visible even when the average stays at 60.
 
 ---
 

@@ -312,6 +312,31 @@ data controls are enabled.
 When Ollama is enabled, a 🤖 button opens a local AI analysis panel. See
 [AI Assistant](10-ai-assistant.md).
 
+### Space Invaders
+
+With `global.easter_egg` enabled, the header's game button opens a Space Invaders clone. Move with
+<kbd>←</kbd>/<kbd>→</kbd> (or <kbd>A</kbd>/<kbd>D</kbd>), shoot with <kbd>Space</kbd>, and pause
+with <kbd>Esc</kbd>. The pause menu offers **Resume**, **Restart** and **Graphics**. <kbd>R</kbd>
+restarts from the pause menu or the game over screen. A restarted run still counts toward the high
+score, but it is not sent to `game_score_url`.
+
+The ⚙️ button in the game's HUD (or <kbd>G</kbd>) opens the graphics settings. Opening them pauses
+a running game, and changes show on the canvas behind the panel as you make them:
+
+| Setting | Options |
+|---|---|
+| Preset | Low, Medium, High (sets every option below except the FPS counter) |
+| Resolution | Retro (800×600, upscaled) or Sharp (rendered at the display's pixel density) |
+| Neon glow | Off / On |
+| Particles | Off / Low / High (explosion debris) |
+| Starfield | Off / Low / High (background star density) |
+| CRT scanlines | Off / On |
+| FPS counter | Off / On (frames per second, and the longest frame of the last second) |
+
+Touch devices start on the Low preset and other devices on Medium. The choice is saved per
+browser. The game runs at the same speed at any frame rate: on a slow machine lower settings make
+motion smoother, not faster.
+
 ## REST API & WebSocket
 
 The dashboard is driven by a small JSON API. If you want to build your own client or scripts,
