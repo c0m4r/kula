@@ -36,7 +36,7 @@ await Promise.all(locked.map(async ({ name, version, resolved, integrity }) => {
     if (!resolved?.startsWith(`${REGISTRY}${name}/-/`)) problems.push(`${id}: resolved from ${resolved}`);
     if (!integrity?.startsWith('sha512-')) problems.push(`${id}: no sha512 integrity`);
     try {
-        const response = await fetch(REGISTRY + name.replace('/', '%2f'), { signal: AbortSignal.timeout(60000) });
+        const response = await fetch(REGISTRY + encodeURIComponent(name),{ signal: AbortSignal.timeout(60000) });
         if (!response.ok) throw new Error(`registry answered ${response.status}`);
         const published = Date.parse((await response.json()).time?.[version]);
         if (!Number.isFinite(published)) problems.push(`${id}: no publish time in the registry`);
