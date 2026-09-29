@@ -14,10 +14,15 @@ import {
 } from './charts-data.js';
 import { updateUrl, ViewportHistory, zoomOutInterval } from './history-navigation.js';
 import { attachRangeCalendar } from './date-range-calendar.js';
+import { attachClockPicker } from './clock-picker.js';
 import {
     formatDateTimeInput,
     formatRangeTimestamp,
+    formatTimeOfDay,
     parseDateTimeInput,
+    parseTimeOfDay,
+    stepTimeOfDay,
+    timeOfDayParts,
 } from './format.js';
 
 const viewportHistory = new ViewportHistory();
@@ -151,51 +156,84 @@ export function syncTimeRangeUI(seconds) {
 
 // ---- Custom Time Range ----
 const MAX_CUSTOM_RANGE_MS = 31 * 86400000;
+const ENDPOINTS = {
+    start: { field: 'custom-from-field', date: 'custom-from-date', day: 'custom-from-day', time: 'custom-from-time' },
+    end: { field: 'custom-to-field', date: 'custom-to-date', day: 'custom-to-day', time: 'custom-to-time' },
+};
+const PRESET_SECONDS = { '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800 };
 let rangeCalendar;
+let clockPicker;
+// The calendar pane shows unless a time field is being edited: then the clock
+// for that end (clockEndpoint) takes its place.
+let clockEndpoint = null;
+let calendarEndpoint = 'start';
 let pickerBoundsLoading = false;
 let pickerBoundsError = false;
 let pickerBoundsRequest = 0;
+// A time the user typed survives later calendar clicks; untouched ends
+// default to whole days.
+const typedTimes = { start: false, end: false };
+
+const subSecondPicker = () => state.collectionIntervalMs < 1000;
+const endOfDay = () => subSecondPicker() ? '23:59:59.999' : '23:59:59';
+const endpointElement = (which, part) => document.getElementById(ENDPOINTS[which][part]);
 
 function pickerDate(date) {
-    return formatDateTimeInput(date, state.timeZone, true, state.collectionIntervalMs < 1000);
+    return formatDateTimeInput(date, state.timeZone, true, subSecondPicker());
 }
 
 function retainedRanges() {
-    const quantum = state.collectionIntervalMs < 1000 ? 1 : 1000;
+    const quantum = subSecondPicker() ? 1 : 1000;
     return (state.retainedRanges || []).map(range => ({
         from: Math.ceil(Date.parse(range.from) / quantum) * quantum,
         to: Math.floor(Math.min(Date.parse(range.to), Date.now()) / quantum) * quantum,
     })).filter(range => Number.isFinite(range.from) && Number.isFinite(range.to) && range.from <= range.to);
 }
 
+// Retention bounds which days can be chosen, never the times within them: a
+// day with any retained history can be viewed from midnight to midnight.
 function retainedDay(day) {
     return retainedRanges().some(range => day >= pickerDate(range.from).slice(0, 10) &&
         day <= pickerDate(range.to).slice(0, 10));
 }
 
-function clampToRetention(date) {
+function retainedDayBounds() {
     const ranges = retainedRanges();
-    if (ranges.length === 0) return date;
-    const timestamp = date.getTime();
-    const nearest = ranges.map(range => Math.max(range.from, Math.min(range.to, timestamp)))
-        .sort((a, b) => Math.abs(a - timestamp) - Math.abs(b - timestamp))[0];
-    return new Date(nearest);
+    if (ranges.length === 0) return null;
+    return {
+        first: pickerDate(Math.min(...ranges.map(range => range.from))).slice(0, 10),
+        last: pickerDate(Math.max(...ranges.map(range => range.to))).slice(0, 10),
+    };
 }
 
-function syncPickerLimits() {
-    const ranges = retainedRanges();
-    for (const id of ['custom-from', 'custom-to']) {
-        const input = document.getElementById(id);
-        input.step = state.collectionIntervalMs < 1000 ? '0.001' : '1';
-        input.min = ranges.length ? pickerDate(Math.min(...ranges.map(range => range.from))) : '';
-        input.max = ranges.length ? pickerDate(Math.max(...ranges.map(range => range.to))) : '';
+// Time fields are text in the UI language's clock (see formatTimeOfDay); the
+// 24-hour value lives in data-time. Reformat them when the language changes,
+// unless the user is typing in one.
+function syncTimeInputs() {
+    const lang = i18n.currentLang;
+    const sample = timeOfDayParts('16:00:00', lang);
+    const placeholder = sample.map(part => ({ hour: 'hh', minute: 'mm', second: 'ss' })[part.type] ?? part.value).join('');
+    const widest = formatTimeOfDay(subSecondPicker() ? '23:59:59.999' : '23:59:59', lang);
+    for (const which of Object.keys(ENDPOINTS)) {
+        const input = endpointElement(which, 'time');
+        input.placeholder = placeholder;
+        input.size = Math.max(placeholder.length, widest.length) + 1;
+        // A numeric keypad suffices unless the clock needs a day period.
+        input.inputMode = sample.some(part => part.type === 'dayPeriod') ? 'text' : 'decimal';
+        if (input.dataset.time && document.activeElement !== input) {
+            input.value = formatTimeOfDay(input.dataset.time, lang);
+        }
     }
+}
+
+function showEndpointTime(which, time) {
+    const input = endpointElement(which, 'time');
+    input.dataset.time = time;
+    input.value = formatTimeOfDay(time, i18n.currentLang);
 }
 
 async function refreshPickerBounds() {
     const request = ++pickerBoundsRequest;
-    const initialFrom = document.getElementById('custom-from').value;
-    const initialTo = document.getElementById('custom-to').value;
     pickerBoundsLoading = true;
     pickerBoundsError = false;
     updateCustomRangePreview();
@@ -210,15 +248,7 @@ async function refreshPickerBounds() {
         if (request !== pickerBoundsRequest) return;
         state.retainedRanges = config.history.ranges;
         state.collectionIntervalMs = config.history.collection_interval_ms || 1000;
-        syncPickerLimits();
-        if (!document.getElementById('time-custom').classList.contains('hidden')) {
-            const draft = customRangeDraft();
-            if (draft.from && draft.to && document.getElementById('custom-from').value === initialFrom &&
-                document.getElementById('custom-to').value === initialTo) {
-                setPickerDates(clampToRetention(draft.from), clampToRetention(draft.to));
-            }
-            rangeCalendar?.sync(true);
-        }
+        syncTimeInputs();
     } catch (_error) {
         if (request === pickerBoundsRequest) pickerBoundsError = true;
     } finally {
@@ -241,51 +271,150 @@ function closeCustomTimePicker(restoreFocus = true) {
     if (wasOpen && restoreFocus) button?.focus();
 }
 
-function setPickerDates(from, to, syncCalendar = true) {
-    syncPickerLimits();
-    document.getElementById('custom-from').value = pickerDate(from);
-    document.getElementById('custom-to').value = pickerDate(to);
+function renderEndpointDay(which) {
+    const button = endpointElement(which, 'date');
+    const day = Date.parse(`${button.dataset.day}T00:00:00Z`);
+    const format = options => new Intl.DateTimeFormat(i18n.currentLang, { ...options, timeZone: 'UTC' }).format(day);
+    endpointElement(which, 'day').textContent = Number.isFinite(day)
+        ? format({ day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+    button.title = Number.isFinite(day) ? format({ dateStyle: 'full' }) : '';
+}
+
+// Each end of the draft is a calendar day (on its date button) plus a time.
+function setEndpoint(which, day, time) {
+    endpointElement(which, 'date').dataset.day = day;
+    showEndpointTime(which, time);
+    renderEndpointDay(which);
+}
+
+function endpointValue(which) {
+    const day = endpointElement(which, 'date').dataset.day;
+    const time = endpointElement(which, 'time').dataset.time;
+    return day && time ? `${day}T${time}` : '';
+}
+
+// The field of the end being edited is highlighted. A pressed date button
+// means the calendar's next click sets that end.
+function markActiveEndpoint() {
+    const active = clockEndpoint ?? calendarEndpoint;
+    for (const which of Object.keys(ENDPOINTS)) {
+        endpointElement(which, 'field').classList.toggle('active', which === active);
+        endpointElement(which, 'date').setAttribute('aria-pressed', String(!clockEndpoint && which === active));
+    }
+}
+
+function showPane(which) {
+    clockEndpoint = which;
+    document.getElementById('custom-range-calendar').classList.toggle('pane-hidden', which !== null);
+    document.getElementById('custom-range-clock').classList.toggle('pane-hidden', which === null);
+    markActiveEndpoint();
+    if (which) clockPicker.update({ reset: true });
+}
+
+function clockView() {
+    const which = clockEndpoint;
+    const day = endpointElement(which, 'date').dataset.day;
+    const date = Date.parse(`${day}T00:00:00Z`);
+    const dayText = Number.isFinite(date) ? new Intl.DateTimeFormat(i18n.currentLang, {
+        weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC',
+    }).format(date) : '—';
+    return {
+        title: `${i18n.t(which === 'start' ? 'from' : 'to')} · ${dayText}`,
+        time: endpointElement(which, 'time').dataset.time,
+        shortcuts: which === 'start' ? ['start_of_day'] : ['end_of_day', 'now'],
+    };
+}
+
+function writePickerDates(from, to) {
+    for (const [which, date] of [['start', from], ['end', to]]) {
+        const value = pickerDate(date);
+        setEndpoint(which, value.slice(0, 10), value.slice(11));
+    }
+}
+
+function setPickerDates(from, to) {
+    syncTimeInputs();
+    writePickerDates(from, to);
+    typedTimes.start = false;
+    typedTimes.end = false;
     updateCustomRangePreview();
-    if (syncCalendar) rangeCalendar?.sync(true);
+    rangeCalendar?.sync({ reset: true });
+}
+
+// Calendar days cover whole days, except that today ends now rather than
+// leaving the rest of the chart empty.
+function defaultTime(which, day) {
+    if (which === 'start') return '00:00:00';
+    const now = pickerDate(new Date());
+    return now.slice(0, 10) === day ? now.slice(11) : endOfDay();
+}
+
+function customPresetRange(preset) {
+    const now = new Date();
+    if (PRESET_SECONDS[preset]) return { from: new Date(now.getTime() - PRESET_SECONDS[preset] * 1000), to: now };
+    const today = pickerDate(now).slice(0, 10);
+    if (preset === 'today') return { from: parseDateTimeInput(`${today}T00:00`, state.timeZone), to: now };
+    const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    return {
+        from: parseDateTimeInput(`${yesterday}T00:00`, state.timeZone),
+        to: parseDateTimeInput(`${yesterday}T${endOfDay()}`, state.timeZone),
+    };
 }
 
 function customRangeDraft() {
-    const fromVal = document.getElementById('custom-from').value;
-    const toVal = document.getElementById('custom-to').value;
-    const from = parseDateTimeInput(fromVal, state.timeZone);
-    const to = parseDateTimeInput(toVal, state.timeZone);
-    const available = date => retainedRanges().some(range => date >= range.from && date <= range.to);
-    const error = !from || !to ? 'range_dates_required'
+    const from = parseDateTimeInput(endpointValue('start'), state.timeZone);
+    const to = parseDateTimeInput(endpointValue('end'), state.timeZone);
+    const ranges = retainedRanges();
+    // Compare days, not instants, so hours before the first sample or after
+    // the last one remain selectable.
+    const retained = () => ranges.some(range =>
+        pickerDate(from).slice(0, 10) <= pickerDate(range.to).slice(0, 10) &&
+        pickerDate(to).slice(0, 10) >= pickerDate(range.from).slice(0, 10));
+    const unreadable = Object.keys(ENDPOINTS).some(which => {
+        const input = endpointElement(which, 'time');
+        return input.value.trim() && !input.dataset.time;
+    });
+    const error = unreadable ? 'range_time_invalid'
+        : !from || !to ? 'range_dates_required'
         : from >= to ? 'range_start_before_end'
         : to - from > MAX_CUSTOM_RANGE_MS ? 'range_max_31_days'
-        : state.collectionIntervalMs >= 1000 && (from.getMilliseconds() || to.getMilliseconds()) ? 'range_whole_seconds'
+        : !subSecondPicker() && (from.getMilliseconds() || to.getMilliseconds()) ? 'range_whole_seconds'
         : pickerBoundsLoading ? 'history_loading'
         : pickerBoundsError ? 'history_failed'
-        : retainedRanges().length === 0 ? 'history_empty'
-        : !available(from) || !available(to) ? 'range_outside_retention' : null;
+        : ranges.length === 0 ? 'history_empty'
+        : !retained() ? 'range_outside_retention' : null;
     return { from, to, error };
 }
 
 function updateCustomRangePreview() {
+    if (clockEndpoint) clockPicker.update();
     const draft = customRangeDraft();
-    document.querySelector('#time-custom button[type="submit"]').disabled = !!draft.error;
+    document.getElementById('btn-apply-custom').disabled = !!draft.error;
     const error = document.getElementById('custom-range-error');
-    error.textContent = draft.error ? i18n.t(draft.error) : '';
+    error.textContent = draft.error === 'range_time_invalid'
+        ? `${i18n.t(draft.error)} ${formatTimeOfDay('14:30:00', i18n.currentLang)}`
+        : draft.error ? i18n.t(draft.error) : '';
     error.classList.toggle('hidden', !draft.error);
     const inputError = ['range_dates_required', 'range_start_before_end', 'range_max_31_days',
         'range_whole_seconds', 'range_outside_retention'].includes(draft.error);
-    document.getElementById('custom-from').setAttribute('aria-invalid', String(!draft.from || inputError));
-    document.getElementById('custom-to').setAttribute('aria-invalid', String(!draft.to || inputError));
+    for (const [which, date] of [['start', draft.from], ['end', draft.to]]) {
+        const invalid = !date || inputError;
+        endpointElement(which, 'time').setAttribute('aria-invalid', String(invalid));
+        endpointElement(which, 'field').classList.toggle('invalid', invalid);
+    }
     const summary = document.getElementById('custom-range-summary');
     if (draft.error) {
         summary.textContent = '';
         return;
     }
-    let minutes = Math.round((draft.to - draft.from) / 60000);
+    // Below a minute, count seconds rather than showing an empty duration.
+    const seconds = (draft.to - draft.from) / 1000;
+    let remaining = seconds < 60 ? Math.max(1, Math.round(seconds)) : Math.round(seconds / 60);
+    const units = seconds < 60 ? [['second', 1]] : [['day', 1440], ['hour', 60], ['minute', 1]];
     const parts = [];
-    for (const [unit, size] of [['day', 1440], ['hour', 60], ['minute', 1]]) {
-        const value = Math.floor(minutes / size);
-        minutes %= size;
+    for (const [unit, size] of units) {
+        const value = Math.floor(remaining / size);
+        remaining %= size;
         if (value) parts.push(new Intl.NumberFormat(i18n.currentLang, {
             style: 'unit', unit, unitDisplay: 'short',
         }).format(value));
@@ -299,50 +428,120 @@ export function refreshCustomTimePicker(previousZone = state.timeZone) {
     const zone = document.getElementById('custom-time-zone');
     if (zone) zone.textContent = state.timeZone === 'utc' ? 'UTC'
         : `${i18n.t('time_zone_local')} · ${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
+    for (const which of Object.keys(ENDPOINTS)) renderEndpointDay(which);
+    syncTimeInputs();
     if (document.getElementById('time-custom')?.classList.contains('hidden')) return;
     if (previousZone !== state.timeZone) {
-        for (const id of ['custom-from', 'custom-to']) {
-            const input = document.getElementById(id);
-            const date = parseDateTimeInput(input.value, previousZone);
-            if (date) input.value = pickerDate(date);
+        for (const which of Object.keys(ENDPOINTS)) {
+            const date = parseDateTimeInput(endpointValue(which), previousZone);
+            if (!date) continue;
+            const value = pickerDate(date);
+            setEndpoint(which, value.slice(0, 10), value.slice(11));
         }
     }
-    syncPickerLimits();
     updateCustomRangePreview();
     rangeCalendar?.sync();
 }
 
 export function initCustomTimePicker() {
     const picker = document.getElementById('time-custom');
+    const presets = picker.querySelectorAll('[data-custom-preset]');
+    const markPreset = active => presets.forEach(button => button.classList.toggle('active', button === active));
     rangeCalendar = attachRangeCalendar(document.getElementById('custom-range-calendar'), {
-        fromInput: document.getElementById('custom-from'),
-        toInput: document.getElementById('custom-to'),
+        getRange: () => ({
+            start: endpointElement('start', 'date').dataset.day,
+            end: endpointElement('end', 'date').dataset.day,
+        }),
         translate: key => i18n.t(key),
         locale: () => i18n.currentLang,
+        today: () => pickerDate(new Date()).slice(0, 10),
         isDayAvailable: day => !pickerBoundsLoading && !pickerBoundsError && retainedDay(day),
-        onSelect: (first, last) => {
-            const endTime = state.collectionIntervalMs < 1000 ? '23:59:59.999' : '23:59:59';
-            setPickerDates(clampToRetention(parseDateTimeInput(`${first}T00:00`, state.timeZone)),
-                clampToRetention(parseDateTimeInput(`${last}T${endTime}`, state.timeZone)), false);
-            picker.querySelectorAll('[data-custom-preset]').forEach(button => button.classList.remove('active'));
+        dataBounds: () => pickerBoundsLoading || pickerBoundsError ? null : retainedDayBounds(),
+        onSelect: (startDay, endDay, changed) => {
+            for (const which of changed) {
+                const day = which === 'start' ? startDay : endDay;
+                const typed = typedTimes[which] && endpointElement(which, 'time').dataset.time;
+                setEndpoint(which, day, typed || defaultTime(which, day));
+            }
+            markPreset(null);
+            updateCustomRangePreview();
+        },
+        onEndpointChange: active => {
+            calendarEndpoint = active;
+            markActiveEndpoint();
         },
     });
+    clockPicker = attachClockPicker(document.getElementById('custom-range-clock'), {
+        getState: clockView,
+        translate: key => i18n.t(key),
+        locale: () => i18n.currentLang,
+        onPick: time => {
+            showEndpointTime(clockEndpoint, time);
+            typedTimes[clockEndpoint] = true;
+            markPreset(null);
+            updateCustomRangePreview();
+        },
+        // Shortcuts equal the defaults, so later day clicks keep choosing them.
+        onShortcut: shortcut => {
+            const which = clockEndpoint;
+            if (shortcut === 'now') {
+                const now = pickerDate(new Date());
+                setEndpoint(which, now.slice(0, 10), now.slice(11));
+                rangeCalendar.sync();
+            } else {
+                showEndpointTime(which, shortcut === 'start_of_day' ? '00:00:00' : endOfDay());
+            }
+            typedTimes[which] = false;
+            markPreset(null);
+            updateCustomRangePreview();
+        },
+        onCalendar: () => {
+            const which = clockEndpoint;
+            showPane(null);
+            rangeCalendar.editEndpoint(which);
+        },
+    });
+    for (const which of Object.keys(ENDPOINTS)) {
+        const input = endpointElement(which, 'time');
+        const edited = () => {
+            typedTimes[which] = true;
+            markPreset(null);
+            updateCustomRangePreview();
+        };
+        endpointElement(which, 'date').addEventListener('click', () => {
+            showPane(null);
+            rangeCalendar.editEndpoint(which);
+        });
+        input.addEventListener('focus', () => showPane(which));
+        input.addEventListener('input', () => {
+            input.dataset.time = parseTimeOfDay(input.value, i18n.currentLang) || '';
+            edited();
+        });
+        // Leaving the field tidies what was typed, e.g. "930" becomes 09:30:00,
+        // and catches up with a language change made while it had focus.
+        for (const type of ['change', 'blur']) {
+            input.addEventListener(type, () => {
+                if (input.dataset.time) input.value = formatTimeOfDay(input.dataset.time, i18n.currentLang);
+            });
+        }
+        // Up/Down step the hours, minutes, seconds or day period at the caret.
+        input.addEventListener('keydown', event => {
+            if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+            const step = stepTimeOfDay(input.dataset.time, input.selectionStart ?? 0,
+                event.key === 'ArrowUp' ? 1 : -1, i18n.currentLang);
+            if (!step) return;
+            event.preventDefault();
+            input.dataset.time = step.value;
+            input.value = step.text;
+            input.setSelectionRange(step.start, step.end);
+            edited();
+        });
+    }
     picker.addEventListener('submit', event => {
         event.preventDefault();
         applyCustomRange();
     });
-    picker.addEventListener('input', event => {
-        if (!['custom-from', 'custom-to'].includes(event.target.id)) return;
-        picker.querySelectorAll('[data-custom-preset]').forEach(button => button.classList.remove('active'));
-        updateCustomRangePreview();
-        rangeCalendar.sync(true);
-    });
     picker.addEventListener('keydown', event => {
-        if (event.key === 'Enter' && event.target.classList.contains('range-calendar-year')) {
-            event.preventDefault();
-            event.target.blur();
-            return;
-        }
         if (event.key !== 'Escape') return;
         event.preventDefault();
         closeCustomTimePicker();
@@ -359,27 +558,12 @@ export function initCustomTimePicker() {
             closeCustomTimePicker(false);
         }
     }, true);
-    picker.querySelectorAll('[data-custom-preset]').forEach(button => {
+    presets.forEach(button => {
         button.addEventListener('click', () => {
-            const now = new Date();
-            let to = now;
-            let from;
-            const preset = button.dataset.customPreset;
-            if (preset === 'today' || preset === 'yesterday') {
-                from = new Date(now);
-                const utc = state.timeZone === 'utc';
-                if (utc) from.setUTCHours(0, 0, 0, 0);
-                else from.setHours(0, 0, 0, 0);
-                if (preset === 'yesterday') {
-                    to = new Date(from);
-                    if (utc) from.setUTCDate(from.getUTCDate() - 1);
-                    else from.setDate(from.getDate() - 1);
-                }
-            } else {
-                from = new Date(now.getTime() - (preset === 'day' ? 86400 : 3600) * 1000);
-            }
-            setPickerDates(clampToRetention(from), clampToRetention(to));
-            picker.querySelectorAll('[data-custom-preset]').forEach(item => item.classList.toggle('active', item === button));
+            const { from, to } = customPresetRange(button.dataset.customPreset);
+            showPane(null);
+            setPickerDates(from, to);
+            markPreset(button);
         });
     });
     refreshCustomTimePicker();
@@ -395,26 +579,21 @@ export function toggleCustomTimePicker() {
         const to = state.customTo || new Date(state.historyViewEnd ?? Date.now());
         const from = state.customFrom || new Date(to.getTime() - (state.timeRange || 3600) * 1000);
         customEl.querySelectorAll('[data-custom-preset]').forEach(button => button.classList.remove('active'));
-        setPickerDates(clampToRetention(from), clampToRetention(to));
+        showPane(null);
+        setPickerDates(from, to);
         refreshCustomTimePicker();
         void refreshPickerBounds();
-        document.getElementById('custom-from').focus();
+        rangeCalendar.focus();
     } else {
         closeCustomTimePicker();
     }
 }
 
 export function applyCustomRange() {
-    if (rangeCalendar && !rangeCalendar.isComplete()) {
-        const error = document.getElementById('custom-range-error');
-        error.textContent = i18n.t('pick_end_day');
-        error.classList.remove('hidden');
-        return;
-    }
     const { from, to, error } = customRangeDraft();
     updateCustomRangePreview();
     if (error) {
-        document.getElementById(!from || (to && from >= to) ? 'custom-from' : 'custom-to').focus();
+        endpointElement(!from || (to && from >= to) ? 'start' : 'end', 'time').focus();
         return;
     }
     setCustomRange(from, to);
@@ -477,12 +656,7 @@ export function syncCustomRangeUI(fromDate, toDate, { preserveDraft = false } = 
     document.querySelectorAll('.time-btn[data-range]').forEach(b => b.classList.remove('active'));
     document.getElementById('btn-custom-range')?.classList.add('active');
 
-    const fromInput = document.getElementById('custom-from');
-    const toInput = document.getElementById('custom-to');
-    if (!preserveDraft) {
-        if (fromInput) fromInput.value = pickerDate(fromDate);
-        if (toInput) toInput.value = pickerDate(toDate);
-    }
+    if (!preserveDraft && endpointElement('start', 'date')) writePickerDates(fromDate, toDate);
 
     const fmt = date => formatRangeTimestamp(date, state.timeZone, i18n.currentLang);
     const zone = state.timeZone === 'utc' ? i18n.t('time_zone_utc') : i18n.t('time_zone_local');

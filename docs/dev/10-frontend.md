@@ -54,7 +54,8 @@ Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.
 | `format.js` | Metric and Local/UTC formatting, datetime conversion, and bucket-tooltip semantics |
 | `history-request.js` | Abortable, generation-safe latest-history-request controller |
 | `history-data.js` | Canonical history items, aggregation validity, missing-observation gaps, and Focus Mode API sections |
-| `date-range-calendar.js` | Tier-availability calendar for exact historical intervals |
+| `date-range-calendar.js` | Single-month range calendar; retention disables days, never times |
+| `clock-picker.js` | Clock dial and hour/minute/second wheels for one end of the custom range, in the UI language's clock |
 | `gauges.js` | Bar gauges, sparkline backgrounds, live gauge updates |
 | `controls.js` | Pause/resume, layout toggle, time-range selection, history fetch |
 | `focus-mode.js` | Select/persist a subset of chart cards |

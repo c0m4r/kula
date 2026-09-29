@@ -47,13 +47,17 @@ const {
     resolveAggregation,
 } = await importSource('../static/js/app/history-data.js');
 const {
+    clockFace,
     formatChartTick,
     formatDateTimeInput,
     formatFullTimestamp,
     formatMetricNumber,
+    formatTimeOfDay,
     historyTooltipLines,
     normalizeTimeZone,
     parseDateTimeInput,
+    parseTimeOfDay,
+    stepTimeOfDay,
 } = await importSource('../static/js/app/format.js');
 const {
     ChartUpdateController,
@@ -379,6 +383,59 @@ test('history items retain compact per-response bucket provenance across redraws
         'legacy responses derive observed bounds from ts/dur');
     assert.equal(JSON.stringify(items[0]).includes('kulaHistoryContext'), false,
         'client-only context must not change canonical JSON');
+});
+
+test('picker times follow the UI language clock and read typed text back', () => {
+    assert.equal(formatTimeOfDay('16:57:33', 'pl'), '16:57:33');
+    assert.match(formatTimeOfDay('16:57:33', 'en'), /^04:57:33\sPM$/u);
+    assert.equal(formatTimeOfDay('16:57:33', 'id'), '16.57.33');
+    // Every locale's own text, digits and day periods parse back exactly.
+    for (const lang of ['ar', 'bn', 'de', 'en', 'hi', 'id', 'ja', 'ko', 'ms', 'pl', 'ur', 'zh']) {
+        for (const time of ['00:00:00', '00:05:09', '12:00:00', '16:57:33', '23:59:59.999']) {
+            assert.equal(parseTimeOfDay(formatTimeOfDay(time, lang), lang), time, `${lang} ${time}`);
+        }
+    }
+    for (const [text, lang, want] of [
+        ['14:30', 'pl', '14:30:00'], ['1430', 'pl', '14:30:00'], ['930', 'en', '09:30:00'],
+        ['143005', 'pl', '14:30:05'], ['9', 'pl', '09:00:00'], ['2:30 pm', 'en', '14:30:00'],
+        ['2:30 p.m.', 'pl', '14:30:00'], ['12 am', 'en', '00:00:00'], ['12:15 PM', 'en', '12:15:00'],
+        ['16.57', 'id', '16:57:00'], ['16:57:33,5', 'pl', '16:57:33.500'], [' 07:05 ', 'de', '07:05:00'],
+    ]) {
+        assert.equal(parseTimeOfDay(text, lang), want, `${lang} ${JSON.stringify(text)}`);
+    }
+    for (const text of ['', 'abc', '24:00', '12:60', '12:00:60', '13 pm', '1234567', '1:2:3:4567', '10 xm']) {
+        assert.equal(parseTimeOfDay(text, 'en'), null, JSON.stringify(text));
+    }
+    // Up/Down change the part at the caret and wrap within the day.
+    assert.deepEqual(stepTimeOfDay('23:59:59', 7, 1, 'pl'), { value: '00:00:00', text: '00:00:00', start: 6, end: 8 });
+    assert.deepEqual(stepTimeOfDay('10:00:00', 4, -1, 'pl'), { value: '09:59:00', text: '09:59:00', start: 3, end: 5 });
+    assert.equal(stepTimeOfDay('10:00:00', 0, 1, 'en').value, '11:00:00');
+    const period = formatTimeOfDay('10:00:00', 'en').length;
+    assert.equal(stepTimeOfDay('10:00:00', period, 1, 'en').value, '22:00:00');
+    assert.equal(stepTimeOfDay('', 0, 1, 'en'), null);
+});
+
+test('the picker clock labels its dial and wheels on the UI language clock', () => {
+    const english = clockFace('en');
+    assert.deepEqual(english.periods, ['AM', 'PM']);
+    assert.equal(english.periodFirst, false);
+    assert.deepEqual([english.hours[0], english.hours[12], english.hours[13], english.sixty[5]], ['12', '12', '1', '05']);
+    assert.match(english.name(14 * 3600000 + 300000), /^2:05\sPM$/u);
+    const polish = clockFace('pl');
+    assert.equal(polish.periods, null);
+    assert.deepEqual([polish.hours[0], polish.hours[13], polish.separator, polish.name(14 * 3600000 + 300000)],
+        ['00', '13', ':', '14:05']);
+    assert.equal(clockFace('id').separator, '.');
+    assert.deepEqual(clockFace('ko').periods, ['오전', '오후']);
+    assert.equal(clockFace('ko').periodFirst, true);
+    assert.deepEqual([clockFace('bn').hours[13], clockFace('bn').sixty[59]], ['১', '৫৯']);
+    for (const lang of ['ar', 'bn', 'de', 'en', 'hi', 'id', 'ja', 'ko', 'ms', 'pl', 'ur', 'zh']) {
+        const face = clockFace(lang);
+        assert.equal(face.hours.length, 24, lang);
+        assert.equal(new Set(face.hours).size, face.periods ? 12 : 24, lang);
+        assert.equal(new Set(face.sixty).size, 60, lang);
+        assert.ok(face.periods === null || face.periods.every(Boolean), lang);
+    }
 });
 
 test('timezone helpers keep UTC inputs exact and produce explicit history context', () => {

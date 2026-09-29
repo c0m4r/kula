@@ -82,12 +82,27 @@ window switches to the history API, which serves downsampled data from the appro
 storage tier (1-minute or 5-minute aggregates for older data).
 
 You can pick a **preset window** (1m … 30d) or a **custom range** with explicit from/to
-timestamps, up to 31 days. The calendar button opens labeled From/To fields in the displayed
-time zone, starting with the current chart range. In the calendar, click the first day and then
-the last day to select a range, including both days. Month/year controls allow jumping to older
-dates; the From/To fields allow precise time adjustments. Quick choices fill in the last hour, last
-24 hours, today, or yesterday. Check the duration and choose **Apply range**; **Cancel** or
-Escape discards your edits. Invalid or oversized ranges show a message before a request is sent.
+timestamps, up to 31 days. The calendar button opens a single month calendar with From and To
+fields below it, in the displayed time zone, starting with the current chart range. Click the
+first day and then the last day; both days are included, and hovering previews the range. The
+highlighted field shows which end the next click sets. Click the From or To date to jump to that
+day and change only that end; a click more than 31 days from the start begins a new range.
+
+A day picked in the calendar starts at 00:00:00 and ends at 23:59:59, except that today ends at
+the current time. Adjust either time in its field; a time you type is kept when you pick other
+days. Times follow the dashboard language's clock, not the browser's: 24-hour in Polish or
+German, 12-hour with AM/PM in English. Type them loosely (`14:30`, `1430`, `930` or `2:30 pm`;
+missing minutes and seconds count as zero) and use Up/Down to step the hours, minutes, seconds
+or AM/PM at the cursor. While a time field has focus, a clock replaces the calendar: a dial and
+hour, minute and second wheels (plus AM/PM on a 12-hour clock), kept in step with the field.
+Click or drag the dial's hand to set the hour (it starts on the hour, 24-hour clocks put the
+afternoon on the inner ring), then the dial moves on to the minutes. Scroll, drag or click a
+wheel, or press its **+** and **−** (hold to repeat), to change only that unit. **Start of
+day**, **End of day** and **Now** (which also moves the end to today) fill in common ends. Click
+the date or the calendar button to return to the calendar. The month menu and arrows (or Page
+Up/Page Down) move between months that contain history. Quick choices fill in the last hour, 6 hours, 24 hours or 7 days, today, or yesterday.
+Check the duration and choose **Apply range**; **Cancel** or Escape discards your edits.
+Invalid ranges show a message before a request is sent.
 
 The dashboard samples history to the chart width and keeps time-axis labels horizontal.
 Resolution, source tier, and partial coverage appear below the controls; tooltips show exact
@@ -140,9 +155,11 @@ not change when switching zones. Historical tooltips report bucket bounds, sourc
 resolution, contributing source-record counts, coverage and valid aggregation semantics.
 
 The date picker uses whole seconds unless `collection.interval` is below one second.
-Dates outside every retained tier range are disabled, and partial first/last days are clamped
-to retained times. Typed dates are validated too. The ranges come from tier headers: outage
-days inside a retained range may remain selectable and are shown as gaps in the charts.
+Days outside every retained tier range are disabled, but times are never restricted: the first
+and last retained days can be viewed from midnight, and hours without samples appear empty.
+A range is accepted when at least one of its days has retained history. The ranges come from
+tier headers: outage days inside a retained range may remain selectable and are shown as gaps
+in the charts.
 Click anywhere outside the picker, or press Escape, to close it without applying the draft.
 
 ### Chart accessibility and data tables

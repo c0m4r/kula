@@ -99,7 +99,9 @@ func TestCurrentUITranslationsCoverEveryLocale(t *testing.T) {
 		"charts", "show_chart_data_controls", "show_chart_tooltip_details", "show_all_series_envelopes",
 		"time_zone", "time_zone_local", "time_zone_utc", "use_local_time", "use_utc_time",
 		"quick_ranges", "today", "yesterday", "from", "to", "selected_duration", "cancel",
-		"apply_range", "synced", "not_synced", "source", "users", "self", "rss",
+		"apply_range", "calendar_month", "previous_month", "next_month", "pick_start_day", "pick_end_day",
+		"range_time_invalid", "show_calendar", "hour", "minute", "second", "start_of_day", "end_of_day", "now",
+		"synced", "not_synced", "source", "users", "self", "rss",
 	}
 
 	for _, lang := range SupportedLangs {

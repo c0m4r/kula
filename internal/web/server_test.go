@@ -649,7 +649,7 @@ func TestHistoricalTooltipsUseBucketContextAndExplicitTimeZone(t *testing.T) {
 		},
 		"static/js/app/controls.js": {
 			"formatDateTimeInput(date, state.timeZone, true",
-			"parseDateTimeInput(fromVal, state.timeZone)",
+			"parseDateTimeInput(endpointValue('start'), state.timeZone)",
 		},
 		"static/js/app/main.js": {
 			"localStorage.setItem('kula_time_zone', state.timeZone)",

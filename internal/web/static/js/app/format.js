@@ -168,6 +168,123 @@ export function parseDateTimeInput(value, mode = 'local') {
     return Number.isFinite(date.getTime()) ? date : null;
 }
 
+// Times of day in the custom range picker. Values are 24-hour 'HH:MM:SS' with
+// optional '.mmm'; the text uses the UI language's clock, like the header
+// clock, rather than the browser's, so Polish shows 16:57:33 and English
+// 04:57:33 PM even when the browser is set up otherwise.
+const DAY_MS = 86400000;
+const TIME_STEPS = { hour: 3600000, minute: 60000, second: 1000, fractionalSecond: 1, dayPeriod: 43200000 };
+
+export function timeOfDayMs(value) {
+    const match = /^(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/.exec(String(value || ''));
+    if (!match || Number(match[1]) > 23 || Number(match[2]) > 59 || Number(match[3]) > 59) return null;
+    return ((Number(match[1]) * 60 + Number(match[2])) * 60 + Number(match[3])) * 1000 +
+        Number((match[4] || '0').padEnd(3, '0'));
+}
+
+export function timeOfDayValue(ms) {
+    const total = ((Math.round(ms) % DAY_MS) + DAY_MS) % DAY_MS;
+    const pad = (number, width = 2) => String(number).padStart(width, '0');
+    const seconds = Math.floor(total / 1000);
+    return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}` +
+        (total % 1000 ? `.${pad(total % 1000, 3)}` : '');
+}
+
+export function timeOfDayParts(value, locale) {
+    const ms = timeOfDayMs(value);
+    if (ms === null) return [];
+    return formatter(locale, 'utc', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', ...(ms % 1000 ? { fractionalSecondDigits: 3 } : {}),
+    }).formatToParts(ms);
+}
+
+export function formatTimeOfDay(value, locale) {
+    return timeOfDayParts(value, locale).map(part => part.value).join('');
+}
+
+// Reads the formatted text back, and forgiving typing such as "14:30", "1430",
+// "2:30 pm" or the language's own digits and day periods. Missing minutes and
+// seconds are zero; a time without a day period is read as 24-hour.
+export function parseTimeOfDay(text, locale) {
+    const periods = { am: new Set(['am', 'a']), pm: new Set(['pm', 'p']) };
+    for (const [period, hour] of [['am', 4], ['pm', 16]]) {
+        const name = formatter(locale, 'utc', { hour: 'numeric', hour12: true })
+            .formatToParts(Date.UTC(2000, 0, 1, hour)).find(part => part.type === 'dayPeriod')?.value;
+        if (name) periods[period].add(name.toLowerCase().replace(/[\s.]/g, ''));
+    }
+    const digits = new Intl.NumberFormat(locale || undefined, { useGrouping: false }).format(1234567890);
+    const normalized = [...String(text || '')]
+        .map(character => digits.includes(character) ? '1234567890'[digits.indexOf(character)] : character)
+        .join('').toLowerCase();
+    const word = (normalized.match(/\p{L}+/gu) || []).join('');
+    const period = !word ? null : periods.pm.has(word) ? 'pm' : periods.am.has(word) ? 'am' : undefined;
+    const groups = normalized.match(/\d+/g) || [];
+    if (period === undefined || groups.length === 0 || groups.length > 4) return null;
+    let [hour, minute = '0', second = '0'] = groups;
+    const fraction = groups[3] || '';
+    if (groups.length === 1 && hour.length > 2 && hour.length <= 6) {
+        const rest = hour.length > 4 ? 4 : 2;
+        [hour, minute, second] = [hour.slice(0, -rest), hour.slice(-rest, hour.length - rest + 2),
+            rest === 4 ? hour.slice(-2) : '0'];
+    }
+    if (hour.length > 2 || minute.length > 2 || second.length > 2 || fraction.length > 3 ||
+        Number(minute) > 59 || Number(second) > 59) return null;
+    let hours = Number(hour);
+    if (period ? hours > 12 : hours > 23) return null;
+    if (period) hours = hours % 12 + (period === 'pm' ? 12 : 0);
+    return timeOfDayValue(((hours * 60 + Number(minute)) * 60 + Number(second)) * 1000 +
+        Number(fraction.padEnd(3, '0')));
+}
+
+function timeOfDayRanges(value, locale) {
+    const ranges = [];
+    let offset = 0;
+    for (const part of timeOfDayParts(value, locale)) {
+        if (TIME_STEPS[part.type]) ranges.push({ type: part.type, start: offset, end: offset + part.value.length });
+        offset += part.value.length;
+    }
+    return ranges;
+}
+
+// Steps the part of the formatted text at caret (hours, minutes, seconds or
+// the day period) by one, wrapping within the day. Returns the new value, its
+// text and that part's range in it for selection.
+export function stepTimeOfDay(value, caret, direction, locale) {
+    const ms = timeOfDayMs(value);
+    const ranges = timeOfDayRanges(value, locale);
+    if (ms === null || ranges.length === 0) return null;
+    const range = ranges.find(item => caret >= item.start && caret <= item.end) ||
+        ranges.filter(item => item.end < caret).at(-1) || ranges[0];
+    const next = timeOfDayValue(ms + Math.sign(direction) * TIME_STEPS[range.type]);
+    const nextRanges = timeOfDayRanges(next, locale);
+    const selection = nextRanges.find(item => item.type === range.type) ||
+        nextRanges.find(item => item.type === 'second') || nextRanges[0];
+    return { value: next, text: formatTimeOfDay(next, locale), start: selection.start, end: selection.end };
+}
+
+// Labels for the picker's clock dial and wheels in the UI language's clock:
+// its digits and hour cycle, and on a 12-hour clock its two day-period names
+// and whether they come first. `hours` holds 0–23 in order, `sixty` 00–59, and
+// `separator` the mark between hours and minutes.
+export function clockFace(locale) {
+    const named = formatter(locale, 'utc', { hour: 'numeric', minute: '2-digit' });
+    const twelve = ['h11', 'h12'].includes(named.resolvedOptions().hourCycle);
+    const hourOnly = formatter(locale, 'utc', { hour: twelve ? 'numeric' : '2-digit' });
+    const part = (parts, type) => parts.find(item => item.type === type)?.value ?? '';
+    const sample = timeOfDayParts('16:05:09', locale);
+    const types = sample.map(item => item.type);
+    return {
+        periods: twelve ? [4, 16].map(hour => part(named.formatToParts(hour * 3600000), 'dayPeriod')) : null,
+        periodFirst: twelve && types.indexOf('dayPeriod') < types.indexOf('hour'),
+        hours: Array.from({ length: 24 }, (_, hour) => part(hourOnly.formatToParts(hour * 3600000), 'hour')),
+        sixty: Array.from({ length: 60 }, (_, minute) =>
+            part(timeOfDayParts(timeOfDayValue(minute * 60000), locale), 'minute')),
+        separator: sample[types.indexOf('minute') - 1]?.value ?? ':',
+        // An accessible name such as "2:05 PM" for a time of day in ms.
+        name: ms => named.format(ms),
+    };
+}
+
 function percentage(value) {
     const percent = Math.max(0, Math.min(1, Number(value))) * 100;
     return `${percent.toFixed(percent >= 99.95 || percent === 0 ? 0 : 1)}%`;

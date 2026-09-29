@@ -1970,12 +1970,12 @@ body {
 
 .time-custom-section {
     display: grid;
-    gap: 0.55rem;
+    gap: 0.75rem;
     position: absolute;
     top: 100%;
     right: 1rem;
-    width: min(42rem, calc(100vw - 2rem));
-    padding: 0.75rem;
+    width: min(40rem, calc(100vw - 2rem));
+    padding: 0.85rem 1rem;
     border: 1px solid var(--border-color);
     border-radius: var(--radius);
     background: var(--bg-card);
@@ -2008,111 +2008,530 @@ body {
     overflow-wrap: anywhere;
 }
 
-.time-custom-shortcuts,
+/* Quick ranges form a sidebar beside the single month calendar. */
+.time-custom-body {
+    display: grid;
+    grid-template-columns: fit-content(12rem) minmax(0, 1fr);
+    gap: 1rem;
+}
+
+.time-custom-shortcuts {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding-inline-end: 1rem;
+    border-inline-end: 1px solid var(--border-color);
+}
+
+.time-custom-shortcuts .time-btn {
+    border-color: transparent;
+    text-align: start;
+}
+
+.time-custom-shortcuts .time-btn:hover {
+    border-color: transparent;
+    background: var(--bg-hover);
+}
+
+.time-custom-shortcuts .time-btn.active {
+    border-color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.15);
+}
+
 .time-custom-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 0.3rem;
 }
 
-.time-custom-fields {
+/* The calendar and the clock share one cell, so switching keeps the size. */
+.range-pane {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.65rem;
+    min-width: 0;
 }
 
-.range-calendar {
+.range-pane > * {
+    grid-area: 1 / 1;
+}
+
+.range-pane > .pane-hidden {
+    visibility: hidden;
+}
+
+.range-calendar,
+.range-clock {
     display: grid;
     gap: 0.4rem;
+    align-content: start;
+    min-width: 0;
 }
 
 .range-calendar-nav {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 0.5rem;
 }
 
-.range-calendar-nav .time-input {
-    min-height: 2rem;
-    padding-block: 0.3rem;
-    font-size: 0.8rem;
-}
-
-.range-calendar-year { width: 5.25rem; }
 .range-calendar-nav .time-btn {
-    min-height: 2rem;
-    padding: 0.1rem 0.55rem;
+    flex: none;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
     font-size: 1.1rem;
+    line-height: 1;
 }
 
-.range-calendar-months {
+[dir="rtl"] .range-calendar-nav .time-btn {
+    transform: scaleX(-1);
+}
+
+.range-clock-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-blue);
+}
+
+[dir="rtl"] .range-clock-back {
+    transform: none;
+}
+
+.range-clock-title {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.range-clock-spacer {
+    flex: none;
+    width: 2rem;
+}
+
+.range-calendar-nav .time-btn:disabled {
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.range-calendar-month {
+    min-width: 0;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    color-scheme: dark;
+}
+
+body.light-mode .range-calendar-month {
+    color-scheme: light;
+}
+
+.range-calendar-month:hover,
+.range-calendar-month:focus-visible {
+    border-color: var(--accent-blue);
+    outline: none;
+}
+
+.range-calendar-month option {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-weight: 400;
+}
+
+.range-calendar-hint {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    text-align: center;
+}
+
+/* The clock: a dial beside hour, minute and second wheels. */
+.range-clock-body {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 12.5rem) auto;
+    align-items: center;
+    justify-content: center;
     gap: 1rem;
 }
 
-.range-calendar-month h4 {
-    margin-bottom: 0.3rem;
-    font-size: 0.78rem;
-    font-weight: 500;
+.range-dial {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    cursor: pointer;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    direction: ltr;
+}
+
+.range-dial svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.range-dial:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+}
+
+.range-dial-plate {
+    fill: var(--bg-secondary);
+    stroke: var(--border-color);
+}
+
+.range-dial-hand {
+    stroke: #1d4ed8;
+    stroke-width: 2;
+}
+
+.range-dial-pivot,
+.range-dial-knob {
+    fill: #1d4ed8;
+}
+
+.range-dial-label {
+    fill: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+}
+
+.range-dial-label.inner {
+    fill: var(--text-secondary);
+    font-size: 10px;
+}
+
+.range-dial-label.on-knob {
+    fill: #fff;
+    font-weight: 600;
+}
+
+/* Times read left to right, as in the time fields, in every language. */
+.range-wheels {
+    --wheel-item: 1.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    direction: ltr;
+}
+
+.range-wheel-column {
+    display: grid;
+    justify-items: center;
+    gap: 0.2rem;
+}
+
+.range-wheel-step {
+    width: 2.3rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+}
+
+.range-wheel-step:hover {
+    border-color: var(--border-color);
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.range-wheel-step:active {
+    background: rgba(59, 130, 246, 0.2);
+}
+
+/* Five rows show; the middle one, behind the band, is the value. */
+.range-wheel {
+    position: relative;
+    width: 2.6rem;
+    height: calc(var(--wheel-item) * 5);
+    overflow-y: auto;
+    border-radius: var(--radius-sm);
+    /* The band stays put while the items scroll over it. */
+    background: linear-gradient(transparent calc(var(--wheel-item) * 2), rgba(59, 130, 246, 0.14) 0,
+        rgba(59, 130, 246, 0.14) calc(var(--wheel-item) * 3), transparent 0);
+    scroll-snap-type: y mandatory;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    cursor: grab;
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent);
+    mask-image: linear-gradient(transparent, #000 30%, #000 70%, transparent);
+}
+
+.range-wheel::-webkit-scrollbar {
+    display: none;
+}
+
+.range-wheel.dragging {
+    scroll-snap-type: none;
+    cursor: grabbing;
+}
+
+.range-wheel:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
+}
+
+.range-wheel-spacer {
+    height: calc(var(--wheel-item) * 2);
+}
+
+.range-wheel-item {
+    height: var(--wheel-item);
+    line-height: var(--wheel-item);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    white-space: nowrap;
+    scroll-snap-align: center;
+    cursor: pointer;
+}
+
+.range-wheel-item.current {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+/* The wheel the dial is showing. */
+.range-wheel.dial-unit .range-wheel-item.current {
+    color: var(--accent-blue);
+}
+
+.range-wheel-separator {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-weight: 600;
+}
+
+.range-clock-shortcuts {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.3rem;
+}
+
+.time-custom-section .range-clock-shortcuts .time-btn {
+    min-height: 1.75rem;
+    padding-block: 0.2rem;
 }
 
 .range-calendar-grid {
     display: grid;
     grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 0.2rem 0;
+    row-gap: 0.15rem;
     text-align: center;
 }
 
 .range-calendar-weekday {
-    color: var(--text-muted);
-    font-size: 0.68rem;
     padding-bottom: 0.25rem;
+    color: var(--text-muted);
+    font-size: 0.7rem;
 }
 
 .range-calendar-day {
+    position: relative;
+    height: 2.1rem;
+    border: 0;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-primary);
-    border: 1px solid transparent;
-    min-height: 2rem;
     font: inherit;
-    font-size: 0.78rem;
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
     cursor: pointer;
 }
 
-.range-calendar-day:hover { background: var(--bg-hover); }
-.range-calendar-day.in-range { background: rgba(59, 130, 246, 0.18); }
-.range-calendar-day.range-edge {
-    background: #1d4ed8;
-    color: #fff;
-    border-radius: var(--radius-sm);
-}
-.range-calendar-day:focus-visible {
-    outline: 2px solid var(--text-primary);
-    outline-offset: -3px;
+.range-calendar-day.outside {
+    color: var(--text-muted);
 }
 
-@media (max-width: 600px) {
-    .range-calendar-months { grid-template-columns: minmax(0, 1fr); }
-    .range-calendar-month + .range-calendar-month { display: none; }
-    .range-calendar-nav { justify-content: space-between; }
-    .range-calendar-nav select { min-width: 0; flex: 1; }
+.range-calendar-day:not(.in-range):not([aria-disabled="true"]):hover {
+    background: var(--bg-hover);
+}
+
+/* The selection is one continuous band per week row, rounded at its ends. */
+.range-calendar-day.in-range {
+    border-radius: 0;
+    background: rgba(59, 130, 246, 0.2);
+}
+
+.range-calendar-day.in-range:not(.range-start):not(.range-end):hover {
+    background: rgba(59, 130, 246, 0.34);
+}
+
+.range-calendar-day.in-range:nth-child(7n + 1),
+.range-calendar-day.range-start {
+    border-start-start-radius: var(--radius-sm);
+    border-end-start-radius: var(--radius-sm);
+}
+
+.range-calendar-day.in-range:nth-child(7n),
+.range-calendar-day.range-end {
+    border-start-end-radius: var(--radius-sm);
+    border-end-end-radius: var(--radius-sm);
+}
+
+.range-calendar-day.range-start,
+.range-calendar-day.range-end {
+    background: #1d4ed8;
+    color: #fff;
+    font-weight: 600;
+}
+
+.range-calendar-day.today::after {
+    content: '';
+    position: absolute;
+    bottom: 0.3rem;
+    left: 50%;
+    width: 4px;
+    height: 4px;
+    margin-left: -2px;
+    border-radius: 50%;
+    background: var(--accent-blue);
+}
+
+.range-calendar-day.today.range-start::after,
+.range-calendar-day.today.range-end::after {
+    background: #fff;
+}
+
+.range-calendar-day[aria-disabled="true"] {
+    color: var(--text-muted);
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.range-calendar-day:focus-visible {
+    z-index: 1;
+    outline: 2px solid var(--text-primary);
+    outline-offset: -2px;
+}
+
+.time-custom-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
 }
 
 .time-custom-field {
     display: grid;
-    gap: 0.25rem;
+    gap: 0.3rem;
     min-width: 0;
-    color: var(--text-secondary);
-    font-size: 0.8rem;
 }
 
-.time-custom-field .time-input {
-    width: 100%;
+.time-custom-label {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+
+/* Each end is one control: a date that points the calendar at it, and a time. */
+.range-endpoint {
+    display: flex;
     min-width: 0;
-    min-height: 2.25rem;
-    padding: 0.4rem 0.6rem;
-    font-size: 0.85rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.time-custom-field.active .range-endpoint {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.time-custom-field.invalid .range-endpoint {
+    border-color: var(--accent-red);
+}
+
+.range-endpoint-date {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+    padding: 0.45rem 0.6rem;
+    border: 0;
+    border-start-start-radius: inherit;
+    border-end-start-radius: inherit;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 0.82rem;
+    text-align: start;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.range-endpoint-date span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.range-endpoint-date svg {
+    flex: none;
+    color: var(--text-muted);
+}
+
+.time-custom-field.active .range-endpoint-date svg {
+    color: var(--accent-blue);
+}
+
+.range-endpoint-date:hover {
+    background: var(--bg-hover);
+}
+
+.range-endpoint-time {
+    flex: none;
+    min-width: 0;
+    padding: 0.45rem 0.55rem;
+    border: 0;
+    border-inline-start: 1px solid var(--border-color);
+    border-start-end-radius: inherit;
+    border-end-end-radius: inherit;
+    background: transparent;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.range-endpoint-time::placeholder {
+    color: var(--text-muted);
+}
+
+.range-endpoint-date:focus-visible,
+.range-endpoint-time:focus {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
 }
 
 .time-custom-error {
@@ -2129,30 +2548,22 @@ body {
     outline-offset: 2px;
 }
 
-.time-custom-field .time-input[aria-invalid="true"] {
-    border-color: var(--accent-red);
-}
+@media (max-width: 600px) {
+    .time-custom-body {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.75rem;
+    }
 
-.time-input {
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    outline: none;
-    transition: border-color 0.2s;
-    color-scheme: dark;
-}
+    .time-custom-shortcuts {
+        flex-direction: row;
+        flex-wrap: wrap;
+        padding-inline-end: 0;
+        border-inline-end: 0;
+    }
 
-body.light-mode .time-input {
-    color-scheme: light;
-}
-
-.time-input:focus {
-    border-color: var(--accent-blue);
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+    .time-custom-shortcuts .time-btn {
+        border-color: var(--border-color);
+    }
 }
 
 .time-sep {
@@ -3209,12 +3620,6 @@ body.light-mode .focus-selecting .chart-card::after {
     font-family: inherit;
     border: 0;
     border-radius: 5px;
-}
-
-.range-calendar-day:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-    background: transparent;
 }
 
 .settings-row-stepper {

@@ -442,90 +442,250 @@ check(zoneLabelBox.right < zoneActionsBox.left &&
     'Local/UTC control is not aligned as a labelled settings row');
 document.getElementById('btn-settings').click();
 const pickerButton = document.getElementById('btn-custom-range');
-const fromInput = document.getElementById('custom-from');
-const toInput = document.getElementById('custom-to');
+const calendar = document.getElementById('custom-range-calendar');
+const clock = document.getElementById('custom-range-clock');
+const dial = clock.querySelector('.range-dial');
+const wheel = unit => clock.querySelector(`.range-wheel[data-unit="${unit}"]`);
+const wheelValues = () => [...clock.querySelectorAll('.range-wheel')].map(node => node.getAttribute('aria-valuetext')).join();
+// A dial press at an angle (clockwise from 12) and a radius in dial units.
+const pressDial = (angle, radius = 78) => {
+    const box = dial.getBoundingClientRect();
+    const distance = box.width / 2 * radius / 100;
+    const at = {
+        clientX: box.left + box.width / 2 + distance * Math.sin(angle * Math.PI / 180),
+        clientY: box.top + box.height / 2 - distance * Math.cos(angle * Math.PI / 180),
+        pointerId: 1, button: 0, bubbles: true,
+    };
+    dial.dispatchEvent(new PointerEvent('pointerdown', at));
+    dial.dispatchEvent(new PointerEvent('pointerup', at));
+};
+const stepWheel = (unit, step) => {
+    const button = wheel(unit).parentElement.querySelector(`[data-step="${step}"]`);
+    button.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }));
+    button.dispatchEvent(new PointerEvent('pointerup', { button: 0, bubbles: true }));
+};
+const submitButton = picker.querySelector('button[type="submit"]');
+const rangeError = document.getElementById('custom-range-error');
+const fromDate = document.getElementById('custom-from-date');
+const toDate = document.getElementById('custom-to-date');
+const fromTime = document.getElementById('custom-from-time');
+const toTime = document.getElementById('custom-to-time');
 const { parseDateTimeInput } = await import('./js/app/format.js');
-pickerButton.click();
-for (let i = 0; picker.querySelector('button[type="submit"]').disabled && i < 100; i++) await pause(10);
+const draftFrom = () => `${fromDate.dataset.day}T${fromTime.dataset.time}`;
+const draftTo = () => `${toDate.dataset.day}T${toTime.dataset.time}`;
+const typeTime = (input, value) => {
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+};
+const showMonth = value => {
+    const select = calendar.querySelector('.range-calendar-month');
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    check(select.value === value, `Calendar cannot show ${value}`);
+};
+const clickDay = day => calendar.querySelector(`[data-date="${day}"]`).click();
+const openPicker = async () => {
+    pickerButton.click();
+    for (let i = 0; submitButton.disabled && i < 100; i++) await pause(10);
+};
+await openPicker();
 check(pickerButton.getAttribute('aria-expanded') === 'true', 'Picker does not announce its open state');
-check(parseDateTimeInput(fromInput.value, state.timeZone).getTime() === Math.floor(state.customFrom.getTime() / 1000) * 1000,
-    `Picker discarded the selected range: ${fromInput.value}`);
-check(fromInput.step === '1' && !fromInput.value.includes('.'), 'One-second collection exposes fractional precision');
-fromInput.value = '2026-04-20T12:00:00';
-toInput.value = '2026-09-02T12:00:00';
-fromInput.dispatchEvent(new Event('input', { bubbles: true }));
-check(document.getElementById('custom-range-error').textContent === i18n.t('range_max_31_days'),
-    'Oversized range validation lost precedence');
-fromInput.value = '2026-04-20T12:00:00';
-toInput.value = '2026-04-21T12:00:00';
-fromInput.dispatchEvent(new Event('input', { bubbles: true }));
-check(document.getElementById('custom-range-error').textContent === i18n.t('range_outside_retention') &&
-    picker.querySelector('button[type="submit"]').disabled,
-    'Typed dates in a retention gap were accepted');
+check(parseDateTimeInput(draftFrom(), state.timeZone).getTime() === Math.floor(state.customFrom.getTime() / 1000) * 1000,
+    `Picker discarded the selected range: ${draftFrom()}`);
+check(!fromTime.dataset.time.includes('.') && !/\d[.,]\d{3}/.test(fromTime.value),
+    'One-second collection exposes fractional precision');
+check(calendar.querySelectorAll('.range-calendar-grid').length === 1 &&
+    !picker.querySelector('input[type="date"], input[type="datetime-local"]'), 'Picker shows more than one calendar');
+check(document.activeElement.dataset.date === fromDate.dataset.day, 'Opening the picker did not focus the start day');
 const pickerRequests = window.historyRequests;
-fromInput.value = toInput.value;
+// Presets and the current view can produce drafts the calendar cannot, so
+// validation still covers them. Write such drafts to the fields directly.
+fromDate.dataset.day = '2026-04-21';
+typeTime(fromTime, '12:00:00');
+toDate.dataset.day = '2026-09-02';
+typeTime(toTime, '12:00:00');
+check(rangeError.textContent === i18n.t('range_max_31_days'), 'Oversized range validation lost precedence');
+toDate.dataset.day = '2026-04-22';
+typeTime(toTime, '12:00:00');
+check(rangeError.textContent === i18n.t('range_outside_retention') && submitButton.disabled,
+    'A range without retained days was accepted');
 picker.requestSubmit();
-check(!document.getElementById('custom-range-error').classList.contains('hidden'), 'Reversed range has no validation message');
-fromInput.value = '2026-07-01T12:00';
-toInput.value = '2026-09-01T12:00';
-picker.requestSubmit();
-check(document.getElementById('custom-range-error').textContent.includes('31'), 'Oversized range has no validation message');
 check(window.historyRequests === pickerRequests, 'Invalid picker input made a history request');
-fromInput.value = '2026-09-04T12:00';
-toInput.value = '2026-09-04T14:30';
-fromInput.dispatchEvent(new Event('input', { bubbles: true }));
-const draftStart = parseDateTimeInput(fromInput.value, state.timeZone).getTime();
+// A calendar day spans the whole day. Typed times survive later day changes.
+document.querySelector('[data-custom-preset="1h"]').click();
+showMonth('2026-09');
+clickDay('2026-09-04');
+clickDay('2026-09-04');
+check(draftFrom() === '2026-09-04T00:00:00' && draftTo() === '2026-09-04T23:59:59',
+    `A calendar day does not span the whole day: ${draftFrom()} - ${draftTo()}`);
+check(calendar.querySelectorAll('.in-range').length === 1, 'Single-day highlight is incorrect');
+typeTime(fromTime, '14:30:00');
+typeTime(toTime, '12:00:00');
+picker.requestSubmit();
+check(rangeError.textContent === i18n.t('range_start_before_end') && submitButton.disabled,
+    'Reversed range has no validation message');
+check(window.historyRequests === pickerRequests, 'Invalid picker input made a history request');
+clickDay('2026-09-02');
+clickDay('2026-09-05');
+check(draftFrom() === '2026-09-02T14:30:00' && draftTo() === '2026-09-05T12:00:00',
+    `Calendar clicks discarded typed times: ${draftFrom()} - ${draftTo()}`);
+check(!submitButton.disabled, 'A valid typed range was rejected');
+// The From and To dates choose which end the next click sets.
+toDate.click();
+check(toDate.getAttribute('aria-pressed') === 'true' && document.activeElement.dataset.date === '2026-09-05',
+    'The To date does not point the calendar at the end');
+clickDay('2026-09-07');
+check(draftFrom() === '2026-09-02T14:30:00' && draftTo() === '2026-09-07T12:00:00', 'Editing the end changed the start');
+// Time fields use the UI language's clock rather than the browser's, accept
+// loose typing and step the part at the caret with the arrow keys.
+check(/^02:30:00\sPM$/u.test(fromTime.value) && /^12:00:00\sPM$/u.test(toTime.value),
+    `English times are not shown on a 12-hour clock: ${fromTime.value} - ${toTime.value}`);
+await i18n.loadTranslations('pl');
+i18n.applyTranslations();
+document.dispatchEvent(new Event('kula-i18n-changed'));
+check(fromTime.value === '14:30:00' && toTime.value === '12:00:00' && fromTime.placeholder === 'hh:mm:ss',
+    `Polish times are not shown on a 24-hour clock: ${fromTime.value} - ${toTime.value}`);
+typeTime(fromTime, '930');
+check(draftFrom() === '2026-09-02T09:30:00', `Compact typing was not understood: ${draftFrom()}`);
+fromTime.dispatchEvent(new Event('change', { bubbles: true }));
+check(fromTime.value === '09:30:00', `Leaving the field did not tidy the time: ${fromTime.value}`);
+fromTime.focus();
+fromTime.setSelectionRange(4, 4);
+fromTime.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+check(draftFrom() === '2026-09-02T09:29:00' && fromTime.value === '09:29:00' &&
+    fromTime.selectionStart === 3 && fromTime.selectionEnd === 5, 'ArrowDown did not step the minutes');
+check(wheelValues() === '09,29,00' && clock.querySelectorAll('.range-dial-label.inner').length === 12,
+    `The Polish clock does not follow the time field on a 24-hour clock: ${wheelValues()}`);
+pressDial(60, 52);
+check(draftFrom() === '2026-09-02T14:00:00' && fromTime.value === '14:00:00',
+    `The inner ring does not choose afternoon hours: ${draftFrom()}`);
+typeTime(fromTime, '25:00');
+check(rangeError.textContent.startsWith(i18n.t('range_time_invalid')) && submitButton.disabled &&
+    document.getElementById('custom-from-field').classList.contains('invalid') &&
+    !document.getElementById('custom-to-field').classList.contains('invalid'), 'An impossible time was accepted');
+typeTime(fromTime, '14:30');
+fromTime.blur();
+await i18n.loadTranslations('en');
+i18n.applyTranslations();
+document.dispatchEvent(new Event('kula-i18n-changed'));
+check(/^02:30:00\sPM$/u.test(fromTime.value) && draftFrom() === '2026-09-02T14:30:00',
+    `Switching back to English lost the 12-hour clock: ${fromTime.value}`);
+// A focused time field swaps the calendar for that end's clock, a dial and
+// wheels in step with the field. The dial sets its unit and zeroes the finer
+// ones, then moves from the hours to the minutes.
+toTime.focus();
+check(calendar.classList.contains('pane-hidden') && !clock.classList.contains('pane-hidden') &&
+    document.getElementById('custom-to-field').classList.contains('active') &&
+    toDate.getAttribute('aria-pressed') === 'false', 'Focusing a time did not show its clock');
+check(wheelValues() === '12,00,00,PM' && dial.getAttribute('aria-label') === i18n.t('hour'),
+    `The English clock is not a 12-hour clock: ${wheelValues()}`);
+pressDial(180);
+check(draftTo() === '2026-09-07T18:00:00' && /^06:00:00\sPM$/u.test(toTime.value) &&
+    dial.getAttribute('aria-label') === i18n.t('minute'), `The dial did not set the hour: ${draftTo()}`);
+pressDial(90);
+check(draftTo() === '2026-09-07T18:15:00' && wheelValues() === '6,15,00,PM', `The dial did not set the minutes: ${draftTo()}`);
+// A wheel changes only its own unit: pick a row, press + or −, or use the arrow keys.
+wheel('minute').querySelector('[data-index="45"]').click();
+check(draftTo() === '2026-09-07T18:45:00', `A wheel row did not set the minutes: ${draftTo()}`);
+stepWheel('second', 1);
+check(draftTo() === '2026-09-07T18:45:01' && document.activeElement === wheel('second'), `+ did not add a second: ${draftTo()}`);
+stepWheel('second', -1);
+stepWheel('second', -1);
+check(draftTo() === '2026-09-07T18:45:59', `− did not wrap within the seconds: ${draftTo()}`);
+wheel('hour').focus();
+wheel('hour').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+wheel('period').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+check(draftTo() === '2026-09-07T07:45:59' && dial.getAttribute('aria-label') === i18n.t('hour'),
+    `Wheel keys did not step the hour and day period: ${draftTo()}`);
+check(!submitButton.disabled, 'A clock-picked range was rejected');
+clock.querySelector('[data-shortcut="end_of_day"]').click();
+check(draftTo() === '2026-09-07T23:59:59', `End of day did not end the day: ${draftTo()}`);
+clock.querySelector('[data-shortcut="now"]').click();
+check(Math.abs(parseDateTimeInput(draftTo(), state.timeZone) - Date.now()) < 5000, `Now did not end the range now: ${draftTo()}`);
+fromTime.focus();
+check(clock.querySelector('.range-clock-title').textContent.startsWith(i18n.t('from')) &&
+    clock.querySelector('[data-shortcut="start_of_day"]') && !clock.querySelector('[data-shortcut="now"]') &&
+    wheelValues() === '2,30,00,PM', `The start clock shows the wrong end: ${wheelValues()}`);
+clock.querySelector('.range-clock-back').click();
+check(!calendar.classList.contains('pane-hidden') && clock.classList.contains('pane-hidden') &&
+    fromDate.getAttribute('aria-pressed') === 'true' && document.activeElement.dataset.date === '2026-09-02',
+    'The clock does not return to the calendar at its end');
+// Beyond 31 days, a click starts a new range rather than producing an error.
+fromDate.click();
+showMonth('2026-04');
+clickDay('2026-04-18');
+showMonth('2026-09');
+clickDay('2026-09-03');
+check(fromDate.dataset.day === '2026-09-03' && toDate.dataset.day === '2026-09-03' &&
+    calendar.querySelector('.range-calendar-hint').textContent === i18n.t('pick_end_day'),
+    'A span beyond 31 days did not restart the range');
+clickDay('2026-09-04');
+const draftStart = parseDateTimeInput(draftFrom(), state.timeZone).getTime();
 const previousPickerZone = state.timeZone;
 state.timeZone = 'utc';
 controls.refreshCustomTimePicker(previousPickerZone);
-check(parseDateTimeInput(fromInput.value, 'utc').getTime() === draftStart, 'Time zone change shifted the draft range');
+check(parseDateTimeInput(draftFrom(), 'utc').getTime() === draftStart, 'Time zone change shifted the draft range');
 check(document.getElementById('custom-time-zone').textContent === 'UTC', 'Picker does not show its time zone');
 document.querySelector('[data-custom-preset="yesterday"]').click();
-check(toInput.value.endsWith('T00:00') && fromInput.value.endsWith('T00:00'), 'Yesterday does not use calendar boundaries');
-check(parseDateTimeInput(toInput.value, 'utc') - parseDateTimeInput(fromInput.value, 'utc') === 86400000, 'Yesterday is not one UTC day');
+check(fromDate.dataset.day === toDate.dataset.day && fromTime.dataset.time === '00:00:00' &&
+    toTime.dataset.time === '23:59:59',
+    'Yesterday does not cover one calendar day');
+check(parseDateTimeInput(draftTo(), 'utc') - parseDateTimeInput(draftFrom(), 'utc') === 86399000, 'Yesterday is not one UTC day');
 check(window.historyRequests === pickerRequests, 'A shortcut applied the draft before confirmation');
-// Choose April 17 then April 19 using the shared range calendar.
-const calendar = document.getElementById('custom-range-calendar');
-const calendarYear = calendar.querySelector('input');
-calendarYear.value = '2026';
-calendarYear.dispatchEvent(new Event('change', { bubbles: true }));
-const calendarMonth = calendar.querySelector('select');
-calendarMonth.value = '3';
-calendarMonth.dispatchEvent(new Event('change', { bubbles: true }));
-check(calendar.querySelector('[data-date="2026-04-16"]').disabled, 'Calendar allows dates before retained history');
-check(calendar.querySelector('[data-date="2026-04-20"]').disabled, 'Calendar allows dates after retained history');
-check(!calendar.querySelector('[data-date="2026-04-18"]').disabled, 'Calendar disabled a retained date');
-calendar.querySelector('[data-date="2026-04-17"]').click();
-picker.requestSubmit();
-check(window.historyRequests === pickerRequests, 'Calendar submitted an unfinished range');
-calendar.querySelector('[data-date="2026-04-19"]').click();
-check(fromInput.value === '2026-04-17T03:00', 'Calendar start is not clamped to retained history');
-check(toInput.value === '2026-04-19T21:00', 'Calendar end is not clamped to retained history');
+// Retention limits the days, not the times: the first and last retained days
+// run from midnight to midnight although history starts at 03:00 and ends at 21:00.
+showMonth('2026-04');
+check(calendar.querySelector('[data-date="2026-04-16"]').getAttribute('aria-disabled') === 'true',
+    'Calendar allows dates before retained history');
+check(calendar.querySelector('[data-date="2026-04-20"]').getAttribute('aria-disabled') === 'true',
+    'Calendar allows dates after retained history');
+check(!calendar.querySelector('[data-date="2026-04-18"]').hasAttribute('aria-disabled'), 'Calendar disabled a retained date');
+check(calendar.querySelector('.calendar-prev').disabled, 'Calendar navigates before retained history');
+clickDay('2026-04-17');
+clickDay('2026-04-19');
+check(draftFrom() === '2026-04-17T00:00:00', `Calendar start was clamped to retained history: ${draftFrom()}`);
+check(draftTo() === '2026-04-19T23:59:59', `Calendar end was clamped to retained history: ${draftTo()}`);
+check(!submitButton.disabled, 'Times outside retained history made the range invalid');
 check(calendar.querySelectorAll('.in-range').length === 3, 'Calendar range highlight is incorrect');
 check(window.historyRequests === pickerRequests, 'Calendar applied dates without Apply');
+clickDay('2026-04-21');
+check(fromDate.dataset.day === '2026-04-17' && toDate.dataset.day === '2026-04-19', 'A day without history was selectable');
+calendar.querySelector('[data-date="2026-04-19"]').focus();
+document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+check(document.activeElement.dataset.date === '2026-04-20', 'Arrow keys cannot cross days without history');
+document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true }));
+check(document.activeElement.dataset.date === '2026-05-20' &&
+    calendar.querySelector('.range-calendar-month').value === '2026-05', 'PageDown did not move to the next month');
 state.collectionIntervalMs = 250;
 controls.refreshCustomTimePicker();
-calendar.querySelector('[data-date="2026-04-18"]').click();
-calendar.querySelector('[data-date="2026-04-18"]').click();
-check(fromInput.step === '0.001' && toInput.value === '2026-04-18T23:59:59.999',
+showMonth('2026-04');
+clickDay('2026-04-18');
+clickDay('2026-04-18');
+check(draftTo() === '2026-04-18T23:59:59.999' && /59[.,]999/.test(toTime.value),
     'Sub-second collection did not preserve fractional precision');
 state.collectionIntervalMs = 1000;
 picker.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 check(picker.classList.contains('hidden') && document.activeElement === pickerButton, 'Escape did not close the picker and restore focus');
-pickerButton.click();
-for (let i = 0; picker.querySelector('button[type="submit"]').disabled && i < 100; i++) await pause(10);
-check(parseDateTimeInput(fromInput.value, state.timeZone).getTime() === Math.floor(state.customFrom.getTime() / 1000) * 1000,
+await openPicker();
+check(parseDateTimeInput(draftFrom(), state.timeZone).getTime() === Math.floor(state.customFrom.getTime() / 1000) * 1000,
     'Cancel did not discard the draft');
 document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 check(picker.classList.contains('hidden'), 'Outside pointer click did not dismiss the picker');
-pickerButton.click();
-for (let i = 0; picker.querySelector('button[type="submit"]').disabled && i < 100; i++) await pause(10);
+await openPicker();
 document.querySelector('.time-zone-btn[data-time-zone="utc"]').click();
 check(picker.classList.contains('hidden'), 'Outside settings click did not dismiss the picker');
-pickerButton.click();
-for (let i = 0; picker.querySelector('button[type="submit"]').disabled && i < 100; i++) await pause(10);
-fromInput.value = '2026-09-04T10:00';
-toInput.value = '2026-09-05T10:00';
+await openPicker();
+// Today's end defaults to now, so the chart does not end in empty future time.
+const today = new Date().toISOString().slice(0, 10);
+showMonth(today.slice(0, 7));
+clickDay(today);
+check(Math.abs(parseDateTimeInput(draftTo(), 'utc') - Date.now()) < 5000, `Today does not end now: ${draftTo()}`);
+fromDate.click();
+showMonth('2026-09');
+clickDay('2026-09-04');
+clickDay('2026-09-05');
+typeTime(fromTime, '10:00:00');
+typeTime(toTime, '10:00:00');
 picker.requestSubmit();
 for (let i = 0; state.loadingHistory && i < 500; i++) await pause(10);
 check(state.customFrom.toISOString() === '2026-09-04T10:00:00.000Z', 'Picker applied the wrong start timestamp');

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
+## [Unreleased]
+
+### Added
+
+- Clock picker for custom range times
+
+### Changed
+
+- The custom range picker uses one month calendar instead of two side-by-side
+- Retained history now limits only which days can be picked
+
 ## [0.20.3] - 2026-09-29
 
 ### Fixed
