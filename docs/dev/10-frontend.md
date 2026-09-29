@@ -62,6 +62,7 @@ to read the original sources in browser developer tools.
 | `gauges.js` | Bar gauges, sparkline backgrounds, live gauge updates |
 | `controls.js` | Pause/resume, layout toggle, time-range selection, history fetch |
 | `focus-mode.js` | Select/persist a subset of chart cards |
+| `tv-mode.js` | Import-free TV mode over Focus Mode: viewport-filling grid, idle cursor, wake lock, full screen |
 | `section-utils.js` | Resolves section titles to their charts grid, including the Applications header wrapper |
 | `split.js` | Per-device/interface graph splitting |
 | `header.js` | Header bar + chart subtitle updates |
@@ -203,6 +204,23 @@ everywhere. The module has no imports, so `history_frontend_test.mjs` can load i
 Focus Mode selects API metric sections through `history-data.js`; leaving or changing
 Focus Mode refreshes the interval to populate newly visible cards. The default dashboard asks
 for all sections. Opening the dashboard does not start a background storage-coverage scan.
+
+TV mode (`tv-mode.js`) is a presentation of an applied Focus Mode selection. It never
+changes the selection or the history sections. The Focus bar's TV checkbox is read when
+**Done** applies a selection. `kula_focus_tv` persists the choice, and `main.js` restores it
+after `applyStoredFocusMode()`. `html.tv-mode` hides the chrome in CSS and turns the dashboard
+into a viewport-height flex column with `#charts-grid` taking the remaining space. Focus Mode
+has already moved every selected card into that grid. `tvGridShape()` picks columns and rows
+that fit the widest 2:1 chart. The result goes into `--tv-columns`/`--tv-rows`, and `.tv-fill`
+marks the last card to span a partial row. A `MutationObserver` on the grid's children and a
+`ResizeObserver` on the grid recompute the grid shape in one animation frame. Cards come and
+go with telemetry, and the gauge row and text size change the available height; the grid does
+not rely on `applyStoredFocusMode()` re-running. Chart.js resizes canvases through its own
+observers. `syncPauseState()` ignores hover pause while `isTvModeActive()`, because a wall
+display's cursor rests on a card. Manual and zoom pauses still apply. The module holds a
+screen wake lock and requests it again when the page becomes visible. The static
+`#tv-controls` toolbar in `index.html` gets its translations from the normal `data-i18n` pass.
+The module has no imports, so `history_frontend_test.mjs` loads `tvGridShape()` directly.
 
 Browser regression commands and performance fixtures are described in [Testing](12-testing.md).
 

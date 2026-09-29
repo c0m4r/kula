@@ -41,6 +41,7 @@ import { checkAuth, handleLogin, handleLogout } from './auth.js';
 import { aggregationField } from './history-data.js';
 import { addExpandButton, addSaveImageButton, attachHoverPauseToCard } from './chart-card-actions.js';
 import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
+import { applyStoredTvMode, initTvMode } from './tv-mode.js';
 import { initSplitModule } from './split.js';
 import { initOllama } from './ollama.js';
 import { chartsGridForTitle, sectionHeadForTitle } from './section-utils.js';
@@ -373,8 +374,10 @@ async function init() {
         if (state.theme === 'auto') applyTheme();
     });
 
-    // Apply stored focus mode
+    // Apply stored focus mode, then the TV mode presented on top of it
     applyStoredFocusMode();
+    initTvMode();
+    if (state.focusMode) applyStoredTvMode();
 
     // Event listeners
     document.getElementById('btn-theme').addEventListener('click', toggleTheme);

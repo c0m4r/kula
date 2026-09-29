@@ -13,6 +13,7 @@ import {
 // The Applications header carries the shared container colour legend, which is
 // the only labelling for the multi-series container charts.
 import { syncApplicationsHeaderFocus } from './container-apps.js';
+import { enterTvMode, exitTvMode, isTvModeStored } from './tv-mode.js';
 
 // Container metrics moved from "one card per container × metric" to a fixed set
 // of multi-series cards. Focus selections are persisted, so stored ids from the
@@ -94,6 +95,7 @@ export function toggleFocusMode() {
 
     if (state.focusMode && !state.focusSelecting) {
         // Exit focus mode
+        exitTvMode();
         state.focusMode = false;
         grids.forEach(g => g.classList.remove('focus-active', 'focus-selecting', 'focus-hidden'));
         clearAllSectionFocusChrome();
@@ -117,6 +119,7 @@ export function toggleFocusMode() {
 
     if (state.focusSelecting) {
         // Apply selection
+        const tvRequested = document.getElementById('focus-tv-mode-chk')?.checked === true;
         const selected = [];
         chartCardIds.forEach(id => {
             const el = document.getElementById(id);
@@ -203,6 +206,8 @@ export function toggleFocusMode() {
 
         combineGrids();
         removeFocusBar();
+        if (tvRequested) enterTvMode();
+        else exitTvMode();
         document.dispatchEvent(new Event('kula-history-sections-changed'));
         return;
     }
@@ -284,6 +289,30 @@ export function toggleFocusMode() {
     });
 }
 
+// The bar is built after the translations were applied to the page, so it
+// translates its own labels; data-i18n keeps them following language changes.
+function translatedLabel(element, key, fallback) {
+    element.setAttribute('data-i18n', key);
+    element.textContent = i18n.translations[key] || fallback;
+}
+
+function focusBarCheckbox(id, key, fallback, checked) {
+    const label = document.createElement('label');
+    label.className = 'focus-bar-checkbox';
+
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.id = id;
+    chk.checked = checked;
+
+    const text = document.createElement('span');
+    translatedLabel(text, key, fallback);
+
+    label.appendChild(chk);
+    label.appendChild(text);
+    return { label, chk };
+}
+
 export function showFocusBar() {
     removeFocusBar();
     const bar = document.createElement('div');
@@ -293,49 +322,34 @@ export function showFocusBar() {
     
     const spanWrapper = document.createElement('span');
     const spanText = document.createElement('span');
-    spanText.setAttribute('data-i18n', 'select_graphs');
-    spanText.textContent = 'Select graphs to display, then click Done';
+    translatedLabel(spanText, 'select_graphs', 'Select graphs to display, then click Done');
     spanWrapper.appendChild(spanText);
 
-    const label = document.createElement('label');
-    label.className = 'focus-bar-checkbox';
-    label.style.display = 'flex';
-    label.style.alignItems = 'center';
-    label.style.gap = '0.4rem';
-    label.style.margin = '0 0.5rem';
-    label.style.cursor = 'pointer';
-
-    const chk = document.createElement('input');
-    chk.type = 'checkbox';
-    chk.id = 'focus-hide-gauges-chk';
-    chk.checked = hideGauges;
-
-    const chkSpan = document.createElement('span');
-    chkSpan.setAttribute('data-i18n', 'hide_gauges');
-    chkSpan.textContent = 'Hide gauges';
-
-    label.appendChild(chk);
-    label.appendChild(chkSpan);
+    const gauges = focusBarCheckbox('focus-hide-gauges-chk', 'hide_gauges', 'Hide gauges', hideGauges);
+    // Applied with Done, unlike Hide gauges: TV mode takes over the screen.
+    const tv = focusBarCheckbox('focus-tv-mode-chk', 'tv_mode', 'TV mode', isTvModeStored());
+    tv.label.setAttribute('data-i18n-title', 'tv_mode_hint');
+    tv.label.title = i18n.translations.tv_mode_hint ||
+        'Fill the screen with the selected charts, without dashboard controls';
 
     const btnDone = document.createElement('button');
     btnDone.id = 'btn-focus-done';
-    btnDone.setAttribute('data-i18n', 'done');
-    btnDone.textContent = 'Done';
+    translatedLabel(btnDone, 'done', 'Done');
 
     const btnCancel = document.createElement('button');
     btnCancel.id = 'btn-focus-cancel';
-    btnCancel.setAttribute('data-i18n', 'cancel');
-    btnCancel.textContent = 'Cancel';
+    translatedLabel(btnCancel, 'cancel', 'Cancel');
 
     bar.appendChild(spanWrapper);
-    bar.appendChild(label);
+    bar.appendChild(gauges.label);
+    bar.appendChild(tv.label);
     bar.appendChild(btnDone);
     bar.appendChild(btnCancel);
 
     const firstGrid = document.querySelector('.charts-grid');
     if (firstGrid) firstGrid.parentNode.insertBefore(bar, firstGrid);
 
-    chk.addEventListener('change', (e) => {
+    gauges.chk.addEventListener('change', (e) => {
         localStorage.setItem('kula_focus_hide_gauges', e.target.checked ? 'true' : 'false');
     });
 
@@ -351,10 +365,6 @@ export function showFocusBar() {
         removeFocusBar();
         restoreGrids();
     });
-
-    if (typeof applyTranslation === 'function') {
-        applyTranslation(document.getElementById('focus-bar'));
-    }
 }
 
 export function removeFocusBar() {

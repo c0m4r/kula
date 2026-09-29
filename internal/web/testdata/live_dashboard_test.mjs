@@ -196,9 +196,58 @@ try {
     check(state.blank === 0 && state.unavailable === 0 && state.lastAge <= 15,
         'bucketed desktop hour stopped advancing in Max', state);
 
+    const hour = state;
+
+    // TV mode is restored over a stored Focus Mode selection, fits every card
+    // on screen, keeps streaming under a resting cursor, and Escape leaves it.
+    await evaluate(`localStorage.setItem('kula_focus_visible',
+        JSON.stringify(['card-cpu', 'card-memory', 'card-network'])); localStorage.setItem('kula_focus_tv', 'true')`);
+    await call('Page.navigate', { url: `${base}/?range=300` });
+    const tvLayout = () => evaluate(`(() => {
+        const grid = document.getElementById('charts-grid');
+        if (!grid || !document.getElementById('btn-pause')) return null;
+        const cards = Array.from(grid.children)
+            .filter(card => card.classList.contains('chart-card') && card.getClientRects().length)
+            .map(card => card.getBoundingClientRect().toJSON());
+        return {
+            tv: document.documentElement.classList.contains('tv-mode'),
+            rows: grid.style.getPropertyValue('--tv-rows'),
+            stored: localStorage.getItem('kula_focus_tv'),
+            focus: document.getElementById('btn-focus').classList.contains('focus-active'),
+            controls: document.querySelector('.time-controls').getClientRects().length > 0,
+            paused: document.getElementById('btn-pause').classList.contains('paused'),
+            overflow: document.scrollingElement.scrollHeight - innerHeight,
+            cards, width: innerWidth, height: innerHeight,
+        };
+    })()`);
+    let tv = await waitFor(async () => {
+        const layout = await tvLayout();
+        return layout?.tv && layout.rows && layout.cards.length === 3 ? layout : null;
+    }, 'TV mode was not restored over the Focus Mode selection');
+    check(!tv.controls && tv.overflow <= 0 && tv.cards.every(card =>
+        card.bottom <= tv.height && card.right <= tv.width && card.height > 200),
+    'TV mode did not fill the screen with the selection', tv);
+    await settle(s => s.lastAge <= 2.5, 'TV mode did not load live history');
+    const cpu = tv.cards[0];
+    await call('Input.dispatchMouseEvent', { type: 'mouseMoved',
+        x: cpu.x + cpu.width / 2, y: cpu.y + cpu.height / 2 });
+    const rested = await snapshot();
+    await delay(4000);
+    state = await snapshot();
+    tv = await tvLayout();
+    check(!tv.paused && state.lastX - rested.lastX >= 2000, 'a resting cursor paused TV mode', { tv, state });
+    await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    tv = await waitFor(async () => {
+        const layout = await tvLayout();
+        return layout && !layout.tv ? layout : null;
+    }, 'Escape did not leave TV mode');
+    check(tv.stored === null && tv.focus && tv.controls && tv.cards.length === 3,
+        'leaving TV mode did not return to Focus Mode', tv);
+
     assert.deepEqual(errors, [], 'the dashboard threw exceptions');
     console.log(JSON.stringify({ status: 'pass', bucketed_phone: bucketed.sampling,
-        raw_desktop: raw.sampling, desktop_hour: state.sampling, history_requests: historyRequests }));
+        raw_desktop: raw.sampling, desktop_hour: hour.sampling, history_requests: historyRequests }));
 } catch (error) {
     if (serverOutput) console.error(`kula serve output:\n${serverOutput}`);
     if (errors.length) console.error(`dashboard exceptions:\n${errors.join('\n')}`);

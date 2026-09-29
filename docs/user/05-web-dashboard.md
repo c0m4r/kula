@@ -10,7 +10,8 @@ dashboard is disabled and only `/metrics`, `/health` and `/status` remain.
 ## Layout
 
 - **Header** — hostname, chart search, connection status, pause, the **System Info** 📡 page
-  button, the alerts 🔔 bell, theme toggle, Focus Mode 🎯, layout toggle, **Customization** ⚙️,
+  button, the alerts 🔔 bell, theme toggle, Focus Mode 🎯 (with an optional TV mode), layout
+  toggle, **Customization** ⚙️,
   the language selector, and (when enabled) the AI assistant 🤖 button and the Space Invaders
   easter-egg button.
 - **Gauges** — at-a-glance circular gauges for the headline metrics (CPU, memory, etc.).
@@ -188,6 +189,29 @@ the screen's pixel density. The export happens in the browser and does not conta
 Hide everything except the charts you care about. Useful when investigating a specific
 subsystem. While Focus Mode is active, history requests omit unrelated high-cardinality metric
 sections and refetch them automatically when the selection changes or Focus Mode is closed.
+
+#### TV mode
+
+TV mode turns a Focus Mode selection into a wall display. Tick **TV mode** in the Focus bar
+before clicking **Done**. The selected charts fill the screen in a grid sized for their number
+and the screen's shape; the last chart widens to fill a partial row. The header keeps only the
+hostname, connection status and clock; time controls, chart buttons and the footer are hidden.
+The gauges stay unless **Hide gauges** is ticked.
+
+- Resting the cursor on a chart does not pause live updates, and the cursor hides after a few
+  seconds without movement.
+- The page asks the browser to keep the screen awake. Browsers allow this only over HTTPS or on
+  `localhost`.
+- If the connection to Kula drops, the charts turn grey and dim until it returns, so a stale
+  display is obvious from a distance.
+- If the view is paused, a ▶ button in the header shows it and resumes live updates.
+- Moving the pointer or pressing a key shows a small toolbar with **Full screen** and
+  **Exit TV mode**. <kbd>Esc</kbd> also leaves TV mode and returns to the Focus Mode selection.
+  If the browser is full screen, the first <kbd>Esc</kbd> leaves full screen.
+
+TV mode is stored in the browser with the Focus Mode selection, so a kiosk that reloads or
+restarts the browser comes back in TV mode. Browsers only allow a user click to start full
+screen, so after a reload use the toolbar button or the browser's kiosk mode.
 
 ### Y-axis bounds
 

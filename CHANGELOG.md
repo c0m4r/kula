@@ -14,11 +14,16 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Clock picker for custom range times
 - Download the chart as PNG image
 - CSS and JS assets auto-minification at startup with `web.minify_assets: true`
+- TV mode under Focus Mode
 
 ### Changed
 
 - The custom range picker uses one month calendar instead of two side-by-side
 - Retained history now limits only which days can be picked
+
+### Fixed
+
+- The Focus Mode bar ("Select graphs…", Hide gauges, Done, Cancel) is now translated
 
 ## [0.20.3] - 2026-09-29
 

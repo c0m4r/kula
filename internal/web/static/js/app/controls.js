@@ -15,6 +15,7 @@ import {
 import { updateUrl, ViewportHistory, zoomOutInterval } from './history-navigation.js';
 import { attachRangeCalendar } from './date-range-calendar.js';
 import { attachClockPicker } from './clock-picker.js';
+import { isTvModeActive } from './tv-mode.js';
 import {
     formatDateTimeInput,
     formatRangeTimestamp,
@@ -60,7 +61,9 @@ export function initializeViewportNavigation() {
 
 // ---- Pause/Resume ----
 export function syncPauseState() {
-    const shouldPause = state.pausedManual || state.pausedHover || state.pausedZoom;
+    // A wall display's resting cursor must not freeze TV mode.
+    const pausedHover = state.pausedHover && !isTvModeActive();
+    const shouldPause = state.pausedManual || pausedHover || state.pausedZoom;
     if (shouldPause !== state.paused) {
         state.paused = shouldPause;
         const btn = document.getElementById('btn-pause');

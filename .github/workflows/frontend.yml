@@ -1,7 +1,7 @@
 # Browser regressions for the dashboard, kept out of the main CI workflow so a
 # hung browser cannot hold up vet, test and lint results. Each suite runs as its
 # own step with a timeout several times its normal duration (local: dashboard
-# ~45s, performance ~2s, live ~31s), and the job has an overall ceiling.
+# ~45s, performance ~2s, live ~40s), and the job has an overall ceiling.
 #
 # Same security model as ci.yml: read-only token, no persisted credentials,
 # only first-party actions/* pinned to full commit SHAs.

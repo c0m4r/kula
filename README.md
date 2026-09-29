@@ -133,6 +133,7 @@ it connects via WebSocket for live updates and falls back to history API for lon
 - Save any chart as a PNG image with its title, host and visible time range
 - Chart updates limited to the viewport, with plot-width sampling and full-range live refreshes
 - Focus mode to display only specific charts and request only their history sections
+- TV mode for wall displays: the Focus Mode charts fill the screen without controls
 - Configurable Y-axis bounds (Manual limits or Auto-detect)
 - Per-device selectors for Network, Disk I/O, and Thermal monitoring
 - Grid / stacked list layout toggle

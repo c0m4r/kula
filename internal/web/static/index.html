@@ -47,6 +47,7 @@
     <link rel="modulepreload" href="js/app/clock-picker.js" integrity="{{sri `js/app/clock-picker.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/auth.js" integrity="{{sri `js/app/auth.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/settings.js" integrity="{{sri `js/app/settings.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/tv-mode.js" integrity="{{sri `js/app/tv-mode.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/focus-mode.js" integrity="{{sri `js/app/focus-mode.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/split.js" integrity="{{sri `js/app/split.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/ollama.js" integrity="{{sri `js/app/ollama.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
@@ -638,6 +639,17 @@
                 <div id="system-info-content" class="system-info-content" role="tabpanel" tabindex="0"></div>
             </div>
         </main>
+    </div>
+
+    <!-- TV mode controls: revealed by pointer or keyboard activity, hidden while idle -->
+    <div id="tv-controls" class="tv-controls" role="group" aria-label="TV mode" data-i18n-aria-label="tv_mode">
+        <button type="button" id="btn-tv-fullscreen" class="tv-control-btn" aria-pressed="false"
+            data-i18n-title="full_screen" data-i18n-aria-label="full_screen" title="Full screen"
+            aria-label="Full screen"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg></button>
+        <button type="button" id="btn-tv-exit" class="tv-control-btn">
+            <span data-i18n="exit_tv_mode">Exit TV mode</span>
+            <kbd class="tv-control-key" aria-hidden="true">Esc</kbd>
+        </button>
     </div>
 
     <!-- AI Assistant Panel -->

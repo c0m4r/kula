@@ -236,8 +236,10 @@ method; run them when upgrading the vendored library.
 through `KULA_DIRECTORY`, `KULA_LISTEN` and `KULA_PORT`. It drives the dashboard over live
 WebSocket data. A phone-width 5-minute view must load 2s buckets, keep Max, refresh its snapshot
 and never draw blank points. A desktop 5-minute view must be raw and stream without history
-requests. Narrowing again must restore Max, and a desktop hour must stay drawn in Max. The test
-builds kula with the Go toolchain unless `KULA_BINARY` names a binary, and takes about 30 seconds.
+requests. Narrowing again must restore Max, and a desktop hour must stay drawn in Max. TV mode
+restored from storage must fit the Focus Mode cards on screen and keep streaming while the
+cursor rests on a chart. <kbd>Esc</kbd> must return to Focus Mode. The test builds kula with the
+Go toolchain unless `KULA_BINARY` names a binary, and takes about 40 seconds.
 
 Run all three fixtures with
 [`addons/test-frontend-regressions.sh`](../../addons/test-frontend-regressions.sh), which needs

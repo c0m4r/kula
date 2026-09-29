@@ -3220,6 +3220,179 @@ body.light-mode .focus-selecting .chart-card::after {
     background: rgba(59, 130, 246, 0.1);
 }
 
+.focus-bar-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0 0.5rem;
+    cursor: pointer;
+}
+
+/* ---- TV mode ----
+   A Focus Mode presentation for wall displays: the selected cards, already
+   combined into #charts-grid, fill the viewport. tv-mode.js sets
+   --tv-columns/--tv-rows from the card count and marks the last card
+   .tv-fill to absorb a partial final row. */
+html.tv-mode,
+html.tv-mode body {
+    height: 100%;
+    overflow: hidden;
+}
+
+html.tv-mode .dashboard {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+}
+
+html.tv-mode #dashboard-home:not(.hidden) {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Only the connection state, the clock and a paused indicator stay in the header. */
+html.tv-mode .header {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+}
+
+html.tv-mode .header-right > :not(#connection-status):not(#clock):not(#btn-pause),
+html.tv-mode #btn-pause:not(.paused),
+html.tv-mode .time-controls,
+html.tv-mode .time-custom-section,
+html.tv-mode .sys-footer,
+html.tv-mode #ai-panel,
+html.tv-mode .chart-header .btn-icon,
+html.tv-mode .chart-header .btn-ai-chart,
+html.tv-mode .chart-header .btn-chart-data,
+html.tv-mode .chart-settings-dropdown,
+html.tv-mode .chart-data-panel,
+html.tv-mode .btn-ai-chart--gauge,
+/* The pinned Applications head keeps only the container colour legend. */
+html.tv-mode .section-head.focus-pinned .section-head-row {
+    display: none !important;
+}
+
+html.tv-mode #connection-status {
+    width: 12px;
+    height: 12px;
+}
+
+/* A stale wall display must be obvious from across the room. */
+html.tv-mode .dashboard:has(#connection-status.disconnected) #dashboard-home {
+    opacity: 0.45;
+    filter: grayscale(1);
+}
+
+html.tv-mode #charts-grid {
+    display: grid !important;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    grid-template-columns: repeat(var(--tv-columns, 3), minmax(0, 1fr));
+    grid-template-rows: repeat(var(--tv-rows, 1), minmax(10rem, 1fr));
+    grid-auto-rows: minmax(10rem, 1fr);
+}
+
+/* Cards left behind in another grid would otherwise leave an empty band. */
+html.tv-mode #dashboard-home > .charts-grid:not(#charts-grid):not(:has(> .chart-card.focus-visible:not(.hidden))) {
+    display: none !important;
+}
+
+html.tv-mode #charts-grid > .chart-card {
+    display: none !important;
+    /* Expanded and wide cards would break the uniform grid. */
+    grid-column: auto !important;
+    order: 0 !important;
+    min-width: 0;
+    min-height: 0;
+}
+
+html.tv-mode #charts-grid > .chart-card.focus-visible:not(.hidden):not(.chart-search-hidden) {
+    display: flex !important;
+    flex-direction: column;
+}
+
+html.tv-mode #charts-grid > .chart-card.tv-fill {
+    grid-column: span var(--tv-span, 1) !important;
+}
+
+html.tv-mode #charts-grid .chart-body {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+}
+
+.tv-controls {
+    display: none;
+}
+
+html.tv-mode .tv-controls {
+    position: fixed;
+    inset-inline-end: 1.5rem;
+    bottom: 1.5rem;
+    z-index: 900;
+    display: flex;
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0.4rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(10px);
+    transition: opacity 0.3s;
+}
+
+html.tv-mode.tv-idle .tv-controls {
+    opacity: 0;
+    pointer-events: none;
+}
+
+html.tv-mode.tv-idle,
+html.tv-mode.tv-idle * {
+    cursor: none !important;
+}
+
+.tv-control-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.9rem;
+    border: 1px solid var(--accent-blue);
+    border-radius: var(--radius-sm);
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--accent-blue);
+    cursor: pointer;
+    font: 500 0.85rem var(--font-sans);
+    transition: background 0.15s;
+}
+
+.tv-control-btn:hover,
+.tv-control-btn[aria-pressed="true"] {
+    background: rgba(59, 130, 246, 0.3);
+}
+
+.tv-control-btn:focus-visible {
+    outline: 3px solid var(--accent-yellow);
+    outline-offset: 2px;
+}
+
+.tv-control-btn[hidden] {
+    display: none;
+}
+
+.tv-control-key {
+    padding: 0.05rem 0.35rem;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    font: 0.7rem var(--font-mono);
+    opacity: 0.75;
+}
+
 /* ---- Footer ---- */
 .sys-footer {
     display: flex;

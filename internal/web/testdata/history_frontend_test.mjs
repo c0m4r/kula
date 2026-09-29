@@ -1159,3 +1159,29 @@ test('chart image mirrors for RTL and omits an empty footer', () => {
     const draw = target.ctx.calls.find(call => call.op === 'drawImage');
     assert.equal(target.height, draw.args[2] + 200 + 16, 'no footer row is reserved');
 });
+
+const { tvGridShape } = await importSource('../static/js/app/tv-mode.js');
+
+test('TV mode grid keeps time axes wide and fits every card on screen', () => {
+    const shape = (count, width, height) => {
+        const { columns, rows } = tvGridShape(count, width, height, 14);
+        return `${columns}x${rows}`;
+    };
+    // 1080p minus the slim header and grid padding.
+    assert.deepEqual([1, 2, 3, 4, 6, 9, 12, 17].map(count => shape(count, 1878, 980)),
+        ['1x1', '1x2', '2x2', '2x2', '2x3', '3x3', '3x4', '4x5']);
+    assert.equal(shape(4, 1040, 1800), '1x4', 'a portrait display stacks full-width charts');
+    assert.equal(shape(8, 1040, 1800), '2x4');
+
+    for (const [width, height] of [[1878, 980], [1040, 1800], [320, 480]]) {
+        for (let count = 1; count <= 40; count++) {
+            const { columns, rows } = tvGridShape(count, width, height, 14);
+            assert.ok(columns * rows >= count, `${count} cards fit ${columns}x${rows}`);
+            assert.ok(columns * (rows - 1) < count, `${columns}x${rows} leaves no empty row for ${count}`);
+        }
+    }
+
+    assert.deepEqual(tvGridShape(0, 1000, 500), { columns: 1, rows: 1 });
+    assert.deepEqual(tvGridShape(5, 0, 0), { columns: 1, rows: 5 }, 'an unlaid-out grid stacks');
+    assert.deepEqual(tvGridShape(3, Number.NaN, 400), { columns: 1, rows: 3 });
+});
