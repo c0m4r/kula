@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---- Fetch GitHub Stars ----
     async function fetchStars() {
         const badges = document.querySelectorAll('.github-stars-count');
-        const DEFAULT_STARS = 1185;
+        const DEFAULT_STARS = 1324;
         const CACHE_KEY = 'kula-stars';
         const TIMESTAMP_KEY = 'kula-stars-time';
         const SIX_HOURS = 6 * 60 * 60 * 1000;
