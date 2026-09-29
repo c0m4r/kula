@@ -76,7 +76,8 @@ When `web.security.headers` is on (default), responses carry:
 
 All served JavaScript carries `integrity="sha384-..."` hashes computed at startup
 (`calculateSRIs`, `sha512.Sum384`) and injected into the templated HTML, so a tampered asset
-won't execute.
+won't execute. The hashes cover the bytes actually served — the minified form when
+`web.minify_assets` is on.
 
 ## WebSocket security
 

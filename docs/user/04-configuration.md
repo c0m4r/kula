@@ -156,6 +156,7 @@ web:
   # unix_socket: /run/kula/kula.sock   # listen on a Unix socket (no TCP listener)
   # unix_socket_mode: "0660"
   enable_compression: true
+  minify_assets: true     # serve the dashboard's CSS/JS minified
   max_websocket_conns: 100
   max_websocket_conns_per_ip: 5
   trust_proxy: false      # trust X-Forwarded-Proto from a reverse proxy
@@ -170,6 +171,10 @@ Key points:
   prefix — for reverse proxies that forward the prefix intact. See
   [Reverse Proxy & TLS](13-reverse-proxy.md).
 - **`unix_socket`** replaces the TCP listener — ideal behind a local nginx.
+- **`minify_assets`** strips comments and whitespace from the dashboard's stylesheets and
+  scripts once at startup, cutting their transfer size by about a third (a quarter on top of
+  `enable_compression`). Set it to `false` to serve the readable sources, e.g. to debug the
+  dashboard in browser developer tools.
 
 ### `web.security`
 

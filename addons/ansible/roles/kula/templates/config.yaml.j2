@@ -108,6 +108,11 @@ web:
   # Compress HTTP responses and WebSockets (default: true)
   enable_compression: true
 
+  # Minify the dashboard's CSS and JavaScript once at startup to cut transfer
+  # size (default: true). Only comments and whitespace are removed; disable to
+  # serve the original, readable sources, e.g. while debugging in the browser.
+  minify_assets: true
+
   # Resource limits for WebSocket connections
   # max_websocket_conns: Global limit (default: 100)
   # max_websocket_conns_per_ip: Per-IP limit (default: 5)

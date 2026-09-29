@@ -13,6 +13,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 - Clock picker for custom range times
 - Download the chart as PNG image
+- CSS and JS assets auto-minification at startup with `web.minify_assets: true`
 
 ### Changed
 

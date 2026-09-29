@@ -77,7 +77,7 @@ Go-native fuzz targets (each with a committed seed corpus that also runs under p
 | Package | Target |
 |---------|--------|
 | `config` | `FuzzNormalizeBasePath`, `FuzzValidateOllamaURL`, `FuzzParseSize` |
-| `web` | `FuzzValidateOrigin`, `FuzzGetClientIP` |
+| `web` | `FuzzValidateOrigin`, `FuzzGetClientIP`, `FuzzMinifyJS`, `FuzzMinifyCSS` |
 | `collector` | `FuzzParseNginxStatus`, `FuzzParseApache2Status`, `FuzzParseUintBytes`, `FuzzCustomMessage`, `FuzzCollectProcessesStat` |
 | `storage` | `FuzzDecodeSample`, `FuzzExtractTimestamp`, `FuzzEncodeDecodeRoundTrip` |
 

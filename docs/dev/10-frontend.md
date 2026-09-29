@@ -32,6 +32,8 @@ static/
 ### ES6 modules (`js/app/`)
 
 Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.js` last.
+The server minifies them, like `style.css`, at startup (`web.minify_assets`); set it to `false`
+to read the original sources in browser developer tools.
 
 | Module | Responsibility |
 |--------|----------------|

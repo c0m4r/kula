@@ -67,6 +67,10 @@ per-application reducer branches.
   `//go:embed`ed — rebuild for edits to take effect.
 - SRI hashes are computed at startup by walking every `static/**/*.js`, so a new script is
   covered automatically; it still needs its template tag and CSP clearance.
+- Served `.css`/`.js` (except vendored `*.min.*`) is minified at startup by
+  `internal/web/minify.go`, and SRI hashes cover the minified bytes. `TestEmbeddedAssetsMinify`
+  fails if a shipped asset no longer minifies (it would silently be served unminified). Tests
+  that assert on source text must read `staticFS`, not the served response.
 - 26 locale files. `TestCurrentUITranslationsCoverEveryLocale` requires every locale to carry all
   `si_*` keys present in `internal/i18n/locales/en.json` plus a fixed required list, and rejects
   obsolete `si_*` keys. Adding, renaming or removing a UI string means editing **all** locale

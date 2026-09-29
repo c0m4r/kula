@@ -102,6 +102,7 @@ type WebConfig struct {
 	Logging                LogConfig           `yaml:"logging"`
 	TrustProxy             bool                `yaml:"trust_proxy"`
 	EnableCompression      bool                `yaml:"enable_compression"`
+	MinifyAssets           bool                `yaml:"minify_assets"` // serve embedded CSS/JS minified at startup
 	Graphs                 GraphConfig         `yaml:"graphs"`
 	Appearance             AppearanceConfig    `yaml:"appearance"`
 	Accessibility          AccessibilityConfig `yaml:"accessibility"`
@@ -415,6 +416,7 @@ func DefaultConfig() *Config {
 				Level:   "perf",
 			},
 			EnableCompression: true,
+			MinifyAssets:      true,
 			Graphs: GraphConfig{
 				CPUTemp:  GraphMaxConfig{MaxMode: "off", MaxValue: 100}, // 100 Celsius
 				DiskTemp: GraphMaxConfig{MaxMode: "off", MaxValue: 100},

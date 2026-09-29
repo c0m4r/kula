@@ -229,4 +229,14 @@ prompt sanitization, model-name validation, and a request-body cap. See
 and `integrity="sha384-..."` SRI attributes computed at startup (`calculateSRIs`,
 `sha512.Sum384`). The SPA, fonts, and icons are embedded with `//go:embed static`.
 
+With `web.minify_assets` (default on), [`minify.go`](../../internal/web/minify.go) minifies every
+embedded `.css` and `.js` file except the vendored `*.min.*` ones once per process, before SRI
+hashes are computed, and `handleStatic` serves the minified bytes (`readStatic`). Both
+minifiers are dependency-free and only remove comments and whitespace; they never rename or
+rewrite tokens. The JavaScript lexer keeps every line break automatic semicolon insertion could
+depend on, and re-lexes its output to require the exact input token stream. A file either
+minifier cannot follow is logged and served unminified. `TestEmbeddedAssetsMinify` requires every
+shipped asset to minify, `TestMinifiedScriptsParseInNode` syntax-checks the output with node, and
+`FuzzMinifyJS` / `FuzzMinifyCSS` cover arbitrary input.
+
 Next: [Security Model](08-security.md).

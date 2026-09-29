@@ -47,6 +47,7 @@ type Server struct {
 	httpSrv         *http.Server
 	templates       *template.Template
 	sriHashes       map[string]string
+	assets          map[string][]byte // minified static files by embedded path; see readStatic
 	ollama          *ollamaClient
 	ollamaLimiter   *chatRateLimiter
 	ollamaMetaLim   *chatRateLimiter
@@ -81,6 +82,9 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 		ollama:          newOllamaClient(ollamaCfg),
 		ollamaLimiter:   newChatRateLimiter(),
 		ollamaMetaLim:   newMetaRateLimiter(),
+	}
+	if cfg.UI && cfg.MinifyAssets {
+		srv.assets = minifiedStatic()
 	}
 	srv.initializeTemplates()
 	srv.calculateSRIs()
@@ -1096,7 +1100,8 @@ func (s *Server) calculateSRIs() {
 			return nil
 		}
 
-		data, err := staticFS.ReadFile(path)
+		// Hash the served bytes: a minified script's integrity differs from its source.
+		data, err := s.readStatic(path)
 		if err != nil {
 			log.Printf("Warning: failed to read %s for SRI: %v", path, err)
 			return nil
@@ -1114,6 +1119,15 @@ func (s *Server) calculateSRIs() {
 
 		return nil
 	})
+}
+
+// readStatic returns the bytes served for an embedded static file: its
+// minified form when one was built, otherwise the embedded original.
+func (s *Server) readStatic(path string) ([]byte, error) {
+	if data, ok := s.assets[path]; ok {
+		return data, nil
+	}
+	return staticFS.ReadFile(path)
 }
 
 // getClientIP extracts the real client IP, considering proxies and stripping ephemeral ports.
@@ -1176,7 +1190,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data, err := staticFS.ReadFile(fullPath)
+	data, err := s.readStatic(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "Not Found", http.StatusNotFound)
