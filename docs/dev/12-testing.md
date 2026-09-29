@@ -19,7 +19,9 @@ Runs, in order (all must pass):
 
 CI runs the equivalent ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)) plus
 Semgrep ([`semgrep.yml`](../../.github/workflows/semgrep.yml)); CI itself has no standalone
-`gofmt` step.
+`gofmt` step. A separate Frontend workflow
+([`frontend.yml`](../../.github/workflows/frontend.yml)) runs the
+[real-browser fixtures](#real-browser-fixtures) with Node.js 22 and the runner's Google Chrome.
 
 ## Unit tests
 
@@ -44,6 +46,16 @@ writes/exec/network actually fail once Landlock is enforced.
 When Node.js is available, `server_test.go` runs `history_frontend_test.mjs`. It checks request
 cancellation and stale responses, envelope preservation, formatter reuse, missing-data breaks,
 viewport batching and culling, gestures, keyboard exploration and complete formula-safe CSV.
+`TestHistoryResponsesMatchDashboardContract` (storage) checks the `/api/history` contract from
+both sides. It queries real stores the way the dashboard does (unaligned millisecond bounds and
+its point budget): raw and 2s-bucketed five-minute views, a right-edge clip, an outage, an empty
+window, and tier-1 history with legacy, current and mixed buckets. It asserts the server
+metadata, then runs [`history_contract_test.mjs`](../../internal/web/testdata/history_contract_test.mjs)
+on the encoded responses. The dashboard's own modules must reach the expected live-streaming
+decision, aggregation choices and gap markers. They must also draw every CPU bucket in Max, and
+the test checks that partial extrema profiles name real JSON fields. Every resolution the server
+can format must parse in each frontend parser. Add a scenario when a change alters tier choice,
+output steps, clipping or extrema profiles.
 Storage tests cover sparse contributing statistics through multiple reductions, disk round
 trips, malformed metadata, old records and parity with the Python decoder. API tests retain
 the 31-day range cap even when more data exists on disk.
@@ -219,11 +231,25 @@ Chart.js mutation records without a full chart update, and a hidden point must m
 These assertions cover the controller's dependency on Chart.js's private `_updateHiddenIndices()`
 method; run them when upgrading the vendored library.
 
-Run both fixtures together with
+[`live_dashboard_test.mjs`](../../internal/web/testdata/live_dashboard_test.mjs) runs the real
+`kula serve` with the shipped `config.example.yaml`, overriding only storage, address and port
+through `KULA_DIRECTORY`, `KULA_LISTEN` and `KULA_PORT`. It drives the dashboard over live
+WebSocket data. A phone-width 5-minute view must load 2s buckets, keep Max, refresh its snapshot
+and never draw blank points. A desktop 5-minute view must be raw and stream without history
+requests. Narrowing again must restore Max, and a desktop hour must stay drawn in Max. The test
+builds kula with the Go toolchain unless `KULA_BINARY` names a binary, and takes about 30 seconds.
+
+Run all three fixtures with
 [`addons/test-frontend-regressions.sh`](../../addons/test-frontend-regressions.sh), which needs
-Node.js 22+ and a Chromium/Chrome executable and reports the skipped optional local dependency
-when either is missing; neither `./addons/check.sh` nor CI runs them. Set `KULA_CHROMIUM` when
-the browser lives at a non-standard path.
+Node.js 22+, a Chromium/Chrome executable and Go. It reports the skipped optional local
+dependency when Node.js or the browser is missing. `./addons/check.sh` does not run the
+fixtures. Set `KULA_CHROMIUM` when the browser lives at a non-standard path.
+
+CI runs them in the separate Frontend workflow, so a hung browser cannot delay the main CI
+results. Each fixture is its own step with a timeout several times its local duration, and the
+job has an overall ceiling. Teardown sends SIGTERM to Chromium (and `kula serve`) and escalates
+to SIGKILL after five seconds, so a process that ignores the signal cannot hold a finished run
+open.
 
 ## Runtime security tests
 

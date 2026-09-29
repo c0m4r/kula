@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { delay, findChromium, launchChromium } from './chromium_test_helper.mjs';
+import { delay, findChromium, launchChromium, stopProcess } from './chromium_test_helper.mjs';
 
 const fixture = fileURLToPath(new URL('./history_performance.html', import.meta.url));
 const browserPath = findChromium();
@@ -94,7 +94,6 @@ try {
     console.log(JSON.stringify(result));
 } finally {
     socket?.close();
-    if (browser?.exitCode === null && browser.signalCode === null) browser.kill('SIGTERM');
-    if (browserClosed) await browserClosed;
+    await stopProcess(browser, browserClosed);
     fs.rmSync(scratch, { recursive: true, force: true });
 }

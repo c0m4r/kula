@@ -40,6 +40,23 @@ function launchError(message, browserPath, browser, output) {
     return new Error(`${message}\nExecutable: ${browserPath}\nStatus: ${status}\n${details}`);
 }
 
+const STOP_TIMED_OUT = Symbol('stop timed out');
+
+// Stop a child without trusting it to honor SIGTERM. Awaiting a browser that
+// ignores the signal would hold the test run open indefinitely.
+export async function stopProcess(child, closed, graceMs = 5000) {
+    if (!child || !closed) return;
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    let timer;
+    const expired = new Promise(resolve => { timer = setTimeout(resolve, graceMs, STOP_TIMED_OUT); });
+    const outcome = await Promise.race([closed, expired]);
+    clearTimeout(timer);
+    if (outcome === STOP_TIMED_OUT && child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL');
+        await closed;
+    }
+}
+
 export async function launchChromium(browserPath, args, userDataDir, timeoutMs = 30000) {
     const browser = spawn(browserPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const browserClosed = new Promise(resolve => browser.once('close', resolve));
@@ -65,8 +82,7 @@ export async function launchChromium(browserPath, args, userDataDir, timeoutMs =
         throw launchError(`Chromium did not expose a DevTools endpoint within ${timeoutMs / 1000}s.`,
             browserPath, browser, output);
     } catch (error) {
-        if (browser.exitCode === null && browser.signalCode === null) browser.kill('SIGTERM');
-        await browserClosed;
+        await stopProcess(browser, browserClosed);
         throw error;
     }
 }

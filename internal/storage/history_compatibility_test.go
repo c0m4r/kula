@@ -49,6 +49,27 @@ func legacyHistorySample(t *testing.T, ts time.Time) *AggregatedSample {
 	return decoded
 }
 
+// writeLegacyTierRecord appends a record in the pre-policy layout, bypassing
+// the current writer so its flags cannot certify the envelope.
+func writeLegacyTierRecord(t *testing.T, tier *Tier, sample *AggregatedSample) {
+	t.Helper()
+	payload := append([]byte{recordKindBinary}, legacyHistoryPayload(t, sample)...)
+	record := binary.LittleEndian.AppendUint32(nil, uint32(len(payload)))
+	record = append(record, payload...)
+	if _, err := tier.file.WriteAt(record, headerSize+tier.writeOff); err != nil {
+		t.Fatal(err)
+	}
+	tier.writeOff += int64(len(record))
+	tier.count++
+	if tier.count == 1 {
+		tier.oldestTS = sample.Timestamp
+	}
+	tier.newestTS = sample.Timestamp
+	if err := tier.writeHeader(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLegacyHistoryCompatibilityProfiles(t *testing.T) {
 	base := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
 	legacy := legacyHistorySample(t, base)
@@ -98,23 +119,7 @@ func TestLegacyHistoryCompatibilityAcrossDecodeBatches(t *testing.T) {
 	base := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
 	tier := store.tiers[1]
 	for i := 1; i <= historyDecodeBatchSize+2; i++ {
-		ts := base.Add(time.Duration(i) * time.Minute)
-		sample := legacyHistorySample(t, ts)
-		payload := append([]byte{recordKindBinary}, legacyHistoryPayload(t, sample)...)
-		record := binary.LittleEndian.AppendUint32(nil, uint32(len(payload)))
-		record = append(record, payload...)
-		if _, err := tier.file.WriteAt(record, headerSize+tier.writeOff); err != nil {
-			t.Fatal(err)
-		}
-		tier.writeOff += int64(len(record))
-		tier.count++
-		if i == 1 {
-			tier.oldestTS = ts
-		}
-		tier.newestTS = ts
-	}
-	if err := tier.writeHeader(); err != nil {
-		t.Fatal(err)
+		writeLegacyTierRecord(t, tier, legacyHistorySample(t, base.Add(time.Duration(i)*time.Minute)))
 	}
 	for _, points := range []int{1, 1000} {
 		result, err := store.QueryRangeWithMeta(base, tier.newestTS, points)

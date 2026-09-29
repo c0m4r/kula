@@ -13,6 +13,8 @@ if command -v node &>/dev/null && { [ -n "${KULA_CHROMIUM:-}" ] || command -v ch
     echo -e "${CYAN}Running frontend browser regressions...${RESET}"
     node --experimental-websocket internal/web/testdata/history_dashboard_test.mjs
     node --experimental-websocket internal/web/testdata/history_performance_test.mjs
+    # Builds kula with the Go toolchain unless KULA_BINARY names a binary.
+    node --experimental-websocket internal/web/testdata/live_dashboard_test.mjs
 else
     echo -e "${CYAN}Skipping frontend browser regressions (Node.js or Chromium/Chrome not installed)${RESET}"
 fi

@@ -71,7 +71,7 @@ export class HistoryRequestController {
     }
 }
 
-function resolutionMilliseconds(value) {
+export function resolutionMilliseconds(value) {
     const match = typeof value === 'string' ? value.trim().match(/^(\d+(?:\.\d+)?)(ms|s|m|h)$/) : null;
     if (!match) return null;
     const amount = Number(match[1]) * { ms: 1, s: 1000, m: 60000, h: 3600000 }[match[2]];

@@ -222,7 +222,7 @@ function itemTimestamp(item) {
     return finiteTime(item?.ts ?? item?.data?.ts);
 }
 
-function resolutionMilliseconds(value) {
+export function resolutionMilliseconds(value) {
     if (typeof value !== 'string') return 1000;
     const match = value.trim().match(/^([\d.]+)\s*(ms|s|m|h|d)$/i);
     if (!match) return 1000;

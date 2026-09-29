@@ -83,8 +83,13 @@ per-application reducer branches.
   from dismissing the dropdown, and preserve dismissal on unrelated bubbling icon clicks.
 - Run `./addons/test-frontend-regressions.sh` when changing viewport culling, split-card
   teardown/dropdowns, or the vendored Chart.js version. It covers mutation retention, point
-  visibility after trimming, and split-card listener/instance cleanup. These browser fixtures
-  require Node.js 22+ and Chromium/Chrome and are **not** run by `./addons/check.sh` or CI.
+  visibility after trimming, and split-card listener/instance cleanup, and drives the real
+  `kula serve` in Chromium to check live streaming versus bucketed refreshes. These browser
+  fixtures require Node.js 22+, Chromium/Chrome and Go. The separate Frontend workflow
+  (`.github/workflows/frontend.yml`) runs each with its own timeout; `./addons/check.sh` does not.
+- `/api/history` metadata is a contract with the dashboard's live-refresh and aggregation logic.
+  `TestHistoryResponsesMatchDashboardContract` (storage) feeds real responses to the frontend
+  modules; add a scenario there when a change alters tiers, steps, clipping or extrema profiles.
 
 ### Build and lint
 

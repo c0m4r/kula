@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert/strict';
-import { delay, findChromium, launchChromium } from './chromium_test_helper.mjs';
+import { delay, findChromium, launchChromium, stopProcess } from './chromium_test_helper.mjs';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const browserPath = findChromium();
 if (!browserPath) throw new Error('Chromium/Chrome not found; set KULA_CHROMIUM');
@@ -167,8 +167,9 @@ try {
     console.log(JSON.stringify(result));
 } finally {
     socket?.close();
-    if (browser?.exitCode === null && browser.signalCode === null) browser.kill('SIGTERM');
+    await stopProcess(browser, browserClosed);
+    // Keep-alive connections would otherwise hold close() open.
+    server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
-    if (browserClosed) await browserClosed;
     fs.rmSync(scratch, {recursive: true, force: true});
 }
