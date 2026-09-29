@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
+## [Unreleased]
+
+### Fixed
+
+- Min/Max charts stopped drawing new data on short live windows (for example 5 minutes on a
+  narrow screen or a list-layout card) whose history the server returned in bucketed form:
+  live samples without extrema were appended as blank points and flagged "Min/Max unavailable".
+  The dashboard now streams only onto native raw views and refreshes bucketed views instead
+- Selecting a window without Min/Max (such as raw history or an empty refresh) no longer
+  silently switches the rest of the session to Avg; the Min/Max choice returns as soon as a
+  view supports it again
+
 ## [0.20.2] - 2026-09-20
 
 ### Fixed

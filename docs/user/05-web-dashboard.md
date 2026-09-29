@@ -98,7 +98,10 @@ gestures. Enable **Show detailed chart tooltips** in Customization to add bucket
 source, contributing records, coverage, and aggregation details.
 
 Long live windows refresh the whole selected interval at display resolution. This preserves
-older history as new samples arrive. The range stays at its last successful snapshot during a
+older history as new samples arrive. A short window is streamed point by point only when its
+history arrived as raw samples; if the chart is too narrow to show every raw sample (a
+5-minute window on a phone, for example), the server returns bucketed history and that window
+refreshes like a long one, so Avg/Min/Max stay consistent across the whole range. The range stays at its last successful snapshot during a
 refresh; hover the resolution for the refresh interval and last update. Failed refreshes are
 reported while the previous chart remains visible. Gauges and status continue to update live.
 
@@ -199,7 +202,9 @@ Min and Max are per-series extrema within each bucket, so values across differen
 occurred at the same instant. Avg is duration-weighted for sampled gauges and rates; monotonic
 counters and fixed capacity/metadata values retain their latest observation. Existing
 `web.default_aggregation` settings remain the preferred operation whenever the response
-supports it; fresh installs default to Avg.
+supports it; fresh installs default to Avg. A view that offers no Min/Max (such as raw
+history) shows Avg without discarding your choice: Min or Max returns as soon as a later view
+supports it again.
 Unavailable readings, such as unknown MySQL replication lag, remain gaps in every aggregation.
 Filesystem tooltip percentages and byte counts use the same selected aggregation.
 

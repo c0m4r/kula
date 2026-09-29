@@ -921,6 +921,67 @@ document.querySelector('#agg-presets-list [data-agg="avg"]').click();
 await frame();
 check(state.charts.connections.data.datasets[3].data.filter(point => !point.extremaUnavailable).some(point => point.y === 3),
     'Avg did not restore representative history');
+
+// A short preset can still be answered in buckets: an unaligned five-minute
+// window spans 301 one-second buckets, so a 300-point request returns 2s
+// buckets with extrema even though the point budget suggests native data.
+// Live samples must not extend that view (without extrema they rendered as a
+// growing gap in Max), and a data-only response must suspend, not discard,
+// the Max choice.
+let bucketedView = true;
+window.fetch = async (url, options) => {
+    const response = await compatibilityFetch(url, options);
+    if (!String(url).includes('/api/history?')) return response;
+    const payload = await response.json();
+    payload.samples = payload.samples.filter((_, index) => index % 3 === 0);
+    Object.assign(payload, { tier: 0, source_resolution: '1s', complete: true, exact_complete: true },
+        bucketedView
+            ? { resolution: '2s', downsampled: true, valid_aggregations: ['data', 'min', 'max'],
+                available_aggregations: ['data', 'min', 'max'] }
+            : { resolution: '1s', downsampled: false, valid_aggregations: ['data'],
+                available_aggregations: ['data'] });
+    return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
+};
+let liveNow = Math.max(NativeDate.now(), Date.parse(state.lastSample?.ts) || 0) + 60000;
+window.Date = class extends NativeDate {
+    constructor(...args) { super(...(args.length ? args : [liveNow])); }
+    static now() { return liveNow; }
+};
+const pushLive = async () => {
+    liveNow += 1000;
+    const sample = structuredClone(state.lastSample);
+    sample.ts = new Date(liveNow).toISOString();
+    data.pushLiveSample(sample);
+    for (let waits = 0; state.loadingHistory && waits < 500; waits++) await pause(2);
+};
+state.timeRange = 300; state.customFrom = state.customTo = null; state.historyViewEnd = null;
+await data.fetchHistory(300);
+document.querySelector('#agg-presets-list [data-agg="max"]').click();
+check(state.currentAggregation === 'max' && state.historyViewEnd !== null,
+    'A bucketed short preset was treated as a live-streamable view');
+const bucketedRequests = window.historyRequests;
+for (let i = 0; i < 5; i++) await pushLive();
+check(window.historyRequests > bucketedRequests, 'A bucketed short preset did not refresh its snapshot');
+const liveTotal = state.charts.cpu.data.datasets[4];
+check(state.charts.cpu.data.datasets.every(dataset => dataset.data.every(point => !point.extremaUnavailable)),
+    'Live samples without extrema were appended to a Max view');
+check(Number.isFinite(liveTotal.data.at(-1).y) && liveNow - liveTotal.data.at(-1).x <= 3000,
+    'A bucketed short preset stopped advancing in Max');
+
+bucketedView = false;
+await data.fetchHistory(300);
+check(state.currentAggregation === 'avg' && state.suspendedAggregation === 'max' && state.historyViewEnd === null,
+    'A data-only native preset did not fall back to streaming Avg');
+await pushLive();
+check(liveTotal.data.at(-1).x === liveNow && Number.isFinite(liveTotal.data.at(-1).y),
+    'A native raw preset stopped streaming live samples');
+bucketedView = true;
+await data.fetchHistory(300);
+check(state.currentAggregation === 'max' && state.suspendedAggregation === null,
+    'A data-only response discarded the Max selection');
+check(new URL(location.href).searchParams.get('agg') === 'max', 'Restored Max was not written back to the share URL');
+document.querySelector('#agg-presets-list [data-agg="avg"]').click();
+window.Date = NativeDate;
 window.fetch = compatibilityFetch;
 await (await import('./audit-system-info.js')).testSystemInfo();
 window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math.round(layoutMs), system_info: true,
@@ -932,6 +993,7 @@ window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math
     calendar_range: true, tooltip_details_opt_in: true, crosshair_drag_safe: true,
     shaded_measurement_gaps: true, historical_device_selection: true, stable_disk_identity: true,
     gesture_request_isolation: true, minimum_zoom_points: 12, legacy_metric_compatibility: true,
-    unavailable_replication_lag: true, filesystem_aggregation_tooltips: true, errors };
+    unavailable_replication_lag: true, filesystem_aggregation_tooltips: true,
+    bucketed_live_preset: true, suspended_aggregation: true, errors };
 check(errors.length === 0, errors.join('; '));
 window.ready = true;

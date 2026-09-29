@@ -1844,8 +1844,7 @@ export function pushLiveSample(sample) {
 
     updateSelectors(liveSample);
 
-    const refreshInterval = liveHistoryRefreshInterval(
-        state.timeRange, state.historyPointLimit, state.liveSampleIntervalMs);
+    const refreshInterval = rollingRefreshInterval(state.timeRange, state.historyPointLimit);
     if (refreshInterval > 0 || state.historyViewEnd !== null) {
         refreshRollingHistory(refreshInterval || 1000);
         updateSubtitles(liveSample);
@@ -1874,16 +1873,22 @@ export function pushLiveSample(sample) {
 }
 
 function applyAggregationValidity(validAggregations) {
-    const resolved = resolveAggregation(state.currentAggregation, validAggregations);
+    // Data-only responses (raw windows, empty or legacy refreshes) hide Min/Max
+    // without revoking the choice. Keep it and restore it once a later response
+    // supports it, instead of silently switching to Avg for the whole session.
+    const wanted = state.suspendedAggregation ?? state.currentAggregation;
+    const resolved = resolveAggregation(wanted, validAggregations);
     state.validAggregations = resolved.valid;
+    state.suspendedAggregation = resolved.selection === wanted ? null : wanted;
 
     if (resolved.selection !== state.currentAggregation) {
         state.currentAggregation = resolved.selection;
 
         // An old bookmark may still request agg=min|max. Once the server has
         // declared that operation invalid, remove the misleading URL state.
+        // A restored choice is written back by the metadata-changed listener.
         const params = new URLSearchParams(window.location.search);
-        if (params.has('agg')) {
+        if (state.suspendedAggregation !== null && params.has('agg')) {
             params.delete('agg');
             const query = params.toString();
             const url = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
@@ -1948,6 +1953,17 @@ export function updateSamplingInfo(
         .filter(Boolean).join(' · ');
 }
 
+// Describe the loaded view from the server's response rather than the
+// requested point budget; see historyViewAcceptsLiveSamples.
+function rollingRefreshInterval(rangeSeconds, points) {
+    return liveHistoryRefreshInterval(rangeSeconds, points, state.liveSampleIntervalMs, {
+        tier: state.currentTier,
+        resolution: state.currentResolution,
+        sourceResolution: state.currentSourceResolution,
+        availableAggregations: state.validAggregations,
+    });
+}
+
 function refreshRollingHistory(interval) {
     const now = Date.now();
     if (state.historyViewEnd === null) {
@@ -1964,7 +1980,7 @@ export function fetchHistory(rangeSeconds, { background = false } = {}) {
     const points = historyPointBudget();
     state.historyRefreshAttempt = toDate.getTime();
     return requestHistory(fromDate, toDate, points, (response, samples) => {
-        const interval = liveHistoryRefreshInterval(rangeSeconds, points, state.liveSampleIntervalMs);
+        const interval = rollingRefreshInterval(rangeSeconds, points);
         state.historyViewEnd = interval > 0 ? toDate.getTime() : null;
         const latest = replaceHistoryBuffer(samples, response?.resolution, response);
         trimChartsToTimeRange();

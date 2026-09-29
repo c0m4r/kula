@@ -426,6 +426,7 @@ async function init() {
             document.querySelectorAll('#agg-presets-list .time-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             state.currentAggregation = btn.dataset.agg;
+            state.suspendedAggregation = null;
             localStorage.setItem('kula_aggregation', state.currentAggregation);
             updateUrl(state);
 

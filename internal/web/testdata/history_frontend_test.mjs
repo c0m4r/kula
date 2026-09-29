@@ -11,6 +11,7 @@ async function importSource(relativePath) {
 
 const {
     HistoryRequestController,
+    historyViewAcceptsLiveSamples,
     liveHistoryRefreshInterval,
     updateLiveSampleInterval,
 } = await importSource('../static/js/app/history-request.js');
@@ -934,6 +935,34 @@ test('rolling history refreshes at display resolution while short views stream',
     assert.ok(liveHistoryRefreshInterval(86400, 720, 1000) >= 120000);
     assert.ok(liveHistoryRefreshInterval(2592000, 5000, 1000) > 500000);
     assert.equal(liveHistoryRefreshInterval(300, 500, 100), 1000);
+});
+
+test('only native raw views accept live samples, whatever the point budget predicts', () => {
+    const raw = { tier: 0, resolution: '1s', sourceResolution: '1s', availableAggregations: ['data'] };
+    assert.equal(historyViewAcceptsLiveSamples(raw), true);
+    assert.equal(liveHistoryRefreshInterval(300, 534, 1000, raw), 0);
+
+    // 300 points look like 1.003s per point, but an unaligned five-minute
+    // window spans 301 one-second buckets, so the server answers in 2s.
+    const bucketed = { tier: 0, resolution: '2s', sourceResolution: '1s',
+        availableAggregations: ['data', 'min', 'max'] };
+    assert.equal(historyViewAcceptsLiveSamples(bucketed), false);
+    assert.equal(liveHistoryRefreshInterval(300, 300, 1000, bucketed), 2000);
+
+    // A native-step density reduction still carries extrema that live
+    // samples cannot supply.
+    const dense = { ...raw, availableAggregations: ['data', 'min', 'max'] };
+    assert.equal(liveHistoryRefreshInterval(300, 301, 1000, dense), 1000);
+
+    const coarse = { tier: 1, resolution: '1m', sourceResolution: '1m', availableAggregations: ['data'] };
+    assert.equal(liveHistoryRefreshInterval(300, 534, 1000, coarse), 60000);
+
+    // A slow collector's native view keeps streaming; long windows keep their
+    // display-step cadence.
+    const slow = { tier: 0, resolution: '5s', sourceResolution: '5s', availableAggregations: ['data'] };
+    assert.equal(liveHistoryRefreshInterval(300, 534, 5000, slow), 0);
+    assert.equal(liveHistoryRefreshInterval(86400, 720, 1000, bucketed),
+        liveHistoryRefreshInterval(86400, 720, 1000));
 });
 
 test('chart labels reuse bounded formatters across every chart', () => {

@@ -62,6 +62,8 @@ export const state = {
     cpuTempSensorNames: [],
     diskTempSensorNames: [],
     currentAggregation: localStorage.getItem('kula_aggregation') || 'avg',
+    // A choice the loaded view cannot serve; restored when a later response can.
+    suspendedAggregation: null,
     validAggregations: ['data'], // available choices; bucket profiles restrict individual fields
     timeZone: localStorage.getItem('kula_time_zone') === 'utc' ? 'utc' : 'local',
     // One compact provenance record per timestamp. Tooltips look up this map

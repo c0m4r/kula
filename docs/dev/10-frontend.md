@@ -78,7 +78,9 @@ history, stops reconnecting, clears authenticated readings and returns to login.
 login opens a fresh connection and reloads the selected preset or custom interval.
 
 Every buffer observation uses the canonical `ts`, `data`, optional `min`/`max`, `dur`, and
-bucket-metadata shape. `available_aggregations` controls the selector; per-bucket
+bucket-metadata shape. `available_aggregations` controls the selector (a choice the response
+cannot serve falls back to Avg but is kept in `suspendedAggregation` and restored by the first
+response that supports it); per-bucket
 `extrema_profile` and shared `extrema_profiles` restrict individual scalar fields. Older
 API responses fall back to their strict `valid_aggregations` list. Unknown profiles expose
 no extrema. Representative data supplies identities and chart structure; point ingestion
@@ -100,7 +102,13 @@ coverage and gap markers instead of unconditionally promoting a view to complete
 Requests use 300–5,000 observations based on the widest visible plot. There is room for one
 explicit gap marker between adjacent observations (at most 10,000 buffer items). Gap markers
 never evict observations. Short rolling windows append live data while it fits the selected
-budget; long windows refresh the entire range at display resolution. Their axes remain at the
+budget; long windows refresh the entire range at display resolution. Appending also requires
+the loaded response to be a native view: tier 0, output resolution equal to its source
+resolution, and no Min/Max offered (`historyViewAcceptsLiveSamples`). The point budget alone
+cannot predict this, because the server counts epoch-aligned buckets: an unaligned 5-minute
+window spans 301 one-second buckets, so a 300-point request returns 2s buckets. Such bucketed
+views refresh once per output step instead of receiving raw live samples, which carry no
+extrema and would otherwise render as gaps in Min/Max. Their axes remain at the
 last successful snapshot until replacement, including during network failures. The refresh
 cadence and snapshot time appear in the resolution tooltip. Still-selected history is never
 removed to make room for a stream of raw points.
