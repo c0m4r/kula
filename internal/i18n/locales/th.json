@@ -146,6 +146,7 @@
     "mem_used_only": "ใช้ไป: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  หน่วยความจำ: {mem}",
     "split_by_device": "แยกตามอุปกรณ์",
+    "save_chart_image": "บันทึกเป็นรูปภาพ",
     "customization": "การปรับแต่ง",
     "appearance": "รูปลักษณ์",
     "accessibility": "การเข้าถึง",

@@ -39,7 +39,7 @@ import {
 import { applyUrlState, updateUrl } from './history-navigation.js';
 import { checkAuth, handleLogin, handleLogout } from './auth.js';
 import { aggregationField } from './history-data.js';
-import { addExpandButton, attachHoverPauseToCard } from './chart-card-actions.js';
+import { addExpandButton, addSaveImageButton, attachHoverPauseToCard } from './chart-card-actions.js';
 import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
 import { initSplitModule } from './split.js';
 import { initOllama } from './ollama.js';
@@ -246,6 +246,7 @@ function setupChartActions() {
         }
 
         addExpandButton(card);
+        addSaveImageButton(card);
     });
 }
 

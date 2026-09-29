@@ -12,6 +12,7 @@ import { i18n } from './i18n.js';
 import { queueChartUpdate } from './chart-controller.js';
 import { appendEnvelopeGap, appendEnvelopePoint, clearEnvelopeData, ensureSensorDatasets, hasEnvelopeData } from './chart-envelope.js';
 import { setChartHidden } from './chart-ui.js';
+import { addSaveImageButton } from './chart-card-actions.js';
 
 let _redrawFromBuffer = null;
 let _rebuilding = false;
@@ -523,6 +524,7 @@ function _makeSplitCard(cardId, title, type, graphId = null) {
         _toggleExpandSplitCard(card);
     });
     actions.appendChild(expandBtn);
+    addSaveImageButton(card);
 
     // Hover pause
     card.addEventListener('mouseenter', () => {

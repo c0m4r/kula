@@ -1047,3 +1047,115 @@ test('chart labels reuse bounded formatters across every chart', () => {
         assert.ok(constructions <= 2, 'timezone has its own formatter');
     } finally { Intl.DateTimeFormat = NativeFormatter; }
 });
+
+const { chartImageFilename, chartImageSlug, fitText, paintChartImage } =
+    await importSource('../static/js/app/chart-image.js');
+
+function recordingCanvas() {
+    const calls = [];
+    const ctx = {
+        calls,
+        setTransform: (...args) => calls.push({ op: 'setTransform', args }),
+        fillRect: (...args) => calls.push({ op: 'fillRect', args, fill: ctx.fillStyle }),
+        fillText: (text, x, y) => calls.push({ op: 'fillText', text, x, y, align: ctx.textAlign, font: ctx.font, fill: ctx.fillStyle }),
+        drawImage: (...args) => calls.push({ op: 'drawImage', args }),
+        // Seven pixels per character keeps truncation arithmetic predictable.
+        measureText: text => ({ width: Array.from(text).length * 7 }),
+    };
+    return { width: 0, height: 0, getContext: () => ctx, ctx };
+}
+
+const imageFonts = {
+    title: { font: '600 13.6px Inter', size: 13.6, color: '#f1f5f9' },
+    detail: { font: '400 12px monospace', size: 12, color: '#94a3b8' },
+    footer: { font: '400 12px monospace', size: 12, color: '#94a3b8' },
+};
+
+test('chart image filenames are safe, readable and time-zone explicit', () => {
+    const utcDate = new Date(Date.UTC(2026, 8, 29, 14, 30, 5));
+    assert.equal(chartImageFilename({ title: 'CPU Usage', hostname: 'web-01.example', date: utcDate, utc: true }),
+        'kula-web-01-example-cpu-usage-20260929-143005Z.png');
+    assert.equal(chartImageFilename({ title: 'Disk I/O', date: new Date(2026, 0, 2, 3, 4, 5) }),
+        'kula-disk-i-o-20260102-030405.png');
+    assert.equal(chartImageFilename({ title: '', hostname: '../../', date: utcDate, utc: true }),
+        'kula-chart-20260929-143005Z.png');
+    assert.equal(chartImageSlug('Использование ЦП'), 'использование-цп');
+    assert.equal(chartImageSlug('ＣＰＵ　温度'), 'cpu-温度');
+    assert.equal(chartImageSlug(`${'a'.repeat(79)} tail`).length, 79, 'trailing separator is trimmed after truncation');
+    assert.doesNotMatch(chartImageFilename({ title: 'a/b\\c:d*e?"f<g>h|i', hostname: 'x' }), /[\\/:*?"<>|]/);
+});
+
+test('chart image text truncates without splitting code points', () => {
+    const { ctx } = recordingCanvas();
+    assert.equal(fitText(ctx, 'short', 100), 'short');
+    assert.equal(fitText(ctx, 'abcdefghij', 35), 'abcd…');
+    assert.equal(fitText(ctx, '😀😀😀😀😀', 21), '😀😀…');
+    assert.equal(fitText(ctx, 'abcdef', 5), '');
+    assert.equal(fitText(ctx, '', 100), '');
+});
+
+test('chart image composites the canvas 1:1 on an opaque themed background', () => {
+    const target = recordingCanvas();
+    const source = { width: 800, height: 440 };
+    paintChartImage(target, {
+        source, ratio: 2, title: 'CPU Usage', details: '12.5% · 4 cores',
+        footerStart: 'web-01', footerEnd: '29 Sept 2026, 14:00:00 UTC – 29 Sept 2026, 14:05:00 UTC',
+        background: ['#0a0e17', 'rgba(17, 24, 39, 0.85)'], border: 'rgba(55, 65, 81, 0.5)', fonts: imageFonts,
+    });
+    const { calls } = target.ctx;
+    assert.deepEqual(calls[0], { op: 'setTransform', args: [2, 0, 0, 2, 0, 0] });
+    assert.equal(target.width, (400 + 32) * 2, 'image keeps the source device-pixel density');
+    const fills = calls.filter(call => call.op === 'fillRect');
+    assert.deepEqual(fills.slice(0, 2).map(call => call.fill), ['#0a0e17', 'rgba(17, 24, 39, 0.85)']);
+    fills.slice(0, 2).forEach(call => assert.deepEqual(call.args, [0, 0, 432, target.height / 2]));
+
+    const draw = calls.find(call => call.op === 'drawImage');
+    assert.equal(draw.args[0], source);
+    assert.deepEqual(draw.args.slice(3), [400, 220], 'chart is drawn at its CSS size');
+    const [, chartX, chartY] = draw.args;
+    assert.equal(chartX, 16);
+
+    const texts = calls.filter(call => call.op === 'fillText');
+    const title = texts.find(call => call.text === 'CPU Usage');
+    assert.equal(title.align, 'left');
+    assert.ok(title.y < chartY, 'title is above the chart');
+    const details = texts.find(call => call.text === '12.5% · 4 cores');
+    assert.ok(details.x > title.x + 9 * 7, 'details follow the title');
+    // Host and range do not fit side by side in 400px, so both are kept on
+    // separate rows instead of dropping the hostname.
+    const footer = texts.filter(call => call.y > chartY + 220);
+    assert.deepEqual(footer.map(call => [call.text, call.align]), [
+        ['web-01', 'left'],
+        ['29 Sept 2026, 14:00:00 UTC – 29 Sept 2026, 14:05:00 UTC', 'left'],
+    ]);
+    assert.ok(footer[1].y > footer[0].y);
+    footer.forEach(call => assert.ok(Array.from(call.text).length * 7 <= 400, `${call.text} overflows`));
+    assert.ok(target.height / 2 >= footer[1].y + 16, 'footer keeps bottom padding');
+
+    const wide = recordingCanvas();
+    paintChartImage(wide, {
+        source: { width: 1600, height: 440 }, ratio: 2, title: 'CPU Usage', details: '',
+        footerStart: 'web-01', footerEnd: '29 Sept 2026, 14:00:00 UTC – 29 Sept 2026, 14:05:00 UTC',
+        background: ['#fff'], border: '#ccc', fonts: imageFonts,
+    });
+    const wideFooter = wide.ctx.calls.filter(call => call.op === 'fillText' && call.text !== 'CPU Usage');
+    assert.deepEqual(wideFooter.map(call => call.align), ['left', 'right'], 'wide footer shares one row');
+    assert.equal(wideFooter[0].y, wideFooter[1].y);
+    assert.equal(wideFooter[1].x, 800 + 16, 'range is aligned to the right padding edge');
+    assert.ok(wide.height < target.height, 'one footer row is shorter than two');
+});
+
+test('chart image mirrors for RTL and omits an empty footer', () => {
+    const target = recordingCanvas();
+    paintChartImage(target, {
+        source: { width: 300, height: 200 }, ratio: 1, rtl: true, title: 'استخدام المعالج',
+        details: '', footerStart: '', footerEnd: '',
+        background: ['#fff'], border: '#ccc', fonts: imageFonts,
+    });
+    const texts = target.ctx.calls.filter(call => call.op === 'fillText');
+    assert.equal(texts.length, 1);
+    assert.equal(texts[0].align, 'right');
+    assert.equal(texts[0].x, 332 - 16, 'RTL title starts at the right padding edge');
+    const draw = target.ctx.calls.find(call => call.op === 'drawImage');
+    assert.equal(target.height, draw.args[2] + 200 + 16, 'no footer row is reserved');
+});

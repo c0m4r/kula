@@ -146,6 +146,7 @@
     "mem_used_only": "בשימוש: {used}",
     "cpu_mem_summary": "מעבד: {cpu}%  זיכרון: {mem}",
     "split_by_device": "פיצול לפי התקן",
+    "save_chart_image": "שמירה כתמונה",
     "customization": "התאמה אישית",
     "appearance": "מראה",
     "accessibility": "נגישות",

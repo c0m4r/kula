@@ -146,6 +146,7 @@
     "mem_used_only": "المستخدم: {used}",
     "cpu_mem_summary": "المعالج: {cpu}%  الذاكرة: {mem}",
     "split_by_device": "تقسيم حسب الجهاز",
+    "save_chart_image": "حفظ كصورة",
     "customization": "تخصيص",
     "appearance": "المظهر",
     "accessibility": "إمكانية الوصول",

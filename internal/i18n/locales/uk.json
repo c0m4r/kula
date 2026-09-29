@@ -146,6 +146,7 @@
     "mem_used_only": "Використано: {used}",
     "cpu_mem_summary": "ЦП: {cpu}%  Пам’ять: {mem}",
     "split_by_device": "Розділити за пристроєм",
+    "save_chart_image": "Зберегти як зображення",
     "customization": "Налаштування вигляду",
     "appearance": "Вигляд",
     "accessibility": "Доступність",

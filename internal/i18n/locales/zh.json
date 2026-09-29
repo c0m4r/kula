@@ -146,6 +146,7 @@
     "mem_used_only": "已用: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  内存: {mem}",
     "split_by_device": "按设备拆分",
+    "save_chart_image": "保存为图片",
     "customization": "个性化",
     "appearance": "外观",
     "accessibility": "无障碍",

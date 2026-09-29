@@ -4,6 +4,9 @@
    ============================================================ */
 'use strict';
 import { state } from './state.js';
+import { i18n } from './i18n.js';
+import { formatFullTimestamp } from './format.js';
+import { saveChartImage } from './chart-image.js';
 
 const ORDER_STEP = 10;
 const ROW_TOLERANCE_PX = 10;
@@ -168,12 +171,9 @@ export function toggleExpandChart(cardId) {
     resizeCardChart(card);
 }
 
-// Add the expand button to a chart card header (idempotent).
-export function addExpandButton(card) {
-    if (!card?.id || card.querySelector('.btn-expand-chart')) return;
-
+function headerActions(card) {
     const header = card.querySelector('.chart-header');
-    if (!header) return;
+    if (!header) return null;
 
     let actions = header.querySelector('.chart-header-right');
     if (!actions) {
@@ -181,6 +181,15 @@ export function addExpandButton(card) {
         actions.className = 'chart-header-right';
         header.appendChild(actions);
     }
+    return actions;
+}
+
+// Add the expand button to a chart card header (idempotent).
+export function addExpandButton(card) {
+    if (!card?.id || card.querySelector('.btn-expand-chart')) return;
+
+    const actions = headerActions(card);
+    if (!actions) return;
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -196,9 +205,54 @@ export function addExpandButton(card) {
     actions.appendChild(btn);
 }
 
+// ---- Save as Image ----
+async function saveCardImage(card, button) {
+    const chart = chartForCanvas(card.querySelector('.chart-body canvas'));
+    if (!chart || button.disabled) return;
+    button.disabled = true;
+    try {
+        await saveChartImage(chart, card, {
+            hostname: document.getElementById('hostname')?.textContent?.trim() || '',
+            formatTimestamp: value => formatFullTimestamp(value, state.timeZone, i18n.currentLang),
+            utc: state.timeZone === 'utc',
+            rtl: document.documentElement.dir === 'rtl',
+        });
+    } catch (error) {
+        console.error('Chart image export failed:', error);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+// Add the save-as-image button to a chart card header (idempotent). It sits
+// before the expand button, which stays the trailing control. The data-i18n
+// attributes let language changes retitle existing buttons.
+export function addSaveImageButton(card) {
+    if (!card || card.querySelector('.btn-chart-image')) return;
+
+    const actions = headerActions(card);
+    if (!actions) return;
+
+    const translated = i18n.t('save_chart_image');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-icon btn-chart-image';
+    btn.dataset.i18nTitle = 'save_chart_image';
+    btn.dataset.i18nAriaLabel = 'save_chart_image';
+    btn.title = translated !== 'save_chart_image' ? translated : 'Save as image';
+    btn.setAttribute('aria-label', btn.title);
+    btn.textContent = '📷';
+    btn.addEventListener('click', event => {
+        event.stopPropagation();
+        saveCardImage(card, btn);
+    });
+    actions.insertBefore(btn, actions.querySelector('.btn-expand-chart'));
+}
+
 // Attach card-local interactions needed after page initialization. Chart
 // double-click reset is owned by main.js's single delegated document handler.
 export function attachDynamicChartCardActions(card) {
     addExpandButton(card);
+    addSaveImageButton(card);
     attachHoverPauseToCard(card);
 }

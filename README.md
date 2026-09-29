@@ -129,6 +129,7 @@ it connects via WebSocket for live updates and falls back to history API for lon
 - Bucket-aware tooltips and Local/UTC timestamps, with secondary choices in Customization
 - Drag, modifier-wheel, touch/pinch, and keyboard pan/zoom plus a shared pinnable crosshair
 - Accessible chart names and keyboard exploration; Data tables and CSV are opt-in
+- Save any chart as a PNG image with its title, host and visible time range
 - Chart updates limited to the viewport, with plot-width sampling and full-range live refreshes
 - Focus mode to display only specific charts and request only their history sections
 - Configurable Y-axis bounds (Manual limits or Auto-detect)

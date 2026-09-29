@@ -146,6 +146,7 @@
     "mem_used_only": "उपयोग: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  मेमोरी: {mem}",
     "split_by_device": "डिवाइस के अनुसार विभाजित करें",
+    "save_chart_image": "छवि के रूप में सहेजें",
     "customization": "अनुकूलन",
     "appearance": "दिखावट",
     "accessibility": "सुगम्यता",

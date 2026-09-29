@@ -12,6 +12,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Added
 
 - Clock picker for custom range times
+- Download the chart as PNG image
 
 ### Changed
 

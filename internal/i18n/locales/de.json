@@ -146,6 +146,7 @@
     "mem_used_only": "Belegt: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  RAM: {mem}",
     "split_by_device": "Nach Gerät aufteilen",
+    "save_chart_image": "Als Bild speichern",
     "customization": "Anpassung",
     "appearance": "Darstellung",
     "accessibility": "Barrierefreiheit",

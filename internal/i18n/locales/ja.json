@@ -146,6 +146,7 @@
     "mem_used_only": "使用中: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  メモリ: {mem}",
     "split_by_device": "デバイスごとに分割",
+    "save_chart_image": "画像として保存",
     "customization": "カスタマイズ",
     "appearance": "外観",
     "accessibility": "アクセシビリティ",

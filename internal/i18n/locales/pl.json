@@ -146,6 +146,7 @@
     "mem_used_only": "Użyte: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  Pam: {mem}",
     "split_by_device": "Podziel według urządzenia",
+    "save_chart_image": "Zapisz jako obraz",
     "customization": "Personalizacja",
     "appearance": "Wygląd",
     "accessibility": "Dostępność",

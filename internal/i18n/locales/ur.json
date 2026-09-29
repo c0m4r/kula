@@ -146,6 +146,7 @@
     "mem_used_only": "استعمال شدہ: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  میموری: {mem}",
     "split_by_device": "ڈیوائس کے مطابق تقسیم کریں",
+    "save_chart_image": "تصویر کے طور پر محفوظ کریں",
     "customization": "تخصیص",
     "appearance": "ظاہری شکل",
     "accessibility": "قابلِ رسائی",

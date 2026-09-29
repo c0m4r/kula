@@ -146,6 +146,7 @@
     "mem_used_only": "Terpakai: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}",
     "split_by_device": "Pisahkan per perangkat",
+    "save_chart_image": "Simpan sebagai gambar",
     "customization": "Kustomisasi",
     "appearance": "Tampilan",
     "accessibility": "Aksesibilitas",

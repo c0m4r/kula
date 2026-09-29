@@ -146,6 +146,7 @@
     "mem_used_only": "Použito: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  Pam: {mem}",
     "split_by_device": "Rozdělit podle zařízení",
+    "save_chart_image": "Uložit jako obrázek",
     "customization": "Přizpůsobení",
     "appearance": "Vzhled",
     "accessibility": "Přístupnost",

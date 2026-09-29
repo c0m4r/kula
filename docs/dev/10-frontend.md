@@ -50,7 +50,8 @@ Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.
 | `chart-interactions.js` | Pointer/keyboard pan and zoom, shared crosshair, and gesture-safe tooltips |
 | `chart-envelope.js` | Compact extrema arrays plus Min–Max and missing-interval chart bands |
 | `chart-accessibility.js` | Canvas names/summaries, keyboard point cursor, bounded semantic tables, and complete chart CSV |
-| `chart-card-actions.js` | Expand-button and hover/touch pause interactions shared by static and dynamic chart cards |
+| `chart-card-actions.js` | Expand and save-as-image buttons plus hover/touch pause, shared by static, dynamic and split chart cards |
+| `chart-image.js` | Import-free PNG export: composites a chart canvas with its card title, details, host and time range |
 | `format.js` | Metric and Local/UTC formatting, datetime conversion, and bucket-tooltip semantics |
 | `history-request.js` | Abortable, generation-safe latest-history-request controller |
 | `history-data.js` | Canonical history items, aggregation validity, missing-observation gaps, and Focus Mode API sections |
@@ -186,6 +187,16 @@ chart creation, creates a Data button only after opt-in, and creates table/expor
 first use. Opt-out removes those nodes without removing canvas accessibility. The table preview
 shows up to 50 timestamps; CSV includes all represented observations in the selected viewport,
 with representative values and trusted extrema. Spreadsheet formula strings are escaped.
+
+Each card's 📷 button (`addSaveImageButton`, placed before the expand button) exports a PNG
+entirely in the browser. `chart-image.js` copies the rendered Chart.js canvas 1:1 at its current
+device-pixel ratio. Legend, bands, gap shading and a pinned crosshair are already in the
+canvas. It paints the page and translucent card backgrounds under it, so the image is opaque in
+either theme. Above the chart go the card title, subtitle and visible device-selector values;
+below it go the hostname and the viewport range (`formatFullTimestamp`, honoring Local/UTC).
+Footer labels wrap to two rows rather than truncating the hostname. Layout mirrors for RTL
+languages with explicit left/right alignment, because canvas `direction` is not honored
+everywhere. The module has no imports, so `history_frontend_test.mjs` can load it directly.
 
 Focus Mode selects API metric sections through `history-data.js`; leaving or changing
 Focus Mode refreshes the interval to populate newly visible cards. The default dashboard asks

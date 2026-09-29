@@ -101,7 +101,7 @@ func TestCurrentUITranslationsCoverEveryLocale(t *testing.T) {
 		"quick_ranges", "today", "yesterday", "from", "to", "selected_duration", "cancel",
 		"apply_range", "calendar_month", "previous_month", "next_month", "pick_start_day", "pick_end_day",
 		"range_time_invalid", "show_calendar", "hour", "minute", "second", "start_of_day", "end_of_day", "now",
-		"synced", "not_synced", "source", "users", "self", "rss",
+		"synced", "not_synced", "source", "users", "self", "rss", "save_chart_image",
 	}
 
 	for _, lang := range SupportedLangs {

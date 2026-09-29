@@ -146,6 +146,7 @@
     "mem_used_only": "Utilizat: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  Mem: {mem}",
     "split_by_device": "Împarte pe dispozitiv",
+    "save_chart_image": "Salvează ca imagine",
     "customization": "Personalizare",
     "appearance": "Aspect",
     "accessibility": "Accesibilitate",

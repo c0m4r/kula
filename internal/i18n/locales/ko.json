@@ -146,6 +146,7 @@
     "mem_used_only": "사용: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  메모리: {mem}",
     "split_by_device": "장치별로 분할",
+    "save_chart_image": "이미지로 저장",
     "customization": "사용자 지정",
     "appearance": "모양",
     "accessibility": "접근성",

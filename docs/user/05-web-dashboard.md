@@ -174,6 +174,15 @@ exports all observations represented in that chart's viewport, including rows om
 preview. Text that could be interpreted as a spreadsheet formula is neutralized. Disabling the
 preference removes the controls and tables while retaining basic chart accessibility.
 
+### Save a chart as an image
+
+Click 📷 in a chart card's header to download it as a PNG, e.g.
+`kula-web-01-cpu-usage-20260929-143005.png` (a trailing `Z` marks a UTC timestamp). The image
+shows the chart as currently rendered (zoom, legend selections, Min–Max bands, gap shading
+and any pinned crosshair) with its title, header values and selected device. A footer names the
+host and the visible time range in the selected Local/UTC zone. It uses the current theme and
+the screen's pixel density. The export happens in the browser and does not contact the server.
+
 ### Focus mode
 
 Hide everything except the charts you care about. Useful when investigating a specific

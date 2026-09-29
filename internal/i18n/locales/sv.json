@@ -146,6 +146,7 @@
     "mem_used_only": "Använt: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  Minne: {mem}",
     "split_by_device": "Dela upp per enhet",
+    "save_chart_image": "Spara som bild",
     "customization": "Anpassning",
     "appearance": "Utseende",
     "accessibility": "Tillgänglighet",

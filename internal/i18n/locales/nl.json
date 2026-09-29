@@ -146,6 +146,7 @@
     "mem_used_only": "Gebruikt: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  Geh: {mem}",
     "split_by_device": "Splitsen per apparaat",
+    "save_chart_image": "Opslaan als afbeelding",
     "customization": "Aanpassing",
     "appearance": "Weergave",
     "accessibility": "Toegankelijkheid",

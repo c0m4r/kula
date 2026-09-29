@@ -343,6 +343,9 @@ check(document.getElementById('btn-apply-custom').textContent === i18n.t('apply_
 check(document.getElementById('sys-info').textContent.includes(i18n.t('source')) &&
     document.getElementById('sys-info').textContent.includes(i18n.t('self')),
     'Footer status text is not translated');
+check([...document.querySelectorAll('.btn-chart-image')].every(button =>
+    button.title === 'Zapisz jako obraz' && button.getAttribute('aria-label') === button.title),
+    'Save-as-image buttons were not retitled by a language change');
 await i18n.loadTranslations('en');
 i18n.applyTranslations();
 document.dispatchEvent(new Event('kula-i18n-changed'));
@@ -381,6 +384,39 @@ check(document.querySelector('.chart-data-download'), 'CSV control missing');
 checkbox.checked = false; checkbox.dispatchEvent(new Event('change', { bubbles: true }));
 check(!document.querySelector('.btn-chart-data') && !document.querySelector('.chart-data-panel'), 'Opt-out retained controls or table');
 check(JSON.parse(localStorage.getItem('kula_ui_settings')).chart_data_controls === false, 'Opt-out did not persist');
+
+// Every chart card offers a PNG snapshot before its expand control. The
+// export is opaque (cards are translucent), keeps the canvas resolution, adds
+// the header/footer rows and downloads under a descriptive name.
+const imageButtons = document.querySelectorAll('.chart-card .btn-chart-image');
+check(imageButtons.length > 0 &&
+    imageButtons.length === document.querySelectorAll('.chart-card .btn-expand-chart').length,
+    'Save-as-image button is missing from some chart cards');
+const cpuImageButton = cpu.canvas.closest('.chart-card').querySelector('.btn-chart-image');
+check(cpuImageButton.nextElementSibling?.classList.contains('btn-expand-chart'),
+    'Save-as-image button is not placed before the expand button');
+const nativeCreateObjectURL = URL.createObjectURL;
+const nativeAnchorClick = HTMLAnchorElement.prototype.click;
+let imageDownload = null;
+URL.createObjectURL = blob => { imageDownload = { blob }; return nativeCreateObjectURL.call(URL, blob); };
+HTMLAnchorElement.prototype.click = function () { if (imageDownload) imageDownload.filename = this.download; };
+try {
+    cpuImageButton.click();
+    for (let i = 0; i < 300 && !imageDownload?.filename; i++) await pause(10);
+} finally {
+    URL.createObjectURL = nativeCreateObjectURL;
+    HTMLAnchorElement.prototype.click = nativeAnchorClick;
+}
+check(imageDownload?.blob?.type === 'image/png', 'Chart image was not exported as PNG');
+check(/^kula-(?:[\p{L}\p{N}-]+-)?cpu-usage-\d{8}-\d{6}Z?\.png$/u.test(imageDownload.filename),
+    `Unexpected chart image name ${imageDownload.filename}`);
+const snapshot = await createImageBitmap(imageDownload.blob);
+check(snapshot.width === cpu.canvas.width + 32, 'Chart image width does not match the chart canvas');
+check(snapshot.height > cpu.canvas.height + 40, 'Chart image omitted the title and footer rows');
+const snapshotPixels = new OffscreenCanvas(snapshot.width, snapshot.height).getContext('2d');
+snapshotPixels.drawImage(snapshot, 0, 0);
+check(snapshotPixels.getImageData(1, 1, 1, 1).data[3] === 255, 'Chart image background is transparent');
+check(!cpuImageButton.disabled, 'Save-as-image button stayed disabled after export');
 
 const tooltipPoint = cpu.data.datasets[1].data[0];
 const tooltipItems = [{ parsed: { x: Number(tooltipPoint.x) }, raw: tooltipPoint }];
@@ -1154,6 +1190,6 @@ window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math
     shaded_measurement_gaps: true, historical_device_selection: true, stable_disk_identity: true,
     gesture_request_isolation: true, minimum_zoom_points: 12, legacy_metric_compatibility: true,
     unavailable_replication_lag: true, filesystem_aggregation_tooltips: true,
-    bucketed_live_preset: true, suspended_aggregation: true, errors };
+    bucketed_live_preset: true, suspended_aggregation: true, chart_image_export: true, errors };
 check(errors.length === 0, errors.join('; '));
 window.ready = true;

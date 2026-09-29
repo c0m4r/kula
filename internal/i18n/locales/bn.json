@@ -146,6 +146,7 @@
     "mem_used_only": "ব্যবহৃত: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  মেমরি: {mem}",
     "split_by_device": "ডিভাইস অনুযায়ী ভাগ করুন",
+    "save_chart_image": "ছবি হিসেবে সংরক্ষণ করুন",
     "customization": "কাস্টমাইজেশন",
     "appearance": "চেহারা",
     "accessibility": "অ্যাক্সেসিবিলিটি",

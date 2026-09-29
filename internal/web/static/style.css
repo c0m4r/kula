@@ -3074,6 +3074,27 @@ body.light-mode .range-calendar-month {
     background: rgba(6, 182, 212, 0.1);
 }
 
+/* ---- Save-as-image button in chart header ---- */
+.btn-chart-image {
+    font-size: 0.85rem;
+    padding: 0.15rem 0.35rem;
+    opacity: 0.5;
+    transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+    flex-shrink: 0;
+}
+
+.btn-chart-image:hover,
+.btn-chart-image:focus-visible {
+    opacity: 1;
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+}
+
+.btn-chart-image:disabled {
+    cursor: progress;
+    opacity: 0.3;
+}
+
 /* ---- List Layout Mode ---- */
 .layout-list .charts-grid {
     grid-template-columns: 1fr;
@@ -4316,6 +4337,7 @@ html.a11y-contrast body {
 /* A lot of chrome is dimmed to 0.5-0.75 opacity by default. Restore it. */
 html.a11y-contrast .btn-icon,
 html.a11y-contrast .btn-expand-chart,
+html.a11y-contrast .btn-chart-image,
 html.a11y-contrast .btn-ai-chart,
 html.a11y-contrast .btn-alert.no-alerts,
 html.a11y-contrast .container-app-filter-caret,

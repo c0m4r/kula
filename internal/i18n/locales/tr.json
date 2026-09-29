@@ -146,6 +146,7 @@
     "mem_used_only": "Kullanılan: {used}",
     "cpu_mem_summary": "CPU: {cpu}%  Bellek: {mem}",
     "split_by_device": "Aygıta göre ayır",
+    "save_chart_image": "Resim olarak kaydet",
     "customization": "Özelleştirme",
     "appearance": "Görünüm",
     "accessibility": "Erişilebilirlik",
