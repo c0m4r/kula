@@ -57,7 +57,28 @@ export async function stopProcess(child, closed, graceMs = 5000) {
     }
 }
 
-export async function launchChromium(browserPath, args, userDataDir, timeoutMs = 30000) {
+// Startup work a test browser never needs, each a known place for Chromium to
+// block on a headless CI host: the OS keyring (password store), the component
+// and sync updaters, extensions, and the default-browser check.
+const STARTUP_FLAGS = [
+    '--password-store=basic',
+    '--disable-component-update',
+    '--disable-sync',
+    '--disable-extensions',
+    '--disable-default-apps',
+    '--no-default-browser-check',
+    '--disable-breakpad',
+];
+
+// A killed attempt can leave its endpoint file and profile lock behind. The
+// next attempt must neither read that endpoint nor refuse the locked profile.
+function clearStaleProfileState(userDataDir) {
+    for (const name of ['DevToolsActivePort', 'SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+        fs.rmSync(path.join(userDataDir, name), { force: true });
+    }
+}
+
+async function launchOnce(browserPath, args, userDataDir, timeoutMs) {
     // The test browser needs no desktop services, so keep it off D-Bus.
     // Chromium 154 queries Bluetooth, NetworkManager and UPower over the system
     // bus at startup, and on GitHub's Ubuntu runners, where systemd can start
@@ -84,10 +105,28 @@ export async function launchChromium(browserPath, args, userDataDir, timeoutMs =
             if (endpoint) return { browser, browserClosed, endpoint };
             await delay(50);
         }
-        throw launchError(`Chromium did not expose a DevTools endpoint within ${timeoutMs / 1000}s.`,
+        const error = launchError(`Chromium did not expose a DevTools endpoint within ${timeoutMs / 1000}s.`,
             browserPath, browser, output);
+        error.stalled = true;
+        throw error;
     } catch (error) {
         await stopProcess(browser, browserClosed);
         throw error;
+    }
+}
+
+// Even off D-Bus, Chromium intermittently stalls before exposing DevTools on
+// GitHub's Ubuntu runners: identical commits pass and fail. The stall happens
+// before any page loads, so restarting cannot hide a dashboard failure; each
+// restart is logged so the flake stays visible.
+export async function launchChromium(browserPath, args, userDataDir, { timeoutMs = 20000, attempts = 3 } = {}) {
+    for (let attempt = 1; ; attempt++) {
+        clearStaleProfileState(userDataDir);
+        try {
+            return await launchOnce(browserPath, [...STARTUP_FLAGS, ...args], userDataDir, timeoutMs);
+        } catch (error) {
+            if (!error.stalled || attempt >= attempts) throw error;
+            console.error(`${error.message}\nRestarting Chromium (attempt ${attempt + 1} of ${attempts}).`);
+        }
     }
 }
