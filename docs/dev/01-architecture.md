@@ -22,10 +22,12 @@ the binary via `//go:embed`, so there are no runtime assets to ship.
           ┌───────────────────┼───────────────────────┐
           │ serve             │ tui                    │ hash-password / inspect / disks
           ▼                   ▼                        ▼
-   ┌─────────────┐      ┌───────────┐           one-shot helpers
+   ┌─────────────┐      ┌────────────┐          one-shot helpers
    │  config     │      │  collector │
    │  .Load()    │      │  + tui     │
-   └──────┬──────┘      └───────────┘
+   └──────┬──────┘      │  + storage │
+          │             │  read-only │
+          │             └────────────┘
           ▼
    ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
    │  collector  │   │   storage   │   │   sandbox   │   │  web.Server │

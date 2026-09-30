@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -254,7 +255,7 @@ func TestOverviewFitsStandardTerminalWithoutScrolling(t *testing.T) {
 func TestNavigationAlwaysExposesViews(t *testing.T) {
 	wide := newTestModel(80, 24)
 	wideTabs := stripped(wide.renderTabBar())
-	for _, want := range []string{"1 Overview", "2 CPU", "7 GPU"} {
+	for _, want := range []string{"1 Overview", "2 CPU", "7 GPU", "8 History"} {
 		if !strings.Contains(wideTabs, want) {
 			t.Errorf("standard tab bar missing %q", want)
 		}
@@ -285,13 +286,13 @@ func TestKeyboardTabNavigationAndDirectJump(t *testing.T) {
 		t.Fatalf("Shift+Tab selected %d, want Overview", got)
 	}
 
-	m.activeTab = tabGPU
+	m.activeTab = tabHistory
 	wrapped, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	if got := wrapped.(model).activeTab; got != tabOverview {
 		t.Fatalf("right-arrow wrap selected %d, want Overview", got)
 	}
 
-	for key := '1'; key <= '7'; key++ {
+	for key := '1'; key <= '8'; key++ {
 		jumped, _ := m.Update(runeKey(key))
 		if got, want := jumped.(model).activeTab, tabID(key-'1'); got != want {
 			t.Errorf("%c selected %d, want %d", key, got, want)
@@ -562,12 +563,12 @@ func TestSparklineWidthAndInvalidValues(t *testing.T) {
 
 func TestGaugeClampsPercent(t *testing.T) {
 	for _, value := range []float64{-10, 0, 50, 110, math.NaN()} {
-		line := stripped(renderGauge("CPU", value, "", 60))
+		line := stripped(strings.Join(renderGauge("CPU", value, "", 60), "\n"))
 		if strings.Contains(line, "NaN") {
 			t.Errorf("gauge exposed invalid value: %q", line)
 		}
 	}
-	if line := stripped(renderGauge("CPU", 110, "", 60)); !strings.Contains(line, "100.0%") {
+	if line := stripped(strings.Join(renderGauge("CPU", 110, "", 60), "\n")); !strings.Contains(line, "100.0%") {
 		t.Fatalf("high gauge not clamped: %q", line)
 	}
 }
@@ -641,5 +642,236 @@ func TestTrendWindowUsesActualSampleSpan(t *testing.T) {
 	m.histTimes.push(start.Add(9 * time.Second))
 	if got := m.trendWindow(); got != "last 9s" {
 		t.Fatalf("trend window = %q, want last 9s", got)
+	}
+}
+
+func TestMetricGridAlignsValuesWithoutCuttingLabels(t *testing.T) {
+	items := []metricItem{
+		{"Established", "17"},
+		{"Retrans / s", "0.00"},
+		{"Input errors / s", "0.00"},
+		{"UDP in use", "6"},
+	}
+	for _, width := range []int{46, 76, 116} {
+		lines := metricGrid(items, width, responsiveColumns(width, 2, 4))
+		plain := stripped(strings.Join(lines, "\n"))
+		for _, item := range items {
+			if !strings.Contains(plain, item.label+" ") {
+				t.Errorf("width %d cut label %q:\n%s", width, item.label, plain)
+			}
+		}
+		if len(lines) > 1 {
+			// Values are right-aligned: their last digits share a column.
+			first, second := stripped(lines[0]), stripped(lines[1])
+			if strings.Index(first, "17")+len("17") != strings.Index(second, "0.00")+len("0.00") {
+				t.Errorf("width %d values not aligned:\n%s\n%s", width, first, second)
+			}
+		}
+	}
+}
+
+// barSpan returns the first and last cell of a gauge's bar.
+func barSpan(line string) (int, int) {
+	cells := []rune(stripped(line))
+	first, last := -1, -1
+	for index, cell := range cells {
+		if cell == '━' || cell == '─' {
+			if first < 0 {
+				first = index
+			}
+			last = index
+		}
+	}
+	return first, last
+}
+
+func TestGaugesShareBarGeometryAndKeepDetails(t *testing.T) {
+	for _, width := range []int{46, 76, 116} {
+		withDetail := renderGauge("VRAM", 22.5, "922.2 MiB / 24.0 GiB", width)
+		bare := renderGauge("Core", 17, "", width)
+		a0, a1 := barSpan(withDetail[0])
+		b0, b1 := barSpan(bare[0])
+		if a0 != b0 || a1 != b1 || a0 < 0 {
+			t.Errorf("width %d bars differ: [%d,%d] vs [%d,%d]", width, a0, a1, b0, b1)
+		}
+		joined := stripped(strings.Join(withDetail, "\n"))
+		if !strings.Contains(joined, "922.2 MiB / 24.0 GiB") {
+			t.Errorf("width %d truncated the detail: %q", width, joined)
+		}
+		for _, line := range withDetail {
+			if lipgloss.Width(line) > width {
+				t.Errorf("width %d gauge overflows: %q", width, stripped(line))
+			}
+		}
+	}
+	if lines := renderGauge("RAM", 50, "7.2 GiB / 27.3 GiB", 116); len(lines) != 1 {
+		t.Fatalf("wide gauge split its detail onto %d lines", len(lines))
+	}
+}
+
+func TestProcessStatesAccountForEveryTask(t *testing.T) {
+	m := newTestModel(80, 30)
+	m.activeTab = tabProcesses
+	m.sample.Process = collector.ProcessStats{Total: 200, Running: 2, Sleeping: 148, Threads: 900}
+	content := stripped(strings.Join(m.contentLines(m.contentWidth()), "\n"))
+	if !strings.Contains(content, "Other") || !strings.Contains(content, "25.0%") {
+		t.Fatalf("idle kernel threads not accounted for:\n%s", content)
+	}
+
+	m.sample.Process = collector.ProcessStats{Total: 150, Running: 2, Sleeping: 148}
+	if content := stripped(strings.Join(m.contentLines(m.contentWidth()), "\n")); strings.Contains(content, "Other") {
+		t.Fatal("empty Other row shown when the states add up")
+	}
+
+	for _, width := range []int{32, 46, 76} {
+		line := renderStateGauge("Sleeping", 225, 361, width, sText, sBarRest)
+		if lipgloss.Width(line) > width || !strings.Contains(stripped(line), "62.3%") {
+			t.Errorf("width %d state gauge lost its share: %q", width, stripped(line))
+		}
+	}
+}
+
+func TestHealthWrapsInsteadOfTruncating(t *testing.T) {
+	findings := []string{
+		"CPU 95%", "memory 92%", "load 2.1/core", "disk /var/lib/docker 97% full",
+		"nvme0n1 99% busy", "3 zombie", "clock not synchronized",
+	}
+	lines := renderHealth(healthCritical, findings, 60)
+	if len(lines) < 2 || len(lines) > 3 {
+		t.Fatalf("health used %d lines, want 2-3", len(lines))
+	}
+	joined := stripped(strings.Join(lines, "\n"))
+	shown := 0
+	for _, finding := range findings {
+		if strings.Contains(joined, finding) {
+			shown++
+		}
+	}
+	if shown < len(findings) && !strings.Contains(joined, fmt.Sprintf("+%d more", len(findings)-shown)) {
+		t.Fatalf("hid %d findings without saying so:\n%s", len(findings)-shown, joined)
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) != 60 {
+			t.Errorf("health line width %d: %q", lipgloss.Width(line), stripped(line))
+		}
+	}
+	if single := renderHealth(healthOK, nil, 60); len(single) != 1 ||
+		!strings.Contains(stripped(single[0]), "NOMINAL") {
+		t.Fatalf("nominal health = %q", single)
+	}
+
+	sample := newTestSample()
+	sample.Disks.FileSystems[0].UsedPct = 88
+	if _, got := assessHealth(sample); len(got) != 1 || got[0] != "disk / 88% full" {
+		t.Fatalf("filesystem finding = %q, want a labelled mount point", got)
+	}
+}
+
+func TestTrafficTrendsShareOneScale(t *testing.T) {
+	m := newTestModel(80, 24)
+	m.histNetRx, m.histNetTx = newRing(), newRing()
+	for index := 0; index < 10; index++ {
+		m.histNetRx.push(900)
+		m.histNetTx.push(1)
+	}
+	if got := m.trafficScale(); got != 1000 {
+		t.Fatalf("traffic scale = %v, want the receive peak rounded to 1000", got)
+	}
+	m.activeTab = tabNetwork
+	content := stripped(strings.Join(m.contentLines(m.contentWidth()), "\n"))
+	if !strings.Contains(content, "Shared scale 0 – 1.00 Gbit/s") {
+		t.Fatalf("shared scale not labelled:\n%s", content)
+	}
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "↑ ") && strings.ContainsAny(line, "▂▃▄▅▆▇█") {
+			t.Fatalf("1 Mbit/s transmit drawn tall beside 900 Mbit/s receive: %q", line)
+		}
+	}
+}
+
+func TestTallTerminalsGrowTrendCharts(t *testing.T) {
+	short := newTestModel(80, 24)
+	tall := newTestModel(120, 40)
+	if short.trendRows() != 1 || short.overviewTrendRows() != 1 {
+		t.Fatal("an 80x24 terminal should keep one-line sparklines")
+	}
+	if tall.trendRows() < 3 || tall.overviewTrendRows() < 3 {
+		t.Fatalf("a 120x40 terminal left trend rows at %d/%d", tall.trendRows(), tall.overviewTrendRows())
+	}
+	tall.activeTab = tabCPU
+	content := stripped(strings.Join(tall.contentLines(tall.contentWidth()), "\n"))
+	if !strings.Contains(content, " 100%") {
+		t.Fatalf("tall CPU trend lacks its scale:\n%s", content)
+	}
+	for _, tab := range []tabID{tabOverview, tabCPU, tabMemory, tabNetwork, tabDisk, tabProcesses} {
+		tall.activeTab = tab
+		if got := tall.maxScroll(); got != 0 {
+			t.Errorf("%s needs %d lines of scrolling at 120x40", tabNames[tab], got)
+		}
+	}
+}
+
+func TestZeroValuesAreMuted(t *testing.T) {
+	for _, zero := range []string{"0", "0.00", "0.0%", "0 B/s", "0 bit/s", "0 B", " 0 "} {
+		if !isZeroValue(zero) {
+			t.Errorf("%q should read as zero", zero)
+		}
+		if valueStyle(zero, sStrong).GetForeground() != clrMuted {
+			t.Errorf("%q not muted", zero)
+		}
+	}
+	for _, value := range []string{"12", "0.5", "0.01%", "0 / 1520", "361 · 1 running", "synced · tsc", "—", ""} {
+		if isZeroValue(value) {
+			t.Errorf("%q should not read as zero", value)
+		}
+		if valueStyle(value, sStrong).GetForeground() != sStrong.GetForeground() {
+			t.Errorf("%q lost its emphasis", value)
+		}
+	}
+}
+
+func TestWideTerminalsCentreACappedFrame(t *testing.T) {
+	m := newTestModel(220, 40)
+	assertFrameFits(t, m)
+	margin := (220 - maxFrameWidth) / 2
+	lines := strings.Split(stripped(m.View()), "\n")
+	if got := strings.Index(lines[0], "KULA"); got != margin {
+		t.Fatalf("header starts at column %d, want the %d-column margin", got, margin)
+	}
+	if got := m.contentWidth(); got != maxFrameWidth-4 {
+		t.Fatalf("content width %d, want the capped %d", got, maxFrameWidth-4)
+	}
+	for tab := tabID(0); tab < numTabs; tab++ {
+		m.activeTab = tab
+		assertFrameFits(t, m)
+	}
+	if narrow := newTestModel(100, 30); narrow.frameWidth() != 100 {
+		t.Fatal("terminals under the cap must use their full width")
+	}
+}
+
+func TestStandardTabBarKeepsRoomyGaps(t *testing.T) {
+	m := newTestModel(80, 24)
+	bar := stripped(m.renderTabBar())
+	if !strings.Contains(bar, "1 Overview  2 CPU") || !strings.Contains(bar, "7 GPU  8 History") {
+		t.Fatalf("80-column tab bar lost its two-space gaps: %q", bar)
+	}
+	if lipgloss.Width(m.renderTabBar()) > 80 {
+		t.Fatal("tab bar overflows 80 columns")
+	}
+}
+
+func TestTemperaturesShareGaugeColumns(t *testing.T) {
+	for _, width := range []int{46, 76, 116} {
+		temperature := renderTemperature("Package", 41.5, width)
+		gauge := renderGauge("Total", 41.5, "", width)[0]
+		t0, t1 := barSpan(temperature)
+		g0, g1 := barSpan(gauge)
+		if t0 != g0 || t1 != g1 || t0 < 0 {
+			t.Errorf("width %d temperature bar [%d,%d], gauge bar [%d,%d]", width, t0, t1, g0, g1)
+		}
+		if !strings.Contains(stripped(temperature), "41.5°C") || lipgloss.Width(temperature) > width {
+			t.Errorf("width %d temperature row: %q", width, stripped(temperature))
+		}
 	}
 }

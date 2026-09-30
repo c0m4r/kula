@@ -33,8 +33,8 @@ drain, then storage is closed.
 
 ### `kula tui`
 
-Self-contained terminal dashboard. Does not require `serve` to be running and does not touch
-the storage files. See [Terminal UI](06-tui.md).
+Self-contained terminal dashboard. Does not require `serve` to be running. Its History view
+reads the storage tier files read-only and never modifies them. See [Terminal UI](06-tui.md).
 
 ```bash
 kula tui

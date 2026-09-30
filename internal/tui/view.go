@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,18 +41,47 @@ func (m model) View() string {
 		return m.renderTooSmall()
 	}
 
+	// On a very wide terminal the whole UI becomes a centred column: labels
+	// stay near their values and the header's two sides stay in one glance.
+	frame := m
+	frame.width = m.frameWidth()
+	view := frame.renderFrame()
+	if frame.width == m.width {
+		return view
+	}
+	left := strings.Repeat(" ", (m.width-frame.width)/2)
+	right := strings.Repeat(" ", m.width-frame.width-len(left))
+	lines := strings.Split(view, "\n")
+	for index := range lines {
+		lines[index] = left + lines[index] + right
+	}
+	return strings.Join(lines, "\n")
+}
+
+// maxFrameWidth caps line length; wider terminals get margins instead.
+const maxFrameWidth = 136
+
+func (m model) frameWidth() int {
+	return min(m.width, maxFrameWidth)
+}
+
+func (m model) renderFrame() string {
 	header := fitLine(m.renderHeader(), m.width)
 	tabs := fitLine(m.renderTabBar(), m.width)
-	footer := fitLine(m.renderFooter(), m.width)
 
-	var content string
+	// Build the active view once per frame; the footer's scroll indicator
+	// and the viewport both derive from it.
+	var content, footer string
 	if m.showHelp {
 		content = m.renderHelp(m.width, m.contentHeight())
+		footer = m.renderFooterWith(0)
 	} else {
-		content = m.renderViewport(m.width, m.contentHeight())
+		lines := m.contentLines(m.contentWidth())
+		content = m.renderViewportLines(lines, m.width, m.contentHeight())
+		footer = m.renderFooterWith(max(0, len(lines)-m.contentHeight()))
 	}
 
-	return strings.Join([]string{header, tabs, content, footer}, "\n")
+	return strings.Join([]string{header, tabs, content, fitLine(footer, m.width)}, "\n")
 }
 
 func (m model) contentHeight() int {
@@ -59,13 +89,14 @@ func (m model) contentHeight() int {
 }
 
 func (m model) contentWidth() int {
+	width := m.frameWidth()
 	switch {
-	case m.width >= 48:
-		return m.width - 4
-	case m.width >= 34:
-		return m.width - 2
+	case width >= 48:
+		return width - 4
+	case width >= 34:
+		return width - 2
 	default:
-		return m.width
+		return width
 	}
 }
 
@@ -86,7 +117,7 @@ func (m model) renderHeader() string {
 	}
 
 	if m.width >= 88 && m.sample != nil && m.sample.System.UptimeHuman != "" {
-		left += sFaint.Render("  uptime ") + sText.Render(m.sample.System.UptimeHuman)
+		left += sMuted.Render("  uptime ") + sText.Render(m.sample.System.UptimeHuman)
 	}
 
 	var state string
@@ -95,7 +126,7 @@ func (m model) renderHeader() string {
 	case m.paused:
 		state = sWarn.Render("Ⅱ PAUSED")
 		if !m.lastUpdated.IsZero() {
-			state += sFaint.Render(" " + compactAge(age))
+			state += sMuted.Render(" " + compactAge(age))
 		}
 	case m.sample == nil:
 		state = sAccent.Render("◌ STARTING")
@@ -104,7 +135,7 @@ func (m model) renderHeader() string {
 	default:
 		state = sGood.Render("● LIVE")
 		if m.width >= 108 && m.collectTime > 0 {
-			state += sFaint.Render("  sample " + compactDuration(m.collectTime))
+			state += sMuted.Render("  sample " + compactDuration(m.collectTime))
 		}
 	}
 
@@ -116,34 +147,44 @@ func (m model) renderHeader() string {
 }
 
 func (m model) renderTabBar() string {
-	var tabs []string
+	tabs := make([]string, 0, numTabs)
 	for tab := tabID(0); tab < numTabs; tab++ {
-		label := fmt.Sprintf("%d %s", tab+1, tabNames[tab])
-		if tab == m.activeTab {
-			tabs = append(tabs, sTabActive.Render(label))
-		} else {
-			tabs = append(tabs, sTabInactive.Render(label))
-		}
+		tabs = append(tabs, m.renderTab(tab))
 	}
 
-	full := strings.Join(tabs, sFaint.Render("  "))
-	if lipgloss.Width(full) <= m.width-2 {
-		return centerLine(full, m.width)
+	// Prefer roomy spacing and tighten it before giving up the full list, so
+	// every view stays one digit away. The bar may use the whole width: at 80
+	// columns that is exactly what two-space gaps need, and gaps are what
+	// keep "1 Overview  2 CPU" from reading as "Overview 2".
+	for _, gap := range []string{"  ", " "} {
+		full := strings.Join(tabs, gap)
+		if lipgloss.Width(full) <= m.width {
+			return centerLine(full, m.width)
+		}
 	}
 
 	previous := (m.activeTab - 1 + numTabs) % numTabs
 	next := (m.activeTab + 1) % numTabs
-	compact := sFaint.Render("‹ ") +
-		sTabInactive.Render(fmt.Sprintf("%d %s", previous+1, tabNames[previous])) +
-		sFaint.Render("  ") +
-		sTabActive.Render(fmt.Sprintf("%d %s", m.activeTab+1, tabNames[m.activeTab])) +
-		sFaint.Render("  ") +
-		sTabInactive.Render(fmt.Sprintf("%d %s", next+1, tabNames[next])) +
-		sFaint.Render(" ›")
+	compact := sFaint.Render("‹ ") + m.renderTab(previous) + "  " +
+		m.renderTab(m.activeTab) + "  " + m.renderTab(next) + sFaint.Render(" ›")
 	return centerLine(compact, m.width)
 }
 
+// renderTab shows the digit that selects a view in a quieter tone than its
+// name, so the digit reads as a key hint attached to the name that follows.
+func (m model) renderTab(tab tabID) string {
+	number := fmt.Sprintf("%d", tab+1)
+	if tab == m.activeTab {
+		return sAccent.Render(number) + " " + sTabActive.Render(tabNames[tab])
+	}
+	return sTabNumber.Render(number) + " " + sTabInactive.Render(tabNames[tab])
+}
+
 func (m model) renderFooter() string {
+	return m.renderFooterWith(m.maxScroll())
+}
+
+func (m model) renderFooterWith(maxScroll int) string {
 	if m.showHelp {
 		return joinSides(
 			sKey.Render("? / esc")+" "+sMuted.Render("close help"),
@@ -163,6 +204,32 @@ func (m model) renderFooter() string {
 	}
 	var hints []hint
 	switch {
+	case m.activeTab == tabHistory && m.width >= 104:
+		hints = []hint{
+			{"- +", "range"},
+			{"[ ]", "pan"},
+			{"n", "now"},
+			{"tab", "switch"},
+			{"↑↓", "scroll"},
+			{"?", "keys"},
+			{"q", "quit"},
+		}
+	case m.activeTab == tabHistory && m.width >= 66:
+		hints = []hint{
+			{"- +", "range"},
+			{"[ ]", "pan"},
+			{"n", "now"},
+			{"↑↓", "scroll"},
+			{"?", "help"},
+			{"q", "quit"},
+		}
+	case m.activeTab == tabHistory:
+		hints = []hint{
+			{"- +", "range"},
+			{"[ ]", "pan"},
+			{"?", "help"},
+			{"q", "quit"},
+		}
 	case m.width >= 104:
 		hints = []hint{
 			{"tab", "switch"},
@@ -197,8 +264,8 @@ func (m model) renderFooter() string {
 	left := strings.Join(parts, sFaint.Render("  "))
 
 	right := sMuted.Render("v" + m.version)
-	if maxScroll := m.maxScroll(); maxScroll > 0 {
-		right = sAccent.Render(fmt.Sprintf("↑ %d/%d ↓", m.clampScroll(m.scroll)+1, maxScroll+1))
+	if maxScroll > 0 {
+		right = sAccent.Render(fmt.Sprintf("↑ %d/%d ↓", clamp(m.scroll, 0, maxScroll)+1, maxScroll+1))
 	}
 	return joinSides(left, right, m.width)
 }
@@ -206,37 +273,42 @@ func (m model) renderFooter() string {
 func (m model) renderHelp(width, height int) string {
 	var rows []string
 	switch {
-	case height < 12:
+	// Each layout is chosen so its bordered panel (rows + 4) fits the height.
+	case height < 19:
 		rows = []string{
 			sBrand.Render("KULA KEYS"),
-			sKey.Render("tab h l ← →") + sMuted.Render("  switch view"),
+			sKey.Render("tab h l ← → 1-8") + sMuted.Render("  switch view"),
 			sKey.Render("j k ↑ ↓") + sMuted.Render("  scroll"),
 			sKey.Render("space / r") + sMuted.Render("  pause / sample"),
 			sKey.Render("? esc / q") + sMuted.Render("  close / quit"),
+			sKey.Render("- + [ ] n") + sMuted.Render("  history smaller/bigger, pan, now"),
 		}
-	case height < 20:
+	case height < 29:
 		rows = []string{
-			sBrand.Render("KULA") + sFaint.Render("  keyboard"),
+			sBrand.Render("KULA") + sMuted.Render("  keyboard"),
 			"",
 			helpRow("tab / shift+tab", "switch view"),
 			helpRow("h l  /  ← →", "switch view"),
-			helpRow("1 … 7", "jump to view"),
+			helpRow("1 … 8", "jump to view"),
 			helpRow("j k  /  ↑ ↓", "scroll"),
 			helpRow("pgup / pgdown", "scroll page"),
 			helpRow("g / G", "top / bottom"),
 			helpRow("space", "pause / resume"),
-			helpRow("r", "sample now"),
+			helpRow("r", "sample now · reload history"),
+			helpRow("- / +", "history: smaller / bigger"),
+			helpRow("[ / ]", "history: pan back / forward"),
+			helpRow("n", "history: back to now"),
 			helpRow("? / esc", "close help"),
 			helpRow("q", "quit"),
 		}
 	default:
 		rows = []string{
-			sBrand.Render("KULA") + sFaint.Render("  keyboard"),
+			sBrand.Render("KULA") + sMuted.Render("  keyboard"),
 			"",
 			sSection.Render("Navigate"),
 			helpRow("tab / shift+tab", "next / previous view"),
 			helpRow("h l  /  ← →", "next / previous view"),
-			helpRow("1 … 7", "jump directly to a view"),
+			helpRow("1 … 8", "jump directly to a view"),
 			"",
 			sSection.Render("Move"),
 			helpRow("j k  /  ↑ ↓", "scroll one line"),
@@ -246,6 +318,13 @@ func (m model) renderHelp(width, height int) string {
 			sSection.Render("Live data"),
 			helpRow("space", "pause / resume sampling"),
 			helpRow("r", "sample immediately"),
+			"",
+			sSection.Render("History"),
+			helpRow("- / +", "smaller / bigger range"),
+			helpRow("[ / ]", "pan back / forward"),
+			helpRow("n", "back to now"),
+			helpRow("r", "reload stored history"),
+			"",
 			helpRow("q", "quit"),
 		}
 	}
@@ -268,9 +347,8 @@ func helpRow(key, description string) string {
 	return sKey.Render(padRight(key, 19)) + sText.Render(description)
 }
 
-func (m model) renderViewport(width, height int) string {
+func (m model) renderViewportLines(lines []string, width, height int) string {
 	contentWidth := m.contentWidth()
-	lines := m.contentLines(contentWidth)
 	if len(lines) == 0 {
 		lines = []string{""}
 	}
@@ -294,6 +372,9 @@ func (m model) renderViewport(width, height int) string {
 }
 
 func (m model) contentLines(width int) []string {
+	if m.activeTab == tabHistory {
+		return m.historyLines(width)
+	}
 	if m.sample == nil {
 		status := m.t.T("collecting_data")
 		if !m.collecting {
@@ -329,43 +410,46 @@ func (m model) overviewLines(width int) []string {
 	if width >= 66 {
 		trendWidth = (width - 3) / 2
 	}
-	lines := []string{
-		"",
-		sectionLine("System status", width),
-		renderHealth(level, findings, width),
-		"",
-	}
+	lines := []string{"", sectionLine("System status", width)}
+	lines = append(lines, renderHealth(level, findings, width)...)
+	lines = append(lines, "")
 
+	rows := m.overviewTrendRows()
 	cpuTile := []string{
 		sSection.Render("CPU"),
 		statusStyle(sample.CPU.Total.Usage).Render(fmt.Sprintf("%.1f%%", sample.CPU.Total.Usage)) +
 			sMuted.Render(fmt.Sprintf("  ·  load %.2f", sample.LoadAvg.Load1)),
-		sparkline(m.histCPU.getAll(), max(8, trendWidth), 0, 100),
-		sMuted.Render(fmt.Sprintf("%d cores  ·  %s", sample.CPU.NumCores, m.trendWindow())),
 	}
+	cpuTile = append(cpuTile, trendChart(m.histCPU.getAll(), max(8, trendWidth), rows, 0, 100, percentLabel)...)
+	cpuTile = append(cpuTile, sMuted.Render(fmt.Sprintf("%d cores  ·  %s", sample.CPU.NumCores, m.trendWindow())))
+
 	memoryTile := []string{
 		sSection.Render("MEMORY"),
 		statusStyle(sample.Memory.UsedPercent).Render(fmt.Sprintf("%.1f%%", sample.Memory.UsedPercent)) +
 			sMuted.Render("  ·  "+fmtBytes(sample.Memory.Used)+" / "+fmtBytes(sample.Memory.Total)),
-		sparkline(m.histMem.getAll(), max(8, trendWidth), 0, 100),
-		sMuted.Render(fmtBytes(sample.Memory.Available) + " available"),
 	}
+	memoryTile = append(memoryTile, trendChart(m.histMem.getAll(), max(8, trendWidth), rows, 0, 100, percentLabel)...)
+	memoryTile = append(memoryTile, sMuted.Render(fmtBytes(sample.Memory.Available)+" available"))
 
 	totalRx, totalTx := networkTotals(sample.Network.Interfaces)
+	trafficScale := m.trafficScale()
+	trafficRows := max(1, (rows+1)/2)
 	trafficTile := []string{
-		sSection.Render("TRAFFIC"),
-		sGood.Render("↓ "+fmtBitRate(totalRx)) +
-			sFaint.Render("   ") + sAccent.Render("↑ "+fmtBitRate(totalTx)),
-		sGood.Render("↓ ") + sparkline(m.histNetRx.getAll(), max(7, trendWidth-2), 0, 0),
-		sAccent.Render("↑ ") + sparkline(m.histNetTx.getAll(), max(7, trendWidth-2), 0, 0),
+		sSection.Render("TRAFFIC") + sMuted.Render("  scale "+fmtBitRate(trafficScale)),
+		sGood.Render("↓ "+fmtBitRate(totalRx)) + "   " + sAccent.Render("↑ "+fmtBitRate(totalTx)),
 	}
+	trafficTile = append(trafficTile, labelBaseline(sGood.Render("↓ "),
+		trendChart(m.histNetRx.getAll(), max(7, trendWidth-2), trafficRows, 0, trafficScale, nil))...)
+	trafficTile = append(trafficTile, labelBaseline(sAccent.Render("↑ "),
+		trendChart(m.histNetTx.getAll(), max(7, trendWidth-2), trafficRows, 0, trafficScale, nil))...)
+
 	diskRead, diskWrite, diskBusy := diskTotals(sample.Disks.Devices)
 	storageTile := []string{
 		sSection.Render("STORAGE"),
 		statusStyle(diskBusy).Render(fmt.Sprintf("%.1f%% busy", diskBusy)),
-		sparkline(m.histDisk.getAll(), max(8, trendWidth), 0, 100),
-		sMuted.Render("R " + fmtByteRate(diskRead) + "  ·  W " + fmtByteRate(diskWrite)),
 	}
+	storageTile = append(storageTile, trendChart(m.histDisk.getAll(), max(8, trendWidth), rows, 0, 100, percentLabel)...)
+	storageTile = append(storageTile, sMuted.Render("R "+fmtByteRate(diskRead)+"  ·  W "+fmtByteRate(diskWrite)))
 
 	if width >= 66 {
 		columnWidth := (width - 3) / 2
@@ -412,19 +496,60 @@ func (m model) overviewLines(width int) []string {
 	return lines
 }
 
+// overviewTrendRows lets the overview tiles use a tall terminal's spare rows
+// while an 80×24 overview still fits without scrolling.
+func (m model) overviewTrendRows() int {
+	switch height := m.contentHeight(); {
+	case height >= 40:
+		return 4
+	case height >= 32:
+		return 3
+	case height >= 27:
+		return 2
+	default:
+		return 1
+	}
+}
+
+// trendRows grows the detailed views' trend charts into the space a tall
+// terminal would otherwise leave empty. Short terminals keep one-line
+// sparklines so the numbers stay on screen.
+func (m model) trendRows() int {
+	switch height := m.contentHeight(); {
+	case height >= 40:
+		return 6
+	case height >= 32:
+		return 4
+	case height >= 27:
+		return 3
+	default:
+		return 1
+	}
+}
+
+// trafficScale is the shared ceiling for the receive and transmit trends, so
+// the two can be compared: a separate auto-scale draws a 1 kbit/s blip as
+// tall as a 1 Gbit/s transfer.
+func (m model) trafficScale() float64 {
+	return niceCeil(max(maxFinite(m.histNetRx.getAll()), maxFinite(m.histNetTx.getAll())))
+}
+
+func percentLabel(value float64) string { return fmt.Sprintf("%.0f%%", value) }
+
+func countLabel(value float64) string { return fmt.Sprintf("%.0f", value) }
+
 func (m model) cpuLines(width int) []string {
 	cpu := m.sample.CPU
 	load := m.sample.LoadAvg
-	lines := []string{
-		"",
-		sectionLine("CPU", width),
-		renderGauge("Total", cpu.Total.Usage,
-			fmt.Sprintf("%d logical cores", cpu.NumCores), width),
-		sparkline(m.histCPU.getAll(), width, 0, 100),
-		sMuted.Render("Trend  " + m.trendWindow()),
+	lines := []string{"", sectionLine("CPU", width)}
+	lines = append(lines, renderGauge("Total", cpu.Total.Usage,
+		fmt.Sprintf("%d logical cores", cpu.NumCores), width)...)
+	lines = append(lines, trendChart(m.histCPU.getAll(), width, m.trendRows(), 0, 100, percentLabel)...)
+	lines = append(lines,
+		sMuted.Render("Trend  "+m.trendWindow()),
 		"",
 		sectionLine("Time share", width),
-	}
+	)
 
 	timeShare := []metricItem{
 		{"User", fmt.Sprintf("%.1f%%", cpu.Total.User)},
@@ -446,7 +571,7 @@ func (m model) cpuLines(width int) []string {
 	lines = append(lines, metricGrid(loadItems, width, responsiveColumns(width, 2, 4))...)
 	if cpu.NumCores > 0 {
 		pressure := load.Load1 / float64(cpu.NumCores) * 100
-		lines = append(lines, renderGauge("Capacity", pressure, "1m load / cores", width))
+		lines = append(lines, renderGauge("Capacity", pressure, "1m load / cores", width)...)
 	}
 
 	if cpu.Temperature > 0 || len(cpu.Sensors) > 0 {
@@ -464,16 +589,15 @@ func (m model) cpuLines(width int) []string {
 func (m model) memoryLines(width int) []string {
 	memory := m.sample.Memory
 	swap := m.sample.Swap
-	lines := []string{
-		"",
-		sectionLine("Memory", width),
-		renderGauge("RAM", memory.UsedPercent,
-			fmtBytes(memory.Used)+" / "+fmtBytes(memory.Total), width),
-		sparkline(m.histMem.getAll(), width, 0, 100),
-		sMuted.Render("Trend  " + m.trendWindow()),
+	lines := []string{"", sectionLine("Memory", width)}
+	lines = append(lines, renderGauge("RAM", memory.UsedPercent,
+		fmtBytes(memory.Used)+" / "+fmtBytes(memory.Total), width)...)
+	lines = append(lines, trendChart(m.histMem.getAll(), width, m.trendRows(), 0, 100, percentLabel)...)
+	lines = append(lines,
+		sMuted.Render("Trend  "+m.trendWindow()),
 		"",
 		sectionLine("Breakdown", width),
-	}
+	)
 	items := []metricItem{
 		{"Available", fmtBytes(memory.Available)},
 		{"Free", fmtBytes(memory.Free)},
@@ -489,29 +613,33 @@ func (m model) memoryLines(width int) []string {
 		lines = append(lines, sMuted.Render(m.t.T("no_swap")))
 		return lines
 	}
-	lines = append(lines,
-		renderGauge("Swap", swap.UsedPercent,
-			fmtBytes(swap.Used)+" / "+fmtBytes(swap.Total), width),
-		sparkline(m.histSwap.getAll(), width, 0, 100),
-	)
+	lines = append(lines, renderGauge("Swap", swap.UsedPercent,
+		fmtBytes(swap.Used)+" / "+fmtBytes(swap.Total), width)...)
+	lines = append(lines, sparkline(m.histSwap.getAll(), width, 0, 100))
 	return lines
 }
 
 func (m model) networkLines(width int) []string {
 	network := m.sample.Network
 	totalRx, totalTx := networkTotals(network.Interfaces)
+	scale := m.trafficScale()
+	rows := max(1, m.trendRows()/2)
+
 	lines := []string{
 		"",
 		sectionLine("Network", width),
-		sGood.Render("↓ "+fmtBitRate(totalRx)) +
-			sFaint.Render("   receive total"),
-		sGood.Render("↓ ") + sparkline(m.histNetRx.getAll(), max(1, width-2), 0, 0),
-		sAccent.Render("↑ "+fmtBitRate(totalTx)) +
-			sFaint.Render("   transmit total"),
-		sAccent.Render("↑ ") + sparkline(m.histNetTx.getAll(), max(1, width-2), 0, 0),
+		sGood.Render("↓ "+fmtBitRate(totalRx)) + sMuted.Render("   receive total"),
+	}
+	lines = append(lines, labelBaseline(sGood.Render("↓ "),
+		trendChart(m.histNetRx.getAll(), max(1, width-2), rows, 0, scale, fmtBitRate))...)
+	lines = append(lines, sAccent.Render("↑ "+fmtBitRate(totalTx))+sMuted.Render("   transmit total"))
+	lines = append(lines, labelBaseline(sAccent.Render("↑ "),
+		trendChart(m.histNetTx.getAll(), max(1, width-2), rows, 0, scale, fmtBitRate))...)
+	lines = append(lines,
+		sMuted.Render("Shared scale 0 – "+fmtBitRate(scale)+"  ·  "+m.trendWindow()),
 		"",
 		sectionLine("Interfaces", width),
-	}
+	)
 
 	if len(network.Interfaces) == 0 {
 		lines = append(lines, sMuted.Render("No active interfaces"))
@@ -537,8 +665,8 @@ func (m model) networkLines(width int) []string {
 		for _, iface := range network.Interfaces {
 			lines = append(lines,
 				sStrong.Render(truncatePlain(iface.Name, max(6, width/3)))+
-					sFaint.Render("  ↓ ")+sText.Render(fmtBitRate(iface.RxMbps))+
-					sFaint.Render("  ↑ ")+sText.Render(fmtBitRate(iface.TxMbps)),
+					sMuted.Render("  ↓ ")+valueStyle(fmtBitRate(iface.RxMbps), sText).Render(fmtBitRate(iface.RxMbps))+
+					sMuted.Render("  ↑ ")+valueStyle(fmtBitRate(iface.TxMbps), sText).Render(fmtBitRate(iface.TxMbps)),
 				sMuted.Render(fmt.Sprintf("  packets %.0f ↓  %.0f ↑  ·  drops %d",
 					iface.RxPPS, iface.TxPPS, iface.RxDrop+iface.TxDrop)),
 			)
@@ -559,19 +687,32 @@ func (m model) networkLines(width int) []string {
 	return lines
 }
 
+// labelBaseline puts label before a chart's baseline row, where a one-row
+// sparkline would carry it, and indents the rows above to match.
+func labelBaseline(label string, lines []string) []string {
+	indent := strings.Repeat(" ", lipgloss.Width(label))
+	for index := range lines {
+		if index == len(lines)-1 {
+			lines[index] = label + lines[index]
+		} else {
+			lines[index] = indent + lines[index]
+		}
+	}
+	return lines
+}
+
 func (m model) diskLines(width int) []string {
 	disks := m.sample.Disks
 	readRate, writeRate, busy := diskTotals(disks.Devices)
-	lines := []string{
-		"",
-		sectionLine("Storage I/O", width),
-		renderGauge("Busy", busy,
-			"R "+fmtByteRate(readRate)+"  ·  W "+fmtByteRate(writeRate), width),
-		sparkline(m.histDisk.getAll(), width, 0, 100),
-		sMuted.Render("Average device utilization  ·  " + m.trendWindow()),
+	lines := []string{"", sectionLine("Storage I/O", width)}
+	lines = append(lines, renderGauge("Busy", busy,
+		"R "+fmtByteRate(readRate)+"  ·  W "+fmtByteRate(writeRate), width)...)
+	lines = append(lines, trendChart(m.histDisk.getAll(), width, m.trendRows(), 0, 100, percentLabel)...)
+	lines = append(lines,
+		sMuted.Render("Average device utilization  ·  "+m.trendWindow()),
 		"",
 		sectionLine("Block devices", width),
-	}
+	)
 
 	if len(disks.Devices) == 0 {
 		lines = append(lines, sMuted.Render("No block-device activity"))
@@ -592,17 +733,17 @@ func (m model) diskLines(width int) []string {
 				fmt.Sprintf("%.1f%%", device.Utilization),
 			}, columns, false))
 			if device.Temperature > 0 {
-				lines = append(lines, sMuted.Render("  ")+
-					renderTemperature(device.Name+" temperature", device.Temperature, width-2))
+				// Indented under its device row, so the device name need not repeat.
+				lines = append(lines, renderTemperature("  temperature", device.Temperature, width))
 			}
 		}
 	} else {
 		for _, device := range disks.Devices {
 			lines = append(lines,
 				sStrong.Render(truncatePlain(device.Name, max(6, width/4)))+
-					sFaint.Render("  R ")+sText.Render(fmtByteRate(device.ReadBytesPS))+
-					sFaint.Render("  W ")+sText.Render(fmtByteRate(device.WriteBytesPS))+
-					sFaint.Render("  ")+statusStyle(device.Utilization).Render(fmt.Sprintf("%.1f%%", device.Utilization)),
+					sMuted.Render("  R ")+valueStyle(fmtByteRate(device.ReadBytesPS), sText).Render(fmtByteRate(device.ReadBytesPS))+
+					sMuted.Render("  W ")+valueStyle(fmtByteRate(device.WriteBytesPS), sText).Render(fmtByteRate(device.WriteBytesPS))+
+					"  "+statusStyle(device.Utilization).Render(fmt.Sprintf("%.1f%%", device.Utilization)),
 			)
 		}
 	}
@@ -611,12 +752,17 @@ func (m model) diskLines(width int) []string {
 	if len(disks.FileSystems) == 0 {
 		lines = append(lines, sMuted.Render("No filesystems reported"))
 	} else {
+		labelWidth := newGaugeLayout(width).labelWidth
 		for _, filesystem := range disks.FileSystems {
 			detail := fmtBytes(filesystem.Used) + " / " + fmtBytes(filesystem.Total)
-			lines = append(lines,
-				renderGauge(truncatePlain(filesystem.MountPoint, max(8, width/3)),
-					filesystem.UsedPct, detail, width),
-			)
+			mount := filesystem.MountPoint
+			if lipgloss.Width(mount) > labelWidth {
+				// A long mount point gets its own line instead of being cut
+				// to an ambiguous prefix such as "/var/lib/do".
+				lines = append(lines, sText.Render(truncatePlain(mount, width)))
+				mount = ""
+			}
+			lines = append(lines, renderGauge(mount, filesystem.UsedPct, detail, width)...)
 			if width >= 76 && (filesystem.Device != "" || filesystem.FSType != "") {
 				lines = append(lines, sMuted.Render("  "+
 					truncatePlain(strings.TrimSpace(filesystem.Device+"  "+filesystem.FSType), width-2)))
@@ -632,12 +778,14 @@ func (m model) processLines(width int) []string {
 		"",
 		sectionLine("Processes", width),
 		sStrong.Render(fmt.Sprintf("%d total", process.Total)) +
-			sFaint.Render(fmt.Sprintf("  ·  %d threads", process.Threads)),
-		sparkline(m.histRunning.getAll(), width, 0, 0),
-		sMuted.Render("Runnable processes  ·  " + m.trendWindow()),
+			sMuted.Render(fmt.Sprintf("  ·  %d threads", process.Threads)),
+	}
+	lines = append(lines, trendChart(m.histRunning.getAll(), width, m.trendRows(), 0, 0, countLabel)...)
+	lines = append(lines,
+		sMuted.Render("Runnable processes  ·  "+m.trendWindow()),
 		"",
 		sectionLine("States", width),
-	}
+	)
 
 	states := []struct {
 		name      string
@@ -646,9 +794,21 @@ func (m model) processLines(width int) []string {
 		activeBar lipgloss.Style
 	}{
 		{"Running", process.Running, sGood, sBarGood},
-		{"Sleeping", process.Sleeping, sText, sBarRest},
+		// A neutral state: a visible fill, but no status colour.
+		{"Sleeping", process.Sleeping, sText, sBarNeutral},
 		{"Blocked", process.Blocked, sWarn, sBarWarn},
 		{"Zombie", process.Zombie, sCrit, sBarCrit},
+	}
+	// The collector counts only R, S, D and Z; idle kernel threads (I) and
+	// stopped tasks make up the rest, without which the bars never add up.
+	other := process.Total - process.Running - process.Sleeping - process.Blocked - process.Zombie
+	if other > 0 {
+		states = append(states, struct {
+			name      string
+			value     int
+			active    lipgloss.Style
+			activeBar lipgloss.Style
+		}{"Other", other, sText, sBarNeutral})
 	}
 	for _, state := range states {
 		lines = append(lines, renderStateGauge(state.name, state.value,
@@ -680,23 +840,17 @@ func (m model) gpuLines(width int) []string {
 		title := fmt.Sprintf("%d  %s", gpu.Index, fallback(gpu.Name, "GPU"))
 		lines = append(lines,
 			sStrong.Render(truncatePlain(title, max(1, width-18)))+
-				sFaint.Render("  "+fallback(gpu.Driver, "unknown driver")),
-			renderGauge("Core", gpu.LoadPct, "", width),
-		)
+				sMuted.Render("  "+fallback(gpu.Driver, "unknown driver")))
+		lines = append(lines, renderGauge("Core", gpu.LoadPct, "", width)...)
 		if gpu.VRAMTotal > 0 {
 			lines = append(lines, renderGauge("VRAM", gpu.VRAMUsedPct,
-				fmtBytes(gpu.VRAMUsed)+" / "+fmtBytes(gpu.VRAMTotal), width))
+				fmtBytes(gpu.VRAMUsed)+" / "+fmtBytes(gpu.VRAMTotal), width)...)
 		}
-
-		details := make([]metricItem, 0, 2)
 		if gpu.Temperature > 0 {
-			details = append(details, metricItem{"Temperature", fmt.Sprintf("%.1f°C", gpu.Temperature)})
+			lines = append(lines, renderTemperature("Temperature", gpu.Temperature, width))
 		}
 		if gpu.PowerW > 0 {
-			details = append(details, metricItem{"Power", fmt.Sprintf("%.1f W", gpu.PowerW)})
-		}
-		if len(details) > 0 {
-			lines = append(lines, metricGrid(details, width, responsiveColumns(width, 1, 2))...)
+			lines = append(lines, metricGrid([]metricItem{{"Power", fmt.Sprintf("%.1f W", gpu.PowerW)}}, width, 1)...)
 		}
 	}
 	return lines
@@ -744,10 +898,11 @@ func assessHealth(sample *collector.Sample) (healthLevel, []string) {
 		}
 	}
 	for _, filesystem := range sample.Disks.FileSystems {
+		// "disk /" rather than a bare "/", which reads as a separator.
 		if filesystem.UsedPct >= 90 {
-			add(fmt.Sprintf("%s %.0f%% full", filesystem.MountPoint, filesystem.UsedPct), healthCritical)
+			add(fmt.Sprintf("disk %s %.0f%% full", filesystem.MountPoint, filesystem.UsedPct), healthCritical)
 		} else if filesystem.UsedPct >= 80 {
-			add(fmt.Sprintf("%s %.0f%% full", filesystem.MountPoint, filesystem.UsedPct), healthWatch)
+			add(fmt.Sprintf("disk %s %.0f%% full", filesystem.MountPoint, filesystem.UsedPct), healthWatch)
 		}
 	}
 	if sample.CPU.Temperature >= 90 {
@@ -778,7 +933,10 @@ func assessHealth(sample *collector.Sample) (healthLevel, []string) {
 	return level, findings
 }
 
-func renderHealth(level healthLevel, findings []string, width int) string {
+// renderHealth wraps findings under the badge instead of truncating them, so
+// the most severe signal is never the one pushed off-screen. Past three lines
+// the remainder is counted.
+func renderHealth(level healthLevel, findings []string, width int) []string {
 	var badge string
 	switch level {
 	case healthCritical:
@@ -788,28 +946,75 @@ func renderHealth(level healthLevel, findings []string, width int) string {
 	default:
 		badge = sGood.Render("✓ NOMINAL")
 	}
-
-	detail := "No pressure or fault signals"
-	if len(findings) > 0 {
-		detail = strings.Join(findings, "  ·  ")
+	if len(findings) == 0 {
+		return []string{fitLine(badge+"  "+sText.Render("No pressure or fault signals"), width)}
 	}
-	return fitLine(badge+sFaint.Render("  ")+sText.Render(detail), width)
+
+	const maxLines = 3
+	indent := lipgloss.Width(badge) + 2
+	separator := sFaint.Render("  ·  ")
+	lines := []string{badge + "  "}
+	lineWidth := indent
+	for index, finding := range findings {
+		item := sText.Render(finding)
+		itemWidth := lipgloss.Width(item)
+		if lineWidth > indent {
+			if lineWidth+5+itemWidth <= width {
+				lines[len(lines)-1] += separator + item
+				lineWidth += 5 + itemWidth
+				continue
+			}
+			if len(lines) == maxLines {
+				lines[len(lines)-1] += sMuted.Render(fmt.Sprintf("  +%d more", len(findings)-index))
+				break
+			}
+			lines = append(lines, strings.Repeat(" ", indent))
+			lineWidth = indent
+		}
+		lines[len(lines)-1] += item
+		lineWidth += itemWidth
+	}
+	for index := range lines {
+		lines[index] = fitLine(lines[index], width)
+	}
+	return lines
 }
 
-func renderGauge(label string, percent float64, detail string, width int) string {
-	percent = sanePercent(percent)
+// gaugeLayout fixes gauge geometry from the available width alone, so every
+// bar in a view starts and ends in the same columns whatever its detail text.
+type gaugeLayout struct {
+	labelWidth int
+	barWidth   int
+}
+
+func newGaugeLayout(width int) gaugeLayout {
 	labelWidth := clamp(width/5, 7, 16)
-	label = padRight(label, labelWidth)
-	percentText := fmt.Sprintf("%5.1f%%", percent)
-	reserved := labelWidth + 1 + lipgloss.Width(percentText)
-	if detail != "" {
-		reserved += min(lipgloss.Width(detail)+2, max(0, width/3))
+	detailBudget := 0
+	if width >= 60 {
+		detailBudget = clamp(width/3, 18, 30)
 	}
-	barWidth := clamp(width-reserved-2, 0, maxBarWidth)
+	// label + space + bar + space + "100.0%" + gap + detail budget
+	barWidth := clamp(width-labelWidth-1-1-6-2-detailBudget, 0, maxBarWidth)
 	if barWidth < minBarWidth {
 		barWidth = 0
 	}
-	return renderMetricBarFull(label, percent, barWidth, detail)
+	return gaugeLayout{labelWidth: labelWidth, barWidth: barWidth}
+}
+
+// renderGauge renders a labelled percentage bar. A detail that does not fit
+// beside the bar moves to its own line rather than being cut mid-value.
+func renderGauge(label string, percent float64, detail string, width int) []string {
+	layout := newGaugeLayout(width)
+	line := renderMetricBarFull(padRight(label, layout.labelWidth), percent, layout.barWidth, "")
+	if detail == "" {
+		return []string{line}
+	}
+	if lipgloss.Width(line)+2+lipgloss.Width(detail) <= width {
+		return []string{line + sMuted.Render("  "+detail)}
+	}
+	indent := layout.labelWidth + 1
+	return []string{line, strings.Repeat(" ", indent) +
+		sMuted.Render(truncatePlain(detail, max(1, width-indent)))}
 }
 
 func renderStateGauge(
@@ -823,27 +1028,29 @@ func renderStateGauge(
 	}
 	percent = sanePercent(percent)
 
-	labelWidth := clamp(width/5, 7, 16)
-	barWidth := clamp(width-labelWidth-20, 0, maxBarWidth)
+	// A count and its share need more room after the bar than a percentage
+	// alone; take it from the bar rather than truncating the share.
+	layout := newGaugeLayout(width)
+	barWidth := min(layout.barWidth, width-layout.labelWidth-1-15)
 	if barWidth < minBarWidth {
 		barWidth = 0
 	}
 	filled := clamp(int(math.Round(percent/100*float64(barWidth))), 0, barWidth)
 
-	valueStyle := active
+	countStyle := active
 	fillStyle := activeBar
 	if count == 0 {
-		valueStyle = sMuted
+		countStyle = sMuted
 		fillStyle = sBarRest
 	}
 
-	line := sMuted.Render(padRight(label, labelWidth)) + " "
+	line := sMuted.Render(padRight(label, layout.labelWidth)) + " "
 	if barWidth > 0 {
 		line += fillStyle.Render(strings.Repeat("━", filled)) +
 			sBarRest.Render(strings.Repeat("─", barWidth-filled)) + " "
 	}
-	line += valueStyle.Render(fmt.Sprintf("%d", count)) +
-		sFaint.Render(fmt.Sprintf("  %.1f%%", percent))
+	line += countStyle.Render(fmt.Sprintf("%6d", count)) +
+		sMuted.Render(fmt.Sprintf("  %5.1f%%", percent))
 	return line
 }
 
@@ -862,21 +1069,30 @@ func renderMetricBarFull(label string, percent float64, barWidth int, detail str
 	}
 	line += value
 	if detail != "" {
-		line += sFaint.Render("  " + detail)
+		line += sMuted.Render("  " + detail)
 	}
 	return line
 }
 
+// renderTemperature draws a temperature as a gauge on a 0–100 °C track, in
+// the same columns as the percentage gauges and coloured at the thresholds
+// the health line uses, so a hot sensor reads at a glance.
 func renderTemperature(label string, temperature float64, width int) string {
-	style := sGood
+	style, fill := sGood, sBarGood
 	switch {
 	case temperature >= 90:
-		style = sCrit
+		style, fill = sCrit, sBarCrit
 	case temperature >= 80:
-		style = sWarn
+		style, fill = sWarn, sBarWarn
 	}
-	return fitLine(sMuted.Render(padRight(label, clamp(width/3, 10, 24)))+" "+
-		style.Render(fmt.Sprintf("%.1f°C", temperature)), width)
+	layout := newGaugeLayout(width)
+	line := sMuted.Render(padRight(label, layout.labelWidth)) + " "
+	if layout.barWidth > 0 {
+		filled := clamp(int(math.Round(sanePercent(temperature)/100*float64(layout.barWidth))), 0, layout.barWidth)
+		line += fill.Render(strings.Repeat("━", filled)) +
+			sBarRest.Render(strings.Repeat("─", layout.barWidth-filled)) + " "
+	}
+	return fitLine(line+style.Render(fmt.Sprintf("%5.1f°C", temperature)), width)
 }
 
 func metricGrid(items []metricItem, width, columns int) []string {
@@ -888,6 +1104,23 @@ func metricGrid(items []metricItem, width, columns int) []string {
 	cellWidth := max(1, (width-gap*(columns-1))/columns)
 	lines := make([]string, 0, (len(items)+columns-1)/columns)
 
+	// Size each grid column from its own items: values right-align so digits
+	// stacked in a column line up, while a column holding one item keeps its
+	// value beside its label. Labels shrink only when a cell cannot hold the
+	// column's longest label beside its longest value.
+	labelWidths := make([]int, columns)
+	valueWidths := make([]int, columns)
+	for index, item := range items {
+		column := index % columns
+		labelWidths[column] = max(labelWidths[column], lipgloss.Width(item.label))
+		valueWidths[column] = max(valueWidths[column], lipgloss.Width(item.value))
+	}
+	for column := range columns {
+		labelWidths[column] = clamp(labelWidths[column], 1,
+			max(1, cellWidth-min(valueWidths[column], cellWidth/2)-1))
+		valueWidths[column] = min(valueWidths[column], max(1, cellWidth-labelWidths[column]-1))
+	}
+
 	for start := 0; start < len(items); start += columns {
 		cells := make([]string, 0, columns)
 		for column := 0; column < columns; column++ {
@@ -897,8 +1130,8 @@ func metricGrid(items []metricItem, width, columns int) []string {
 				continue
 			}
 			item := items[index]
-			label := truncatePlain(item.label, max(1, cellWidth/2))
-			cell := sMuted.Render(label+" ") + sStrong.Render(item.value)
+			cell := sMuted.Render(padRight(item.label, labelWidths[column])+" ") +
+				valueStyle(item.value, sStrong).Render(padLeft(item.value, valueWidths[column]))
 			cells = append(cells, fitLine(cell, cellWidth))
 		}
 		lines = append(lines, strings.Join(cells, strings.Repeat(" ", gap)))
@@ -906,27 +1139,53 @@ func metricGrid(items []metricItem, width, columns int) []string {
 	return lines
 }
 
+// tableRow renders one table row: the name column bold, figures in the text
+// tone, and zero figures muted so activity stands out down each column.
 func tableRow(values []string, widths []int, header bool) string {
 	var builder strings.Builder
 	for index, width := range widths {
-		value := ""
+		raw := ""
 		if index < len(values) {
-			value = values[index]
+			raw = values[index]
 		}
+		value := padLeft(raw, width)
 		if index == 0 {
-			value = padRight(value, width)
-		} else {
-			value = padLeft(value, width)
+			value = padRight(raw, width)
 		}
-		if header {
+		switch {
+		case header:
 			builder.WriteString(sTableHead.Render(value))
-		} else if index == 0 {
-			builder.WriteString(sTableCell.Render(value))
-		} else {
-			builder.WriteString(sTableDim.Render(value))
+		case index == 0:
+			builder.WriteString(sTableName.Render(value))
+		default:
+			builder.WriteString(valueStyle(raw, sText).Render(value))
 		}
 	}
 	return builder.String()
+}
+
+// valueStyle mutes a value that reads as zero ("0", "0.00", "0.0%",
+// "0 B/s") and otherwise returns style, so non-zero activity draws the eye.
+func valueStyle(value string, style lipgloss.Style) lipgloss.Style {
+	if isZeroValue(value) {
+		return sMuted
+	}
+	return style
+}
+
+// isZeroValue reports whether a formatted value is a single zero quantity. A
+// value with a second number, such as "0 / 1520", is not.
+func isZeroValue(value string) bool {
+	value = strings.TrimSpace(value)
+	end := 0
+	for end < len(value) && (value[end] >= '0' && value[end] <= '9' || value[end] == '.') {
+		end++
+	}
+	if end == 0 || strings.ContainsAny(value[end:], "0123456789") {
+		return false
+	}
+	number, err := strconv.ParseFloat(value[:end], 64)
+	return err == nil && number == 0
 }
 
 func joinBlocks(left, right []string, columnWidth, gap int) []string {

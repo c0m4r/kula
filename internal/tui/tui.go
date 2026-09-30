@@ -104,11 +104,12 @@ const (
 	tabDisk
 	tabProcesses
 	tabGPU
+	tabHistory
 	numTabs
 )
 
 var tabNames = [numTabs]string{
-	"Overview", "CPU", "Memory", "Network", "Storage", "Processes", "GPU",
+	"Overview", "CPU", "Memory", "Network", "Storage", "Processes", "GPU", "History",
 }
 
 type tickMsg time.Time
@@ -150,15 +151,29 @@ type model struct {
 	histRunning metricRing
 	histTimes   timestampRing
 	t           *i18n.Translator
+
+	history historyState
+}
+
+// Options configures the terminal UI.
+type Options struct {
+	RefreshRate    time.Duration
+	OSName         string
+	KernelVersion  string
+	CPUArch        string
+	Version        string
+	ShowSystemInfo bool
+
+	// History feeds the History view; nil leaves it explaining why, using
+	// HistoryErr. HistoryDir names the storage directory in that message.
+	History    HistorySource
+	HistoryDir string
+	HistoryErr error
 }
 
 // RunHeadless launches Kula's full-screen real-time terminal monitor.
-func RunHeadless(
-	coll *collector.Collector,
-	refreshRate time.Duration,
-	osName, kernelVersion, cpuArch, version string,
-	showSystemInfo bool,
-) error {
+func RunHeadless(coll *collector.Collector, opts Options) error {
+	refreshRate := opts.RefreshRate
 	if refreshRate <= 0 {
 		refreshRate = time.Second
 	} else if refreshRate < minRefreshRate {
@@ -173,11 +188,11 @@ func RunHeadless(
 	m := model{
 		coll:           coll,
 		refreshRate:    refreshRate,
-		osName:         osName,
-		kernelVersion:  kernelVersion,
-		cpuArch:        cpuArch,
-		version:        version,
-		showSystemInfo: showSystemInfo,
+		osName:         opts.OSName,
+		kernelVersion:  opts.KernelVersion,
+		cpuArch:        opts.CPUArch,
+		version:        opts.Version,
+		showSystemInfo: opts.ShowSystemInfo,
 		now:            time.Now(),
 		collecting:     coll != nil,
 		t:              i18n.NewTranslator(""),
@@ -189,6 +204,12 @@ func RunHeadless(
 		histDisk:       newRing(historySize),
 		histRunning:    newRing(historySize),
 		histTimes:      newTimestampRing(historySize),
+		history: historyState{
+			source:     opts.History,
+			dir:        opts.HistoryDir,
+			openErr:    opts.HistoryErr,
+			rangeIndex: defaultHistoryRange,
+		},
 	}
 
 	program := tea.NewProgram(m, tea.WithAltScreen())
@@ -257,6 +278,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.width = msg.Width
 			m.height = msg.Height
 			m.scroll = m.clampScroll(m.scroll)
+			return m, m.refreshHistoryIfStale()
 		}
 
 	case tickMsg:
@@ -266,7 +288,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.collecting = true
 			commands = append(commands, collectSample(m.coll))
 		}
+		commands = append(commands, m.refreshHistoryIfStale())
 		return m, tea.Batch(commands...)
+
+	case historyLoadedMsg:
+		command := m.applyHistory(msg)
+		m.scroll = m.clampScroll(m.scroll)
+		return m, command
 
 	case sampleMsg:
 		m.collecting = false
@@ -288,6 +316,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.activeTab == tabHistory {
+			if command, handled := m.handleHistoryKey(msg.String()); handled {
+				return m, command
+			}
+		}
+
 		switch msg.String() {
 		case "q", "Q", "ctrl+c":
 			return m, tea.Quit
@@ -306,8 +340,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "tab", "right", "l":
 			m.selectTab((m.activeTab + 1) % numTabs)
+			return m, m.refreshHistoryIfStale()
 		case "shift+tab", "left", "h":
 			m.selectTab((m.activeTab - 1 + numTabs) % numTabs)
+			return m, m.refreshHistoryIfStale()
 		case "up", "k":
 			m.scroll = m.clampScroll(m.scroll - 1)
 		case "down", "j":
@@ -320,8 +356,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scroll = 0
 		case "end", "G":
 			m.scroll = m.maxScroll()
-		case "1", "2", "3", "4", "5", "6", "7":
+		case "1", "2", "3", "4", "5", "6", "7", "8":
 			m.selectTab(tabID(msg.String()[0] - '1'))
+			return m, m.refreshHistoryIfStale()
 		}
 	}
 
@@ -344,7 +381,8 @@ func (m model) pageStep() int {
 }
 
 func (m model) maxScroll() int {
-	if m.width <= 0 || m.height <= 0 || m.showHelp || m.sample == nil {
+	if m.width <= 0 || m.height <= 0 || m.showHelp ||
+		(m.sample == nil && m.activeTab != tabHistory) {
 		return 0
 	}
 	overflow := len(m.contentLines(m.contentWidth())) - m.contentHeight()

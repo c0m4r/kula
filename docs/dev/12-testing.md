@@ -30,13 +30,13 @@ Notable suites:
 | Area | Tests |
 |------|-------|
 | Collectors | `cpu_test.go`, `disk_test.go`, `network_test.go`, `memory_test.go`, `process_test.go`, `system_test.go`, `containers_test.go`, `app_test.go` |
-| Storage | `store_test.go`, `tier_test.go`, `codec_test.go`, `snapshot_test.go`, `migration_test.go` |
+| Storage | `store_test.go`, `tier_test.go`, `codec_test.go`, `snapshot_test.go`, `migration_test.go`, `readonly_test.go` |
 | Web/security | `auth_test.go`, `server_test.go`, `websocket_test.go`, `ollama_test.go`, `prometheus_test.go`, `runtime_security_test.go` |
 | Config | `config_test.go` |
 | Sandbox | `sandbox_test.go` |
 | Backup | `backup_test.go`, `cron_test.go` |
 | i18n | `i18n_test.go` |
-| TUI | `tui_test.go` |
+| TUI | `tui_test.go`, `chart_test.go`, `history_test.go` |
 
 Collectors are driven against synthetic `/proc` and `/sys` fixture trees under
 [`internal/collector/testdata/`](../../internal/collector/testdata/), so they run deterministically

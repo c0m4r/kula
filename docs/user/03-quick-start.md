@@ -35,7 +35,8 @@ export KULA_PORT="27960"
 ```
 
 A self-contained terminal dashboard with tabs for Overview, CPU, Memory, Network, Storage,
-Processes, and GPU. See [Terminal UI](06-tui.md).
+Processes, GPU, and History, which charts what `kula serve` has stored. See
+[Terminal UI](06-tui.md).
 
 ## Inspect the storage
 

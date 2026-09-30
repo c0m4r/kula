@@ -33,6 +33,9 @@ type Store struct {
 	tiers   []*Tier
 	configs []config.TierConfig
 	dir     string
+	// readOnly marks a store opened with OpenReadOnly: another process owns
+	// the tier files, and every write path returns ErrReadOnly.
+	readOnly bool
 
 	// Cached aggregation ratios (computed once at NewStore).
 	ratio1 int // how many tier-0 samples make one tier-1 record
@@ -203,6 +206,9 @@ func (s *Store) reconstructAggregationState() {
 
 // WriteSample writes a raw sample to tier 0 and triggers aggregation.
 func (s *Store) WriteSample(sample *collector.Sample) error {
+	if s.readOnly {
+		return ErrReadOnly
+	}
 	// Own the complete sample graph once this call returns. Callers must not
 	// mutate their input concurrently with the call itself.
 	owned := cloneAggregatedSample(&AggregatedSample{Data: sample})

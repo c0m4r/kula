@@ -328,12 +328,46 @@ Package: [`internal/tui`](../../internal/tui/), built with **Bubble Tea** + **Li
 
 | File | Role |
 |------|------|
-| [`tui.go`](../../internal/tui/tui.go) | Bubble Tea model: rolling metric rings, tab navigation, refresh loop |
-| [`view.go`](../../internal/tui/view.go) | The 7 tab views (Overview, CPU, Memory, Network, Storage, Processes, GPU) with progress bars and responsive layout |
-| [`styles.go`](../../internal/tui/styles.go) | Dark purple/slate theme with style caching for performance |
+| [`tui.go`](../../internal/tui/tui.go) | Bubble Tea model: rolling metric rings, tab navigation, refresh loop, `Options` |
+| [`view.go`](../../internal/tui/view.go) | The seven live views (Overview, CPU, Memory, Network, Storage, Processes, GPU) with gauges and responsive layout |
+| [`history.go`](../../internal/tui/history.go) | The History view: chart definitions, window/range state, background loads |
+| [`chart.go`](../../internal/tui/chart.go) | Braille line charts with envelopes, axes and time ticks; block area charts for live trends |
+| [`styles.go`](../../internal/tui/styles.go) | Adaptive foreground palette (no painted background) shared by every view |
 
-`tui.RunHeadless(collector, refreshRate, osName, kernel, arch, version, showSystemInfo)` drives
-it. The TUI runs its own collector and does **not** read the storage tiers — it samples live.
+`tui.RunHeadless(collector, tui.Options{...})` drives it. The live views sample through the
+TUI's own collector. The History view queries a `tui.HistorySource`, which `cmd/kula` provides
+by opening the configured storage with `storage.OpenReadOnly` (see
+[Storage Engine](05-storage-engine.md#read-only-access)).
+
+History loads run as Bubble Tea commands, so a slow read never blocks input. At most one load
+is in flight: a change while one runs is queued, and a result for a superseded window is
+discarded. At the live edge the view reloads on an interval scaled to the range, only while it
+is the active tab and sampling is not paused. It requests about one bucket per braille dot
+column (`historyPoints`) and reloads when the plot width changes. All charts share a y-label
+width (`historyLabelWidth`) so their time axes line up. The store picks the tier and step, and
+the view reads the step back from `HistoryResult.Resolution`. Buckets are placed at their
+midpoints, and a spacing wider than about two steps breaks the line (`historyData.layout`).
+
+Layout rules the views rely on:
+
+- Three text tones, each with one job (documented in `styles.go`): text for values and names,
+  muted for labels, units, details and hints, faint for decoration only (rules, separators, bar
+  tracks). Faint is too low in contrast for information, especially on light backgrounds.
+- `valueStyle` / `isZeroValue` mute values that read as a single zero, in tables and metric
+  grids alike.
+- `View` renders at `frameWidth()` (the terminal width capped at `maxFrameWidth`) and centres
+  the result. `contentWidth()` derives from the same cap, so scrolling maths in `Update` agrees
+  with what is drawn.
+- `newGaugeLayout` sizes bars from the width alone, so every bar in a view shares its columns.
+  A detail that does not fit beside the bar wraps under it instead of being truncated.
+- `metricGrid` sizes each grid column from its own items: values right-align down a column,
+  and labels shorten only when the column's longest label and value cannot share a cell.
+- `renderTemperature` draws a gauge on a 0–100 °C track using `newGaugeLayout`, so thermals
+  share the percentage gauges' columns.
+- `trendRows`, `overviewTrendRows` and `historyChartRows` size charts from the content height. An
+  80×24 terminal keeps one-line sparklines, and the Overview must fit it without scrolling
+  (`TestOverviewFitsStandardTerminalWithoutScrolling`).
+
 See the user-facing [Terminal UI](../user/06-tui.md) page.
 
 Next: [Internationalization](11-i18n.md).

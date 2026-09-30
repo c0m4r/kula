@@ -63,6 +63,9 @@ type Tier struct {
 	// detect overwritten snapshot bytes while releasing the lock to reduce.
 	writeCycle int64
 	writeEnd   int64
+	// readOnly tiers are views of a file another process writes (see
+	// OpenReadOnly); they never write, and Close only releases the file.
+	readOnly bool
 }
 
 func OpenTier(path string, maxSize int64) (*Tier, error) {
@@ -324,6 +327,9 @@ func (t *Tier) Write(s *AggregatedSample) error {
 	// error so a single bad aggregate can't take the whole process down.
 	if s == nil {
 		return fmt.Errorf("tier %s: refusing to write nil sample", t.path)
+	}
+	if t.readOnly {
+		return ErrReadOnly
 	}
 	// encodeSampleV returns [kind][preamble][fixed][variable...] — the full
 	// on-disk payload including the recordKindBinary byte at [0].
@@ -725,6 +731,15 @@ func (t *Tier) ReadLatest(n int) ([]*AggregatedSample, error) {
 func (t *Tier) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.readOnly {
+		if t.file == nil {
+			return nil
+		}
+		err := t.file.Close()
+		t.file = nil
+		t.clearReadOnlyStateLocked()
+		return err
+	}
 	if err := t.writeHeader(); err != nil {
 		return err
 	}
@@ -742,6 +757,9 @@ func (t *Tier) Close() error {
 func (t *Tier) Flush() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.readOnly {
+		return ErrReadOnly
+	}
 	return t.writeHeader()
 }
 
@@ -752,6 +770,9 @@ func (t *Tier) Flush() error {
 func (t *Tier) SnapshotTo(w io.Writer) (int64, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	if t.file == nil {
+		return 0, fmt.Errorf("tier %s: no file to snapshot", t.path)
+	}
 	info, err := t.file.Stat()
 	if err != nil {
 		return 0, fmt.Errorf("stat tier %s: %w", t.path, err)

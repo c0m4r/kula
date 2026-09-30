@@ -190,6 +190,30 @@ per query after compiling reducer plans and reusing field buffers (median of thr
 collection-write delay, concurrency, and allocations on supported low-power targets before
 increasing the batch size or selection target.
 
+## Read-only access
+
+`OpenReadOnly(cfg)` opens the configured tier files for queries without owning them. The TUI's
+History view uses it to chart what a separately running `kula serve` writes.
+
+- Files are opened `O_RDONLY`. Nothing is created, migrated, resized or rewritten, and a missing
+  directory or tier reads as empty. `WriteSample`, `Tier.Write` and `Tier.Flush` return
+  `ErrReadOnly`, and `Close` only releases descriptors.
+- The owner rewrites each tier header after every record. `Refresh()` re-reads those headers,
+  clears the query cache, and reopens a tier whose file was replaced, for example moved aside
+  before a restart. It is a no-op on an owning store.
+- Refresh mirrors `Write`'s pass bookkeeping (`writeCycle`, `writeEnd`), so the batched scanner's
+  snapshot check still notices if a refresh between batches shows the writer overtaking unread
+  bytes.
+- Tier locks do not cross processes. A scan racing the writer over the oldest records of a
+  wrapped ring can end that segment early or skip a torn record; the decoder never panics on
+  such bytes, and the next refresh reads a consistent ring. Treat results as a view, not an
+  archive.
+- There is no latest-sample cache, so `QueryLatest` returns `nil`.
+
+`readonly_test.go` covers following a live writer across wraps, missing and replaced files,
+permission errors, and the guarantee that a read-only store leaves the file byte-for-byte
+unchanged.
+
 ## Migration
 
 The tier format is versioned. `tier.go` supports migrating **v1 (JSON records)** to **v2

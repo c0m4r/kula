@@ -88,7 +88,7 @@ is simultaneously:
 
 The web dashboard pulls live data over WebSocket and falls back to the history REST API for
 longer time ranges. The TUI is a separate, self-contained terminal view that collects its own
-samples.
+samples, and charts stored history by reading the tier files read-only.
 
 See the [Architecture Overview](../dev/01-architecture.md) for the developer-level picture.
 

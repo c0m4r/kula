@@ -16,6 +16,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - CSS and JS assets auto-minification at startup with `web.minify_assets: true`
 - TV mode under Focus Mode
 - Space Invaders: graphics settings and restart option
+- tui: historical data charts
 
 ### Changed
 
@@ -28,6 +29,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - The Inter font ships as WOFF2 (349 KB instead of 875 KB, same glyphs)
 - Static assets are revalidated with an ETag instead of downloaded again on every visit;
   an unchanged server answers 304 Not Modified
+- tui: UI/UX improvements
 
 ### Fixed
 

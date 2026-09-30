@@ -294,8 +294,9 @@ select another configuration file and `-version` (or `-v`) to print the version.
 The terminal monitor is designed for a fast live read rather than as a second
 web dashboard. Its overview keeps CPU, memory, traffic, storage pressure, host
 health, and short-term trends visible in a standard terminal. Numbered tabs
-switch between the Overview, CPU, Memory, Network, Storage, Processes, and GPU
-views.
+switch between the Overview, CPU, Memory, Network, Storage, Processes, GPU and
+History views. The History view charts what `kula serve` has stored, from five
+minutes to 30 days, reading the tier files read-only while the service runs.
 
 ### Inspect storage
 
