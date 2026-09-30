@@ -124,16 +124,16 @@ func TestCurrentUITranslationsCoverEveryLocale(t *testing.T) {
 				t.Errorf("%s: missing %q", lang, key)
 			}
 		}
+		// Every English string is translated everywhere: a key added to
+		// en.json alone would show English in the other 25 languages.
 		for key := range english {
-			if strings.HasPrefix(key, "si_") && strings.TrimSpace(translation[key]) == "" {
-				t.Errorf("%s: missing active system-info key %q", lang, key)
+			if strings.TrimSpace(translation[key]) == "" {
+				t.Errorf("%s: missing %q, which en.json has", lang, key)
 			}
 		}
 		for key := range translation {
-			if strings.HasPrefix(key, "si_") {
-				if _, active := english[key]; !active {
-					t.Errorf("%s: obsolete system-info key %q", lang, key)
-				}
+			if _, active := english[key]; !active {
+				t.Errorf("%s: obsolete key %q, which en.json no longer has", lang, key)
 			}
 		}
 		if lang != "en" && translation["si_back_dashboard"] == english["si_back_dashboard"] {

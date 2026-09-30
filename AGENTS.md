@@ -74,10 +74,9 @@ per-application reducer branches.
   `internal/web/minify.go`, and SRI hashes cover the minified bytes. `TestEmbeddedAssetsMinify`
   fails if a shipped asset no longer minifies (it would silently be served unminified). Tests
   that assert on source text must read `staticFS`, not the served response.
-- 26 locale files. `TestCurrentUITranslationsCoverEveryLocale` requires every locale to carry all
-  `si_*` keys present in `internal/i18n/locales/en.json` plus a fixed required list, and rejects
-  obsolete `si_*` keys. Adding, renaming or removing a UI string means editing **all** locale
-  files.
+- 26 locale files. `TestCurrentUITranslationsCoverEveryLocale` requires every locale to carry
+  every key of `internal/i18n/locales/en.json`, non-empty, and rejects keys `en.json` no longer
+  has. Adding, renaming or removing a UI string means editing **all** locale files.
 
 ### Dashboard chart lifecycle
 
