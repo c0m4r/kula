@@ -59,6 +59,10 @@ Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.
 The server minifies them, like `style.css`, at startup (`web.minify_assets`); set it to `false`
 to read the original sources in browser developer tools.
 
+`main.js` `init()` loads translations, restores the URL state and layout, then waits for one
+painted frame (`afterNextPaint()`) before `initCharts()` builds every Chart.js instance: the build
+holds the main thread, and the static page should be on screen first.
+
 | Module | Responsibility |
 |--------|----------------|
 | `state.js` | Shared app state, color palette, global Chart.js config (**load first**) |
