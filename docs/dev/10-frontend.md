@@ -239,8 +239,11 @@ changes the selection or the history sections. The Focus bar's TV checkbox is re
 after `applyStoredFocusMode()`. `html.tv-mode` hides the chrome in CSS and turns the dashboard
 into a viewport-height flex column with `#charts-grid` taking the remaining space. Focus Mode
 has already moved every selected card into that grid. `tvGridShape()` picks columns and rows
-that fit the widest 2:1 chart. The result goes into `--tv-columns`/`--tv-rows`, and `.tv-fill`
-marks the last card to span a partial row. A `MutationObserver` on the grid's children and a
+that fit the widest 2:1 chart, among the shapes whose rows all fit at the stylesheet's
+`--tv-row-min` (10rem, so it grows with the text size). A short display therefore gets fewer,
+wider rows rather than a grid that scrolls out of view. The result goes into
+`--tv-columns`/`--tv-rows`, and `.tv-fill` marks the last card to span a partial row. A
+`MutationObserver` on the grid's children and a
 `ResizeObserver` on the grid recompute the grid shape in one animation frame. Cards come and
 go with telemetry, and the gauge row and text size change the available height; the grid does
 not rely on `applyStoredFocusMode()` re-running. Chart.js resizes canvases through its own

@@ -1181,6 +1181,20 @@ test('TV mode grid keeps time axes wide and fits every card on screen', () => {
         }
     }
 
+    // Rows cannot shrink below the stylesheet's 10rem floor, so a short
+    // display takes fewer, wider rows instead of running off the screen.
+    assert.deepEqual(tvGridShape(16, 1920, 400, 12, 160), { columns: 8, rows: 2 });
+    for (const [width, height, floor] of [[1878, 980, 160], [1878, 980, 280], [1920, 400, 160], [320, 480, 160]]) {
+        for (let count = 1; count <= 40; count++) {
+            const { columns, rows } = tvGridShape(count, width, height, 14, floor);
+            assert.ok(columns * rows >= count, `${count} cards fit ${columns}x${rows}`);
+            assert.ok(rows === 1 || rows * floor + 14 * (rows - 1) <= height,
+                `${columns}x${rows} rows of ${floor}px fit ${height}px`);
+        }
+    }
+    assert.equal(tvGridShape(12, 1878, 980, 14, 160).rows, tvGridShape(12, 1878, 980, 14).rows,
+        'a floor that is not reached changes nothing');
+
     assert.deepEqual(tvGridShape(0, 1000, 500), { columns: 1, rows: 1 });
     assert.deepEqual(tvGridShape(5, 0, 0), { columns: 1, rows: 5 }, 'an unlaid-out grid stacks');
     assert.deepEqual(tvGridShape(3, Number.NaN, 400), { columns: 1, rows: 3 });

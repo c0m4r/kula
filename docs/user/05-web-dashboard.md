@@ -194,7 +194,8 @@ sections and refetch them automatically when the selection changes or Focus Mode
 
 TV mode turns a Focus Mode selection into a wall display. Tick **TV mode** in the Focus bar
 before clicking **Done**. The selected charts fill the screen in a grid sized for their number
-and the screen's shape; the last chart widens to fill a partial row. The header keeps only the
+and the screen's shape, and never shorter than readable (a larger text size makes rows taller,
+so fewer fit); the last chart widens to fill a partial row. The header keeps only the
 hostname, connection status and clock; time controls, chart buttons and the footer are hidden.
 The gauges stay unless **Hide gauges** is ticked.
 

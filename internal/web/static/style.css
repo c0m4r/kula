@@ -3298,8 +3298,10 @@ html.tv-mode #charts-grid {
     min-height: 0;
     overflow-y: auto;
     grid-template-columns: repeat(var(--tv-columns, 3), minmax(0, 1fr));
-    grid-template-rows: repeat(var(--tv-rows, 1), minmax(10rem, 1fr));
-    grid-auto-rows: minmax(10rem, 1fr);
+    /* The smallest row; tv-mode.js reads it to pick a grid that fits. */
+    --tv-row-min: 10rem;
+    grid-template-rows: repeat(var(--tv-rows, 1), minmax(var(--tv-row-min), 1fr));
+    grid-auto-rows: minmax(var(--tv-row-min), 1fr);
 }
 
 /* Cards left behind in another grid would otherwise leave an empty band. */

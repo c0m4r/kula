@@ -26,16 +26,23 @@ let initialized = false;
 /**
  * Choose columns × rows for `count` equally sized cells in a width × height
  * area separated by `gap`. The winning shape fits the widest chart of the
- * given aspect ratio; ties keep fewer columns so time axes stay wide.
+ * given aspect ratio; ties keep fewer columns so time axes stay wide. Rows
+ * never shrink below `minRowHeight` (the stylesheet's floor), so only shapes
+ * whose rows all fit at that height are considered.
  */
-export function tvGridShape(count, width, height, gap = 0, aspect = CHART_ASPECT) {
+export function tvGridShape(count, width, height, gap = 0, minRowHeight = 0, aspect = CHART_ASPECT) {
     const cells = Math.max(1, Math.floor(count) || 1);
     let best = { columns: 1, rows: cells };
     if (!(width > 0) || !(height > 0)) return best;
 
+    // At least one row: all cells in a single row is the flattest shape.
+    const maxRows = minRowHeight > 0
+        ? Math.max(1, Math.floor((height + gap) / (minRowHeight + gap)))
+        : cells;
     let bestWidth = -Infinity;
     for (let columns = 1; columns <= cells; columns++) {
         const rows = Math.ceil(cells / columns);
+        if (rows > maxRows) continue;
         const cellWidth = (width - gap * (columns - 1)) / columns;
         const cellHeight = (height - gap * (rows - 1)) / rows;
         const chartWidth = Math.min(cellWidth, cellHeight * aspect);
@@ -77,6 +84,18 @@ function scheduleLayout() {
     layoutFrame = requestAnimationFrame(layoutGrid);
 }
 
+// The grid's --tv-row-min in pixels: the smallest row the stylesheet allows.
+// It is set in rem, so it grows with the dashboard's text size.
+function rowFloor(style) {
+    const value = style.getPropertyValue('--tv-row-min').trim();
+    const number = parseFloat(value);
+    if (!Number.isFinite(number)) return 0;
+    if (value.endsWith('rem')) {
+        return number * (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
+    }
+    return value.endsWith('px') ? number : 0;
+}
+
 // Size the combined Focus Mode grid so every shown card fits on screen.
 function layoutGrid() {
     layoutFrame = null;
@@ -89,7 +108,8 @@ function layoutGrid() {
     const style = getComputedStyle(grid);
     const width = grid.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
     const height = grid.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
-    const { columns, rows } = tvGridShape(cards.length, width, height, parseFloat(style.rowGap) || 0);
+    const { columns, rows } = tvGridShape(cards.length, width, height, parseFloat(style.rowGap) || 0,
+        rowFloor(style));
 
     grid.style.setProperty('--tv-columns', String(columns));
     grid.style.setProperty('--tv-rows', String(rows));
