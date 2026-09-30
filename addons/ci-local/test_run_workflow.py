@@ -99,6 +99,12 @@ class ExpressionTest(unittest.TestCase):
                 with self.assertRaises(rw.Unsupported):
                     evaluate(expression)
 
+    def test_secrets_are_empty_with_a_warning(self) -> None:
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            self.assertIsNone(evaluate("secrets.GITHUB_TOKEN"))
+        self.assertIn("secrets.GITHUB_TOKEN is empty", errors.getvalue())
+
     def test_unsupported_syntax_fails_loudly(self) -> None:
         for expression in ("1 < 2", "hashFiles('go.sum')", "github.*.x", "nope()"):
             with self.subTest(expression=expression):

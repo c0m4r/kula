@@ -183,8 +183,22 @@ snapshot_tree() { # prints the snapshot path
     chmod 0644 "$out"
 }
 
-remote_url() {
-    git config --get remote.origin.url 2>/dev/null || basename "$PWD"
+# owner/repo, the form GitHub gives github.repository, from the origin remote:
+# scp-style, ssh:// or https:// (never the raw URL, which may carry a token).
+repository_slug() {
+    local url path owner repo
+    url="$(git config --get remote.origin.url 2>/dev/null || true)"
+    path="${url%/}"
+    path="${path%.git}"
+    path="${path//:/\/}"
+    repo="${path##*/}"
+    path="${path%/*}"
+    owner="${path##*/}"
+    if [[ "$owner/$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [ "$owner" != "$url" ]; then
+        echo "$owner/$repo"
+    else
+        echo "local/$(basename "$PWD")"
+    fi
 }
 
 ref_name() {
@@ -226,7 +240,7 @@ run_container() { # ARGS...
     done
     local env=(
         -e "CI_LOCAL=true"
-        -e "CI_LOCAL_REPOSITORY=$(remote_url)"
+        -e "CI_LOCAL_REPOSITORY=$(repository_slug)"
         -e "CI_LOCAL_REF_NAME=$(ref_name)"
         -e "CI_LOCAL_SHA=$(git rev-parse HEAD 2>/dev/null || echo 0000000000000000000000000000000000000000)"
     )

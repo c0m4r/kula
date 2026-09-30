@@ -14,6 +14,9 @@ set -euo pipefail
 repo=${CI_LOCAL_REPOSITORY:-kula}
 repo=${repo##*/}
 repo=${repo%.git}
+case $repo in
+    "" | . | .. | -*) repo=kula ;;
+esac
 export GITHUB_WORKSPACE=/home/runner/work/${repo:-kula}/${repo:-kula}
 export RUNNER_TEMP=/home/runner/work/_temp
 

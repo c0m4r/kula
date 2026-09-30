@@ -441,11 +441,17 @@ class EvalContext:
             "strategy": {"fail-fast": True, "job-index": 0, "job-total": 1},
         }
         self.job_status = "success"
+        self.warned: set = set()
 
     def lookup(self, parts: Sequence[Any], source: str) -> Any:
         if not parts:
             raise Unsupported(f"empty expression {source!r}")
         name = str(parts[0])
+        if name in ("secrets", "vars") and len(parts) > 1:
+            key = f"{name}.{parts[1]}"
+            if key not in self.warned:
+                self.warned.add(key)
+                warn(f"{key} is empty: ci-local has no repository {name}")
         if name not in self.contexts:
             # GitHub rejects the workflow for an unrecognized named-value;
             # guessing a value here could silently flip a condition.
