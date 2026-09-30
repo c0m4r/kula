@@ -87,7 +87,12 @@ sudo kula --config /etc/kula/config.yaml tui
 
 With the default `storage.directory` of `/var/lib/kula`, a user who cannot write there falls back
 to `~/.kula`, which holds only history recorded by a `kula serve` that user ran. The view says
-which directory it reads and why it is empty or unreadable.
+which directory it reads and why it is empty or unreadable. Storage it could not open is tried
+again every few seconds while the view is shown, so it starts charting once the files become
+readable, without a restart. The tier files do not record their resolutions, so the view takes
+them, and the tier it reads for a window, from the configuration it was started with. When the
+files' sizes or number differ from that configuration, it says so above the charts: pass the
+service's `--config`.
 
 ## Keys
 

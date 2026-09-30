@@ -288,16 +288,15 @@ func runTUI(cfg *config.Config, osName, kernelVersion, cpuArch string) {
 		Version:        version,
 		ShowSystemInfo: cfg.Global.ShowSystemInfo,
 		HistoryDir:     cfg.Storage.Directory,
-	}
-	// The History view reads the tier files `kula serve` writes. Read-only:
-	// the TUI never writes, migrates or resizes storage it does not own.
-	history, err := storage.OpenReadOnly(cfg.Storage)
-	if err != nil {
-		opts.HistoryErr = err
-	} else {
-		defer func() { _ = history.Close() }()
-		opts.History = history
-		opts.HistoryDir = history.Dir()
+		// The History view reads the tier files `kula serve` writes. Read-only:
+		// the TUI never writes, migrates or resizes storage it does not own.
+		OpenHistory: func() (tui.HistorySource, error) {
+			history, err := storage.OpenReadOnly(cfg.Storage)
+			if err != nil {
+				return nil, err // not a nil *Store inside a non-nil interface
+			}
+			return history, nil
+		},
 	}
 
 	if err := tui.RunHeadless(coll, opts); err != nil {

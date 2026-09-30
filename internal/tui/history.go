@@ -48,6 +48,11 @@ type historyState struct {
 	source  HistorySource
 	dir     string
 	openErr error
+	// open reopens the source after openErr: the service may create the
+	// storage later, or its permissions may change. openedAt paces attempts.
+	open     func() (HistorySource, error)
+	opening  bool
+	openedAt time.Time
 
 	rangeIndex int
 	// end is the right edge of the window; zero follows the live edge.
@@ -82,6 +87,8 @@ type historyData struct {
 	complete    bool
 	actualFrom  *time.Time
 	retained    []storage.RetainedRange
+	// layoutNote says how the storage differs from this TUI's configuration.
+	layoutNote string
 }
 
 type historyLoadedMsg struct {
@@ -89,6 +96,14 @@ type historyLoadedMsg struct {
 	data *historyData
 	err  error
 }
+
+type historyOpenedMsg struct {
+	source HistorySource
+	err    error
+}
+
+// historyReopenInterval paces attempts to open storage that failed to open.
+const historyReopenInterval = 5 * time.Second
 
 func (h historyState) following() bool {
 	return h.end.IsZero()
@@ -163,7 +178,7 @@ func loadHistory(source HistorySource, id int, request historyRequest) tea.Cmd {
 		step, _ := time.ParseDuration(result.Resolution)
 		data := &historyData{
 			request:     request,
-			samples:     result.Samples,
+			samples:     inTimeOrder(result.Samples),
 			step:        step,
 			resolution:  result.Resolution,
 			sourceStep:  result.SourceResolution,
@@ -172,6 +187,9 @@ func loadHistory(source HistorySource, id int, request historyRequest) tea.Cmd {
 			complete:    result.Complete,
 			actualFrom:  result.ActualFrom,
 			retained:    retained,
+		}
+		if checker, ok := source.(interface{ LayoutMismatch() string }); ok {
+			data.layoutNote = checker.LayoutMismatch()
 		}
 		if len(data.samples) == 0 && refreshErr != nil {
 			return historyLoadedMsg{id: id, data: data, err: refreshErr}
@@ -222,10 +240,69 @@ func (m model) historyStale() bool {
 }
 
 func (m *model) refreshHistoryIfStale() tea.Cmd {
-	if m.activeTab != tabHistory || m.history.loading || !m.historyStale() {
+	if m.activeTab != tabHistory {
+		return nil
+	}
+	if m.history.source == nil {
+		return m.reopenHistoryIfDue()
+	}
+	if m.history.loading || !m.historyStale() {
 		return nil
 	}
 	return m.requestHistory()
+}
+
+// reopenHistoryIfDue retries opening storage that could not be opened, at
+// most once per historyReopenInterval.
+func (m *model) reopenHistoryIfDue() tea.Cmd {
+	h := &m.history
+	if h.open == nil || h.opening || (!h.openedAt.IsZero() && m.now.Sub(h.openedAt) < historyReopenInterval) {
+		return nil
+	}
+	h.opening = true
+	h.openedAt = m.now
+	open := h.open
+	return func() tea.Msg {
+		source, err := open()
+		return historyOpenedMsg{source: source, err: err}
+	}
+}
+
+func (m *model) applyHistoryOpened(msg historyOpenedMsg) tea.Cmd {
+	m.history.opening = false
+	if !m.history.adopt(msg.source, msg.err) {
+		return nil
+	}
+	return m.requestHistory()
+}
+
+// adopt takes the result of opening the source and reports whether it opened.
+func (h *historyState) adopt(source HistorySource, err error) bool {
+	if err != nil || source == nil {
+		h.openErr = err
+		return false
+	}
+	h.source = source
+	h.openErr = nil
+	if named, ok := source.(interface{ Dir() string }); ok {
+		h.dir = named.Dir()
+	}
+	return true
+}
+
+// inTimeOrder drops any bucket that does not follow the previous one in
+// time, so a line never runs backwards: a clock set back on the recording
+// host writes later records with earlier timestamps.
+func inTimeOrder(samples []*storage.AggregatedSample) []*storage.AggregatedSample {
+	ordered := samples[:0:0]
+	var last time.Time
+	for _, sample := range samples {
+		if at := historyPointTime(sample); len(ordered) == 0 || at.After(last) {
+			ordered = append(ordered, sample)
+			last = at
+		}
+	}
+	return ordered
 }
 
 // handleHistoryKey applies the History view's own keys. It reports false for
@@ -453,6 +530,13 @@ func (m model) historyLines(width int) []string {
 		// Keep the last good charts, but say they are not current.
 		lines = append(lines,
 			sWarn.Render("! ")+sMuted.Render(truncatePlain("Reload failed: "+history.err.Error(), max(1, width-2))),
+			"")
+	}
+	if note := history.data.layoutNote; note != "" {
+		// Resolutions and tier choice come from this config, not the files.
+		lines = append(lines,
+			sWarn.Render("! ")+sMuted.Render(truncatePlain("Storage differs from this config; pass the service's --config", max(1, width-2))),
+			"  "+sMuted.Render(truncatePlain(note, max(1, width-2))),
 			"")
 	}
 

@@ -28,6 +28,7 @@ type fakeHistory struct {
 	resolution string
 	err        error
 	refreshErr error
+	layout     string
 	queries    []historyQuery
 	refreshes  int
 }
@@ -60,6 +61,10 @@ func (f *fakeHistory) QueryRangeWithMeta(from, to time.Time, points int) (*stora
 
 func (f *fakeHistory) RetainedRanges() ([]storage.RetainedRange, time.Duration) {
 	return f.retained, time.Second
+}
+
+func (f *fakeHistory) LayoutMismatch() string {
+	return f.layout
 }
 
 var historyTestNow = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
@@ -103,11 +108,12 @@ func drain(t *testing.T, m model, command tea.Cmd) model {
 	t.Helper()
 	for guard := 0; command != nil && guard < 10; guard++ {
 		msg := command()
-		loaded, ok := msg.(historyLoadedMsg)
-		if !ok {
+		switch msg.(type) {
+		case historyLoadedMsg, historyOpenedMsg:
+		default:
 			return m
 		}
-		next, following := m.Update(loaded)
+		next, following := m.Update(msg)
 		m, command = next.(model), following
 	}
 	return m
@@ -430,6 +436,78 @@ func TestHistoryStatesExplainThemselves(t *testing.T) {
 			}
 			assertFrameFits(t, m)
 		})
+	}
+}
+
+// Storage that could not be opened is retried while the view is shown, at
+// most once per historyReopenInterval, and charts once it opens.
+func TestHistoryRetriesStorageThatFailedToOpen(t *testing.T) {
+	permission := fmt.Errorf("tier /var/lib/kula/tier_0.dat: %w", fs.ErrPermission)
+	source := newFakeHistory(time.Hour)
+	opens := 0
+	m := newHistoryModel(100, 40, nil)
+	m.history.openErr = permission
+	m.history.openedAt = historyTestNow
+	m.history.open = func() (HistorySource, error) {
+		opens++
+		if opens == 1 {
+			return nil, permission
+		}
+		return source, nil
+	}
+
+	m = press(t, m, runeKey('8'))
+	if opens != 0 {
+		t.Fatalf("reopened %d times within the retry interval", opens)
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		m.now = m.now.Add(historyReopenInterval)
+		command := m.refreshHistoryIfStale()
+		m = drain(t, m, command)
+		if opens != attempt {
+			t.Fatalf("after %d intervals: %d opens", attempt, opens)
+		}
+	}
+	if m.history.source == nil || m.history.openErr != nil {
+		t.Fatalf("source not adopted (err %v)", m.history.openErr)
+	}
+	if view := historyView(m); !strings.Contains(view, "CPU USAGE") {
+		t.Fatalf("no charts after the storage opened:\n%s", view)
+	}
+}
+
+// Storage laid out for another config is charted, with a note: resolutions
+// and tier choice come from this config.
+func TestHistoryNotesStorageLaidOutForAnotherConfig(t *testing.T) {
+	source := newFakeHistory(time.Hour)
+	source.layout = "tier 0 is 250 MiB on disk but 100 MiB in this configuration"
+	m := press(t, newHistoryModel(80, 40, source), runeKey('8'))
+	view := historyView(m)
+	for _, want := range []string{"Storage differs from this config", "pass the service's --config", source.layout, "CPU USAGE"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing %q:\n%s", want, view)
+		}
+	}
+	assertFrameFits(t, m)
+}
+
+// A record written after a later one (the recording host's clock was set
+// back) must not draw the line backwards.
+func TestHistoryDropsBucketsOutOfTimeOrder(t *testing.T) {
+	source := newFakeHistory(time.Hour)
+	late := *source.samples[10]
+	late.Timestamp, late.BucketStart, late.BucketEnd = source.samples[3].Timestamp, source.samples[3].BucketStart, source.samples[3].BucketEnd
+	source.samples = append(source.samples[:11:11], append([]*storage.AggregatedSample{&late}, source.samples[11:]...)...)
+
+	m := press(t, newHistoryModel(100, 40, source), runeKey('8'))
+	samples := m.history.data.samples
+	if len(samples) != len(source.samples)-1 {
+		t.Fatalf("kept %d of %d buckets, want all but the out-of-order one", len(samples), len(source.samples))
+	}
+	for i := 1; i < len(samples); i++ {
+		if !historyPointTime(samples[i]).After(historyPointTime(samples[i-1])) {
+			t.Fatalf("bucket %d at %s follows %s", i, historyPointTime(samples[i]), historyPointTime(samples[i-1]))
+		}
 	}
 }
 

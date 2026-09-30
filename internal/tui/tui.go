@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"io"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -164,11 +165,13 @@ type Options struct {
 	Version        string
 	ShowSystemInfo bool
 
-	// History feeds the History view; nil leaves it explaining why, using
-	// HistoryErr. HistoryDir names the storage directory in that message.
-	History    HistorySource
-	HistoryDir string
-	HistoryErr error
+	// OpenHistory opens the storage the History view charts. It is called at
+	// start and, while it fails, again whenever the view is shown and a few
+	// seconds have passed. A source that is an io.Closer is closed on exit.
+	// HistoryDir names the storage directory until a source reports its own
+	// through a Dir() string method.
+	OpenHistory func() (HistorySource, error)
+	HistoryDir  string
 }
 
 // RunHeadless launches Kula's full-screen real-time terminal monitor.
@@ -205,15 +208,24 @@ func RunHeadless(coll *collector.Collector, opts Options) error {
 		histRunning:    newRing(historySize),
 		histTimes:      newTimestampRing(historySize),
 		history: historyState{
-			source:     opts.History,
 			dir:        opts.HistoryDir,
-			openErr:    opts.HistoryErr,
+			open:       opts.OpenHistory,
 			rangeIndex: defaultHistoryRange,
 		},
 	}
+	if opts.OpenHistory != nil {
+		m.history.adopt(opts.OpenHistory())
+		m.history.openedAt = m.now
+	}
 
 	program := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := program.Run()
+	final, err := program.Run()
+	if last, ok := final.(model); ok {
+		m = last
+	}
+	if closer, ok := m.history.source.(io.Closer); ok {
+		_ = closer.Close()
+	}
 	return err
 }
 
@@ -278,7 +290,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.width = msg.Width
 			m.height = msg.Height
 			m.scroll = m.clampScroll(m.scroll)
-			return m, m.refreshHistoryIfStale()
+			command := m.refreshHistoryIfStale()
+			return m, command
 		}
 
 	case tickMsg:
@@ -294,6 +307,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case historyLoadedMsg:
 		command := m.applyHistory(msg)
 		m.scroll = m.clampScroll(m.scroll)
+		return m, command
+
+	case historyOpenedMsg:
+		command := m.applyHistoryOpened(msg)
 		return m, command
 
 	case sampleMsg:
@@ -340,10 +357,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "tab", "right", "l":
 			m.selectTab((m.activeTab + 1) % numTabs)
-			return m, m.refreshHistoryIfStale()
+			command := m.refreshHistoryIfStale()
+			return m, command
 		case "shift+tab", "left", "h":
 			m.selectTab((m.activeTab - 1 + numTabs) % numTabs)
-			return m, m.refreshHistoryIfStale()
+			command := m.refreshHistoryIfStale()
+			return m, command
 		case "up", "k":
 			m.scroll = m.clampScroll(m.scroll - 1)
 		case "down", "j":
@@ -358,7 +377,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scroll = m.maxScroll()
 		case "1", "2", "3", "4", "5", "6", "7", "8":
 			m.selectTab(tabID(msg.String()[0] - '1'))
-			return m, m.refreshHistoryIfStale()
+			command := m.refreshHistoryIfStale()
+			return m, command
 		}
 	}
 
