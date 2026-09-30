@@ -191,9 +191,12 @@ export function attachClockPicker(root, { getState, onPick, onShortcut, onCalend
         if (steps) chooseWheel(wheel, (wheel.target ?? 0) + steps);
     }, { passive: false });
 
-    // Holding + or − repeats, first after a pause.
+    // Holding + or − repeats, first after a pause. Releasing anywhere stops it,
+    // and so does the pane closing under the held button (Esc), when the
+    // release lands outside the hidden pane.
     let repeat = 0;
     const stopRepeat = () => clearTimeout(repeat);
+    const shown = () => root.isConnected && root.getClientRects().length > 0;
     wheelHost.addEventListener('pointerdown', event => {
         const step = event.target.closest('.range-wheel-step');
         if (!step || event.button !== 0) return;
@@ -203,6 +206,7 @@ export function attachClockPicker(root, { getState, onPick, onShortcut, onCalend
         const once = () => chooseWheel(wheel, (wheel.target ?? 0) + Number(step.dataset.step), true);
         const again = delay => {
             repeat = setTimeout(() => {
+                if (!shown()) return;
                 once();
                 again(80);
             }, delay);
@@ -211,9 +215,10 @@ export function attachClockPicker(root, { getState, onPick, onShortcut, onCalend
         once();
         again(400);
     });
-    for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
-        wheelHost.addEventListener(type, stopRepeat);
+    for (const type of ['pointerup', 'pointercancel']) {
+        window.addEventListener(type, stopRepeat, true);
     }
+    wheelHost.addEventListener('pointerleave', stopRepeat);
     wheelHost.addEventListener('pointerout', event => {
         if (event.target.closest('.range-wheel-step')) stopRepeat();
     });
