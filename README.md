@@ -16,8 +16,13 @@
 
 Zero dependencies. No external databases. Single binary. Just deploy and go.
 
-<img width="1011" height="834" alt="image" src="https://kula.ovh/light.png#gh-light-mode-only" />
-<img width="1011" height="834" alt="image" src="https://kula.ovh/light.png#gh-dark-mode-only" />
+
+<a href="https://kula.ovh#gh-light-mode-only">
+  <img src="https://kula.ovh/light.png" alt="Kula" />
+</a>
+<a href="https://kula.ovh#gh-dark-mode-only">
+  <img src="https://kula.ovh/dark.png" alt="Kula" />
+</a>
 
 </div>
 
