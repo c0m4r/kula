@@ -184,10 +184,14 @@ steps: it implements the first-party actions the workflows use (`actions/checkou
 not emulate rather than skipping the step. Conditions follow GitHub's rules: `true`/`false`/`null`
 literals, loose equality (mismatched types compare as numbers), an implicit `success() && …`
 unless the condition calls a status function, and a failed step skips the rest of the job except
-`always()`/`failure()` steps; a job-level `if` is evaluated too. An expression that reads a
-context ci-local does not provide (`needs`, for instance) fails the job instead of evaluating to
-empty. The container holds no token, so the workflows' read-only security model holds trivially;
-steps that genuinely need GitHub (a push, a release upload) cannot work here by design.
+`always()`/`failure()` steps; a job-level `if` is evaluated too. `steps.<id>.outcome` is a step's
+own result and `.conclusion` that result after `continue-on-error`, and `run` scripts see the
+same contexts as `if`. `run-all` runs a workflow's jobs in `needs:` order and skips a job whose
+needed job failed. A `strategy.matrix` with more than one combination, `include` or `exclude` is
+not emulated. An expression that reads a context ci-local does not provide (`needs`, for
+instance) fails the job instead of evaluating to empty. The container holds no token, so the
+workflows' read-only security model holds trivially; steps that genuinely need GitHub (a push,
+a release upload) cannot work here by design.
 The container is capped at 8 GiB of memory and 4096 processes so a runaway step cannot take the
 workstation down; `CI_LOCAL_MEMORY` (e.g. `16g`) and `CI_LOCAL_PIDS` change the ceilings, and
 `none` lifts either. `--step PATTERN` runs only the `run` steps whose name matches, which is the fast way to iterate

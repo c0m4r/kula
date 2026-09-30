@@ -221,6 +221,29 @@ class JobTest(unittest.TestCase):
                 run: echo ran > "$MARKS/never"
               - name: second
                 run: echo ran > "$MARKS/second"
+          contexts:
+            runs-on: ubuntu-latest
+            steps:
+              - id: make
+                run: echo "v=42" >> "$GITHUB_OUTPUT"
+              - id: tolerated
+                continue-on-error: true
+                run: exit 3
+              - id: never
+                if: ${{ false }}
+                run: exit 1
+              - name: report
+                run: >-
+                  echo "${{ steps.make.outputs.v }} ${{ steps.tolerated.outcome }}
+                  ${{ steps.tolerated.conclusion }} ${{ steps.never.conclusion }}" > "$MARKS/report"
+          included:
+            runs-on: ubuntu-latest
+            strategy:
+              matrix:
+                include:
+                  - os: linux
+            steps:
+              - run: echo ${{ matrix.os }} > "$MARKS/matrix"
         """)
 
     def setUp(self) -> None:
@@ -279,6 +302,68 @@ class JobTest(unittest.TestCase):
         result = self.run_job("guarded")
         self.assertEqual(result["code"], 0)
         self.assertEqual(result["ran"], {"second"})
+
+    def test_scripts_see_step_results(self) -> None:
+        result = self.run_job("contexts")
+        self.assertEqual(result["code"], 0, result["output"])
+        report = (self.marks / "report").read_text(encoding="utf-8").split()
+        # A tolerated failure: outcome failure, conclusion success.
+        self.assertEqual(report, ["42", "failure", "success", "skipped"])
+
+    def test_matrix_include_is_unsupported(self) -> None:
+        with self.assertRaises(rw.Unsupported):
+            self.run_job("included")
+
+
+@unittest.skipUnless(HAVE_YAML, "PyYAML is not installed")
+class NeedsTest(unittest.TestCase):
+    WORKFLOW = textwrap.dedent("""
+        name: Needs
+        on: workflow_dispatch
+        jobs:
+          deploy:
+            needs: [build, test]
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo deploy >> "$MARKS/order"
+          test:
+            needs: build
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo test >> "$MARKS/order"; exit 1
+          build:
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo build >> "$MARKS/order"
+          lint:
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo lint >> "$MARKS/order"
+        """)
+
+    def test_run_all_follows_needs_and_skips_after_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace, temp, marks = root / "work", root / "temp", root / "marks"
+            (workspace / rw.WORKFLOW_DIR).mkdir(parents=True)
+            temp.mkdir()
+            marks.mkdir()
+            (workspace / rw.WORKFLOW_DIR / "needs.yml").write_text(self.WORKFLOW, encoding="utf-8")
+            env = {"GITHUB_WORKSPACE": str(workspace), "RUNNER_TEMP": str(temp), "MARKS": str(marks)}
+            output = io.StringIO()
+            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
+                    contextlib.redirect_stderr(output):
+                code = rw.main(["run-all"])
+            self.assertEqual(code, 1)
+            order = (marks / "order").read_text(encoding="utf-8").split()
+            self.assertEqual(order, ["build", "test", "lint"], output.getvalue())
+            self.assertIn("job 'deploy' skipped: needs test", output.getvalue())
+            self.assertNotIn("run its dependencies yourself", output.getvalue())
+
+    def test_needs_cycle_is_unsupported(self) -> None:
+        jobs = {"a": {"needs": "b"}, "b": {"needs": ["a"]}}
+        with self.assertRaises(rw.Unsupported):
+            rw.jobs_in_needs_order(jobs)
 
 
 if __name__ == "__main__":

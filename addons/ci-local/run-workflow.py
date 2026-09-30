@@ -24,7 +24,8 @@ GitHub's command files are honoured: a step that appends to $GITHUB_PATH,
 $GITHUB_ENV or $GITHUB_OUTPUT affects the steps after it. As on GitHub, a
 failed step does not end the job: later steps still evaluate their `if`, whose
 implicit `success()` skips them unless they ask for `always()` or `failure()`.
-A job-level `if` is evaluated too.
+A job-level `if` is evaluated too. `run-all` runs a workflow's jobs in
+`needs:` order and skips the jobs whose needed job failed.
 
 Usage:
     run-workflow.py list [WORKFLOW...]
@@ -1101,6 +1102,34 @@ def list_workflows(workspace: str, wanted: Sequence[str]) -> int:
     return 0
 
 
+def job_needs(job: Dict[str, Any]) -> List[str]:
+    needs = job.get("needs") or []
+    return [needs] if isinstance(needs, str) else [str(need) for need in needs]
+
+
+def jobs_in_needs_order(jobs: Dict[str, Any]) -> List[str]:
+    """Job ids in file order, except that each follows the jobs it needs."""
+    order: List[str] = []
+    visiting: set = set()
+
+    def visit(job_id: str) -> None:
+        if job_id in order:
+            return
+        if job_id in visiting:
+            raise Unsupported(f"job {job_id!r} is part of a needs cycle")
+        visiting.add(job_id)
+        for need in job_needs(jobs[job_id]):
+            if need not in jobs:
+                raise Unsupported(f"job {job_id!r} needs unknown job {need!r}")
+            visit(need)
+        visiting.discard(job_id)
+        order.append(job_id)
+
+    for job_id in jobs:
+        visit(str(job_id))
+    return order
+
+
 def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
     workspace = os.environ.get("GITHUB_WORKSPACE") or os.getcwd()
     runner_temp = os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()
@@ -1116,6 +1145,11 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
     strategy = job.get("strategy") or {}
     if strategy.get("matrix"):
         raw_matrix = strategy["matrix"]
+        if not isinstance(raw_matrix, dict):
+            raise Unsupported("a strategy.matrix expression is not emulated by ci-local")
+        for key in ("include", "exclude"):
+            if key in raw_matrix:
+                raise Unsupported(f"strategy.matrix {key} is not emulated by ci-local")
         if any(
             isinstance(value, list) and len(value) > 1 for value in raw_matrix.values()
         ):
@@ -1130,6 +1164,8 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
         if job.get(ignored):
             raise Unsupported(f"job-level {ignored!r} is not emulated by ci-local")
     for ignored in ("needs", "outputs", "environment"):
+        if ignored == "needs" and getattr(options, "needs_ordered", False):
+            continue  # run-all runs the needed jobs first
         if job.get(ignored):
             warn(
                 f"job key {ignored!r} is ignored by ci-local; run its dependencies yourself"
@@ -1205,6 +1241,7 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
         if not condition:
             print(f"{yellow('⤼')} {label} {yellow('(skipped: if)')}", flush=True)
             records.append(StepRecord(label, "skipped", 0.0))
+            record_step_result(state, step, "skipped", False)
             continue
         # --step narrows the `run` steps only: the setup actions put the
         # toolchains on PATH, and every later step depends on them.
@@ -1215,6 +1252,7 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
         ):
             print(f"{yellow('⤼')} {label} {yellow('(skipped: --step)')}", flush=True)
             records.append(StepRecord(label, "skipped", 0.0))
+            record_step_result(state, step, "skipped", False)
             continue
 
         print(flush=True)
@@ -1241,6 +1279,7 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
             break
         elapsed = time.monotonic() - started
         records.append(StepRecord(label, status, elapsed, detail))
+        record_step_result(state, step, status, continue_on_error)
         if status != "failure":
             print(green(f"✓ {label}") + f" ({elapsed:.1f}s)", flush=True)
             continue
@@ -1261,6 +1300,22 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
 
     print_summary(records)
     return 1 if failed else 0
+
+
+def record_step_result(
+    state: JobState, step: Dict[str, Any], status: str, continue_on_error: bool
+) -> None:
+    """Set steps.<id>.outcome and .conclusion the way GitHub does: the outcome
+    is the step's own result, the conclusion that result after
+    continue-on-error, so a tolerated failure concludes as a success."""
+    step_id = str(step.get("id") or "")
+    if not step_id:
+        return
+    result = state.steps.setdefault(step_id, {})
+    result["outcome"] = status
+    result["conclusion"] = (
+        "success" if status == "failure" and continue_on_error else status
+    )
 
 
 def execute_step(
@@ -1303,6 +1358,11 @@ def execute_step(
         {**job_env, **state.extra_env, **step_env},
         context.contexts["runner"],
         context.contexts["matrix"],
+    )
+    # A script sees every context the step's `if` does (steps, job,
+    # strategy…); only env differs, since it adds the step's own.
+    script_context.contexts.update(
+        {name: value for name, value in context.contexts.items() if name != "env"}
     )
     script_context.job_status = context.job_status
     script = interpolate(str(step["run"]), script_context)
@@ -1358,10 +1418,6 @@ def execute_step(
         print(f"  {yellow('path')} {entry}", flush=True)
     for key in apply_github_output(files["GITHUB_OUTPUT"], state, step_id):
         print(f"  {yellow('output')} {step_id}.{key}", flush=True)
-    if step_id:
-        state.steps.setdefault(step_id, {})["conclusion"] = (
-            "success" if code == 0 else "failure"
-        )
 
     if timed_out:
         return "failure", "timed out"
@@ -1438,10 +1494,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 2
         if options.command == "run-all":
             status = 0
+            options.needs_ordered = True
             for path in workflow_files(workspace):
                 workflow = read_workflow(path)
-                for job_id in workflow.get("jobs") or {}:
-                    status |= run_job(path, job_id, options)
+                jobs = workflow.get("jobs") or {}
+                # As on GitHub, a job whose needed job failed or was skipped
+                # does not run.
+                unfinished = set()
+                for job_id in jobs_in_needs_order(jobs):
+                    blocked = [need for need in job_needs(jobs[job_id]) if need in unfinished]
+                    if blocked:
+                        print(
+                            yellow(
+                                f"⤼ {path.name}: job {job_id!r} skipped: needs {', '.join(blocked)}"
+                            ),
+                            flush=True,
+                        )
+                        unfinished.add(job_id)
+                        continue
+                    code = run_job(path, job_id, options)
+                    if code:
+                        unfinished.add(job_id)
+                    status |= code
             return status
         parser.error(f"unknown command {options.command!r}")
     except Unsupported as exc:
