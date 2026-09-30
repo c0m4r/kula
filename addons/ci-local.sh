@@ -93,6 +93,15 @@ if [ -z "$GO_VERSION" ]; then
     exit 1
 fi
 
+# The versions come from files in the checkout and end up in the image tag,
+# the build args and this terminal: accept version numbers and nothing else.
+for setting in "Go=$GO_VERSION" "Node.js=$NODE_VERSION" "Python=$PYTHON_VERSION"; do
+    if ! [[ "${setting#*=}" =~ ^[0-9]+(\.[0-9]+)*(\.x)?$ ]]; then
+        echo -e "${RED}ci-local: ${setting%%=*} version $(printf '%q' "${setting#*=}") is not a version number${RESET}" >&2
+        exit 1
+    fi
+done
+
 IMAGE_TAG="${IMAGE_BASE}:ubuntu${UBUNTU_VERSION}-go${GO_VERSION}-node${NODE_VERSION}-py${PYTHON_VERSION}"
 IMAGE_TAG="$(printf '%s' "$IMAGE_TAG" | tr -c 'A-Za-z0-9_.:' '-')"
 

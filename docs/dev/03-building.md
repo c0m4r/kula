@@ -158,7 +158,8 @@ GitHub Actions workflows live in [`.github/workflows/`](../../.github/workflows/
 image that stands in for the `ubuntu-latest` hosted runner: the same Ubuntu release, a non-root
 `runner` user with passwordless sudo, Google Chrome, and a toolcache holding the Go, Node.js and
 Python versions the workflows ask for (read from `go.mod` and the workflow files, so bumping a
-version there is enough):
+version there is enough; anything but a plain version number such as `1.26.8`, `22` or `3.x` is
+rejected):
 
 ```bash
 ./addons/ci-local.sh                  # list workflows and their jobs
@@ -188,5 +189,16 @@ The container is capped at 8 GiB of memory and 4096 processes so a runaway step 
 workstation down; `CI_LOCAL_MEMORY` (e.g. `16g`) and `CI_LOCAL_PIDS` change the ceilings, and
 `none` lifts either. `--step PATTERN` runs only the `run` steps whose name matches, which is the fast way to iterate
 on one failure; the `uses:` setup steps always run, since they put the toolchains on `PATH`.
+
+What the container can reach: a read-only snapshot of the tree (tracked and untracked files,
+minus ignored ones — mind a stray `.env`), the three cache volumes, and the network. It gets no
+Docker socket, no host mounts and no host environment beyond the `-e` values you pass. The
+`runner` user has passwordless sudo for fidelity with the hosted runner, so container root is one
+step away, and without user-namespace remapping container root is host root to the kernel; to run
+a branch you do not trust, use rootless Docker or `userns-remap`, and `--clean-cache` afterwards
+so the shared Go and npm caches it could have written are not reused. `addons/ci-local/` itself
+belongs to the checkout, so an untrusted branch also brings its own image definition. The image
+build verifies Go and Node.js archives against the checksums their publishers list, and pins
+Google's package signing key by fingerprint (`GOOGLE_LINUX_KEY_FPR`).
 
 Next: [Collector Subsystem](04-collector.md).
