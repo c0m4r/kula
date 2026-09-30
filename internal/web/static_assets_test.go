@@ -1,7 +1,12 @@
 package web
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"html"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -126,6 +131,106 @@ func TestIndexResolvesThemeBeforePaint(t *testing.T) {
 		}
 		if !strings.Contains(rest[script:content], "classList.add('light-mode')") {
 			t.Error("theme script does not apply the light theme")
+		}
+	}
+}
+
+// Static assets revalidate with an ETag of the served bytes: a match is a 304
+// with no body (and no gzip framing), anything else is the full asset.
+func TestStaticAssetsRevalidate(t *testing.T) {
+	for _, compress := range []bool{true, false} {
+		s := NewServer(config.WebConfig{UI: true, MinifyAssets: true, EnableCompression: compress}, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
+		handler := s.buildHandler()
+		get := func(path, ifNoneMatch string) *httptest.ResponseRecorder {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Accept-Encoding", "gzip")
+			if ifNoneMatch != "" {
+				req.Header.Set("If-None-Match", ifNoneMatch)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			return rec
+		}
+
+		for _, path := range []string{"/js/app/main.js", "/style.css", "/fonts/Inter/Inter-VariableFont_opsz,wght.woff2"} {
+			served, err := s.readStatic("static" + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sum := sha256.Sum256(served)
+			want := `W/"` + hex.EncodeToString(sum[:16]) + `"`
+
+			rec := get(path, "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("compress=%v GET %s = %d", compress, path, rec.Code)
+			}
+			etag := rec.Header().Get("ETag")
+			if etag != want {
+				t.Errorf("compress=%v %s ETag = %q, want %q (hash of the served bytes)", compress, path, etag, want)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+				t.Errorf("compress=%v %s Cache-Control = %q, want no-cache", compress, path, got)
+			}
+			body := rec.Body.Bytes()
+			if rec.Header().Get("Content-Encoding") == "gzip" {
+				zr, err := gzip.NewReader(bytes.NewReader(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if body, err = io.ReadAll(zr); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !bytes.Equal(body, served) {
+				t.Errorf("compress=%v %s body differs from the served asset", compress, path)
+			}
+
+			for _, match := range []string{etag, strings.TrimPrefix(etag, "W/"), `"other", ` + etag, "*"} {
+				rec = get(path, match)
+				if rec.Code != http.StatusNotModified {
+					t.Errorf("compress=%v %s If-None-Match %s = %d, want 304", compress, path, match, rec.Code)
+				}
+				if rec.Body.Len() != 0 || rec.Header().Get("Content-Encoding") != "" {
+					t.Errorf("compress=%v %s 304 carries a body (%d bytes) or Content-Encoding %q", compress, path, rec.Body.Len(), rec.Header().Get("Content-Encoding"))
+				}
+				if rec.Header().Get("ETag") != etag {
+					t.Errorf("compress=%v %s 304 without its ETag", compress, path)
+				}
+			}
+			if rec = get(path, `W/"stale"`); rec.Code != http.StatusOK {
+				t.Errorf("compress=%v %s stale If-None-Match = %d, want 200", compress, path, rec.Code)
+			}
+		}
+
+		rec := get("/style.css", "")
+		vary := strings.Join(rec.Header().Values("Vary"), ",")
+		if compress != strings.Contains(vary, "Accept-Encoding") {
+			t.Errorf("compress=%v Vary = %q", compress, vary)
+		}
+	}
+
+	// The tag follows the served bytes, so minifying changes it.
+	minified := NewServer(config.WebConfig{UI: true, MinifyAssets: true}, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
+	plain := NewServer(config.WebConfig{UI: true}, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
+	if minified.etags["static/js/app/main.js"] == plain.etags["static/js/app/main.js"] {
+		t.Error("minified and original main.js share an ETag")
+	}
+}
+
+func TestEtagMatches(t *testing.T) {
+	const tag = `W/"abc"`
+	for header, want := range map[string]bool{
+		`W/"abc"`:         true,
+		`"abc"`:           true,
+		`"x", W/"abc"`:    true,
+		`*`:               true,
+		`"abcd"`:          false,
+		`W/"ab"`:          false,
+		`"x",  "y"`:       false,
+		`W/"abc"garbage"`: false,
+	} {
+		if got := etagMatches(header, tag); got != want {
+			t.Errorf("etagMatches(%q) = %v, want %v", header, got, want)
 		}
 	}
 }

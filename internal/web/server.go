@@ -5,9 +5,11 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/sha512"
 	"embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +49,7 @@ type Server struct {
 	httpSrv         *http.Server
 	templates       *template.Template
 	sriHashes       map[string]string
+	etags           map[string]string // validator of each served static file by embedded path
 	assets          map[string][]byte // minified static files by embedded path; see readStatic
 	ollama          *ollamaClient
 	ollamaLimiter   *chatRateLimiter
@@ -88,6 +91,7 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 	}
 	srv.initializeTemplates()
 	srv.calculateSRIs()
+	srv.etags = srv.staticETags()
 	return srv
 }
 
@@ -166,12 +170,19 @@ type gzipResponseWriter struct {
 	io.Writer
 	http.ResponseWriter
 	wroteHeader bool
+	noBody      bool
 }
 
 func (w *gzipResponseWriter) WriteHeader(status int) {
 	if !w.wroteHeader {
 		w.wroteHeader = true
 		w.ResponseWriter.Header().Del("Content-Length")
+		// A 304 or 204 carries no body, so there is nothing to encode and no
+		// gzip framing may follow it.
+		if status == http.StatusNotModified || status == http.StatusNoContent {
+			w.noBody = true
+			w.ResponseWriter.Header().Del("Content-Encoding")
+		}
 		w.ResponseWriter.WriteHeader(status)
 	}
 }
@@ -199,7 +210,6 @@ func (w *gzipResponseWriter) Flush() {
 func gzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") ||
-			!strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") ||
 			r.Header.Get("Accept") == "text/event-stream" ||
 			strings.HasPrefix(r.URL.Path, "/api/ollama/") ||
 			// WOFF2 is Brotli-compressed already; gzip would only add bytes.
@@ -207,12 +217,21 @@ func gzipMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// The encoding depends on Accept-Encoding, so caches must key on it.
+		w.Header().Add("Vary", "Accept-Encoding")
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		w.Header().Set("Content-Encoding", "gzip")
 		gz := gzip.NewWriter(w)
-		defer func() { _ = gz.Close() }()
-
 		gzw := &gzipResponseWriter{Writer: gz, ResponseWriter: w}
+		defer func() {
+			if !gzw.noBody {
+				_ = gz.Close()
+			}
+		}()
 		next.ServeHTTP(gzw, r)
 	})
 }
@@ -1123,6 +1142,40 @@ func (s *Server) calculateSRIs() {
 	})
 }
 
+// staticETags hashes the bytes each static file is served as. The embedded
+// assets change only with the binary, so a browser can revalidate with
+// If-None-Match and get a 304 instead of the file. The tags are weak because
+// the gzip middleware may encode the body.
+func (s *Server) staticETags() map[string]string {
+	etags := make(map[string]string)
+	_ = fs.WalkDir(staticFS, "static", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		data, err := s.readStatic(path)
+		if err != nil {
+			return nil
+		}
+		sum := sha256.Sum256(data)
+		etags[path] = `W/"` + hex.EncodeToString(sum[:16]) + `"`
+		return nil
+	})
+	return etags
+}
+
+// etagMatches reports whether an If-None-Match header names etag, using the
+// weak comparison RFC 9110 prescribes for it.
+func etagMatches(ifNoneMatch, etag string) bool {
+	opaque := strings.TrimPrefix(etag, "W/")
+	for _, candidate := range strings.Split(ifNoneMatch, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || strings.TrimPrefix(candidate, "W/") == opaque {
+			return true
+		}
+	}
+	return false
+}
+
 // readStatic returns the bytes served for an embedded static file: its
 // minified form when one was built, otherwise the embedded original.
 func (s *Server) readStatic(path string) ([]byte, error) {
@@ -1223,8 +1276,18 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", contentType)
 
-	// Check if it's a JS file and we have an SRI for it (optional: could also add SRI header but browser does it via script tag)
-	// We just serve the content here.
+	// Revalidate on every use (no-cache): the browser keeps its copy and gets a
+	// 304 while the binary is unchanged, and never runs a stale asset after an
+	// upgrade, since the URLs carry no version.
+	if etag := s.etags[fullPath]; etag != "" {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "no-cache")
+		if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
 	// Serves a static asset with an explicit, non-HTML Content-Type; the XSS rule doesn't apply.
 	// nosemgrep: no-direct-write-to-responsewriter
 	_, _ = w.Write(data)

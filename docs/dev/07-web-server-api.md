@@ -239,4 +239,12 @@ minifier cannot follow is logged and served unminified. `TestEmbeddedAssetsMinif
 shipped asset to minify, `TestMinifiedScriptsParseInNode` syntax-checks the output with node, and
 `FuzzMinifyJS` / `FuzzMinifyCSS` cover arbitrary input.
 
+Static assets carry a weak `ETag` of the bytes they are served as (`staticETags`, computed at
+startup after minification) and `Cache-Control: no-cache`: the browser keeps its copy but
+revalidates on every use, so an unchanged binary answers `304 Not Modified` without a body, and
+an upgrade is picked up at once even though asset URLs carry no version. The templated pages
+(`index.html`, `game.html`) carry a per-request nonce and get neither header. With
+`enable_compression`, responses that may be gzipped add `Vary: Accept-Encoding`; a 304 or 204 goes
+out unencoded, and `.woff2` fonts are never gzipped because they are compressed already.
+
 Next: [Security Model](08-security.md).
