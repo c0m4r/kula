@@ -581,7 +581,19 @@ if [ "${DOWNLOAD}" = 1 ]; then
 fi
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
+# Set while the tree is being changed: leaving early (an error, Ctrl-C, a
+# kill) restores what the apply phase had touched, so the tree is never left
+# half converted, with the bundle gone and the template still loading it.
+APPLYING=0
+restore_tree() {
+    [ "${APPLYING}" = 1 ] || return 0
+    echo "replace_chartjs.sh: interrupted; restoring the tree" >&2
+    rm -rf "${PROJECT_ROOT}/internal/web/static/js/chartjs" "${PROJECT_ROOT}/addons/chartjs"
+    tar -C "${PROJECT_ROOT}" -xf "${WORK}/backup.tar"
+}
+trap 'restore_tree; rm -rf "${WORK}"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ "${CHECK_ONLY}" = 1 ]; then
     echo "replace_chartjs.sh: checking the upstream Chart.js trio (the tree is not modified)"
@@ -642,6 +654,16 @@ if [ "${CHECK_ONLY}" = 1 ]; then
     exit 0
 fi
 
+# Everything the apply phase changes, kept for restore_tree.
+backup=()
+for path in internal/web/static/js/chartjs addons/chartjs internal/web/static/index.html \
+    internal/web/testdata/history_performance.html internal/web/server_test.go \
+    internal/web/minify_test.go internal/web/testdata/chart_bundle_test.mjs; do
+    [ ! -e "${PROJECT_ROOT}/${path}" ] || backup+=("${path}")
+done
+tar -C "${PROJECT_ROOT}" -cf "${WORK}/backup.tar" "${backup[@]}"
+APPLYING=1
+
 mkdir -p "${STATIC_DIR}"
 for role in "${ROLES[@]}"; do
     rm -f "${STATIC_DIR}/$(pkg_min_name "${role}")" "${STATIC_DIR}/$(pkg_plain_name "${role}")"
@@ -662,4 +684,5 @@ write_bundle_test
 echo "  rewrote internal/web/testdata/chart_bundle_test.mjs for the trio"
 
 verify_tree
+APPLYING=0
 echo "replace_chartjs.sh: done - run ./addons/check.sh on this tree before packaging"

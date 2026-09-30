@@ -50,7 +50,9 @@ from the npm registry, with unpkg.com as fallback, and verifies each file's sha2
 installing it. `--check` does everything up to the first change — resolves and verifies the
 trio and confirms every substitution still applies — then exits without touching the tree, so
 a new Kula release can be tried before a build. Without it, the script also refuses to start
-unless every substitution applies, so a failure never leaves a half-converted tree.
+unless every substitution applies, and it backs up everything it changes first: if it stops
+partway (an error, Ctrl-C, a kill), it restores that backup, so the tree is never left half
+converted.
 
 The script installs the trio in `internal/web/static/js/chartjs/` and loads it from
 `internal/web/static/index.html` in dependency order (core, adapter, zoom), each file keeping
