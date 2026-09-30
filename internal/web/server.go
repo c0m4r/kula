@@ -1149,11 +1149,17 @@ func (s *Server) calculateSRIs() {
 func (s *Server) staticETags() map[string]string {
 	etags := make(map[string]string)
 	_ = fs.WalkDir(staticFS, "static", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			log.Printf("Warning: ETag walk error at %s: %v", path, err)
 			return nil
 		}
+		if d.IsDir() {
+			return nil
+		}
+		// Without a tag the file is still served, only never revalidated.
 		data, err := s.readStatic(path)
 		if err != nil {
+			log.Printf("Warning: failed to read %s for its ETag: %v", path, err)
 			return nil
 		}
 		sum := sha256.Sum256(data)
