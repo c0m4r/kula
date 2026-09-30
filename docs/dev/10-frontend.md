@@ -22,7 +22,7 @@ static/
 ├── kula.svg / favicon.ico  # branding
 ├── game.html / game.css / game.js   # Space Invaders easter egg
 ├── fonts/
-│   ├── Inter/              # UI font (OFL-1.1)
+│   ├── Inter/              # UI font, variable WOFF2 (OFL-1.1)
 │   └── Press_Start_2P/     # game font (OFL-1.1)
 └── js/
     ├── chartjs/            # Chart.js bundle built by addons/build-chartjs.sh

@@ -1245,7 +1245,7 @@ html.a11y-focus-outline #system-info-title:focus-visible {
 
 @font-face {
     font-family: 'Inter';
-    src: url('fonts/Inter/Inter-VariableFont_opsz,wght.ttf') format('truetype');
+    src: url('fonts/Inter/Inter-VariableFont_opsz,wght.woff2') format('woff2');
     font-weight: normal;
     font-style: normal;
     font-display: swap;

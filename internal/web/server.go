@@ -201,7 +201,9 @@ func gzipMiddleware(next http.Handler) http.Handler {
 		if strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") ||
 			!strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") ||
 			r.Header.Get("Accept") == "text/event-stream" ||
-			strings.HasPrefix(r.URL.Path, "/api/ollama/") {
+			strings.HasPrefix(r.URL.Path, "/api/ollama/") ||
+			// WOFF2 is Brotli-compressed already; gzip would only add bytes.
+			strings.HasSuffix(r.URL.Path, ".woff2") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1212,14 +1214,12 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		contentType = "image/x-icon"
 	} else if strings.HasSuffix(path, ".html") {
 		contentType = "text/html; charset=utf-8"
-	} else if strings.Contains(path, "/fonts/") {
-		if strings.HasSuffix(path, ".woff2") {
-			contentType = "font/woff2"
-		} else if strings.HasSuffix(path, ".woff") {
-			contentType = "font/woff"
-		} else if strings.HasSuffix(path, ".ttf") {
-			contentType = "font/ttf"
-		}
+	} else if strings.HasSuffix(path, ".woff2") {
+		contentType = "font/woff2"
+	} else if strings.HasSuffix(path, ".woff") {
+		contentType = "font/woff"
+	} else if strings.HasSuffix(path, ".ttf") {
+		contentType = "font/ttf"
 	}
 	w.Header().Set("Content-Type", contentType)
 
