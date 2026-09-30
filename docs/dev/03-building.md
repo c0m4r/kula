@@ -199,6 +199,6 @@ a branch you do not trust, use rootless Docker or `userns-remap`, and `--clean-c
 so the shared Go and npm caches it could have written are not reused. `addons/ci-local/` itself
 belongs to the checkout, so an untrusted branch also brings its own image definition. The image
 build verifies Go and Node.js archives against the checksums their publishers list, and pins
-Google's package signing key by fingerprint (`GOOGLE_LINUX_KEY_FPR`).
+Google's package signing key by fingerprint (`GOOGLE_LINUX_SIGNER_FPR`).
 
 Next: [Collector Subsystem](04-collector.md).

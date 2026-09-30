@@ -36,15 +36,15 @@ RUN apt-get update \
 # Google's signing key arrives over the same connection as the packages it
 # vouches for, so it is pinned by its primary fingerprint (the subkeys rotate)
 # and must be the only primary key in the file.
-ARG GOOGLE_LINUX_KEY_FPR=EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796
+ARG GOOGLE_LINUX_SIGNER_FPR=EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796
 RUN if [ "$(dpkg --print-architecture)" = amd64 ]; then \
         key=$(mktemp); \
         curl -fsSL -o "$key" https://dl.google.com/linux/linux_signing_key.pub; \
         fprs=$(GNUPGHOME=$(mktemp -d) gpg --show-keys --with-colons "$key" \
             | awk -F: '$1 == "pub" { primary = 1; next } $1 == "fpr" && primary { print $10; primary = 0 }'); \
-        if [ "$fprs" != "$GOOGLE_LINUX_KEY_FPR" ]; then \
-            echo "Google's signing key has primary fingerprint(s) [$fprs], expected $GOOGLE_LINUX_KEY_FPR;" \
-                "check https://www.google.com/linux/linuxrepositories/ and update GOOGLE_LINUX_KEY_FPR" >&2; \
+        if [ "$fprs" != "$GOOGLE_LINUX_SIGNER_FPR" ]; then \
+            echo "Google's signing key has primary fingerprint(s) [$fprs], expected $GOOGLE_LINUX_SIGNER_FPR;" \
+                "check https://www.google.com/linux/linuxrepositories/ and update GOOGLE_LINUX_SIGNER_FPR" >&2; \
             exit 1; \
         fi; \
         gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg "$key"; \
