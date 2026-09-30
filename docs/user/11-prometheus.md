@@ -130,7 +130,7 @@ metrics are unaffected — their `device` label remains the mount source (for ex
 `/dev/sda1`). Upgrading to 0.20.0 starts new disk series under these label values, so update
 dashboards and alert rules that filter on old kernel-name values (for example `device="sda"`).
 
-> This list reflects version `0.20.0`. For the authoritative, always-current set, scrape your
+> This list reflects version `0.21.0`. For the authoritative, always-current set, scrape your
 > instance and inspect the output, or see the wiki
 > [Prometheus metrics page](https://github.com/c0m4r/kula/wiki/Prometheus-metrics).
 
