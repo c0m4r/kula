@@ -9,7 +9,9 @@
     <title>K U L A</title>
     <link rel="icon" href="kula.svg">
     <meta name="description" content="Lightweight, self-contained Linux® server monitoring tool">
-    <script src="js/chartjs/chartjs-bundle.min.js" integrity="{{sri `js/chartjs/chartjs-bundle.min.js`}}"
+    <!-- defer keeps Chart.js off the render path. Deferred and module scripts run
+         in document order after parsing, so Chart exists before main.js runs. -->
+    <script defer src="js/chartjs/chartjs-bundle.min.js" integrity="{{sri `js/chartjs/chartjs-bundle.min.js`}}"
         nonce="{{.Nonce}}" crossorigin="anonymous"></script>
     <link rel="stylesheet" href="style.css">
 

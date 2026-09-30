@@ -38,6 +38,11 @@ Legend, Tooltip and chartjs-plugin-zoom. Hammer.js is left out because pan and p
 Events. Anything else, such as another chart type or the Filler plugin behind `fill`, stays
 unavailable until it is registered in `entry.js` and the bundle is rebuilt.
 
+`index.html` loads it with `defer`, so it does not block the first paint. Deferred classic
+scripts and module scripts run in document order once parsing ends, so `Chart` is defined before
+`main.js` runs; `TestChartJSScriptsDeferred` keeps it that way, and
+`addons/packaging/replace_chartjs.sh` defers the distro trio the same way.
+
 The time scale uses Kula's native `Date` adapter (`date-adapter.js`) instead of date-fns. Tick
 and tooltip labels come from `Intl` in `format.js`, so the scale only needs local-time calendar
 math: unit starts, steps and whole-unit differences.

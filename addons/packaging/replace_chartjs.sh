@@ -351,12 +351,12 @@ make_snippets() {
     zoom="${INSTALLED[zoom]}"
 
     {
-        printf '    <!-- Chart.js trio from the distro: core, date adapter, zoom plugin -->\n'
+        printf '    <!-- Chart.js trio from the distro: core, date adapter, zoom plugin (deferred, run in this order) -->\n'
         for name in "${core}" "${adapter}" "${zoom}"; do
-            printf '    <script src="js/chartjs/%s" integrity="{{sri `js/chartjs/%s`}}"\n        nonce="{{.Nonce}}" crossorigin="anonymous"></script>\n' "${name}" "${name}"
+            printf '    <script defer src="js/chartjs/%s" integrity="{{sri `js/chartjs/%s`}}"\n        nonce="{{.Nonce}}" crossorigin="anonymous"></script>\n' "${name}" "${name}"
         done
     } >"${WORK}/index-new"
-    printf '    <script src="js/chartjs/chartjs-bundle.min.js" integrity="{{sri `js/chartjs/chartjs-bundle.min.js`}}"\n        nonce="{{.Nonce}}" crossorigin="anonymous"></script>\n' >"${WORK}/index-old"
+    printf '    <script defer src="js/chartjs/chartjs-bundle.min.js" integrity="{{sri `js/chartjs/chartjs-bundle.min.js`}}"\n        nonce="{{.Nonce}}" crossorigin="anonymous"></script>\n' >"${WORK}/index-old"
 
     {
         for name in "${core}" "${adapter}" "${zoom}"; do
