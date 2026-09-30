@@ -28,7 +28,7 @@ RUN apt-get update \
  && echo 'runner ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runner \
  && chmod 0440 /etc/sudoers.d/runner \
  && mkdir -p "$RUNNER_TOOL_CACHE" /home/runner/work/_temp /home/runner/go/pkg/mod \
-        /home/runner/.cache/go-build /home/runner/.cache/pip \
+        /home/runner/.cache/go-build /home/runner/.cache/pip /home/runner/.npm \
  && chown -R runner:runner "$RUNNER_TOOL_CACHE" /home/runner
 
 # The hosted image installs Chrome from Google's package, which only exists

@@ -17,6 +17,14 @@ repo=${repo%.git}
 export GITHUB_WORKSPACE=/home/runner/work/${repo:-kula}/${repo:-kula}
 export RUNNER_TEMP=/home/runner/work/_temp
 
+# A named volume takes its owner from the image directory it is first mounted
+# on, and one created before the image had that directory is root-owned.
+for cache in "$HOME/go" "$HOME/.cache" "$HOME/.npm"; do
+    if [ -d "$cache" ] && [ ! -w "$cache" ]; then
+        sudo -n chown runner:runner "$cache"
+    fi
+done
+
 mkdir -p "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
 tar -xf /ci/src.tar -C "$GITHUB_WORKSPACE"
 cd "$GITHUB_WORKSPACE"

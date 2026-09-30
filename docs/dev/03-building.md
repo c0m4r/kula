@@ -171,8 +171,8 @@ version there is enough):
 
 The working tree (tracked plus untracked, minus ignored files) is snapshotted into the container
 and committed there, so a job sees uncommitted changes; Go module, build, npm and pip caches
-live in named volumes, so only the first run pays for them (`--clean-cache`, or `clean`, starts
-over). [`addons/ci-local/run-workflow.py`](../../addons/ci-local/run-workflow.py) executes the
+live in named volumes owned by the container's `runner` user, so only the first run pays for them
+(`--clean-cache`, or `clean`, starts over). [`addons/ci-local/run-workflow.py`](../../addons/ci-local/run-workflow.py) executes the
 steps: it implements the first-party actions the workflows use (`actions/checkout`,
 `actions/setup-go`, `actions/setup-node`, `actions/setup-python`), honours `if`, `env`,
 `working-directory`, `shell`, timeouts, `continue-on-error` and the
