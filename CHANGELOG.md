@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
-## [Unreleased]
+## [0.21.0] - TBA
 
 ### Added
 
@@ -39,6 +39,11 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
   longer push the page down when they fill in
 - A light-theme dashboard no longer shows a dark first frame; `global.default_theme` also
   applies before the config request finishes
+- System Info no longer grades fans and voltages with temperature thresholds, and uptime refreshes
+- System Info no longer stretches a lone section tab
+- The remaining hard-coded dashboard strings are translated
+- A custom range time inside a DST gap now shows the time that actually loads
+- A corrupt record length in a tier file no longer allocates up to the whole ring before the read fails
 
 ## [0.20.3] - 2026-09-29
 
