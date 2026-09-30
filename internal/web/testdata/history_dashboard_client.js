@@ -178,7 +178,7 @@ check(!cpu.isDatasetVisible(0), 'Layout lost legend visibility');
 // Graph bounds copy only their known fields from stored preferences. A
 // __proto__ key must not supply an inherited automatic limit to the UI.
 const savedGraphBounds = localStorage.getItem('kula_graphs_max');
-const boundsButton = document.querySelector('#card-network button[title="Graph Bounds"]');
+const boundsButton = document.querySelector('#card-network button[data-i18n-title="graph_bounds"]');
 const boundsDropdown = document.querySelector('#card-network .chart-settings-dropdown');
 for (const fixture of [
     { stored: '{}', mode: 'off', value: 1000 },
@@ -213,13 +213,13 @@ try {
     for (let cycle = 0; cycle < 3; cycle++) {
         document.getElementById('btn-split-network').click();
         const card = document.querySelector('[data-split-type="network"]:has(.chart-settings-dropdown)');
-        card.querySelector('button[title="Graph Bounds"]').click();
+        card.querySelector('button[data-i18n-title="graph_bounds"]').click();
         check(!card.querySelector('.chart-settings-dropdown').classList.contains('hidden'),
             'Split graph bounds did not open');
         document.getElementById('btn-theme').click();
         check(card.querySelector('.chart-settings-dropdown').classList.contains('hidden'),
             'Unrelated icon click did not close split graph bounds');
-        card.querySelector('button[title="Graph Bounds"]').click();
+        card.querySelector('button[data-i18n-title="graph_bounds"]').click();
         document.body.click();
         check(card.querySelector('.chart-settings-dropdown').classList.contains('hidden'),
             'Outside click did not close split graph bounds');

@@ -34,7 +34,7 @@ export function updateSubtitles(s) {
     const el = (id, text) => { const e = document.getElementById(id); if (e) e.textContent = text; };
 
     if (s.cpu?.total) {
-        el('cpu-subtitle', `usr:${(s.cpu.total.user || 0).toFixed(1)}% sys:${(s.cpu.total.system || 0).toFixed(1)}% io:${(s.cpu.total.iowait || 0).toFixed(1)}% ${s.cpu.num_cores || 0} cores`);
+        el('cpu-subtitle', `usr:${(s.cpu.total.user || 0).toFixed(1)}% sys:${(s.cpu.total.system || 0).toFixed(1)}% io:${(s.cpu.total.iowait || 0).toFixed(1)}% ${s.cpu.num_cores || 0} ${i18n.t('cores')}`);
     }
     if (s.lavg) el('lavg-subtitle', `${(s.lavg.load1 || 0).toFixed(2)} / ${(s.lavg.load5 || 0).toFixed(2)} / ${(s.lavg.load15 || 0).toFixed(2)}`);
     // Memory — with % appended

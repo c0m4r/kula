@@ -123,7 +123,14 @@
     "collecting_data": "Collecting data…",
     "clock": "Clock",
     "split_by_device": "Split by device",
+    "join_charts": "Join charts",
     "save_chart_image": "Save as image",
+    "expand_chart": "Expand chart",
+    "collapse_chart": "Collapse chart",
+    "graph_bounds": "Graph Bounds",
+    "y_axis_limit": "Y-Axis Limit",
+    "y_axis_auto": "Off (Auto-scale)",
+    "y_axis_max": "On (Max Limit)",
     "ai_assistant": "AI Assistant",
     "ai_clear_conversation": "Clear conversation",
     "ai_close": "Close",
@@ -132,6 +139,7 @@
     "ai_delete_session": "Delete session",
     "ai_input_placeholder": "Ask about the metrics… (Enter to send)",
     "ai_analyse": "Analyse",
+    "ai_analyse_graph": "Analyse Graph",
     "ai_unavailable": "AI assistant unavailable, retrying…",
     "ai_resize": "Resize",
     "ai_confirm_clear": "Clear all messages in this session?",
@@ -265,6 +273,7 @@
     "si_devices": "Connected devices",
     "si_sensors": "Sensors & power",
     "si_loading": "Loading current system information…",
+    "si_refreshing": "Refreshing system information…",
     "si_updated": "Updated",
     "si_metrics_updated": "Metrics collected",
     "si_metrics_pending": "Waiting for the first metric sample",
@@ -379,5 +388,6 @@
     "synced": "synced",
     "not_synced": "not synced",
     "users": "users",
-    "self": "self"
+    "self": "self",
+    "cores": "cores"
 }

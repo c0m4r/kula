@@ -8,6 +8,7 @@ import { pushLiveSample, fetchHistory, fetchCustomHistory } from './charts-data.
 import { wsUrl } from './api.js';
 import { normalizeHistoryItem } from './history-data.js';
 import { requireLogin } from './auth.js';
+import { i18n } from './i18n.js';
 
 export function connectWS() {
     if (state.ws && (state.ws.readyState === WebSocket.CONNECTING || state.ws.readyState === WebSocket.OPEN)) {
@@ -135,7 +136,9 @@ export function scheduleReconnect() {
 export function updateConnectionStatus(connected) {
     const dot = document.getElementById('connection-status');
     if (dot) {
-        dot.className = 'status-dot ' + (connected ? 'connected' : 'disconnected');
-        dot.title = connected ? 'Connected' : 'Disconnected';
+        const status = connected ? 'connected' : 'disconnected';
+        dot.className = 'status-dot ' + status;
+        dot.dataset.i18nTitle = status;
+        dot.title = i18n.t(status);
     }
 }

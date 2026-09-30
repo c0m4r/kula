@@ -103,7 +103,8 @@ function setupChartActions() {
         if (graphId) {
             const settingsButton = document.createElement('button');
             settingsButton.className = 'btn-icon';
-            settingsButton.title = 'Graph Bounds';
+            settingsButton.dataset.i18nTitle = 'graph_bounds';
+            settingsButton.title = i18n.t('graph_bounds');
             settingsButton.textContent = '⚙️';
             settingsButton.style.fontSize = '0.85rem';
             settingsButton.style.padding = '0.15rem 0.35rem';
@@ -121,7 +122,8 @@ function setupChartActions() {
             title.style.fontWeight = '600';
             title.style.textTransform = 'uppercase';
             title.style.color = 'var(--text-muted)';
-            title.textContent = 'Y-Axis Limit';
+            title.dataset.i18n = 'y_axis_limit';
+            title.textContent = i18n.t('y_axis_limit');
 
             const select = document.createElement('select');
             select.style.width = '100%';
@@ -132,10 +134,13 @@ function setupChartActions() {
             select.style.background = 'var(--bg-card)';
             select.style.color = 'var(--text)';
             select.style.fontSize = '0.85rem';
-            select.innerHTML = `
-                <option value="off">Off (Auto-scale)</option>
-                <option value="on">On (Max Limit)</option>
-            `;
+            for (const [value, key] of [['off', 'y_axis_auto'], ['on', 'y_axis_max']]) {
+                const option = document.createElement('option');
+                option.value = value;
+                option.dataset.i18n = key;
+                option.textContent = i18n.t(key);
+                select.appendChild(option);
+            }
 
             const input = document.createElement('input');
             input.type = 'number';
@@ -153,7 +158,8 @@ function setupChartActions() {
             });
 
             const saveButton = document.createElement('button');
-            saveButton.textContent = 'Apply';
+            saveButton.dataset.i18n = 'apply';
+            saveButton.textContent = i18n.t('apply');
             saveButton.style.width = '100%';
             saveButton.style.marginTop = '0.75rem';
             saveButton.style.padding = '0.4rem';

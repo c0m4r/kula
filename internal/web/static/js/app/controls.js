@@ -154,7 +154,9 @@ export function syncTimeRangeUI(seconds) {
     };
     const display = document.getElementById('time-range-display');
     display?.removeAttribute('data-i18n');
-    if (display) display.textContent = labels[seconds] || `${i18n.t('last')} ${seconds}s`;
+    // Every caller passes a preset (URL ranges are validated against the same
+    // list), so the plain duration only guards a preset added without a label.
+    if (display) display.textContent = labels[seconds] || `${seconds}s`;
 }
 
 // ---- Custom Time Range ----

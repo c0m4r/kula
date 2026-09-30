@@ -163,7 +163,10 @@ export function toggleExpandChart(cardId) {
 
     const btn = card.querySelector('.btn-expand-chart');
     if (btn) {
-        btn.title = isExpanded ? 'Collapse chart' : 'Expand chart';
+        const key = isExpanded ? 'collapse_chart' : 'expand_chart';
+        btn.dataset.i18nTitle = key;
+        btn.dataset.i18nAriaLabel = key;
+        btn.title = i18n.t(key);
         btn.setAttribute('aria-label', btn.title);
         btn.setAttribute('aria-expanded', String(isExpanded));
     }
@@ -194,7 +197,9 @@ export function addExpandButton(card) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn-icon btn-expand-chart';
-    btn.title = 'Expand chart';
+    btn.dataset.i18nTitle = 'expand_chart';
+    btn.dataset.i18nAriaLabel = 'expand_chart';
+    btn.title = i18n.t('expand_chart');
     btn.setAttribute('aria-label', btn.title);
     btn.setAttribute('aria-expanded', 'false');
     btn.textContent = '🔍';

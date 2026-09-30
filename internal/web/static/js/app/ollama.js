@@ -326,7 +326,8 @@ function attachAIButtonToCard(card) {
 
     const btn = document.createElement('button');
     btn.className = 'btn-ai-chart';
-    btn.title = 'Analyse Graph';
+    btn.dataset.i18nTitle = 'ai_analyse_graph';
+    btn.title = i18n.t('ai_analyse_graph');
     btn.textContent = '🤖';
 
     if (isGauge) {

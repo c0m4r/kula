@@ -99,9 +99,9 @@
                 <!-- Chart search -->
                 <input type="text" id="chart-search" class="chart-search-input" data-i18n-placeholder="search_charts" placeholder="Search charts..." autocomplete="off" spellcheck="false">
                 <!-- Connection status -->
-                <span id="connection-status" class="status-dot connected" title="Connected"></span>
+                <span id="connection-status" class="status-dot connected" data-i18n-title="connected" title="Connected"></span>
                 <!-- Pause/Resume -->
-                <button id="btn-pause" class="btn-icon" title="Pause/Resume">⏸</button>
+                <button id="btn-pause" class="btn-icon" data-i18n-title="pause_resume" title="Pause/Resume">⏸</button>
                 <!-- Current system and hardware inventory -->
                 <button id="btn-info" class="btn-icon btn-info" data-i18n-title="system_info"
                     data-i18n-aria-label="system_info" title="System Info" aria-controls="system-info-page"
@@ -162,12 +162,12 @@
                                 <div class="settings-stepper">
                                     <button type="button" id="set-text-smaller" class="settings-stepper-btn"
                                         data-i18n-title="text_smaller" title="Smaller text"
-                                        aria-label="Smaller text">&minus;</button>
+                                        data-i18n-aria-label="text_smaller" aria-label="Smaller text">&minus;</button>
                                     <button type="button" id="set-text-reset" class="settings-stepper-value"
                                         data-i18n-title="text_reset" title="Reset text size">100%</button>
                                     <button type="button" id="set-text-bigger" class="settings-stepper-btn"
                                         data-i18n-title="text_bigger" title="Bigger text"
-                                        aria-label="Bigger text">+</button>
+                                        data-i18n-aria-label="text_bigger" aria-label="Bigger text">+</button>
                                 </div>
                             </div>
                             <label class="settings-row">
@@ -302,7 +302,7 @@
                         data-i18n-title="zoom_out" data-i18n-aria-label="zoom_out" disabled>−</button>
                     </div>
                 <span class="time-divider">│</span>
-                <span id="loading-spinner" class="loading-spinner hidden" title="Loading history...">⏳</span>
+                <span id="loading-spinner" class="loading-spinner hidden" data-i18n-title="history_loading" title="Loading historical data">⏳</span>
             </div>
             <div class="time-info">
                 <span id="time-range-display" data-i18n="last_5_m">Last 5 minutes</span>

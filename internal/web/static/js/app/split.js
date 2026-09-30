@@ -495,7 +495,8 @@ function _makeSplitCard(cardId, title, type, graphId = null) {
     // Join button — collapses split back to the combined chart
     const joinBtn = document.createElement('button');
     joinBtn.className = 'btn-icon btn-split-chart';
-    joinBtn.title = i18n.t('join_charts') || 'Join charts';
+    joinBtn.dataset.i18nTitle = 'join_charts';
+    joinBtn.title = i18n.t('join_charts');
     joinBtn.textContent = '⊞';
     joinBtn.style.fontSize = '0.85rem';
     joinBtn.style.padding = '0.15rem 0.35rem';
@@ -517,7 +518,8 @@ function _makeSplitCard(cardId, title, type, graphId = null) {
     // Expand button
     const expandBtn = document.createElement('button');
     expandBtn.className = 'btn-icon btn-expand-chart';
-    expandBtn.title = 'Expand chart';
+    expandBtn.dataset.i18nTitle = 'expand_chart';
+    expandBtn.title = i18n.t('expand_chart');
     expandBtn.textContent = '🔍';
     expandBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -572,7 +574,10 @@ function _toggleExpandSplitCard(card) {
     }
 
     const btn = card.querySelector('.btn-expand-chart');
-    if (btn) btn.title = isExpanded ? 'Collapse chart' : 'Expand chart';
+    if (btn) {
+        btn.dataset.i18nTitle = isExpanded ? 'collapse_chart' : 'expand_chart';
+        btn.title = i18n.t(btn.dataset.i18nTitle);
+    }
 
     const canvas = card.querySelector('canvas');
     if (canvas) {
@@ -590,7 +595,8 @@ function _toggleExpandSplitCard(card) {
 function _addSettingsDropdown(header, actions, graphId, type) {
     const sBtn = document.createElement('button');
     sBtn.className = 'btn-icon';
-    sBtn.title = 'Graph Bounds';
+    sBtn.dataset.i18nTitle = 'graph_bounds';
+    sBtn.title = i18n.t('graph_bounds');
     sBtn.textContent = '⚙️';
     sBtn.style.fontSize = '0.85rem';
     sBtn.style.padding = '0.15rem 0.35rem';
@@ -608,7 +614,8 @@ function _addSettingsDropdown(header, actions, graphId, type) {
     titleEl.style.fontWeight = '600';
     titleEl.style.textTransform = 'uppercase';
     titleEl.style.color = 'var(--text-muted)';
-    titleEl.textContent = 'Y-Axis Limit';
+    titleEl.dataset.i18n = 'y_axis_limit';
+    titleEl.textContent = i18n.t('y_axis_limit');
 
     const select = document.createElement('select');
     select.style.width = '100%';
@@ -619,10 +626,13 @@ function _addSettingsDropdown(header, actions, graphId, type) {
     select.style.background = 'var(--bg-card)';
     select.style.color = 'var(--text)';
     select.style.fontSize = '0.85rem';
-    select.innerHTML = `
-        <option value="off">Off (Auto-scale)</option>
-        <option value="on">On (Max Limit)</option>
-    `;
+    for (const [value, key] of [['off', 'y_axis_auto'], ['on', 'y_axis_max']]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.dataset.i18n = key;
+        option.textContent = i18n.t(key);
+        select.appendChild(option);
+    }
 
     const input = document.createElement('input');
     input.type = 'number';
@@ -640,7 +650,8 @@ function _addSettingsDropdown(header, actions, graphId, type) {
     });
 
     const saveBtn = document.createElement('button');
-    saveBtn.textContent = 'Apply';
+    saveBtn.dataset.i18n = 'apply';
+    saveBtn.textContent = i18n.t('apply');
     saveBtn.style.width = '100%';
     saveBtn.style.marginTop = '0.75rem';
     saveBtn.style.padding = '0.4rem';
