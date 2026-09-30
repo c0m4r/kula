@@ -23,6 +23,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Retained history now limits only which days can be picked
 - Unused CSS/JS cleanup
 - The dashboard now loads one trimmed Chart.js bundle instead of three scripts
+- web: serve Inter as WOFF2, font MIME types
 
 ### Fixed
 
