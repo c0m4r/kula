@@ -33,6 +33,10 @@
 # container gets a 1 GiB /dev/shm, since Docker's 64 MiB default makes Chrome
 # crawl and the browser fixtures measure the difference.
 #
+# The container is capped at CI_LOCAL_MEMORY (default 8g, RAM and swap
+# together) and CI_LOCAL_PIDS processes (default 4096), so a runaway step
+# cannot take the workstation down; set either to "none" to lift it.
+#
 # This is an equivalent, not a simulator: the security model of the workflows
 # (read-only token, no persisted credentials) holds trivially because there is
 # no token at all, and steps that need one (a push, a release upload) cannot
@@ -55,6 +59,11 @@ VOLUME_PREFIX="kula-ci-local"
 # be able to read the bind-mounted path (it cannot see a private /tmp, and
 # Docker Desktop only shares the user's own directories anyway).
 SNAPSHOT_DIR="$PWD/.ci-local"
+
+# Ceilings for code that runs from the working tree. The hosted runner has
+# 16 GiB; a Go race-test run plus golangci-lint fits well within 8.
+CI_LOCAL_MEMORY="${CI_LOCAL_MEMORY:-8g}"
+CI_LOCAL_PIDS="${CI_LOCAL_PIDS:-4096}"
 
 usage() {
     # The header comment block, up to the first line that is not a comment.
@@ -187,6 +196,23 @@ ref_name() {
     echo "$name"
 }
 
+resource_limits() {
+    if [ "$CI_LOCAL_MEMORY" != "none" ]; then
+        if ! [[ "$CI_LOCAL_MEMORY" =~ ^[0-9]+[bkmgBKMG]?$ ]]; then
+            echo -e "${RED}ci-local: CI_LOCAL_MEMORY must be a size such as 8g, or none${RESET}" >&2
+            exit 2
+        fi
+        LIMITS+=(--memory "$CI_LOCAL_MEMORY" --memory-swap "$CI_LOCAL_MEMORY")
+    fi
+    if [ "$CI_LOCAL_PIDS" != "none" ]; then
+        if ! [[ "$CI_LOCAL_PIDS" =~ ^[1-9][0-9]*$ ]]; then
+            echo -e "${RED}ci-local: CI_LOCAL_PIDS must be a positive number, or none${RESET}" >&2
+            exit 2
+        fi
+        LIMITS+=(--pids-limit "$CI_LOCAL_PIDS")
+    fi
+}
+
 run_container() { # ARGS...
     local status=0 tty=()
     snapshot_tree
@@ -215,12 +241,16 @@ run_container() { # ARGS...
     # root-owned directory in its place.
     docker run --rm --init -i "${tty[@]+"${tty[@]}"}" \
         --shm-size=1g \
+        "${LIMITS[@]+"${LIMITS[@]}"}" \
         --mount "type=bind,\"source=$SNAPSHOT\",target=/ci/src.tar,readonly" \
         "${volumes[@]}" \
         "${env[@]}" \
         "$IMAGE_TAG" "$@" || status=$?
     remove_snapshot
     SNAPSHOT=""
+    if [ "$status" = 137 ] && [ "$CI_LOCAL_MEMORY" != "none" ]; then
+        echo -e "${YELLOW}ci-local: exit 137 usually means the container hit CI_LOCAL_MEMORY=$CI_LOCAL_MEMORY; raise it or set it to none${RESET}" >&2
+    fi
     return "$status"
 }
 
@@ -263,6 +293,8 @@ case "$COMMAND" in
 esac
 
 require_docker
+LIMITS=()
+resource_limits
 
 if [ "$CLEAN_CACHE" = "1" ]; then
     echo -e "${YELLOW}Dropping the Go, npm and pip cache volumes${RESET}"
