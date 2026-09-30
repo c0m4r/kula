@@ -204,15 +204,28 @@ History view uses it to chart what a separately running `kula serve` writes.
 - Refresh mirrors `Write`'s pass bookkeeping (`writeCycle`, `writeEnd`), so the batched scanner's
   snapshot check still notices if a refresh between batches shows the writer overtaking unread
   bytes.
-- Tier locks do not cross processes. A scan racing the writer over the oldest records of a
-  wrapped ring can end that segment early or skip a torn record; the decoder never panics on
-  such bytes, and the next refresh reads a consistent ring. Treat results as a view, not an
-  archive.
+- Tier locks do not cross processes, and records carry no checksum, so a record the owner
+  overwrites while it is read could decode into wrong values. Each scan therefore checks itself
+  (`readOnlyScan`). The owner writes from the snapshot's `writeOff` in ring order over the oldest
+  records, and its header `count` only grows, so re-reading the header shows exactly which bytes
+  it has changed since the snapshot. Every 256 records, before a batch is reduced and at the end,
+  the scan re-reads the header. If the owner reached a record read since the previous check, that
+  record may be torn, and so may every record after it, because each length prefix positions the
+  next. The scan then fails with `errHistorySnapshotExpired`. `QueryRangeWithMeta` re-adopts the
+  header and retries up to three times. Records that passed a check stand, and when the owner did
+  write, samples next to its following write are dropped. The owner writes once per collection
+  interval, far slower than a scan, so retries are rare. Treat results as a view, not an archive.
+- A length prefix above `maxRecordBytes` (64 MiB), or one reaching past the end of the file, is
+  corruption: a torn or corrupt prefix never allocates up to the ring size.
 - There is no latest-sample cache, so `QueryLatest` returns `nil`.
+- Tier choice and resolution labels come from the config the store was opened with; the files
+  do not record resolutions. `LayoutMismatch()` compares what the files do record, each tier's
+  size and the number of tier files, and the TUI shows the difference.
 
-`readonly_test.go` covers following a live writer across wraps, missing and replaced files,
-permission errors, and the guarantee that a read-only store leaves the file byte-for-byte
-unchanged.
+`readonly_test.go` covers following a writer across wraps, reading while the owner writes from
+another store (every returned value must be one the owner wrote, in order), missing and replaced
+files, permission errors, and the guarantee that a read-only store leaves the file byte-for-byte
+unchanged, including a legacy JSON tier and a config naming a different tier size.
 
 ## Migration
 

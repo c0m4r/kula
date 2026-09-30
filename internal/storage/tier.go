@@ -339,8 +339,8 @@ func (t *Tier) Write(s *AggregatedSample) error {
 	}
 
 	recordLen := 4 + len(data) // length prefix + data
-	if int64(recordLen) > t.maxData {
-		return fmt.Errorf("sample too large: %d > %d", recordLen, t.maxData)
+	if int64(recordLen) > t.maxData || len(data) > maxRecordBytes {
+		return fmt.Errorf("sample too large: %d bytes (tier holds %d, a record at most %d)", recordLen, t.maxData, maxRecordBytes)
 	}
 
 	t.mu.Lock()
@@ -440,6 +440,20 @@ func (t *Tier) Write(s *AggregatedSample) error {
 	return t.writeHeader()
 }
 
+// maxRecordBytes bounds one record's payload. Encoded samples are kilobytes,
+// and a rollup of a host with 20,000 interfaces, 5,000 filesystems and 10,000
+// containers is about 12 MiB; the most interfaces the codec can hold come to
+// 18 MiB. The bound keeps a corrupt or torn length prefix from allocating up
+// to the whole ring (hundreds of MB) before the read that follows fails.
+const maxRecordBytes = 64 << 20
+
+// validRecordLen reports whether a length prefix can describe a record: not
+// the zero end-of-segment sentinel, within the ring and within
+// maxRecordBytes.
+func (t *Tier) validRecordLen(dataLen uint32) bool {
+	return dataLen != 0 && dataLen <= maxRecordBytes && int64(dataLen) <= t.maxData
+}
+
 // errHistorySnapshotExpired prevents combining old and overwritten ring bytes
 // if a writer overtakes a reader between batches.
 var errHistorySnapshotExpired = errors.New("history retention changed during query; retry the request")
@@ -458,8 +472,32 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 		return nil, nil
 	}
 
+	// A read-only tier's owner writes it from another process while it is
+	// read; the guard checks the scan against it (see readOnlyScan).
+	var guard *readOnlyScan
+	if t.readOnly {
+		guard = t.newReadOnlyScan()
+	}
+
 	var samples []*AggregatedSample
+	keep := func(sample *AggregatedSample, offset, length int64) {
+		samples = append(samples, sample)
+		if guard != nil {
+			guard.kept(offset, length)
+		}
+	}
+	check := func() error {
+		if guard == nil {
+			return nil
+		}
+		var err error
+		samples, err = guard.check(samples)
+		return err
+	}
 	flush := func() error {
+		if err := check(); err != nil {
+			return err
+		}
 		if consume == nil {
 			return nil
 		}
@@ -516,6 +554,13 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 	} else {
 		segments = []segment{{start: 0, size: t.writeOff, resync: true, cycle: t.writeCycle}}
 	}
+	// The header's geometry is not trusted past the end of the file.
+	if info, err := t.file.Stat(); err == nil {
+		dataSize := info.Size() - headerSize
+		for i := range segments {
+			segments[i].size = max(0, min(segments[i].size, dataSize-segments[i].start))
+		}
+	}
 
 	scanned := 0
 	for _, seg := range segments {
@@ -533,6 +578,14 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 				scanned = 0
 			}
 			scanned++
+			if guard != nil {
+				if guard.due() {
+					if err := check(); err != nil {
+						return nil, err
+					}
+				}
+				guard.reached(seg.start + bytesRead)
+			}
 			// The source extent is fixed at scan start. Appends are harmless;
 			// overwrites of unread bytes invalidate this snapshot.
 			passes := t.writeCycle - seg.cycle
@@ -555,7 +608,7 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 			}
 			dataLen := binary.LittleEndian.Uint32(hdr[0:4])
 
-			if dataLen == 0 || int64(dataLen) > t.maxData || bytesRead+4+int64(dataLen) > seg.size {
+			if !t.validRecordLen(dataLen) || bytesRead+4+int64(dataLen) > seg.size {
 				// In the old wrapped segment a zero length is the end-of-segment
 				// sentinel: stop. In the active segment it is a hole from an
 				// unclean shutdown — skip past it and keep the data written after
@@ -601,7 +654,7 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 						break
 					}
 					if !sample.Timestamp.Before(from) {
-						samples = append(samples, sample)
+						keep(sample, seg.start+bytesRead, recordLen)
 					}
 				}
 				bytesRead += recordLen
@@ -624,7 +677,7 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 				continue
 			}
 
-			samples = append(samples, sample)
+			keep(sample, seg.start+bytesRead, recordLen)
 			bytesRead += recordLen
 		}
 	}
@@ -684,7 +737,7 @@ func (t *Tier) ReadLatest(n int) ([]*AggregatedSample, error) {
 				break
 			}
 			dataLen := binary.LittleEndian.Uint32(hdr[0:4])
-			if dataLen == 0 || int64(dataLen) > t.maxData || bytesRead+4+int64(dataLen) > seg.size {
+			if !t.validRecordLen(dataLen) || bytesRead+4+int64(dataLen) > seg.size {
 				// Active segment: skip an unclean-shutdown hole; old segment: the
 				// sentinel ends the segment. (See ReadRange for the rationale.)
 				if !seg.resync || !t.resyncToNextRecord(br, &bytesRead, seg.size) {
@@ -867,10 +920,10 @@ func (t *Tier) recordHeaderSane(hdr []byte) (int64, bool) {
 	if len(hdr) < 13 {
 		return 0, false
 	}
-	dataLen := int64(binary.LittleEndian.Uint32(hdr[0:4]))
-	if dataLen <= 0 || dataLen > t.maxData {
+	if !t.validRecordLen(binary.LittleEndian.Uint32(hdr[0:4])) {
 		return 0, false
 	}
+	dataLen := int64(binary.LittleEndian.Uint32(hdr[0:4]))
 	var ts time.Time
 	if hdr[4] == recordKindBinary {
 		ts = time.Unix(0, int64(binary.LittleEndian.Uint64(hdr[5:13])))
@@ -902,7 +955,7 @@ func (t *Tier) recordLenAt(dataOffset int64) (int64, bool) {
 		return 0, false
 	}
 	dataLen := binary.LittleEndian.Uint32(buf[:])
-	if dataLen == 0 || int64(dataLen) > t.maxData {
+	if !t.validRecordLen(dataLen) {
 		return 0, false
 	}
 	return int64(dataLen), true
@@ -922,7 +975,7 @@ func (t *Tier) readTimestampAt(dataOffset int64) (time.Time, error) {
 		return time.Time{}, err
 	}
 	dataLen := binary.LittleEndian.Uint32(buf[0:4])
-	if dataLen == 0 || int64(dataLen) > t.maxData {
+	if !t.validRecordLen(dataLen) {
 		return time.Time{}, fmt.Errorf("invalid record length %d at offset %d", dataLen, dataOffset)
 	}
 
@@ -1019,7 +1072,7 @@ func (t *Tier) migrateToBinary() error {
 				break
 			}
 			dataLen := binary.LittleEndian.Uint32(lenBuf)
-			if dataLen == 0 || int64(dataLen) > t.maxData {
+			if !t.validRecordLen(dataLen) {
 				break
 			}
 			recordLen := int64(4 + dataLen)

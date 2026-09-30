@@ -17,61 +17,20 @@ func TestTierMigration_JSONToBinary(t *testing.T) {
 	maxSize := int64(64 * 1024)
 	maxData := maxSize - headerSize
 
-	// 1. Manually create a legacy JSON (v1) tier file
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Write v1 header
-	header := make([]byte, headerSize)
-	copy(header[0:4], magicString)
-	binary.LittleEndian.PutUint64(header[8:16], 1) // codecVer = 1
-	binary.LittleEndian.PutUint64(header[16:24], uint64(maxData))
-
-	// Prepare some sample data
+	// 1. A legacy JSON (v1) tier file
 	ts1 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2026, 1, 1, 10, 0, 1, 0, time.UTC)
-
-	s1 := &AggregatedSample{
-		Timestamp: ts1,
-		Duration:  time.Second,
-		Data:      &collector.Sample{Timestamp: ts1, System: collector.SystemStats{Hostname: "host1"}},
-	}
-	s2 := &AggregatedSample{
-		Timestamp: ts2,
-		Duration:  time.Second,
-		Data:      &collector.Sample{Timestamp: ts2, System: collector.SystemStats{Hostname: "host2"}},
-	}
-
-	data1, _ := json.Marshal(s1)
-	data2, _ := json.Marshal(s2)
-
-	// Write records to file
-	off := int64(0)
-	writeRecord := func(data []byte) {
-		lenBuf := make([]byte, 4)
-		binary.LittleEndian.PutUint32(lenBuf, uint32(len(data)))
-		if _, err := f.WriteAt(lenBuf, headerSize+off); err != nil {
-			t.Fatalf("Failed to write length buffer: %v", err)
-		}
-		if _, err := f.WriteAt(data, headerSize+off+4); err != nil {
-			t.Fatalf("Failed to write data: %v", err)
-		}
-		off += 4 + int64(len(data))
-	}
-	writeRecord(data1)
-	writeRecord(data2)
-
-	// Update header with counts and offsets
-	binary.LittleEndian.PutUint64(header[24:32], uint64(off))
-	binary.LittleEndian.PutUint64(header[32:40], 2)
-	binary.LittleEndian.PutUint64(header[40:48], uint64(ts1.UnixNano()))
-	binary.LittleEndian.PutUint64(header[48:56], uint64(ts2.UnixNano()))
-	if _, err := f.WriteAt(header, 0); err != nil {
-		t.Fatalf("Failed to write header: %v", err)
-	}
-	_ = f.Close()
+	writeLegacyJSONTier(t, path, maxData,
+		&AggregatedSample{
+			Timestamp: ts1,
+			Duration:  time.Second,
+			Data:      &collector.Sample{Timestamp: ts1, System: collector.SystemStats{Hostname: "host1"}},
+		},
+		&AggregatedSample{
+			Timestamp: ts2,
+			Duration:  time.Second,
+			Data:      &collector.Sample{Timestamp: ts2, System: collector.SystemStats{Hostname: "host2"}},
+		})
 
 	// 2. Open with OpenTier (should trigger migration)
 	tier, err := OpenTier(path, maxSize)
@@ -113,5 +72,34 @@ func TestTierMigration_JSONToBinary(t *testing.T) {
 	}
 	if peak[0] != 0x02 {
 		t.Errorf("Expected record kind %02x, got %02x (likely still JSON)", 0x02, peak[0])
+	}
+}
+
+// writeLegacyJSONTier writes a codec v1 tier file holding samples as JSON
+// records, the format of the earliest releases.
+func writeLegacyJSONTier(t *testing.T, path string, maxData int64, samples ...*AggregatedSample) {
+	t.Helper()
+	header := make([]byte, headerSize)
+	copy(header[0:4], magicString)
+	binary.LittleEndian.PutUint64(header[8:16], 1) // codecVer = 1
+	binary.LittleEndian.PutUint64(header[16:24], uint64(maxData))
+
+	var records []byte
+	for _, sample := range samples {
+		data, err := json.Marshal(sample)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records = binary.LittleEndian.AppendUint32(records, uint32(len(data)))
+		records = append(records, data...)
+	}
+	binary.LittleEndian.PutUint64(header[24:32], uint64(len(records)))
+	binary.LittleEndian.PutUint64(header[32:40], uint64(len(samples)))
+	if len(samples) > 0 {
+		binary.LittleEndian.PutUint64(header[40:48], uint64(samples[0].Timestamp.UnixNano()))
+		binary.LittleEndian.PutUint64(header[48:56], uint64(samples[len(samples)-1].Timestamp.UnixNano()))
+	}
+	if err := os.WriteFile(path, append(header, records...), 0o600); err != nil {
+		t.Fatalf("writing legacy tier: %v", err)
 	}
 }

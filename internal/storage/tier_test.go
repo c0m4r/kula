@@ -763,3 +763,44 @@ func TestShrinkMaxSizeKeepsOnDiskGeometry(t *testing.T) {
 		t.Errorf("header maxData = %d, want %d", got, int64(large-headerSize))
 	}
 }
+
+// A length prefix beyond maxRecordBytes is corruption even in a ring large
+// enough to hold it: reading it would allocate up to the ring's size before
+// the read fails.
+func TestTierBoundsRecordLength(t *testing.T) {
+	path := t.TempDir() + "/tier_0.dat"
+	tier, err := OpenTier(path, 2*maxRecordBytes)
+	if err != nil {
+		t.Fatalf("OpenTier: %v", err)
+	}
+	defer func() { _ = tier.Close() }()
+
+	for dataLen, want := range map[uint32]bool{0: false, 1: true, maxRecordBytes: true, maxRecordBytes + 1: false} {
+		if got := tier.validRecordLen(dataLen); got != want {
+			t.Errorf("validRecordLen(%d) = %v, want %v", dataLen, got, want)
+		}
+	}
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var offsets []int64
+	for i := 0; i < 3; i++ {
+		offsets = append(offsets, tier.writeOff)
+		if err := tier.Write(varSample(base.Add(time.Duration(i)*time.Second), 1)); err != nil {
+			t.Fatalf("Write(%d): %v", i, err)
+		}
+	}
+	// Corrupt the second record's length to claim more than maxRecordBytes.
+	var prefix [4]byte
+	binary.LittleEndian.PutUint32(prefix[:], maxRecordBytes+maxRecordBytes/2)
+	if _, err := tier.file.WriteAt(prefix[:], headerSize+offsets[1]); err != nil {
+		t.Fatal(err)
+	}
+	samples, err := tier.ReadRange(base, base.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("ReadRange: %v", err)
+	}
+	// The active segment resyncs past the bad prefix to the third record.
+	if len(samples) != 2 || !samples[1].Timestamp.Equal(base.Add(2*time.Second)) {
+		t.Fatalf("read %d samples around a corrupt length, want the first and third", len(samples))
+	}
+}

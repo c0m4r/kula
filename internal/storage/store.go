@@ -569,9 +569,21 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 		tier := s.tiers[tierIdx]
 
 		result, err := s.readHistory(tier, from, to, targetPoints, candidate.resolution, tierIdx == 0)
-		if errors.Is(err, errHistorySnapshotExpired) {
-			// Retention advanced across unread bytes. Restart from the current
-			// snapshot once, without ever publishing the abandoned partial data.
+		// Retention advanced across unread bytes. Restart from the current
+		// snapshot, without ever publishing the abandoned partial data. A
+		// read-only store first adopts the owner's current header, and allows
+		// for the owner writing again during the retry.
+		retries := 1
+		if s.readOnly {
+			retries = 3
+		}
+		for attempt := 0; attempt < retries && errors.Is(err, errHistorySnapshotExpired); attempt++ {
+			if s.readOnly {
+				if reloadErr := tier.reloadReadOnly(); reloadErr != nil {
+					err = reloadErr
+					break
+				}
+			}
 			result, err = s.readHistory(tier, from, to, targetPoints, candidate.resolution, tierIdx == 0)
 			candidate.complete = false
 		}
