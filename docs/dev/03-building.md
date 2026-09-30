@@ -184,6 +184,7 @@ unless the condition calls a status function, and a failed step skips the rest o
 context ci-local does not provide (`needs`, for instance) fails the job instead of evaluating to
 empty. The container holds no token, so the workflows' read-only security model holds trivially;
 steps that genuinely need GitHub (a push, a release upload) cannot work here by design.
-`--step PATTERN` runs only the matching steps, which is the fast way to iterate on one failure.
+`--step PATTERN` runs only the `run` steps whose name matches, which is the fast way to iterate
+on one failure; the `uses:` setup steps always run, since they put the toolchains on `PATH`.
 
 Next: [Collector Subsystem](04-collector.md).

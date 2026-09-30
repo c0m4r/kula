@@ -19,7 +19,8 @@
 #   --rebuild          rebuild the image, re-resolving the toolcache versions
 #   --pull             refresh the Ubuntu/Chrome layers from the registry
 #   --clean-cache      drop the Go/npm/pip cache volumes before running
-#   --step PATTERN     run only steps whose name contains PATTERN (repeatable)
+#   --step PATTERN     run only the `run` steps whose name contains PATTERN
+#                      (repeatable); setup actions always run
 #   -e KEY=VALUE       extra environment variable for the container (repeatable)
 #
 # The working tree (tracked plus untracked, minus ignored files) is snapshotted

@@ -1200,8 +1200,12 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
             print(f"{yellow('⤼')} {label} {yellow('(skipped: if)')}", flush=True)
             records.append(StepRecord(label, "skipped", 0.0))
             continue
-        if options.step and not any(
-            pattern.lower() in label.lower() for pattern in options.step
+        # --step narrows the `run` steps only: the setup actions put the
+        # toolchains on PATH, and every later step depends on them.
+        if (
+            options.step
+            and not step.get("uses")
+            and not any(pattern.lower() in label.lower() for pattern in options.step)
         ):
             print(f"{yellow('⤼')} {label} {yellow('(skipped: --step)')}", flush=True)
             records.append(StepRecord(label, "skipped", 0.0))
@@ -1394,7 +1398,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         action="append",
         default=[],
         metavar="PATTERN",
-        help="run only steps whose name contains PATTERN (repeatable; local convenience)",
+        help="run only the `run` steps whose name contains PATTERN (repeatable); setup actions always run",
     )
     subparsers = parser.add_subparsers(dest="command")
 

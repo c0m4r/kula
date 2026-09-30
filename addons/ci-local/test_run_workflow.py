@@ -263,6 +263,12 @@ class JobTest(unittest.TestCase):
         self.assertEqual(result["ran"], set())
         self.assertIn("job skipped: if", result["output"])
 
+    def test_step_filter_keeps_setup_actions(self) -> None:
+        result = self.run_job("failing", step=["FIRST"])
+        self.assertEqual(result["code"], 0)
+        self.assertEqual(result["ran"], {"first"})
+        self.assertIn("workspace already prepared", result["output"])
+
     def test_false_literal_condition_skips_the_step(self) -> None:
         result = self.run_job("guarded")
         self.assertEqual(result["code"], 0)
