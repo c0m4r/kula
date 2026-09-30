@@ -4,6 +4,7 @@
    ============================================================ */
 'use strict';
 import { apiUrl } from './api.js';
+import { readPref, writePref } from './prefs.js';
 
 export const i18n = {
     currentLang: 'en',
@@ -50,7 +51,7 @@ export const i18n = {
         }
 
         // 1. Check local storage
-        const saved = localStorage.getItem('kula_lang');
+        const saved = readPref('kula_lang');
         if (saved && this.supportedLangs.includes(saved)) return saved;
 
         // 2. Check browser language
@@ -82,7 +83,7 @@ export const i18n = {
             }
             this.translations = { ...this.englishTranslations, ...translations };
             this.currentLang = lang;
-            localStorage.setItem('kula_lang', lang);
+            writePref('kula_lang', lang);
             document.documentElement.lang = lang;
 
             // Set direction for right-to-left locales.

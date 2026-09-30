@@ -4,6 +4,7 @@
    ============================================================ */
 'use strict';
 import { state } from './state.js';
+import { writePref } from './prefs.js';
 import { apiUrl } from './api.js';
 import { i18n } from './i18n.js';
 import { forEachRegisteredChart, queueAllChartUpdates } from './chart-controller.js';
@@ -85,7 +86,7 @@ export function togglePause() {
 // ---- Layout Toggle ----
 export function toggleLayout() {
     state.layoutMode = state.layoutMode === 'grid' ? 'list' : 'grid';
-    localStorage.setItem('kula_layout', state.layoutMode);
+    writePref('kula_layout', state.layoutMode);
     applyLayout();
 }
 

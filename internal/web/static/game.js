@@ -52,6 +52,25 @@
     const PU_TYPES = Object.keys(PU);
 
     // -------------------------------------------------------
+    // Stored settings
+    // -------------------------------------------------------
+    // localStorage throws on every access when site data is blocked; the game
+    // then keeps its settings and high score until reload.
+    function readStored(key) {
+        try {
+            return localStorage.getItem(key);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function writeStored(key, value) {
+        try {
+            localStorage.setItem(key, value);
+        } catch (_) { /* storage unavailable: the value lasts until reload */ }
+    }
+
+    // -------------------------------------------------------
     // Graphics settings
     // -------------------------------------------------------
     // Every option is a string enum persisted in localStorage.
@@ -80,8 +99,8 @@
         const settings = Object.assign({ fps: 'off' }, GFX_PRESETS[isMobile ? 'low' : 'medium']);
         let saved = null;
         try {
-            saved = JSON.parse(localStorage.getItem('kula_invaders_gfx') || 'null');
-        } catch (_) { /* corrupt or unavailable storage: keep the defaults */ }
+            saved = JSON.parse(readStored('kula_invaders_gfx') || 'null');
+        } catch (_) { /* corrupt stored value: keep the defaults */ }
         if (saved && typeof saved === 'object') {
             for (const key of Object.keys(GFX_OPTIONS)) {
                 if (GFX_OPTIONS[key].includes(saved[key])) settings[key] = saved[key];
@@ -96,7 +115,7 @@
     // Audio (Web Audio API — synthesized)
     // -------------------------------------------------------
     let audioCtx = null;
-    let isMuted = localStorage.getItem('kula_invaders_muted') === 'true';
+    let isMuted = readStored('kula_invaders_muted') === 'true';
 
     function ensureAudio() {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -173,7 +192,7 @@
     let score = 0;
     let level = 1;
     let lives = 3;
-    let highScore = parseInt(localStorage.getItem('kula_invaders_high') || '0', 10);
+    let highScore = parseInt(readStored('kula_invaders_high') || '0', 10);
     let shootCooldown = 0;
     let lastEscPress = 0;
     let levelupTimer = 0;
@@ -757,13 +776,13 @@
     // -------------------------------------------------------
     // Game flow
     // -------------------------------------------------------
-    // saveHighScore stores the current score if it beats the saved record and
-    // reports whether it did.
+    // saveHighScore stores the current score if it beats the saved record (or,
+    // without storage, this page's best) and reports whether it did.
     function saveHighScore() {
-        const previousHigh = parseInt(localStorage.getItem('kula_invaders_high') || '0', 10);
+        const previousHigh = parseInt(readStored('kula_invaders_high') ?? String(highScore), 10) || 0;
         if (score > previousHigh && score > 0) {
             highScore = score;
-            localStorage.setItem('kula_invaders_high', String(highScore));
+            writeStored('kula_invaders_high', String(highScore));
             return true;
         }
         return false;
@@ -1189,9 +1208,7 @@
             if (!GFX_OPTIONS[setting] || !GFX_OPTIONS[setting].includes(value)) return;
             gfx[setting] = value;
         }
-        try {
-            localStorage.setItem('kula_invaders_gfx', JSON.stringify(gfx));
-        } catch (_) { /* storage unavailable: the choice lasts until reload */ }
+        writeStored('kula_invaders_gfx', JSON.stringify(gfx));
         applyGfx();
     }
 
@@ -1240,7 +1257,7 @@
 
     function toggleMute() {
         isMuted = !isMuted;
-        localStorage.setItem('kula_invaders_muted', String(isMuted));
+        writeStored('kula_invaders_muted', String(isMuted));
         updateMuteIcon();
     }
 

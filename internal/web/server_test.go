@@ -671,7 +671,7 @@ func TestHistoricalTooltipsUseBucketContextAndExplicitTimeZone(t *testing.T) {
 			"parseDateTimeInput(endpointValue('start'), state.timeZone)",
 		},
 		"static/js/app/main.js": {
-			"localStorage.setItem('kula_time_zone', state.timeZone)",
+			"writePref('kula_time_zone', state.timeZone)",
 			"syncTimeZoneControls()",
 		},
 	}
@@ -826,7 +826,7 @@ func TestFocusModeEmptySelectionRestoresFullHistory(t *testing.T) {
 	for _, required := range []string{
 		"state.focusMode = false;",
 		"state.focusVisible = null;",
-		"localStorage.removeItem('kula_focus_visible');",
+		"removePref('kula_focus_visible');",
 		"kula-history-sections-changed",
 	} {
 		if !strings.Contains(branch, required) {

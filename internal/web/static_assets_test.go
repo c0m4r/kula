@@ -165,6 +165,31 @@ func TestIndexResolvesThemeBeforePaint(t *testing.T) {
 	}
 }
 
+// Blocked site data makes every localStorage access throw, and a module that
+// throws while it loads stops the dashboard, so modules keep preferences
+// through prefs.js. tv-mode.js stays import-free for the Node tests and guards
+// its own calls.
+func TestDashboardStorageGoesThroughPrefs(t *testing.T) {
+	modules, err := fs.Glob(staticFS, "static/js/app/*.js")
+	if err != nil || len(modules) == 0 {
+		t.Fatalf("Glob(static/js/app/*.js) = %v, %v", modules, err)
+	}
+	direct := regexp.MustCompile(`\blocalStorage\s*[.[]`)
+	for _, module := range modules {
+		if name := strings.TrimPrefix(module, "static/js/app/"); name == "prefs.js" || name == "tv-mode.js" {
+			continue
+		}
+		source, err := staticFS.ReadFile(module)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", module, err)
+		}
+		if at := direct.FindIndex(source); at != nil {
+			line := bytes.Count(source[:at[0]], []byte("\n")) + 1
+			t.Errorf("%s:%d uses localStorage directly; read and write it through prefs.js", module, line)
+		}
+	}
+}
+
 // Static assets revalidate with an ETag of the served bytes: a match is a 304
 // with no body (and no gzip framing), anything else is the full asset.
 func TestStaticAssetsRevalidate(t *testing.T) {

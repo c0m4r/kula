@@ -1219,3 +1219,61 @@ test('TV mode grid keeps time axes wide and fits every card on screen', () => {
     assert.deepEqual(tvGridShape(5, 0, 0), { columns: 1, rows: 5 }, 'an unlaid-out grid stacks');
     assert.deepEqual(tvGridShape(3, Number.NaN, 400), { columns: 1, rows: 3 });
 });
+
+const prefs = await importSource('../static/js/app/prefs.js');
+
+test('preferences survive blocked or full browser storage', () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const values = new Map();
+    let mode = 'ok';
+    const storage = {
+        getItem: key => (values.has(key) ? values.get(key) : null),
+        setItem: (key, value) => {
+            if (mode === 'full') throw new DOMException('Quota exceeded', 'QuotaExceededError');
+            values.set(key, String(value));
+        },
+        removeItem: key => { values.delete(key); },
+    };
+    Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        get() {
+            if (mode === 'blocked') throw new DOMException('The operation is insecure.', 'SecurityError');
+            return storage;
+        },
+    });
+    try {
+        prefs.writePref('kula_layout', 'list');
+        assert.equal(values.get('kula_layout'), 'list');
+        values.set('kula_split_net', '{not json');
+        assert.equal(prefs.readJsonPref('kula_split_net', false), false, 'corrupt JSON falls back');
+        assert.equal(prefs.readJsonPref('kula_missing', null), null);
+        prefs.writeJsonPref('kula_focus_visible', ['card-cpu']);
+        assert.deepEqual(prefs.readJsonPref('kula_focus_visible', null), ['card-cpu']);
+
+        // A full quota refuses writes; this page still sees the new value.
+        mode = 'full';
+        prefs.writePref('kula_layout', 'grid');
+        assert.equal(values.get('kula_layout'), 'list');
+        assert.equal(prefs.readPref('kula_layout'), 'grid');
+        prefs.removePref('kula_layout');
+        assert.equal(prefs.readPref('kula_layout'), null);
+
+        // Blocked site data throws on every access.
+        mode = 'blocked';
+        assert.equal(prefs.readPref('kula_theme'), null);
+        assert.equal(prefs.readJsonPref('kula_split_net', false), false);
+        prefs.writePref('kula_theme', 'light');
+        assert.equal(prefs.readPref('kula_theme'), 'light');
+        prefs.removePref('kula_theme');
+        assert.equal(prefs.readPref('kula_theme'), null);
+
+        // Once a write succeeds again, storage is the source again.
+        mode = 'ok';
+        prefs.writePref('kula_theme', 'dark');
+        values.set('kula_theme', 'light');
+        assert.equal(prefs.readPref('kula_theme'), 'light');
+    } finally {
+        if (original) Object.defineProperty(globalThis, 'localStorage', original);
+        else delete globalThis.localStorage;
+    }
+});

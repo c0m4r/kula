@@ -66,6 +66,7 @@ holds the main thread, and the static page should be on screen first.
 | Module | Responsibility |
 |--------|----------------|
 | `state.js` | Shared app state, color palette, global Chart.js config (**load first**) |
+| `prefs.js` | Import-free preference storage that survives blocked or full `localStorage` |
 | `history-navigation.js` | Shareable URL state, bounded Back/Forward stack, and deterministic interval clamping |
 | `main.js` | Entry point; wires event listeners and static chart-card actions, starts auth + WebSocket (**load last**) |
 | `api.js` | URL helpers that prepend `window.KULA_BASE_PATH` (base-path support) |
@@ -99,6 +100,15 @@ holds the main thread, and the static page should be on screen first.
 | `alerts.js` | Alert evaluation (clock sync, low entropy, overload) + dropdown |
 | `i18n.js` | Fetches translations from `/api/i18n` and applies to the DOM |
 | `ollama.js` | AI assistant panel; SSE streaming from `/api/ollama/chat` |
+
+Modules keep preferences in `localStorage` only through `prefs.js`. When site data is blocked,
+every access to `localStorage` throws, and a full quota makes writes throw. `readPref()` and
+`readJsonPref()` then return nothing or their fallback, a corrupt JSON value included, and
+`writePref()` keeps the value in memory, so the page still sees what it last wrote. The dashboard
+starts either way and its preferences last until reload. `TestDashboardStorageGoesThroughPrefs`
+rejects direct `localStorage` use in any other module except the import-free `tv-mode.js`,
+which guards its own calls, and the live-dashboard browser test loads the page with storage
+blocked.
 
 ### History and rendering
 
@@ -291,7 +301,8 @@ hidden section falls back to the System tab.
 
 A Space Invaders clone (`game.html`/`game.js`, Press Start 2P font) is reachable from a header
 button when `global.easter_egg` is true. It is a classic (non-module) script and is not
-translated.
+translated. It reads and writes `localStorage` through its own `readStored()`/`writeStored()`,
+so with storage blocked it runs and keeps settings and the high score until reload.
 
 - **Graphics settings** live in the `gfx` object. Every option is a string enum listed in
   `GFX_OPTIONS`, and `GFX_PRESETS` holds low/medium/high. Low reproduces the original mobile look

@@ -4,6 +4,7 @@
    ============================================================ */
 'use strict';
 import { state } from './state.js';
+import { readPref, removePref, writeJsonPref, writePref } from './prefs.js';
 import { i18n } from './i18n.js';
 import {
     chartsGridForTitle,
@@ -59,7 +60,7 @@ function migrateLegacyFocusIds() {
     if (!changed && out.length === stored.length) return;
 
     state.focusVisible = out;
-    localStorage.setItem('kula_focus_visible', JSON.stringify(out));
+    writeJsonPref('kula_focus_visible', out);
 }
 
 // Run before any consumer reads state.focusVisible.
@@ -110,7 +111,7 @@ export function toggleFocusMode() {
         _getDynamicSystemCards().forEach(card => card.classList.remove('focus-visible', 'focus-selected'));
         _getAppCards().forEach(card => card.classList.remove('focus-visible', 'focus-selected'));
         removeFocusBar();
-        localStorage.removeItem('kula_focus_visible');
+        removePref('kula_focus_visible');
         state.focusVisible = null;
         restoreGrids();
         document.dispatchEvent(new Event('kula-history-sections-changed'));
@@ -143,7 +144,7 @@ export function toggleFocusMode() {
             clearAllSectionFocusChrome();
             btn.classList.remove('focus-active');
             removeFocusBar();
-            localStorage.removeItem('kula_focus_visible');
+            removePref('kula_focus_visible');
             state.focusVisible = null;
             restoreGrids();
             document.dispatchEvent(new Event('kula-history-sections-changed'));
@@ -151,7 +152,7 @@ export function toggleFocusMode() {
         }
 
         state.focusVisible = selected;
-        localStorage.setItem('kula_focus_visible', JSON.stringify(selected));
+        writeJsonPref('kula_focus_visible', selected);
         state.focusSelecting = false;
 
         grids.forEach(g => {
@@ -199,7 +200,7 @@ export function toggleFocusMode() {
             card.classList.remove('focus-selected');
         });
 
-        if (localStorage.getItem('kula_focus_hide_gauges') === 'true') {
+        if (readPref('kula_focus_hide_gauges') === 'true') {
             document.getElementById('gauges-row')?.classList.add('focus-hidden');
         }
         document.getElementById('chart-search')?.classList.add('focus-hidden');
@@ -318,7 +319,7 @@ export function showFocusBar() {
     const bar = document.createElement('div');
     bar.className = 'focus-bar';
     bar.id = 'focus-bar';
-    const hideGauges = localStorage.getItem('kula_focus_hide_gauges') === 'true';
+    const hideGauges = readPref('kula_focus_hide_gauges') === 'true';
     
     const spanWrapper = document.createElement('span');
     const spanText = document.createElement('span');
@@ -350,7 +351,7 @@ export function showFocusBar() {
     if (firstGrid) firstGrid.parentNode.insertBefore(bar, firstGrid);
 
     gauges.chk.addEventListener('change', (e) => {
-        localStorage.setItem('kula_focus_hide_gauges', e.target.checked ? 'true' : 'false');
+        writePref('kula_focus_hide_gauges', e.target.checked ? 'true' : 'false');
     });
 
     btnDone.addEventListener('click', toggleFocusMode);
@@ -446,7 +447,7 @@ export function applyStoredFocusMode() {
             card.classList.toggle('focus-visible', isSelected);
         });
 
-        if (localStorage.getItem('kula_focus_hide_gauges') === 'true') {
+        if (readPref('kula_focus_hide_gauges') === 'true') {
             document.getElementById('gauges-row')?.classList.add('focus-hidden');
         }
         document.getElementById('chart-search')?.classList.add('focus-hidden');

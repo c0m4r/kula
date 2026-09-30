@@ -4,7 +4,8 @@
    configurable from the dashboard or config file.
    ============================================================ */
 'use strict';
-import { state, colors, getChartMaxBound } from './state.js';
+import { state, colors, getChartMaxBound, graphMaxPrefs } from './state.js';
+import { writeJsonPref } from './prefs.js';
 import { diskKey, diskMember, diskLabel, diskTitle, diskDOMKey } from './disk-identity.js';
 import { createTimeSeriesChart } from './charts-init.js';
 import { formatBytesShort, formatMetricNumber, formatPPS } from './format.js';
@@ -35,7 +36,7 @@ const SPLIT_ORIGINAL_CARDS = {
     gpu:       ['card-gpu-load', 'card-vram', 'card-gpu-temp'],
 };
 
-// state key and localStorage key per type
+// state key and stored preference key per type
 const SPLIT_STATE_KEY = {
     network:   'splitNet',
     diskio:    'splitDiskIo',
@@ -299,7 +300,7 @@ function getSplitState(type) {
 
 function setSplitState(type, enabled) {
     state[SPLIT_STATE_KEY[type]] = enabled;
-    localStorage.setItem(SPLIT_LS_KEY[type], JSON.stringify(enabled));
+    writeJsonPref(SPLIT_LS_KEY[type], enabled);
 }
 
 function _sanitize(str) {
@@ -673,8 +674,7 @@ function _addSettingsDropdown(header, actions, graphId, type) {
 
     sBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        let prefs = {};
-        try { prefs = JSON.parse(localStorage.getItem('kula_graphs_max') || '{}'); } catch (err) { }
+        const prefs = graphMaxPrefs();
         let cur = prefs[graphId] || (state.configMax && state.configMax[graphId]);
         // nosemgrep: insecure-object-assign -- assigned keys are static literals, not user-controlled (no mass assignment)
         if (!cur || !cur.mode) cur = Object.assign({}, cur, { mode: 'off', value: cur?.value || (graphId === 'network' ? 1000 : 100) });
@@ -706,13 +706,12 @@ function _addSettingsDropdown(header, actions, graphId, type) {
 
     saveBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        let prefs = {};
-        try { prefs = JSON.parse(localStorage.getItem('kula_graphs_max') || '{}'); } catch (err) { }
+        const prefs = graphMaxPrefs();
         prefs[graphId] = {
             mode: select.value,
             value: parseFloat(input.value) || (graphId === 'network' ? 1000 : 100)
         };
-        localStorage.setItem('kula_graphs_max', JSON.stringify(prefs));
+        writeJsonPref('kula_graphs_max', prefs);
         dropdown.classList.add('hidden');
         // Rebuild split charts for this type to apply the new Y-axis bound
         _rebuildSplitType(type);

@@ -4,7 +4,8 @@
    Must be loaded LAST after all other modules.
    ============================================================ */
 'use strict';
-import { state } from './state.js';
+import { graphMaxPrefs, state } from './state.js';
+import { writeJsonPref, writePref } from './prefs.js';
 import { initCharts } from './charts-init.js';
 import { i18n } from './i18n.js';
 import {
@@ -181,10 +182,7 @@ function setupChartActions() {
 
             settingsButton.addEventListener('click', event => {
                 event.stopPropagation();
-                let preferences = {};
-                try {
-                    preferences = JSON.parse(localStorage.getItem('kula_graphs_max') || '{}');
-                } catch (error) { /* Invalid stored preferences fall back to defaults. */ }
+                const preferences = graphMaxPrefs();
                 let current = preferences[graphId] || (state.configMax && state.configMax[graphId]);
                 if (!current || !current.mode) {
                     current = {
@@ -223,15 +221,12 @@ function setupChartActions() {
 
             saveButton.addEventListener('click', event => {
                 event.stopPropagation();
-                let preferences = {};
-                try {
-                    preferences = JSON.parse(localStorage.getItem('kula_graphs_max') || '{}');
-                } catch (error) { /* Invalid stored preferences are replaced. */ }
+                const preferences = graphMaxPrefs();
                 preferences[graphId] = {
                     mode: select.value,
                     value: parseFloat(input.value) || (graphId === 'network' ? 1000 : 100),
                 };
-                localStorage.setItem('kula_graphs_max', JSON.stringify(preferences));
+                writeJsonPref('kula_graphs_max', preferences);
                 dropdown.classList.add('hidden');
 
                 initCharts();
@@ -296,7 +291,7 @@ function syncTimeZoneControls() {
 function setDisplayTimeZone(mode) {
     const previousZone = state.timeZone;
     state.timeZone = normalizeTimeZone(mode);
-    localStorage.setItem('kula_time_zone', state.timeZone);
+    writePref('kula_time_zone', state.timeZone);
     syncTimeZoneControls();
     if (state.customFrom && state.customTo) {
         syncCustomRangeUI(state.customFrom, state.customTo, { preserveDraft: true });
@@ -466,7 +461,7 @@ async function init() {
             btn.classList.add('active');
             state.currentAggregation = btn.dataset.agg;
             state.suspendedAggregation = null;
-            localStorage.setItem('kula_aggregation', state.currentAggregation);
+            writePref('kula_aggregation', state.currentAggregation);
             updateUrl(state);
 
             // Redraw charts with new aggregation

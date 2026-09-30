@@ -107,6 +107,10 @@ per-application reducer branches.
   of any kind that is not an exact pin or not locked, and any locked package that is
   off-registry, lacks sha512 integrity or is under 14 days old; do not bypass it or add npm
   dependencies elsewhere.
+- Dashboard modules keep preferences through `js/app/prefs.js`, never `localStorage` directly:
+  blocked site data makes every access throw, which would stop the dashboard.
+  `TestDashboardStorageGoesThroughPrefs` enforces it; only the import-free `tv-mode.js` guards
+  its own calls.
 - `/api/history` metadata is a contract with the dashboard's live-refresh and aggregation logic.
   `TestHistoryResponsesMatchDashboardContract` (storage) feeds real responses to the frontend
   modules; add a scenario there when a change alters tiers, steps, clipping or extrema profiles.

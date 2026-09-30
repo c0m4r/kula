@@ -245,6 +245,44 @@ try {
     check(tv.stored === null && tv.focus && tv.controls && tv.cards.length === 3,
         'leaving TV mode did not return to Focus Mode', tv);
 
+    // Blocked site data makes every localStorage access throw, as it does from
+    // here on for this page. The dashboard still starts and streams, and its
+    // toggles work for the page; so does the game, where a packaged build
+    // still serves it.
+    await call('Page.enable');
+    await call('Page.addScriptToEvaluateOnNewDocument', { source: `Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get() { throw new DOMException('The operation is insecure.', 'SecurityError'); },
+    });` });
+    await call('Page.navigate', { url: `${base}/?range=300` });
+    const storage = await evaluate(`(() => {
+        try { return typeof localStorage.getItem; } catch (error) { return error.name; }
+    })()`);
+    check(storage === 'SecurityError', 'localStorage was not blocked', { storage });
+    state = await settle(s => s.lastAge <= 2.5, 'the dashboard did not start with storage blocked');
+    const blocked = await evaluate(`(() => {
+        const light = document.body.classList.contains('light-mode');
+        document.getElementById('btn-layout').click();
+        document.getElementById('btn-theme').click();
+        return {
+            list: document.getElementById('dashboard').classList.contains('layout-list'),
+            themed: document.body.classList.contains('light-mode') !== light,
+        };
+    })()`);
+    check(blocked.list && blocked.themed, 'layout and theme toggles failed with storage blocked', blocked);
+    const game = await evaluate(`fetch('game.html').then(r => r.ok ? r.text() : '').then(t => t.includes('game.js'))`);
+    if (game) {
+        await call('Page.navigate', { url: `${base}/game.html` });
+        await waitFor(() => evaluate(`document.readyState === 'complete' &&
+            !!document.getElementById('start-screen')`), 'the game did not load with storage blocked');
+        const muted = await evaluate(`(() => {
+            const button = document.getElementById('btn-mute');
+            button.click();
+            return button.style.opacity;
+        })()`);
+        check(muted === '0.5', 'the game did not start with storage blocked', { muted });
+    }
+
     assert.deepEqual(errors, [], 'the dashboard threw exceptions');
     console.log(JSON.stringify({ status: 'pass', bucketed_phone: bucketed.sampling,
         raw_desktop: raw.sampling, desktop_hour: hour.sampling, history_requests: historyRequests }));

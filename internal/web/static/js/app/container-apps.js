@@ -4,6 +4,7 @@
    ============================================================ */
 'use strict';
 import { state, colors } from './state.js';
+import { readJsonPref, removePref, writeJsonPref } from './prefs.js';
 import { formatBytesShort, formatMetricNumber } from './format.js';
 import { createTimeSeriesChart } from './charts-init.js';
 import { i18n } from './i18n.js';
@@ -180,24 +181,21 @@ function hexToRgba(hex, alpha) {
 }
 
 // ---- Filter state: exclusions (not selections) ----
-// localStorage shape: { "excluded": ["container_foo", ...] }
+// Stored shape: { "excluded": ["container_foo", ...] }
 // Empty / missing → all selected. New containers are never in excluded → on by default.
 
 function loadExcluded() {
-    try {
-        const raw = localStorage.getItem(FILTER_STORAGE_KEY);
-        if (!raw) return new Set();
-        const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.excluded)) {
-            return new Set(parsed.excluded);
-        }
-        // A bare array is the pre-release selected-keys format. The full container
-        // set is unknown at load time, so it cannot be inverted into exclusions;
-        // drop it and start with everything selected.
-        if (Array.isArray(parsed)) {
-            localStorage.removeItem(FILTER_STORAGE_KEY);
-        }
-    } catch (_) { /* corrupt value — fall through to "all selected" */ }
+    // A missing or corrupt value leaves everything selected.
+    const parsed = readJsonPref(FILTER_STORAGE_KEY, null);
+    if (parsed && Array.isArray(parsed.excluded)) {
+        return new Set(parsed.excluded);
+    }
+    // A bare array is the pre-release selected-keys format. The full container
+    // set is unknown at load time, so it cannot be inverted into exclusions;
+    // drop it and start with everything selected.
+    if (Array.isArray(parsed)) {
+        removePref(FILTER_STORAGE_KEY);
+    }
     return new Set();
 }
 
@@ -205,9 +203,9 @@ function saveExcluded() {
     ensureFilterState();
     const excluded = [...state.containerExcluded];
     if (excluded.length === 0) {
-        localStorage.removeItem(FILTER_STORAGE_KEY);
+        removePref(FILTER_STORAGE_KEY);
     } else {
-        localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ excluded }));
+        writeJsonPref(FILTER_STORAGE_KEY, { excluded });
     }
 }
 

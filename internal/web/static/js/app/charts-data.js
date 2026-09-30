@@ -4,6 +4,7 @@
    ============================================================ */
 'use strict';
 import { state, colors } from './state.js';
+import { writePref } from './prefs.js';
 import { diskKey, diskMember, diskLabel, diskTitle, migrateDiskSelection } from './disk-identity.js';
 import { formatBytesShort, formatMetricNumber, formatRangeTimestamp } from './format.js';
 import { createTimeSeriesChart, setChartTimeRange, updateChartLabels } from './charts-init.js';
@@ -1619,7 +1620,7 @@ function updateDiskSelector(disks, type, selectionField, optionsField) {
     const signature = JSON.stringify([selected, disks.map(d => [diskKey(d), d.name])]);
     state[selectionField] = selected;
     state[optionsField] = disks.map(diskKey);
-    if (selected) localStorage.setItem(`kula_sel_${type}`, selected);
+    if (selected) writePref(`kula_sel_${type}`, selected);
     const sel = document.getElementById(`${type}-selector`);
     if (!sel || state.diskSelectorSignatures[type] === signature) return;
     state.diskSelectorSignatures[type] = signature;
@@ -1647,7 +1648,7 @@ function updateDiskSelector(disks, type, selectionField, optionsField) {
     sel.classList.remove('hidden');
     sel.onchange = e => {
         state[selectionField] = e.target.value;
-        localStorage.setItem(`kula_sel_${type}`, state[selectionField]);
+        writePref(`kula_sel_${type}`, state[selectionField]);
         const disk = diskMember(disks, state[selectionField]);
         sel.title = disk ? diskTitle(disk) : state[selectionField];
         redrawChartsFromBuffer([type]);
@@ -1666,7 +1667,7 @@ export function updateSelectors(s) {
 
             if (!state.selectedNet || !ifaces.includes(state.selectedNet)) {
                 state.selectedNet = ifaces.find(i => i !== 'lo') || ifaces[0] || '';
-                localStorage.setItem('kula_sel_net', state.selectedNet);
+                writePref('kula_sel_net', state.selectedNet);
             }
 
             if (selNet) {
@@ -1683,7 +1684,7 @@ export function updateSelectors(s) {
                 selNet.onchange = (e) => {
                     state.selectedNet = e.target.value;
                     if (selPps) selPps.value = state.selectedNet;
-                    localStorage.setItem('kula_sel_net', state.selectedNet);
+                    writePref('kula_sel_net', state.selectedNet);
                     redrawChartsFromBuffer(['network', 'pps']);
                 };
             }
@@ -1702,7 +1703,7 @@ export function updateSelectors(s) {
                 selPps.onchange = (e) => {
                     state.selectedNet = e.target.value;
                     if (selNet) selNet.value = state.selectedNet;
-                    localStorage.setItem('kula_sel_net', state.selectedNet);
+                    writePref('kula_sel_net', state.selectedNet);
                     redrawChartsFromBuffer(['network', 'pps']);
                 };
             }
@@ -1724,7 +1725,7 @@ export function updateSelectors(s) {
             if (sel) {
                 if (!state.selectedDiskSpace || !mounts.includes(state.selectedDiskSpace)) {
                     state.selectedDiskSpace = mounts.includes('/') ? '/' : (mounts[0] || '');
-                    localStorage.setItem('kula_sel_diskspace', state.selectedDiskSpace);
+                    writePref('kula_sel_diskspace', state.selectedDiskSpace);
                 }
                 sel.innerHTML = '';
                 mounts.forEach(m => {
@@ -1738,7 +1739,7 @@ export function updateSelectors(s) {
                 sel.classList.remove('hidden');
                 sel.onchange = (e) => {
                     state.selectedDiskSpace = e.target.value;
-                    localStorage.setItem('kula_sel_diskspace', state.selectedDiskSpace);
+                    writePref('kula_sel_diskspace', state.selectedDiskSpace);
                     redrawChartsFromBuffer(['diskspace']);
                 };
             }
@@ -1755,7 +1756,7 @@ export function updateSelectors(s) {
 
             if (!state.selectedGpuLoad || !gpus.includes(state.selectedGpuLoad)) {
                 state.selectedGpuLoad = gpus[0];
-                localStorage.setItem('kula_sel_gpuload', state.selectedGpuLoad);
+                writePref('kula_sel_gpuload', state.selectedGpuLoad);
             }
 
             [selLoad, selVram, selTemp].forEach(sel => {
@@ -1775,7 +1776,7 @@ export function updateSelectors(s) {
                         if (selLoad) selLoad.value = state.selectedGpuLoad;
                         if (selVram) selVram.value = state.selectedGpuLoad;
                         if (selTemp) selTemp.value = state.selectedGpuLoad;
-                        localStorage.setItem('kula_sel_gpuload', state.selectedGpuLoad);
+                        writePref('kula_sel_gpuload', state.selectedGpuLoad);
                         redrawChartsFromBuffer(['gpuload', 'vram', 'gputemp']);
                     };
                 }

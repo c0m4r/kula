@@ -3,6 +3,7 @@
    ============================================================ */
 'use strict';
 import { state } from './state.js';
+import { readPref } from './prefs.js';
 import { initCharts } from './charts-init.js';
 import { updateAllCharts, clearAllChartData, cancelHistoryRequest } from './charts-data.js';
 import { connectWS, disconnectWS } from './websocket.js';
@@ -89,12 +90,12 @@ export function fetchConfig() {
                 if (hostnameEl) hostnameEl.textContent = cfg.hostname;
                 document.title = `KULA - ${cfg.hostname}`;
             }
-            if (cfg.theme && !localStorage.getItem('kula_theme')) {
+            if (cfg.theme && !readPref('kula_theme')) {
                 state.theme = cfg.theme;
                 applyTheme();
             }
             if (cfg.aggregation) state.defaultAggregation = cfg.aggregation;
-            if (cfg.aggregation && !localStorage.getItem('kula_aggregation') && !state.aggFromUrl) {
+            if (cfg.aggregation && !readPref('kula_aggregation') && !state.aggFromUrl) {
                 state.currentAggregation = cfg.aggregation;
                 state.suspendedAggregation = null;
                 // Update active button state in the UI

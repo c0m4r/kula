@@ -241,8 +241,11 @@ WebSocket data. A phone-width 5-minute view must load 2s buckets, keep Max, refr
 and never draw blank points. A desktop 5-minute view must be raw and stream without history
 requests. Narrowing again must restore Max, and a desktop hour must stay drawn in Max. TV mode
 restored from storage must fit the Focus Mode cards on screen and keep streaming while the
-cursor rests on a chart. <kbd>Esc</kbd> must return to Focus Mode. The test builds kula with the
-Go toolchain unless `KULA_BINARY` names a binary, and takes about 40 seconds.
+cursor rests on a chart. <kbd>Esc</kbd> must return to Focus Mode. Last, every access to
+`localStorage` is made to throw, as blocked site data does: the dashboard must still start and
+stream, its layout and theme toggles must work, and the game, when the build still serves it,
+must start and toggle mute. The test builds kula with the Go toolchain unless `KULA_BINARY` names
+a binary, and takes about 40 seconds.
 
 Run all three fixtures with
 [`addons/test-frontend-regressions.sh`](../../addons/test-frontend-regressions.sh), which needs

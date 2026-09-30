@@ -10,6 +10,7 @@
    ============================================================ */
 'use strict';
 import { state } from './state.js';
+import { readJsonPref, removePref, writeJsonPref, writePref } from './prefs.js';
 import { forEachRegisteredChart, queueChartUpdate } from './chart-controller.js';
 
 function resolveTheme() {
@@ -74,7 +75,7 @@ export function applyTheme() {
 export function toggleTheme() {
     const effective = resolveTheme();
     state.theme = effective === 'dark' ? 'light' : 'dark';
-    localStorage.setItem('kula_theme', state.theme);
+    writePref('kula_theme', state.theme);
     applyTheme();
 }
 
@@ -137,27 +138,19 @@ function sanitize(key, value) {
 }
 
 function readOverrides() {
-    try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return {};
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-        const clean = {};
-        for (const [k, v] of Object.entries(parsed)) {
-            const ok = sanitize(k, v);
-            if (ok !== undefined) clean[k] = ok;
-        }
-        return clean;
-    } catch (e) {
-        return {};
+    const parsed = readJsonPref(STORAGE_KEY, null);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const clean = {};
+    for (const [k, v] of Object.entries(parsed)) {
+        const ok = sanitize(k, v);
+        if (ok !== undefined) clean[k] = ok;
     }
+    return clean;
 }
 
 function writeOverrides() {
-    try {
-        if (Object.keys(overrides).length === 0) localStorage.removeItem(STORAGE_KEY);
-        else localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
-    } catch (e) { /* private mode / quota — settings stay for this page only */ }
+    if (Object.keys(overrides).length === 0) removePref(STORAGE_KEY);
+    else writeJsonPref(STORAGE_KEY, overrides);
 }
 
 /** Effective value: browser override, else server default, else built-in. */

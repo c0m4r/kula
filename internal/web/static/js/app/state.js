@@ -4,6 +4,7 @@
    Must be loaded FIRST before all other modules.
    ============================================================ */
 'use strict';
+import { readJsonPref, readPref } from './prefs.js';
 
 // ---- State ----
 export const state = {
@@ -46,12 +47,12 @@ export const state = {
     alertDropdownOpen: false,
     timeDropdownOpen: false,
     aggDropdownOpen: false,
-    layoutMode: localStorage.getItem('kula_layout') || 'grid',
+    layoutMode: readPref('kula_layout') || 'grid',
     lastSample: null,
     joinMetrics: false, // fetched from server config
     focusMode: false,
     focusSelecting: false,
-    focusVisible: JSON.parse(localStorage.getItem('kula_focus_visible') || 'null'),
+    focusVisible: readJsonPref('kula_focus_visible', null),
     currentResolution: '1s', // resolution of data currently loaded in charts
     currentSourceResolution: '1s',
     currentDownsampled: false,
@@ -60,15 +61,15 @@ export const state = {
     // The server's default_theme is in the page already (index.html), so the
     // first applyTheme() agrees with the pre-paint script instead of waiting
     // for /api/config.
-    theme: localStorage.getItem('kula_theme') || document.body?.dataset.defaultTheme || 'auto',
+    theme: readPref('kula_theme') || document.body?.dataset.defaultTheme || 'auto',
     diskSpaceMountNames: [], // Not used as datasets anymore, but kept for compatibility
     cpuTempSensorNames: [],
     diskTempSensorNames: [],
-    currentAggregation: localStorage.getItem('kula_aggregation') || 'avg',
+    currentAggregation: readPref('kula_aggregation') || 'avg',
     // A choice the loaded view cannot serve; restored when a later response can.
     suspendedAggregation: null,
     validAggregations: ['data'], // available choices; bucket profiles restrict individual fields
-    timeZone: localStorage.getItem('kula_time_zone') === 'utc' ? 'utc' : 'local',
+    timeZone: readPref('kula_time_zone') === 'utc' ? 'utc' : 'local',
     // One compact provenance record per timestamp. Tooltips look up this map
     // instead of copying bucket metadata onto every series in every chart.
     historyPointContexts: new Map(),
@@ -81,18 +82,18 @@ export const state = {
     diskSelectorSignatures: {},
     diskSpaceOptions: [],
     gpuLoadOptions: [],
-    selectedNet: localStorage.getItem('kula_sel_net') || null,
-    selectedDiskIo: localStorage.getItem('kula_sel_diskio') || null,
-    selectedDiskTemp: localStorage.getItem('kula_sel_disktemp') || null,
-    selectedDiskSpace: localStorage.getItem('kula_sel_diskspace') || null,
-    selectedGpuLoad: localStorage.getItem('kula_sel_gpuload') || null,
+    selectedNet: readPref('kula_sel_net') || null,
+    selectedDiskIo: readPref('kula_sel_diskio') || null,
+    selectedDiskTemp: readPref('kula_sel_disktemp') || null,
+    selectedDiskSpace: readPref('kula_sel_diskspace') || null,
+    selectedGpuLoad: readPref('kula_sel_gpuload') || null,
     configMax: {}, // loaded from server /api/config
     lastHistoricalTs: null,
-    splitNet: JSON.parse(localStorage.getItem('kula_split_net') || 'false'),
-    splitDiskIo: JSON.parse(localStorage.getItem('kula_split_diskio') || 'false'),
-    splitDiskSpace: JSON.parse(localStorage.getItem('kula_split_diskspace') || 'false'),
-    splitDiskTemp: JSON.parse(localStorage.getItem('kula_split_disktemp') || 'false'),
-    splitGpu: JSON.parse(localStorage.getItem('kula_split_gpu') || 'false'),
+    splitNet: readJsonPref('kula_split_net', false),
+    splitDiskIo: readJsonPref('kula_split_diskio', false),
+    splitDiskSpace: readJsonPref('kula_split_diskspace', false),
+    splitDiskTemp: readJsonPref('kula_split_disktemp', false),
+    splitGpu: readJsonPref('kula_split_gpu', false),
     splitCharts: {}, // { type: { chartKey: chartInstance } }
     // One Chart.js instance per metric type, each with one series per container.
     containerCharts: {}, // { cpu|mem|net_rx|net_tx|disk_r|disk_w: chartInstance }
@@ -172,9 +173,14 @@ Chart.Tooltip.positioners.awayFromCursor = function (elements, eventPosition) {
 // ---- Shared Helpers ----
 export const escapeHTML = (str) => String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 
+// Stored Y-axis bounds per chart: { [graphId]: { mode, value, auto } }.
+export function graphMaxPrefs() {
+    const prefs = readJsonPref('kula_graphs_max', {});
+    return prefs && typeof prefs === 'object' && !Array.isArray(prefs) ? prefs : {};
+}
+
 export function getChartMaxBound(id) {
-    let pref = {};
-    try { pref = JSON.parse(localStorage.getItem('kula_graphs_max') || '{}')[id]; } catch (e) { }
+    let pref = graphMaxPrefs()[id];
     if (!pref && state.configMax) pref = state.configMax[id];
     if (!pref || !pref.mode || pref.mode === 'off') return undefined;
     if (pref.mode === 'on') return pref.value;
