@@ -19,15 +19,27 @@ if (!lockPath || !(minDays > 0)) {
 }
 
 const lock = JSON.parse(await readFile(lockPath, 'utf8'));
-const root = lock.packages?.[''] ?? {};
+// Only lockfile v2+ lists every installed package under `packages`; an older
+// or truncated lock would leave nothing to check and pass vacuously.
+const packages = lock.packages;
+if (!(lock.lockfileVersion >= 2) || !packages || typeof packages !== 'object' || !packages['']) {
+    console.error(`${lockPath}: lockfileVersion ${lock.lockfileVersion} has no "packages" map with a root entry; ` +
+        'regenerate it with npm 7 or later');
+    process.exit(1);
+}
+const root = packages[''];
 const problems = [];
 
-for (const [name, spec] of Object.entries({ ...root.dependencies, ...root.devDependencies })) {
-    if (!/^\d+\.\d+\.\d+$/.test(spec)) problems.push(`${name}: "${spec}" is not an exact release version (x.y.z)`);
+// Every direct dependency, whatever its kind, is an exact pin with a locked entry.
+for (const kind of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
+    for (const [name, spec] of Object.entries(root[kind] ?? {})) {
+        if (!/^\d+\.\d+\.\d+$/.test(spec)) problems.push(`${name}: "${spec}" is not an exact release version (x.y.z)`);
+        if (!packages[`node_modules/${name}`]) problems.push(`${name}: in ${kind} but not locked`);
+    }
 }
 
 const cutoff = Date.now() - minDays * 864e5;
-const locked = Object.entries(lock.packages ?? {})
+const locked = Object.entries(packages)
     .filter(([path]) => path)
     .map(([path, meta]) => ({ ...meta, name: path.slice(path.lastIndexOf('node_modules/') + 13) }));
 
@@ -48,6 +60,7 @@ await Promise.all(locked.map(async ({ name, version, resolved, integrity }) => {
     }
 }));
 
+if (locked.length === 0) problems.push('no locked packages');
 if (problems.length) {
     console.error(`package-lock.json failed supply-chain checks:\n  ${problems.sort().join('\n  ')}`);
     process.exit(1);

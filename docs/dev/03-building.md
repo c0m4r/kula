@@ -106,9 +106,12 @@ line so `npm_config_*` environment variables cannot weaken them:
 
 `npm ci` installs locked versions without applying `min-release-age`. Before anything is
 installed, `addons/chartjs/verify-lock.js` therefore checks every locked package, including the
-optional esbuild binaries for other platforms. Each must be an exact direct pin, come from
-`registry.npmjs.org` with sha512 integrity, and be published at least 14 days ago. A lockfile
-changed any other way fails the build. Run npm by hand in `addons/chartjs/` only; its `.npmrc`
+optional esbuild binaries for other platforms. Each must come from `registry.npmjs.org` with
+sha512 integrity and be published at least 14 days ago. Every direct dependency, in any of
+`dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies`, must be an
+exact pin with a locked entry. A lockfile older than v2 has no `packages` map to check and is
+rejected outright rather than passing with nothing checked. A lockfile changed any other way
+fails the build. Run npm by hand in `addons/chartjs/` only; its `.npmrc`
 applies the same guards.
 
 Rebuilding from the lockfile reproduces `chartjs-bundle.min.js` byte for byte. After an update,

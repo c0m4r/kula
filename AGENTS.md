@@ -104,8 +104,10 @@ per-application reducer branches.
   tests accordingly — the "never hand-edit" rule applies to this repo, not to that helper.
 - npm is used only through `addons/build-chartjs.sh` (or by hand in `addons/chartjs/`, whose
   `.npmrc` applies the same guards): `ignore-scripts=true`, `min-release-age=14`, exact pins.
-  `verify-lock.js` rejects any locked package that is unpinned, off-registry, lacks sha512
-  integrity or is under 14 days old; do not bypass it or add npm dependencies elsewhere.
+  `verify-lock.js` rejects a lockfile older than v2 (no `packages` map), a direct dependency
+  of any kind that is not an exact pin or not locked, and any locked package that is
+  off-registry, lacks sha512 integrity or is under 14 days old; do not bypass it or add npm
+  dependencies elsewhere.
 - `/api/history` metadata is a contract with the dashboard's live-refresh and aggregation logic.
   `TestHistoryResponsesMatchDashboardContract` (storage) feeds real responses to the frontend
   modules; add a scenario there when a change alters tiers, steps, clipping or extrema profiles.
