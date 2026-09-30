@@ -37,6 +37,8 @@ on:
       - 'addons/build.sh'
       - 'addons/ci-local/**'
       - 'addons/packaging/**'
+      - 'addons/chartjs/**'
+      - 'addons/build-chartjs.sh'
       - '.github/workflows/ci.yml'
   pull_request:
     paths: *code-paths

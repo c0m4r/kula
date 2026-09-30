@@ -20,6 +20,8 @@ on:
       - 'version.go'
       - 'VERSION'
       - 'addons/build.sh'
+      - 'addons/chartjs/**'
+      - 'addons/build-chartjs.sh'
       - '.github/workflows/frontend.yml'
   pull_request:
     paths: *frontend-paths
