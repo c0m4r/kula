@@ -338,6 +338,9 @@ export async function testSystemInfo() {
         check(document.querySelectorAll('#system-info-tabs .system-info-tab').length === 1 &&
             document.querySelector('[data-section="overview"]')?.getAttribute('aria-selected') === 'true',
             'Host detail sections are still offered while details are disabled');
+        check(document.querySelector('[data-section="overview"]').getBoundingClientRect().width <
+            document.getElementById('system-info-tabs').clientWidth / 2,
+            'The only remaining tab stretches across the whole section menu');
         select('overview');
         check(content.querySelectorAll('.system-info-summary-card').length === 2,
             'Storage or network summary is still shown while details are disabled');

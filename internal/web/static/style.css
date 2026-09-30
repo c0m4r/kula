@@ -207,6 +207,12 @@ html.a11y-focus-outline #system-info-title:focus-visible {
     transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 
+/* With host details disabled only the overview tab remains; stretching it
+   across the whole bar turns a single label into a banner. */
+.system-info-tab:only-child {
+    flex-grow: 0;
+}
+
 .system-info-tab:hover {
     color: var(--text-primary);
     background: var(--bg-hover);
