@@ -86,7 +86,38 @@ collection:
   `disk.devices[].id` in `/api/current`) or legacy kernel names. Kula tracks disks by hardware
   identity, so a persistent ID follows the drive across reboots and renames, while a kernel name
   selects whatever drive currently carries that name. Disks with no usable identifier, or with a
-  duplicate identifier, stay visible as unstable with a warning and kernel-name history.
+  duplicate identifier, stay visible as unstable with a warning and kernel-name history. See
+  [Persistent disk identities](#persistent-disk-identities).
+
+### Persistent disk identities
+
+Kula tracks disk I/O and temperatures by hardware identity, so a drive's history follows it when
+Linux changes names such as `sda` or `nvme0n1`. Discovery reads sysfs directly, preferring the
+WWID, then the NVMe namespace UUID/NGUID/EUI, then vendor/model/serial; the NVMe serial fallback
+includes the namespace number. No external tools or raw block-device access are required.
+
+- **No configuration needed.** Automatic discovery uses these IDs. To monitor particular drives,
+  copy IDs from `kula disks` (or `disk.devices[].id` in `/api/current`) into
+  `collection.devices`. Legacy kernel names still work as filters but may select a different
+  drive after a reboot.
+- **Partitions** are the parent disk's ID followed by `:part:<number>`. This tracks a numbered
+  partition on that drive, not a filesystem across repartitioning. Filesystem capacity history
+  continues to follow mount points.
+- **API and dashboard.** The JSON API keeps `name` as the kernel name and adds `id`; device
+  selectors show the name, with the ID in their tooltip.
+- **Unstable disks.** Disks without usable identifiers, or with duplicate identifiers, remain
+  visible as **unstable** with a warning and kernel-name history. Their API `id` is absent, and
+  cross-reboot physical identity cannot be guaranteed. Duplicate paths to the same storage are
+  treated as ambiguous, not combined as multipath I/O.
+- **Containers** must expose the corresponding host sysfs metadata to obtain stable IDs.
+
+Prometheus disk series use the same IDs as their `device` label — see
+[Prometheus Exporter](11-prometheus.md#exposed-metrics).
+
+**Upgrading from before 0.20.0.** Existing tier files remain readable. Old records have no
+physical identity and stay in separate name-based series: Kula cannot safely assign their history
+to today's drives, so physical-disk series begin at the upgrade. Older binaries cannot read the
+extended records, so keep a pre-upgrade backup if you may downgrade.
 
 ---
 

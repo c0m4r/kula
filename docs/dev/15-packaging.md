@@ -75,6 +75,15 @@ The image expects host PID/network and read-only `/proc` at runtime — see the 
 
 ## Snap specifics
 
+Building needs [snapcraft](https://documentation.ubuntu.com/snapcraft/stable/howto/setup/) and
+a build backend (LXD recommended):
+
+```bash
+snap install snapcraft --classic
+snap install lxd
+lxd init --auto
+```
+
 The snap uses a **strict sandbox**, so capabilities are limited by default and extended with
 `snap connect`. The snap packaging lives under [`snap/`](../../snap/). See the
 [Snap wiki page](https://github.com/c0m4r/kula/wiki/Snap).
@@ -114,6 +123,7 @@ pass `./addons/check.sh` there.
 4. `./addons/release.sh` — build all artifacts + checksums.
 5. Build/push the Docker image and any distro packages needed.
 6. Publish the GitHub release with `dist/` artifacts and `CHECKSUMS.sha256.txt`.
-7. Update install/standalone checksums referenced in `README.md` if applicable.
+7. If `addons/install_v2.sh` changed, update its checksum in
+   [`docs/user/02-installation.md`](../user/02-installation.md#verifying-the-installer-first).
 
 Next: [Contributing](16-contributing.md).

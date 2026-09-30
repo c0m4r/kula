@@ -229,7 +229,8 @@ split (⊟) button, or set defaults under `web.graphs.split`.
 
 Disk selectors follow the drive's persistent ID from sysfs, so history stays attached to the
 same physical drive when kernel names change. A drive without a persistent ID is labelled
-`name (unstable)` and its name-only history is kept separate from identified drives.
+`name (unstable)` and its name-only history is kept separate from identified drives. See
+[Persistent disk identities](04-configuration.md#persistent-disk-identities).
 
 ### Layout toggle
 

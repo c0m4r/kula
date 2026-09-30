@@ -7,8 +7,9 @@ it without installing anything else. The examples below use **amd64 (x86_64)**; 
 > ⚠️ **Security note.** Never paste install commands blindly. Verifying a checksum confirms a
 > download is intact, but it is no substitute for reviewing the code you are about to run.
 
-The version and checksums below are examples — always take current values from the
-[latest release](https://github.com/c0m4r/kula/releases/latest).
+Package versions and checksums below are placeholders — take current values from the
+[latest release](https://github.com/c0m4r/kula/releases/latest) and its
+`CHECKSUMS.sha256.txt`. The installer checksum is the current hash of `install_v2.sh` on `main`.
 
 ---
 
@@ -26,8 +27,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/ma
 ```bash
 KULA_INSTALL=$(mktemp)
 curl -o ${KULA_INSTALL} -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v2.sh
-# Replace the hash below with the one published for the release you want
-echo "<sha256>  ${KULA_INSTALL}" | sha256sum -c || rm -f ${KULA_INSTALL}
+echo "bad61ee9eed4595d20fa7e613bd27c3b8700c67f8a5fcac756d282a811705398  ${KULA_INSTALL}" | sha256sum -c || rm -f ${KULA_INSTALL}
 bash ${KULA_INSTALL}
 rm -f ${KULA_INSTALL}
 ```

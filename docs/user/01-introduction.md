@@ -10,7 +10,7 @@ a terminal UI, and a Prometheus endpoint.
 - **Self-contained** — one statically-linked binary embeds the web UI, fonts, locales, and
   storage engine. Nothing else to install.
 - **Lightweight** — reads directly from the kernel's `/proc` and `/sys` interfaces; the
-  production binary is ~14 MB (~4 MB compressed).
+  production binary is ~15 MB (~5 MB compressed).
 - **Private** — no telemetry, no ads, no registration, no third-party APIs. Works fully in
   air-gapped networks.
 - **Secure by default** — optional Argon2id authentication, CSRF/CSP/HSTS protections, and a

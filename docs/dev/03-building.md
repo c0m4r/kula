@@ -12,10 +12,10 @@ The binary is **CGO-free** (`CGO_ENABLED=0`) and fully static.
 ## Quick builds
 
 ```bash
-# Dev build (~20 MB, with symbols)
+# Dev build (~21 MB, with symbols)
 CGO_ENABLED=0 go build -o kula ./cmd/kula/
 
-# Production build (~14 MB, ~4 MB xz-compressed)
+# Production build (~15 MB, ~5 MB xz-compressed)
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -buildvcs=false -o kula ./cmd/kula/
 ```
 
