@@ -287,22 +287,35 @@ function profile(data) {
     }
     primary.append(chips);
     const side = node('div', 'system-info-profile-side');
-    for (const [name, value] of [
+    for (const [name, value, live] of [
         [label('kernel'), system.kernel],
-        [label('uptime'), data.live?.sys?.uptime_human],
+        // Uptime keeps moving while the page is open, so polls patch it like
+        // the other measured values.
+        [label('uptime'), data.live?.sys?.uptime_human, 'uptime'],
     ]) {
         const fact = node('div', 'system-info-profile-fact');
-        const strong = node('strong', '', value || '—');
-        if (present(value)) {
-            strong.classList.add('system-info-copyable');
-            strong.dataset.copy = String(value);
-            strong.title = label('copy_value');
-        }
+        const strong = node('strong');
+        if (live) strong.dataset.live = live;
+        profileFact(strong, value);
         fact.append(node('span', '', name), strong);
         side.append(fact);
     }
     item.append(primary, side);
     return item;
+}
+
+// profileFact shows a value that copies itself when clicked. The copied text
+// must follow the displayed one, and a missing value is not copyable.
+function profileFact(strong, value) {
+    strong.textContent = value || '—';
+    strong.classList.toggle('system-info-copyable', present(value));
+    if (present(value)) {
+        strong.dataset.copy = String(value);
+        strong.title = label('copy_value');
+    } else {
+        delete strong.dataset.copy;
+        strong.removeAttribute('title');
+    }
 }
 
 function mainFilesystem(data) {
@@ -715,12 +728,24 @@ function sensorValue(sensor) {
     return wrap;
 }
 
-function temperatureSeverity(value) {
-    if (!finite(Number(value))) return '';
-    if (Number(value) >= 90) return 'is-critical';
-    if (Number(value) >= 75) return 'is-hot';
-    if (Number(value) >= 60) return 'is-warm';
+// Fans, voltages and currents share the sensor list, but only temperatures are
+// graded: a fan at 1240 RPM is not "critical".
+function sensorSeverity(sensor) {
+    if (!sensor || sensorKind(sensor) !== 'temperature' || !finite(Number(sensor.value))) return '';
+    if (Number(sensor.value) >= 90) return 'is-critical';
+    if (Number(sensor.value) >= 75) return 'is-hot';
+    if (Number(sensor.value) >= 60) return 'is-warm';
     return '';
+}
+
+// Rows are keyed by device and name, since two devices can expose the same
+// sensor name (two NVMe "Composite" readings, unlabelled temp1 inputs).
+function sensorKey(sensor) {
+    return `${sensor.device}\u0001${sensor.name}`;
+}
+
+function sensorByKey(data, key) {
+    return (data.sensors || []).find(sensor => sensorKey(sensor) === key);
 }
 
 function sensorGroups(data) {
@@ -741,7 +766,7 @@ function sensorGroups(data) {
 }
 
 function sensorItem(sensor) {
-    const item = node('li', `system-info-inventory-item ${temperatureSeverity(sensor.value)}`.trim());
+    const item = node('li', `system-info-inventory-item ${sensorSeverity(sensor)}`.trim());
     item.append(icon(sensorKindIcons[sensorKind(sensor)] || 'sensor', 'system-info-card-icon'));
     const body = node('div', 'system-info-inventory-body');
     const head = node('div', 'system-info-inventory-heading');
@@ -749,7 +774,7 @@ function sensorItem(sensor) {
     titleWrap.append(node('h4', '', sensor.name || label('unknown_sensor')));
     titleWrap.append(node('p', '', sensorKindLabel(sensor)));
     head.append(titleWrap);
-    head.append(liveBox('sensor', `${sensor.device}\u0001${sensor.name}`, 'system-info-sensor-live'));
+    head.append(liveBox('sensor', sensorKey(sensor), 'system-info-sensor-live'));
     body.append(head);
     item.append(body);
     return item;
@@ -918,8 +943,7 @@ function liveContent(kind, key, data) {
         return nodes;
     }
     if (kind === 'sensor') {
-        const [device, name] = String(key || '').split('\u0001');
-        const sensor = (data.sensors || []).find(item => item.device === device && item.name === name);
+        const sensor = sensorByKey(data, key);
         if (sensor) nodes.push(...sensorValue(sensor).childNodes);
         return nodes;
     }
@@ -934,16 +958,17 @@ function patchValues(data) {
     if (!content) return;
     for (const box of content.querySelectorAll('[data-live]')) {
         const kind = box.dataset.live;
+        if (kind === 'uptime') {
+            profileFact(box, data.live?.sys?.uptime_human);
+            continue;
+        }
         const replacement = liveContent(kind, box.dataset.key, data);
         box.replaceChildren(...replacement);
         if (kind === 'sensor') {
-            const [, name] = String(box.dataset.key || '').split('\u0001');
-            const sensor = (data.sensors || []).find(item => item.name === name);
-            for (const className of ['is-warm', 'is-hot', 'is-critical']) {
-                box.closest('.system-info-inventory-item')?.classList.remove(className);
-            }
-            const severity = temperatureSeverity(sensor?.value);
-            if (severity) box.closest('.system-info-inventory-item')?.classList.add(severity);
+            const row = box.closest('.system-info-inventory-item');
+            row?.classList.remove('is-warm', 'is-hot', 'is-critical');
+            const severity = sensorSeverity(sensorByKey(data, box.dataset.key));
+            if (severity) row?.classList.add(severity);
         }
     }
 }

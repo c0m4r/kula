@@ -32,7 +32,10 @@ export async function testSystemInfo() {
             device_id: '1234:5678', speed_mbps: 12, max_power: '100mA' }],
         sensors: [{ device: 'coretemp', name: 'Package', value: 48, unit: '°C', kind: 'temperature' },
             { device: 'coretemp', name: 'Core 0', value: 46, unit: '°C', kind: 'temperature' },
-            { device: 'board', name: 'CPU fan', value: 1240, unit: 'RPM', kind: 'fan' }],
+            { device: 'board', name: 'CPU fan', value: 1240, unit: 'RPM', kind: 'fan' },
+            // Unlabelled hwmon inputs repeat the same name on different devices.
+            { device: 'acpitz', name: 'temp1', value: 40, unit: '°C', kind: 'temperature' },
+            { device: 'nvme', name: 'temp1', value: 41, unit: '°C', kind: 'temperature' }],
         power: [{ name: 'UPS', manufacturer: 'Example Power', status: 'Full', capacity_percent: '100' }],
         live: {
             mem: { total: 68719476736, used: 34359738368, used_pct: 50 },
@@ -146,18 +149,19 @@ export async function testSystemInfo() {
         }
         // Sensors are grouped per device and labelled by kind, never by a repeated caption.
         select('sensors');
-        check(content.querySelectorAll('.system-info-inventory-item').length === 4, 'Sensors and power supplies are not rendered as a list');
+        check(content.querySelectorAll('.system-info-inventory-item').length === 6, 'Sensors and power supplies are not rendered as a list');
         check(content.querySelector('.system-info-inventory-list')?.tagName === 'UL', 'Sensor rows are not a list');
-        check(content.querySelectorAll('.system-info-sensor-group').length === 3 &&
+        check(content.querySelectorAll('.system-info-sensor-group').length === 5 &&
             [...content.querySelectorAll('.system-info-group-heading h3')].some(heading => heading.textContent === 'CPU'),
             'Sensors are not grouped by device with a friendly name');
-        check(content.querySelectorAll('.system-info-sensor-live').length === 3 &&
+        check(content.querySelectorAll('.system-info-sensor-live').length === 5 &&
             content.textContent.includes('Temperature') && content.textContent.includes('Fan'),
             'Sensor kinds are not labelled');
         check(!content.textContent.includes('Current reading'),
             'The per-row "Current reading" caption is still repeated');
-        check(content.querySelector('.system-info-inventory-item.is-warm') === null,
-            'A 48 °C sensor is flagged as hot');
+        // Only temperatures are graded: a 1240 RPM fan is not "critical".
+        check(!content.querySelector('.system-info-inventory-item:is(.is-warm, .is-hot, .is-critical)'),
+            'A 48 °C sensor or a 1240 RPM fan is flagged as hot');
         // Devices are grouped by class, described by vendor, and searchable.
         select('devices');
         check(content.querySelectorAll('.system-info-inventory-item').length === 4 &&
@@ -228,6 +232,7 @@ export async function testSystemInfo() {
         fixture.live.mem.used = 40000000000;
         fixture.live.mem.used_pct = 58;
         fixture.sensors[0].value = 71;
+        fixture.sensors[4].value = 80;
         await tick();
         check(content.querySelector('.system-info-mounted-storage') === mountCard &&
             content.querySelector('.system-info-mounted-storage .system-info-filesystem') === anchor,
@@ -249,6 +254,23 @@ export async function testSystemInfo() {
         check(packageRow?.querySelector('.system-info-sensor-live')?.textContent.includes('71'),
             'Sensor readings are not updated in place');
         check(packageRow.classList.contains('is-warm'), 'A warm sensor is not flagged');
+        const sensorRow = (group, name) => {
+            const section = [...content.querySelectorAll('.system-info-sensor-group')]
+                .find(item => item.querySelector('.system-info-group-heading h3')?.textContent === group);
+            return [...(section?.querySelectorAll('.system-info-inventory-item') || [])]
+                .find(row => row.querySelector('h4')?.textContent === name);
+        };
+        const severity = row => ['is-warm', 'is-hot', 'is-critical'].filter(name => row?.classList.contains(name)).join(' ');
+        check(severity(sensorRow('NVMe', 'temp1')) === 'is-hot' && severity(sensorRow('ACPI', 'temp1')) === '',
+            'A sensor row is graded with the reading of another device\'s sensor of the same name');
+        // The same holds when a poll patches the rows in place.
+        const acpiRow = sensorRow('ACPI', 'temp1');
+        fixture.sensors[3].value = 95;
+        fixture.sensors[4].value = 41;
+        await tick();
+        check(sensorRow('ACPI', 'temp1') === acpiRow && severity(acpiRow) === 'is-critical' &&
+            severity(sensorRow('NVMe', 'temp1')) === '' && severity(sensorRow('board', 'CPU fan')) === '',
+            'Live sensor grading follows the wrong row or grades a fan');
         select('network');
         check(content.textContent.includes('1500'), 'Interface MTU is missing');
         check(!content.textContent.includes('addresses') && !/\b\d{1,3}(?:\.\d{1,3}){3}\b/.test(content.textContent) &&
@@ -288,9 +310,14 @@ export async function testSystemInfo() {
         select('overview');
         check(content.querySelectorAll('.system-info-summary-value')[1].textContent === '—', 'Missing memory is displayed as zero');
         fixture.live.mem.total = 68719476736;
+        fixture.live.sys.uptime_human = '12d 4h 19m';
+        const profile = content.querySelector('.system-info-profile');
         content.querySelector('[data-summary-section="storage"]').focus();
         await tick();
         check(document.activeElement?.dataset.summarySection === 'storage', 'Live refresh loses overview keyboard focus');
+        const uptime = content.querySelector('.system-info-profile-side [data-live="uptime"]');
+        check(content.querySelector('.system-info-profile') === profile && uptime?.textContent === '12d 4h 19m' &&
+            uptime.dataset.copy === '12d 4h 19m', 'Uptime or its copied value stays frozen at the first render');
         pending = true; refresh.click();
         closeSystemInfo({ useHistory: false });
         await new Promise(resolve => setTimeout(resolve, 0));
