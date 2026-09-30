@@ -94,9 +94,13 @@ rollouts (`deploy.sh`, `kula.yaml`, the `roles/kula` role with a `config.yaml.j2
 
 [`addons/packaging/`](../../addons/packaging/) holds optional helpers for distro packagers and
 constrained builds, run against the source tree before building: `remove_fonts.sh` drops the
-bundled fonts in favor of system fonts, and `remove_game.sh` strips the Space Invaders easter
-egg along with its routes, tests and font. Each exits non-zero if its patterns no longer match
-the code. When the game or font wiring changes, rerun both on a scratch copy and pass
+bundled fonts in favor of system fonts, `remove_game.sh` strips the Space Invaders easter egg
+along with its routes, tests and font, and `replace_chartjs.sh` swaps the vendored Chart.js
+bundle for the distro-provided `chart.umd.min.js` +
+`chartjs-adapter-date-fns.bundle.min.js` + `chartjs-plugin-zoom.min.js` trio (found via
+`--from DIR`, `$CHARTJS_DIST_DIR` or the usual distro paths, or fetched and sha256-verified
+with `--download`). Each exits non-zero if its patterns no longer match the code. When the
+game, font or Chart.js wiring changes, rerun all three on a scratch copy and pass
 `./addons/check.sh` there.
 
 ## Release checklist

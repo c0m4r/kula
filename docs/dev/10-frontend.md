@@ -42,6 +42,12 @@ The time scale uses Kula's native `Date` adapter (`date-adapter.js`) instead of 
 and tooltip labels come from `Intl` in `format.js`, so the scale only needs local-time calendar
 math: unit starts, steps and whole-unit differences.
 
+A distro build can swap the bundle for the upstream UMD trio (`chart.umd.min.js`,
+`chartjs-adapter-date-fns.bundle.min.js`, `chartjs-plugin-zoom.min.js`) with
+[`addons/packaging/replace_chartjs.sh`](../../addons/packaging/replace_chartjs.sh): the trio
+registers a superset of the above with the date-fns adapter, and the script rewrites the
+template, fixtures and tests that name the bundle.
+
 ### ES6 modules (`js/app/`)
 
 Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.js` last.
