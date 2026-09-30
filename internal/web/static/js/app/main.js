@@ -343,6 +343,33 @@ function filterCharts(query) {
     });
 }
 
+// Resolves once the browser has painted a frame. Building every chart holds the
+// main thread, and far longer when it runs before the page's first frame, so
+// the static page is shown first. A hidden tab paints nothing and never runs
+// requestAnimationFrame, so it resolves at once there, and the timeout bounds
+// the wait wherever frames are throttled.
+function afterNextPaint() {
+    return new Promise(resolve => {
+        if (document.visibilityState === 'hidden') {
+            resolve();
+            return;
+        }
+        let timer;
+        const onVisibility = () => {
+            if (document.visibilityState === 'hidden') done();
+        };
+        function done() {
+            clearTimeout(timer);
+            document.removeEventListener('visibilitychange', onVisibility);
+            resolve();
+        }
+        timer = setTimeout(done, 1000);
+        document.addEventListener('visibilitychange', onVisibility);
+        // A timeout queued from a frame callback runs after that frame is painted.
+        requestAnimationFrame(() => setTimeout(done, 0));
+    });
+}
+
 async function init() {
     // Initialize i18n before everything else
     await i18n.init();
@@ -360,6 +387,8 @@ async function init() {
 
     // Apply stored layout
     applyLayout();
+    // Paint the page before the chart build takes the main thread.
+    await afterNextPaint();
     initCharts();
 
     // Apply the customization settings before the theme: high contrast swaps
