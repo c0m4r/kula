@@ -15,7 +15,7 @@
 # upstream change has outdated the script.
 #
 # Usage:
-#   ./addons/packaging/replace_chartjs.sh [--from DIR]... [--download]
+#   ./addons/packaging/replace_chartjs.sh [--from DIR]... [--download] [--check]
 #
 #   --from DIR   distro-provided copies (repeatable, or one colon-separated
 #                list; $CHARTJS_DIST_DIR is honoured too). Searches DIR itself,
@@ -25,6 +25,8 @@
 #   --download   fetch the pinned releases below from registry.npmjs.org
 #                (unpkg.com as fallback) and verify their sha256 before
 #                installing. Also spelled --fetch.
+#   --check      resolve and verify the trio and every substitution, then
+#                exit without touching the tree.
 #
 # With neither flag the usual distro locations are searched:
 #   /usr/share/javascript/<pkg>, /usr/share/nodejs/<pkg>/dist,
@@ -57,6 +59,7 @@ MINIFY_TEST="${PROJECT_ROOT}/internal/web/minify_test.go"
 ROLES=(core adapter zoom)
 declare -A RESOLVED=()
 declare -A INSTALLED=()
+declare -A VERSIONS=()
 
 die() {
     echo "replace_chartjs.sh: $*" >&2
@@ -65,12 +68,14 @@ die() {
 
 usage() {
     cat <<'EOF'
-Usage: ./addons/packaging/replace_chartjs.sh [--from DIR]... [--download]
+Usage: ./addons/packaging/replace_chartjs.sh [--from DIR]... [--download] [--check]
 
   --from DIR   distro-provided Chart.js dist files (repeatable, or one
                colon-separated list; $CHARTJS_DIST_DIR is honoured too)
   --download   fetch the pinned releases from the npm registry and verify
                their sha256 before installing (also spelled --fetch)
+  --check      verify the trio and every substitution without changing
+               the tree
   -h, --help   show this help
 EOF
 }
@@ -121,6 +126,64 @@ pkg_label() {
     adapter) echo "date-fns time adapter" ;;
     zoom) echo "zoom plugin" ;;
     esac
+}
+
+# The dashboard is written against these major versions.
+pkg_major() {
+    case "$1" in
+    core) echo 4 ;;
+    adapter) echo 3 ;;
+    zoom) echo 2 ;;
+    esac
+}
+
+# Banner name each dist file announces its version with ("<name> v1.2.3").
+pkg_banner() {
+    case "$1" in
+    core) echo "Chart.js" ;;
+    adapter) echo "chartjs-adapter-date-fns" ;;
+    zoom) echo "chartjs-plugin-zoom" ;;
+    esac
+}
+
+# Prints the library version of a dist file: from its banner, else from the
+# package.json of the package it sits in (the unminified adapter bundle has no
+# banner). Prints nothing when neither says.
+library_version() {
+    local role="$1" path="$2" banner_re name_re semver_re text dir json
+    semver_re='([0-9]+\.[0-9]+\.[0-9]+)'
+    banner_re="$(pkg_banner "${role}" | sed 's/\./\\./g') v${semver_re}"
+    text=$(head -c 512 "${path}")
+    if [[ "${text}" =~ ${banner_re} ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    name_re="\"name\": *\"$(pkg_name "${role}" | sed 's/\./\\./g')\""
+    dir=$(dirname "${path}")
+    for json in "${dir}/package.json" "${dir}/../package.json"; do
+        [ -f "${json}" ] || continue
+        text=$(head -c 65536 "${json}")
+        [[ "${text}" =~ ${name_re} ]] || continue
+        if [[ "${text}" =~ \"version\":\ *\"${semver_re} ]]; then
+            echo "${BASH_REMATCH[1]}"
+        fi
+        return 0
+    done
+}
+
+# Rejects a copy of the wrong major version and records the version found.
+check_version() {
+    local role="$1" path="$2" version want
+    version=$(library_version "${role}" "${path}")
+    want=$(pkg_major "${role}")
+    if [ -z "${version}" ]; then
+        echo "  warning: $(pkg_label "${role}"): cannot tell the version of ${path}; expected ${want}.x" >&2
+        VERSIONS[${role}]="unknown"
+        return 0
+    fi
+    [ "${version%%.*}" = "${want}" ] ||
+        die "$(pkg_label "${role}"): ${path} is $(pkg_name "${role}") ${version}; the dashboard needs ${want}.x"
+    VERSIONS[${role}]="${version}"
 }
 
 # Structural checks for distro copies: they are not the pinned bytes, so only
@@ -223,6 +286,7 @@ download_role() {
     fi
     verify_sha256 "${role}" "${RESOLVED[${role}]}"
     sanity_check "${role}" "${RESOLVED[${role}]}"
+    check_version "${role}" "${RESOLVED[${role}]}"
     INSTALLED[${role}]="${min}"
     echo "  ${pkg}@${version}: downloaded and sha256 verified"
 }
@@ -319,14 +383,19 @@ make_snippets() {
     printf 'js/chartjs/%s' "${core}" >"${WORK}/minify-new"
 }
 
+# Phase 1: write_bundle_test overwrites the whole file, so refuse to start
+# when it is no longer the Chart.js bundle test this script knows.
+check_bundle_test() {
+    if [ -f "${BUNDLE_TEST}" ] && ! grep -q 'chartjs-bundle\.min\.js\|replace_chartjs\.sh' "${BUNDLE_TEST}"; then
+        die "${BUNDLE_TEST} does not look like the Chart.js bundle test; update the script"
+    fi
+}
+
 # The old bundle test unit-tested addons/chartjs/date-adapter.js; the trio is
 # upstream code, so the replacement checks that the stock files register what
 # the dashboard uses and that the date-fns adapter still drives local-time
 # ticks across a DST boundary.
 write_bundle_test() {
-    if [ -f "${BUNDLE_TEST}" ] && ! grep -q 'chartjs-bundle\.min\.js\|replace_chartjs\.sh' "${BUNDLE_TEST}"; then
-        die "${BUNDLE_TEST} does not look like the Chart.js bundle test; update the script"
-    fi
     cat >"${BUNDLE_TEST}" <<'CHARTJS_TEST_EOF'
 // Checks the upstream Chart.js trio that addons/packaging/replace_chartjs.sh
 // installs in place of Kula's esbuild bundle: the stock chart.js UMD dist
@@ -467,6 +536,7 @@ verify_tree() {
 
 FROM_DIRS=()
 DOWNLOAD=0
+CHECK_ONLY=0
 while [ $# -gt 0 ]; do
     case "$1" in
     --from)
@@ -482,6 +552,10 @@ while [ $# -gt 0 ]; do
         ;;
     --download | --fetch)
         DOWNLOAD=1
+        shift
+        ;;
+    --check)
+        CHECK_ONLY=1
         shift
         ;;
     -h | --help)
@@ -509,7 +583,11 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
-echo "replace_chartjs.sh: installing the upstream Chart.js trio into internal/web/static/js/chartjs"
+if [ "${CHECK_ONLY}" = 1 ]; then
+    echo "replace_chartjs.sh: checking the upstream Chart.js trio (the tree is not modified)"
+else
+    echo "replace_chartjs.sh: installing the upstream Chart.js trio into internal/web/static/js/chartjs"
+fi
 
 if [ ${#FROM_DIRS[@]} -gt 0 ]; then
     for role in "${ROLES[@]}"; do
@@ -531,6 +609,7 @@ for role in "${ROLES[@]}"; do
     fi
     # Distro copies are not the pinned bytes; check their structure here.
     sanity_check "${role}" "${RESOLVED[$role]}"
+    check_version "${role}" "${RESOLVED[$role]}"
 done
 
 for role in "${ROLES[@]}"; do
@@ -546,7 +625,7 @@ releases ($(pkg_name "${role}")@$(pkg_version "${role}")), or set \$CHARTJS_DIST
 done
 
 for role in "${ROLES[@]}"; do
-    echo "using ${RESOLVED[$role]} for internal/web/static/js/chartjs/${INSTALLED[$role]}"
+    echo "using ${RESOLVED[$role]} ($(pkg_name "${role}") ${VERSIONS[$role]}) for internal/web/static/js/chartjs/${INSTALLED[$role]}"
 done
 
 make_snippets
@@ -556,6 +635,12 @@ check_patch "internal/web/static/index.html" "${WORK}/index-old" "${WORK}/index-
 check_patch "internal/web/testdata/history_performance.html" "${WORK}/perf-old" "${WORK}/perf-new" "${PERF_HTML}"
 check_patch "internal/web/server_test.go" "${WORK}/server-test-old" "${WORK}/server-test-new" "${SERVER_TEST}"
 check_patch "internal/web/minify_test.go" "${WORK}/minify-old" "${WORK}/minify-new" "${MINIFY_TEST}"
+check_bundle_test
+
+if [ "${CHECK_ONLY}" = 1 ]; then
+    echo "replace_chartjs.sh: check passed - every substitution applies; nothing was changed"
+    exit 0
+fi
 
 mkdir -p "${STATIC_DIR}"
 for role in "${ROLES[@]}"; do

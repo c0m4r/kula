@@ -27,6 +27,7 @@ three upstream dist files a distro provides: `chart.umd.min.js` (chart.js),
 ```bash
 ./addons/packaging/replace_chartjs.sh --from /usr/share/javascript
 ./addons/packaging/replace_chartjs.sh --download
+./addons/packaging/replace_chartjs.sh --check --from /usr/share/javascript  # dry run
 ```
 
 `--from DIR` (repeatable, or one colon-separated list; `$CHARTJS_DIST_DIR` works too) searches
@@ -34,11 +35,18 @@ three upstream dist files a distro provides: `chart.umd.min.js` (chart.js),
 name or the unminified `chart.umd.js` / `chartjs-plugin-zoom.js` /
 `chartjs-adapter-date-fns.bundle.js`. Distro copies are checked for the library banner, a
 plausible size and the expected global or registration, not for byte equality; unminified
-files keep their upstream name. With neither `--from` nor `--download` the usual distro
+files keep their upstream name. Each copy must also be the major version the dashboard is
+written against — chart.js 4.x, chartjs-adapter-date-fns 3.x, chartjs-plugin-zoom 2.x — read
+from its banner or, for the banner-less unminified adapter bundle, from the `package.json` of
+its package; the script prints every version it uses and warns when it cannot tell one. With
+neither `--from` nor `--download` the usual distro
 locations are searched: `/usr/share/javascript/<pkg>`, `/usr/share/nodejs/<pkg>/dist` and
 `/usr/lib/node_modules/<pkg>/dist`. `--download` (also `--fetch`) fetches the pinned releases
 from the npm registry, with unpkg.com as fallback, and verifies each file's sha256 before
-installing it.
+installing it. `--check` does everything up to the first change — resolves and verifies the
+trio and confirms every substitution still applies — then exits without touching the tree, so
+a new Kula release can be tried before a build. Without it, the script also refuses to start
+unless every substitution applies, so a failure never leaves a half-converted tree.
 
 The script installs the trio in `internal/web/static/js/chartjs/` and loads it from
 `internal/web/static/index.html` in dependency order (core, adapter, zoom), each file keeping
