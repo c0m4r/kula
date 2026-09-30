@@ -257,6 +257,14 @@ Browser regression commands and performance fixtures are described in [Testing](
 The server injects `window.KULA_BASE_PATH` into the HTML template; `api.js` prepends it to every
 request so the SPA works unchanged when mounted under a reverse-proxy prefix.
 
+### Theme before first paint
+
+The server renders `global.default_theme` into `<body data-default-theme>`, and a nonce'd inline
+script at the top of `<body>` resolves the theme the way `settings.js` does (stored `kula_theme`,
+else that default, else `auto` via `prefers-color-scheme`) and adds `light-mode` before anything
+paints. `state.js` starts from the same default, so the first `applyTheme()` agrees with it
+instead of waiting for `/api/config`. Change the resolution in both places together.
+
 ### Adding a chart for a new metric type
 
 When you add an application metric type, the frontend side is: define an `APP_ORDER_*` constant

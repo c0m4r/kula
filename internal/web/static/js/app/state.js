@@ -57,7 +57,10 @@ export const state = {
     currentDownsampled: false,
     currentTier: 0,           // tier index of data currently loaded in charts
     liveQueue: [],        // samples buffered while a foreground history load replaces the view
-    theme: localStorage.getItem('kula_theme') || 'auto',
+    // The server's default_theme is in the page already (index.html), so the
+    // first applyTheme() agrees with the pre-paint script instead of waiting
+    // for /api/config.
+    theme: localStorage.getItem('kula_theme') || document.body?.dataset.defaultTheme || 'auto',
     diskSpaceMountNames: [], // Not used as datasets anymore, but kept for compatibility
     cpuTempSensorNames: [],
     diskTempSensorNames: [],

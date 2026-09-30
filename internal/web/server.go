@@ -1245,6 +1245,7 @@ func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, template
 		EasterEgg    bool
 		BasePath     string
 		GameScoreURL string
+		DefaultTheme string
 	}{
 		Nonce:        nonce,
 		SRI:          s.sriHashes,
@@ -1253,6 +1254,7 @@ func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, template
 		EasterEgg:    s.global.EasterEgg,
 		BasePath:     s.cfg.BasePath,
 		GameScoreURL: s.gameScoreURL,
+		DefaultTheme: s.global.DefaultTheme,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

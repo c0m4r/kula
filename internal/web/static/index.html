@@ -52,7 +52,18 @@
 
 </head>
 
-<body>
+<body data-default-theme="{{.DefaultTheme}}">
+    <!-- Resolve the theme before the first paint, the way settings.js does once
+         the modules load, so a light dashboard never paints dark first. -->
+    <script nonce="{{.Nonce}}">
+        (function () {
+            var theme = '';
+            try { theme = localStorage.getItem('kula_theme') || ''; } catch (e) { /* storage blocked */ }
+            theme = theme || document.body.dataset.defaultTheme || 'auto';
+            if (theme === 'auto') theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+            if (theme === 'light') document.body.classList.add('light-mode');
+        })();
+    </script>
     {{if .AuthEnabled}}
     <!-- Login overlay -->
     <div id="login-overlay" class="login-overlay hidden">

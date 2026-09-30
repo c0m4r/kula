@@ -1,6 +1,7 @@
 package web
 
 import (
+	"html"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -72,11 +73,11 @@ func TestChartJSScriptsDeferred(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	html := string(page)
-	scripts := regexp.MustCompile(`<script\b[^>]*>`).FindAllStringIndex(html, -1)
+	source := string(page)
+	scripts := regexp.MustCompile(`<script\b[^>]*>`).FindAllStringIndex(source, -1)
 	appModule, chartScripts := -1, 0
 	for _, loc := range scripts {
-		tag := html[loc[0]:loc[1]]
+		tag := source[loc[0]:loc[1]]
 		if strings.Contains(tag, `src="js/app/main.js"`) {
 			appModule = loc[0]
 		}
@@ -93,5 +94,38 @@ func TestChartJSScriptsDeferred(t *testing.T) {
 	}
 	if chartScripts == 0 || appModule < 0 {
 		t.Fatalf("found %d Chart.js scripts and app module at %d", chartScripts, appModule)
+	}
+}
+
+// The theme is resolved by a nonce'd inline script at the top of <body>, from
+// the server default rendered into the page, before anything paints.
+func TestIndexResolvesThemeBeforePaint(t *testing.T) {
+	for _, tc := range []struct{ theme, want string }{
+		{"light", `data-default-theme="light"`},
+		{`"><script>alert(1)</script>`, `data-default-theme="&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"`},
+	} {
+		s := NewServer(config.WebConfig{UI: true, Security: config.SecurityConfig{Headers: true}}, config.GlobalConfig{DefaultTheme: tc.theme}, nil, nil, t.TempDir(), config.OllamaConfig{})
+		rec := httptest.NewRecorder()
+		s.securityMiddleware(http.HandlerFunc(s.handleIndex)).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		body := rec.Body.String()
+
+		start := strings.Index(body, "<body ")
+		if start < 0 || !strings.HasPrefix(body[start:], "<body "+tc.want+">") {
+			t.Fatalf("default theme %q: body tag not rendered as %s", tc.theme, tc.want)
+		}
+		nonce := regexp.MustCompile(`'nonce-([^']+)'`).FindStringSubmatch(rec.Header().Get("Content-Security-Policy"))
+		if nonce == nil {
+			t.Fatal("CSP has no nonce")
+		}
+		// The template HTML-escapes the base64 nonce ("+" becomes "&#43;").
+		rest := html.UnescapeString(body[start:])
+		script := strings.Index(rest, `<script nonce="`+nonce[1]+`">`)
+		content := strings.Index(rest, "<div")
+		if script < 0 || content < 0 || script > content {
+			t.Fatalf("theme script (at %d) must precede the first element (at %d) and carry the CSP nonce", script, content)
+		}
+		if !strings.Contains(rest[script:content], "classList.add('light-mode')") {
+			t.Error("theme script does not apply the light theme")
+		}
 	}
 }
