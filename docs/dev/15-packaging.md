@@ -99,9 +99,12 @@ along with its routes, tests and font, and `replace_chartjs.sh` swaps the vendor
 bundle for the distro-provided `chart.umd.min.js` +
 `chartjs-adapter-date-fns.bundle.min.js` + `chartjs-plugin-zoom.min.js` trio (found via
 `--from DIR`, `$CHARTJS_DIST_DIR` or the usual distro paths, or fetched and sha256-verified
-with `--download`). Each exits non-zero if its patterns no longer match the code. When the
-game, font or Chart.js wiring changes, rerun all three on a scratch copy and pass
-`./addons/check.sh` there.
+with `--download`). Each exits non-zero if its patterns no longer match the code.
+`check_helpers.sh` runs the two removal helpers on scratch copies, alone and combined, and
+requires `go vet ./...` and `go test ./internal/web/` to pass there; CI runs it on every change.
+Tests that depend on the fonts or the game must therefore skip when a helper has removed
+them. When the Chart.js wiring changes, also run `replace_chartjs.sh` on a scratch copy and
+pass `./addons/check.sh` there.
 
 ## Release checklist
 

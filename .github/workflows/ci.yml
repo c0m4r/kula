@@ -36,6 +36,7 @@ on:
       - 'addons/check.sh'
       - 'addons/build.sh'
       - 'addons/ci-local/**'
+      - 'addons/packaging/**'
       - '.github/workflows/ci.yml'
   pull_request:
     paths: *code-paths
@@ -105,6 +106,11 @@ jobs:
         # The runner's expression semantics decide which local CI steps run;
         # stdlib unittest on the runner's system Python, nothing installed.
         run: python3 -m unittest discover -s addons/ci-local -v
+
+      - name: Packaging helpers
+        # Each helper on a scratch copy, then go vet and the web tests there,
+        # as a distro build that runs them before its test step would.
+        run: ./addons/packaging/check_helpers.sh
 
       # ── Build + prove the binary actually runs ───────────────────────────
       - name: Build

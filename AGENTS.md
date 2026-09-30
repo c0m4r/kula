@@ -17,6 +17,7 @@ runtime dependency.
 | Native fuzzing over every `Fuzz*` target | `./addons/fuzz.sh [duration] [filter]` |
 | Storage engine benchmarks | `./addons/benchmark.sh` |
 | Rebuild the vendored Chart.js bundle (needs node + npm) | `./addons/build-chartjs.sh [--update]` |
+| Packaging helpers still leave a tree that vets and passes the web tests | `./addons/packaging/check_helpers.sh` |
 
 `./addons/check.sh` runs, in order: `govulncheck` → `gofmt -l .` → `go vet ./...` →
 `go test -v -race ./...` → `golangci-lint`. govulncheck and golangci-lint print "Skipping" when

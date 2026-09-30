@@ -17,17 +17,43 @@ import (
 	"kula/internal/config"
 )
 
+// embeddedWOFF2 returns the URL path of an embedded WOFF2 font, or "" when
+// the tree ships none (addons/packaging/remove_fonts.sh deletes them all).
+func embeddedWOFF2(t *testing.T) string {
+	t.Helper()
+	var found string
+	err := fs.WalkDir(staticFS, "static", func(path string, d fs.DirEntry, err error) error {
+		if err == nil && found == "" && !d.IsDir() && strings.HasSuffix(path, ".woff2") {
+			found = strings.TrimPrefix(path, "static")
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return found
+}
+
 // Every font a stylesheet points at must be embedded, or the dashboard
-// silently falls back to system fonts.
+// silently falls back to system fonts. The packaging helpers remove the game
+// stylesheet and the fonts, so the sheets and fonts are taken from the tree.
 func TestStylesheetFontsAreEmbedded(t *testing.T) {
 	fontURL := regexp.MustCompile(`url\('(fonts/[^']+)'\)`)
-	for _, sheet := range []string{"static/style.css", "static/game.css"} {
+	sheets, err := fs.Glob(staticFS, "static/*.css")
+	if err != nil || len(sheets) == 0 {
+		t.Fatalf("no embedded stylesheets (err %v)", err)
+	}
+	_, statErr := fs.Stat(staticFS, "static/fonts")
+	fontsShipped := statErr == nil
+	for _, sheet := range sheets {
 		css, err := staticFS.ReadFile(sheet)
 		if err != nil {
 			t.Fatal(err)
 		}
 		matches := fontURL.FindAllStringSubmatch(string(css), -1)
-		if len(matches) == 0 {
+		// Guards the pattern itself: a sheet that stops matching it would
+		// otherwise pass without checking anything.
+		if len(matches) == 0 && fontsShipped {
 			t.Errorf("%s references no fonts", sheet)
 		}
 		for _, match := range matches {
@@ -39,10 +65,14 @@ func TestStylesheetFontsAreEmbedded(t *testing.T) {
 }
 
 func TestWOFF2FontServedWithoutGzip(t *testing.T) {
+	font := embeddedWOFF2(t)
+	if font == "" {
+		t.Skip("no WOFF2 font is embedded (fonts removed for packaging)")
+	}
 	s := NewServer(config.WebConfig{UI: true, EnableCompression: true}, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
 	handler := s.buildHandler()
 
-	req := httptest.NewRequest(http.MethodGet, "/fonts/Inter/Inter-VariableFont_opsz,wght.woff2", nil)
+	req := httptest.NewRequest(http.MethodGet, font, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -138,6 +168,10 @@ func TestIndexResolvesThemeBeforePaint(t *testing.T) {
 // Static assets revalidate with an ETag of the served bytes: a match is a 304
 // with no body (and no gzip framing), anything else is the full asset.
 func TestStaticAssetsRevalidate(t *testing.T) {
+	paths := []string{"/js/app/main.js", "/style.css"}
+	if font := embeddedWOFF2(t); font != "" {
+		paths = append(paths, font)
+	}
 	for _, compress := range []bool{true, false} {
 		s := NewServer(config.WebConfig{UI: true, MinifyAssets: true, EnableCompression: compress}, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
 		handler := s.buildHandler()
@@ -152,7 +186,7 @@ func TestStaticAssetsRevalidate(t *testing.T) {
 			return rec
 		}
 
-		for _, path := range []string{"/js/app/main.js", "/style.css", "/fonts/Inter/Inter-VariableFont_opsz,wght.woff2"} {
+		for _, path := range paths {
 			served, err := s.readStatic("static" + path)
 			if err != nil {
 				t.Fatal(err)

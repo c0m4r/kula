@@ -5,6 +5,10 @@ Run these against the source tree **before** building: they edit files under
 independent and safe to run in any order. Each exits non-zero if references survive its
 edits, which means an upstream change has outdated the script.
 
+`check_helpers.sh` runs `remove_fonts.sh` and `remove_game.sh`, alone and together in both
+orders, each on a scratch copy of the tree, and checks that the result still passes `go vet`
+and the web tests. CI runs it, so a change that breaks a packaged build fails before release.
+
 ## remove_fonts.sh | status: stable
 
 Removes the bundled dashboard fonts (Inter, Press Start 2P) and their `@font-face` rules, so the
