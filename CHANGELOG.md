@@ -23,12 +23,20 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Retained history now limits only which days can be picked
 - Unused CSS/JS cleanup
 - The dashboard now loads one trimmed Chart.js bundle instead of three scripts
-- web: serve Inter as WOFF2, font MIME types
+- The dashboard paints sooner: Chart.js no longer blocks the first paint, and charts are
+  built once the page is on screen
+- The Inter font ships as WOFF2 (349 KB instead of 875 KB, same glyphs)
+- Static assets are revalidated with an ETag instead of downloaded again on every visit;
+  an unchanged server answers 304 Not Modified
 
 ### Fixed
 
 - The Focus Mode bar ("Select graphs…", Hide gauges, Done, Cancel) is now translated
 - Space Invaders: fixed game stability on firefox
+- Layout shifts while the dashboard loads: the gauges, chart headers and sampling info no
+  longer push the page down when they fill in
+- A light-theme dashboard no longer shows a dark first frame; `global.default_theme` also
+  applies before the config request finishes
 
 ## [0.20.3] - 2026-09-29
 
