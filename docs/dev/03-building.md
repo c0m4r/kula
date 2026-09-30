@@ -151,6 +151,34 @@ GitHub Actions workflows live in [`.github/workflows/`](../../.github/workflows/
 
 - `ci.yml` — build + the `check.sh`-style verification (govulncheck, `go vet`, race tests,
   golangci-lint; no standalone `gofmt` step), then a `./kula --version` smoke test.
+- `frontend.yml` — the three Chromium fixtures, each in its own timed step.
 - `semgrep.yml` — static analysis security scan.
+
+[`addons/ci-local.sh`](../../addons/ci-local.sh) runs the same workflows locally, inside a Docker
+image that stands in for the `ubuntu-latest` hosted runner: the same Ubuntu release, a non-root
+`runner` user with passwordless sudo, Google Chrome, and a toolcache holding the Go, Node.js and
+Python versions the workflows ask for (read from `go.mod` and the workflow files, so bumping a
+version there is enough):
+
+```bash
+./addons/ci-local.sh                  # list workflows and their jobs
+./addons/ci-local.sh run ci           # every job of ci.yml
+./addons/ci-local.sh run frontend     # the browser job, Chrome included
+./addons/ci-local.sh run-all          # every job of every workflow
+./addons/ci-local.sh shell            # poke around inside the runner image
+./addons/ci-local.sh --rebuild run ci # re-resolve the toolcache versions first
+```
+
+The working tree (tracked plus untracked, minus ignored files) is snapshotted into the container
+and committed there, so a job sees uncommitted changes; Go module, build, npm and pip caches
+live in named volumes, so only the first run pays for them (`--clean-cache`, or `clean`, starts
+over). [`addons/ci-local/run-workflow.py`](../../addons/ci-local/run-workflow.py) executes the
+steps: it implements the first-party actions the workflows use (`actions/checkout`,
+`actions/setup-go`, `actions/setup-node`, `actions/setup-python`), honours `if`, `env`,
+`working-directory`, `shell`, timeouts and the `GITHUB_PATH`/`GITHUB_ENV`/`GITHUB_OUTPUT`
+command files, and fails loudly on a construct it does not emulate rather than skipping the
+step. The container holds no token, so the workflows' read-only security model holds trivially;
+steps that genuinely need GitHub (a push, a release upload) cannot work here by design.
+`--step PATTERN` runs only the matching steps, which is the fast way to iterate on one failure.
 
 Next: [Collector Subsystem](04-collector.md).

@@ -418,6 +418,9 @@ All settings live in `config.yaml`. See [`config.example.yaml`](config.example.y
 # Lint + test suite
 ./addons/check.sh
 
+# The GitHub Actions workflows, locally in a ubuntu-latest stand-in (needs Docker)
+./addons/ci-local.sh run ci
+
 # Build
 ./addons/build.sh
 

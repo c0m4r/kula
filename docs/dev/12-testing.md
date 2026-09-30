@@ -254,7 +254,8 @@ CI runs them in the separate Frontend workflow, so a hung browser cannot delay t
 results. Each fixture is its own step with a timeout several times its local duration, and the
 job has an overall ceiling. Teardown sends SIGTERM to Chromium (and `kula serve`) and escalates
 to SIGKILL after five seconds, so a process that ignores the signal cannot hold a finished run
-open.
+open. [`addons/ci-local.sh`](../../addons/ci-local.sh) reproduces that job locally, browser
+included: `./addons/ci-local.sh run frontend`.
 
 ## Runtime security tests
 
