@@ -234,10 +234,17 @@ embedded `.css` and `.js` file except the vendored `*.min.*` ones once per proce
 hashes are computed, and `handleStatic` serves the minified bytes (`readStatic`). Both
 minifiers are dependency-free and only remove comments and whitespace; they never rename or
 rewrite tokens. The JavaScript lexer keeps every line break automatic semicolon insertion could
-depend on, and re-lexes its output to require the exact input token stream. A file either
-minifier cannot follow is logged and served unminified. `TestEmbeddedAssetsMinify` requires every
-shipped asset to minify, `TestMinifiedScriptsParseInNode` syntax-checks the output with node, and
-`FuzzMinifyJS` / `FuzzMinifyCSS` cover arbitrary input.
+depend on, and re-lexes its output to require the exact input token stream. That re-check shares
+the lexer's regex-or-division decision, so the decision itself must be right: a `/` after a
+keyword that precedes an expression (`return`, `typeof`, `default`, …) starts a regular
+expression unless the word is a property name (`a.of / 2`), and so does a `/` after the `)` of an
+`if`, `for`, `for await`, `while` or `with` head. In CSS, a comment is not whitespace: next to
+whitespace it collapses with it, beside a delimiter it is dropped, and between two tokens that
+could merge it stays as `/**/`. A hex escape keeps the one whitespace character that ends it. A
+file either minifier cannot follow is logged and served unminified. `TestEmbeddedAssetsMinify`
+requires every shipped asset to minify, and checks each stylesheet with `cssGapsPreserved`, which
+uses no code from the minifier. `TestMinifiedScriptsParseInNode` syntax-checks the output with
+node, and `FuzzMinifyJS` / `FuzzMinifyCSS` cover arbitrary input.
 
 Static assets carry a weak `ETag` of the bytes they are served as (`staticETags`, computed at
 startup after minification) and `Cache-Control: no-cache`: the browser keeps its copy but

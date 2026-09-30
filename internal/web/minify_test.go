@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"crypto/sha512"
 	"encoding/base64"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -50,6 +50,13 @@ func TestMinifyJS(t *testing.T) {
 		{"regex flags before word", "x = /re/g instanceof RegExp", "x=/re/g instanceof RegExp"},
 		{"division before regex", "a / /re/.source.length", "a/ /re/.source.length"},
 		{"regex before division", "x = /re/ / 2", "x=/re/ /2"},
+		// A keyword used as a property name is an operand: the "/" after it
+		// divides, so the comment is dropped and the next statement kept.
+		{"keyword property division", "x = a.of / 2 // halve a/b,\ny()", "x=a.of/2\ny()"},
+		{"optional keyword property", "x = a?.in / b / c", "x=a?.in/b/c"},
+		{"property named if is no head", "x = a.if(b) / 2 / c", "x=a.if(b)/2/c"},
+		{"regex after export default", "export default /[a-z] /;", "export default/[a-z] /;"},
+		{"regex after for await head", "for await (const x of y) /[a-z] / .test(x);", "for await(const x of y)/[a-z] /.test(x);"},
 		{"strings keep comment markers", "'// not' + \"/* nor */\"", "'// not'+\"/* nor */\""},
 		{"string line continuation", "'a\\\nb' + c", "'a\\\nb'+c"},
 		{"template substitutions", "`a ${ b + `c ${ d }` } e`", "`a ${b+`c ${d}`} e`"},
@@ -107,6 +114,16 @@ func TestMinifyCSS(t *testing.T) {
 		{"comments", "/* x */ a { /* y */ b: c; }", "a{b:c}"},
 		{"strings", "a::before { content: \" { ; } /* */ \" }", "a::before{content:\" { ; } /* */ \"}"},
 		{"escaped colon", ".a\\: .b { }", ".a\\: .b{}"},
+		// A hex escape owns one whitespace character after it; a second one is
+		// a descendant combinator and must survive.
+		{"hex escape then descendant", ".a\\31  .b { }", ".a\\31  .b{}"},
+		{"hex escape terminator", ".a\\31 .b, .c\\31\r\n.d { }", ".a\\31 .b,.c\\31 .d{}"},
+		// A comment is not whitespace: it must neither join tokens nor become
+		// a descendant combinator, unless a delimiter makes it redundant.
+		{"comment in compound selector", ".a/**/.b { }", ".a/**/.b{}"},
+		{"comment between values", "a { margin: 1px/* x */2px }", "a{margin:1px/**/2px}"},
+		{"comment before function paren", "a { b: f/**/(x) }", "a{b:f/**/(x)}"},
+		{"comment next to delimiters", "a {/* x */color:red;/**/}", "a{color:red}"},
 		{"quoted url", "@font-face { src: url('x y.ttf') format('truetype'); }", "@font-face{src:url('x y.ttf') format('truetype')}"},
 		{"unquoted url", "a { background: url( data:image/svg+xml;x/*y*/z ) }", "a{background:url(data:image/svg+xml;x/*y*/z)}"},
 		{"empty custom property", "a { --x: ; }", "a{--x: }"},
@@ -160,8 +177,6 @@ func embeddedMinifiable(t *testing.T) []string {
 // falls back to its unminified form, minification only drops whitespace and
 // comments, and a second pass changes nothing.
 func TestEmbeddedAssetsMinify(t *testing.T) {
-	cssComment := regexp.MustCompile(`(?s)/\*.*?\*/`)
-	cssSpace := regexp.MustCompile(`\s+`)
 	assets := minifiedStatic()
 	for _, path := range embeddedMinifiable(t) {
 		src, err := staticFS.ReadFile(path)
@@ -178,12 +193,8 @@ func TestEmbeddedAssetsMinify(t *testing.T) {
 			t.Errorf("%s: minifying twice is not stable (err %v)", path, err)
 		}
 		if strings.HasSuffix(path, ".css") {
-			strip := func(b []byte) string {
-				s := cssSpace.ReplaceAllString(cssComment.ReplaceAllString(string(b), ""), "")
-				return strings.ReplaceAll(s, ";}", "}")
-			}
-			if strip(src) != strip(min) {
-				t.Errorf("%s: minified stylesheet differs beyond whitespace and comments", path)
+			if err := cssGapsPreserved(string(src), string(min)); err != nil {
+				t.Errorf("%s: %v", path, err)
 			}
 			continue
 		}
@@ -193,6 +204,133 @@ func TestEmbeddedAssetsMinify(t *testing.T) {
 		}
 		if got, err := lexJS(string(min)); err != nil || !sameJSTokens(got, want) {
 			t.Errorf("%s: minified script lexes to different tokens (err %v)", path, err)
+		}
+	}
+}
+
+// cssGapsPreserved checks a minified stylesheet against its source without
+// the minifier's own scanner. Outside strings, escapes and url() arguments,
+// every run of whitespace and comments must survive as one space or an empty
+// comment, or be dropped next to a delimiter that is a token of its own:
+// after one of "{};,(:>~" or before one of "{};,)>~!". A ";" may also be
+// dropped before "}". Nothing else may change.
+func cssGapsPreserved(src, out string) error {
+	const dropAfter, dropBefore = "{};,(:>~", "{};,)>~!"
+	isSpace := func(c byte) bool { return strings.IndexByte(" \t\n\r\f", c) >= 0 }
+	isHex := func(c byte) bool { return strings.IndexByte("0123456789abcdefABCDEF", c) >= 0 }
+	fail := func(i, j int, what string) error {
+		near := func(s string, at int) string { return s[max(0, at-24):min(len(s), at+24)] }
+		return fmt.Errorf("%s at source offset %d (%q), output offset %d (%q)", what, i, near(src, i), j, near(out, j))
+	}
+	i, j := 0, 0
+	// copied matches the source span src[i:end] as text in the output.
+	copied := func(text string, end int) bool {
+		if !strings.HasPrefix(out[j:], text) {
+			return false
+		}
+		i, j = end, j+len(text)
+		return true
+	}
+	for i < len(src) {
+		c := src[i]
+		switch {
+		case isSpace(c) || strings.HasPrefix(src[i:], "/*"):
+			for i < len(src) {
+				if isSpace(src[i]) {
+					i++
+				} else if strings.HasPrefix(src[i:], "/*") {
+					end := strings.Index(src[i+2:], "*/")
+					if end < 0 {
+						return fail(i, j, "unterminated comment")
+					}
+					i += 2 + end + 2
+				} else {
+					break
+				}
+			}
+			switch {
+			case strings.HasPrefix(out[j:], "/**/"):
+				j += 4
+			case j < len(out) && out[j] == ' ':
+				j++
+			case j == 0 || i == len(src) ||
+				strings.IndexByte(dropAfter, out[j-1]) >= 0 || strings.IndexByte(dropBefore, src[i]) >= 0:
+			default:
+				return fail(i, j, "whitespace dropped between tokens that need it")
+			}
+		case c == '"' || c == '\'':
+			end := i + 1
+			for end < len(src) && src[end] != c {
+				if src[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			if end >= len(src) || !copied(src[i:end+1], end+1) {
+				return fail(i, j, "string changed")
+			}
+		case c == '\\':
+			end := min(i+2, len(src))
+			if end-i == 2 && isHex(src[i+1]) {
+				for end < len(src) && end-i < 7 && isHex(src[end]) {
+					end++
+				}
+				text := src[i:end]
+				if strings.HasPrefix(src[end:], "\r\n") {
+					text, end = text+" ", end+2
+				} else if end < len(src) && isSpace(src[end]) {
+					text, end = text+" ", end+1
+				}
+				if !copied(text, end) {
+					return fail(i, j, "escape changed")
+				}
+				continue
+			}
+			if !copied(src[i:end], end) {
+				return fail(i, j, "escape changed")
+			}
+		case strings.EqualFold(src[i:min(i+4, len(src))], "url(") &&
+			!strings.ContainsAny(strings.TrimLeft(src[i+4:], " \t\n\r\f")[:1], "\"'"):
+			end := strings.IndexByte(src[i:], ')')
+			if end < 0 || !copied(src[i:i+4]+strings.TrimSpace(src[i+4:i+end])+")", i+end+1) {
+				return fail(i, j, "url() changed")
+			}
+		case c == ';' && j < len(out) && out[j] == '}':
+			rest := strings.TrimLeft(src[i+1:], " \t\n\r\f")
+			if !strings.HasPrefix(rest, "}") && !strings.HasPrefix(rest, "/*") {
+				return fail(i, j, "semicolon dropped")
+			}
+			i++
+		default:
+			if j >= len(out) || out[j] != c {
+				return fail(i, j, "text changed")
+			}
+			i, j = i+1, j+1
+		}
+	}
+	if j != len(out) {
+		return fail(i, j, "output has trailing text")
+	}
+	return nil
+}
+
+func TestCSSGapsPreservedCatchesDroppedSpaces(t *testing.T) {
+	src := "a .b > .c { color : red ; }\n@media screen and (max-width: 600px) { d { e: f } }"
+	good, err := minifyCSS([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cssGapsPreserved(src, string(good)); err != nil {
+		t.Fatalf("real output rejected: %v", err)
+	}
+	for _, bad := range []string{
+		"a.b>.c{color :red}@media screen and (max-width:600px){d{e:f}}",   // descendant combinator lost
+		"a .b>.c{color :red}@media screen and(max-width:600px){d{e:f}}",   // "and(" is a function
+		"a .b>.c{color :red}@mediascreen and (max-width:600px){d{e:f}}",   // at-rule name merged
+		"a .b>.c{color :red}@media screen and (max-width:600px){d{e:ff}}", // text changed
+	} {
+		if err := cssGapsPreserved(src, bad); err == nil {
+			t.Errorf("cssGapsPreserved accepted %q", bad)
 		}
 	}
 }
@@ -276,6 +414,9 @@ func FuzzMinifyJS(f *testing.F) {
 		"1 .toString(); 0x1f + 1e+5",
 		"class A { #x = 1\n static y }",
 		"a < !b; a-- > b",
+		"x = a.of / 2 // halve a/b,\ny()",
+		"export default /[a-z] /",
+		"for await (const x of y) /[a-z] /.test(x)",
 	} {
 		f.Add([]byte(s))
 	}
@@ -305,6 +446,8 @@ func FuzzMinifyCSS(f *testing.F) {
 		"a::before { content: \" { ; } /* */ \" } /* note */",
 		".a\\: .b { background: url( x/*y*/z ) }",
 		"a { --x: ; }",
+		".a\\31  .b { }",
+		".a/**/.b { margin: 1px/**/2px }",
 	} {
 		f.Add([]byte(s))
 	}

@@ -93,6 +93,9 @@ type jsToken struct {
 	// regexAfter marks a ")" closing an if/for/while/with head: a "/" after it
 	// starts a regular expression, not a division.
 	regexAfter bool
+	// property marks a word that follows "." or "?.": a property name such as
+	// the "of" in "a.of / 2", never a keyword.
+	property bool
 }
 
 // jsPunctuators lists every punctuator, longest first, for longest-match lexing.
@@ -106,11 +109,13 @@ var jsPunctuators = []string{
 }
 
 // jsKeywordsBeforeExpression are the words after which a "/" starts a
-// regular expression rather than a division.
+// regular expression rather than a division, unless the word is a property
+// name (see jsToken.property).
 var jsKeywordsBeforeExpression = map[string]bool{
 	"return": true, "typeof": true, "instanceof": true, "in": true, "of": true,
 	"new": true, "delete": true, "void": true, "throw": true, "case": true,
 	"do": true, "else": true, "yield": true, "await": true, "extends": true,
+	"default": true,
 }
 
 // jsNoLineBreakAfter are the words a restricted production forbids a line
@@ -321,6 +326,7 @@ func lexJS(src string) ([]jsToken, error) {
 			tok.kind, i = jsNumber, jsScanNumber(src, i)
 		case jsIdentByte(c) || c == '\\' || c == '#' || c >= utf8.RuneSelf:
 			tok.kind, i = jsWord, jsScanWord(src, i)
+			tok.property = prev != nil && prev.kind == jsPunct && (prev.text == "." || prev.text == "?.")
 		case c == '/' && jsRegexAllowed(prev):
 			end, err := jsScanRegex(src, i)
 			if err != nil {
@@ -343,9 +349,7 @@ func lexJS(src string) ([]jsToken, error) {
 					braces[len(braces)-1]--
 				}
 			case "(":
-				head := prev != nil && prev.kind == jsWord &&
-					(prev.text == "if" || prev.text == "for" || prev.text == "while" || prev.text == "with")
-				parens = append(parens, head)
+				parens = append(parens, jsOpensHead(toks))
 			case ")":
 				if len(parens) > 0 {
 					tok.regexAfter = parens[len(parens)-1]
@@ -375,7 +379,7 @@ func jsRegexAllowed(prev *jsToken) bool {
 	case jsTemplate:
 		return strings.HasSuffix(prev.text, "${")
 	case jsWord:
-		return jsKeywordsBeforeExpression[prev.text]
+		return !prev.property && jsKeywordsBeforeExpression[prev.text]
 	}
 	switch prev.text {
 	case ")":
@@ -384,6 +388,27 @@ func jsRegexAllowed(prev *jsToken) bool {
 		return false
 	}
 	return true
+}
+
+// jsOpensHead reports whether a "(" following toks opens an if, for, while
+// or with head, including "for await (".
+func jsOpensHead(toks []jsToken) bool {
+	keyword := func(back int) string {
+		if back > len(toks) {
+			return ""
+		}
+		if tok := toks[len(toks)-back]; tok.kind == jsWord && !tok.property {
+			return tok.text
+		}
+		return ""
+	}
+	switch keyword(1) {
+	case "if", "for", "while", "with":
+		return true
+	case "await":
+		return keyword(2) == "for"
+	}
+	return false
 }
 
 // jsPunctAt returns the longest punctuator at src[i:], or "".
@@ -609,8 +634,18 @@ func minifyCSS(src []byte) ([]byte, error) {
 			if end < 0 {
 				return nil, fmt.Errorf("unterminated comment at offset %d", i)
 			}
-			space = true
 			i += 2 + end + 2
+			// A comment separates tokens without being whitespace. Next to
+			// whitespace it collapses with it. Between two tokens it can only
+			// go where they cannot merge: dropped, "1px/**/2px" would become
+			// one token, and as a space ".a/**/.b" would become a descendant
+			// selector. Elsewhere an empty comment keeps them apart.
+			switch {
+			case space || out.Len() == 0 || i >= len(s) || strings.IndexByte(cssWhitespace, s[i]) >= 0:
+				space = true
+			case !cssCommentDroppable(out.Bytes()[out.Len()-1], s[i]):
+				emit("/**/", true)
+			}
 		case c == '"' || c == '\'':
 			end, err := cssScanString(s, i)
 			if err != nil {
@@ -619,12 +654,8 @@ func minifyCSS(src []byte) ([]byte, error) {
 			emit(s[i:end], true)
 			i = end
 		case c == '\\':
-			end := i + 1
-			if end < len(s) {
-				_, size := utf8.DecodeRuneInString(s[end:])
-				end += size
-			}
-			emit(s[i:end], true)
+			text, end := cssEscape(s, i)
+			emit(text, true)
 			i = end
 		case (c == 'u' || c == 'U') && cssURLStart(s, i, out.Bytes()):
 			end, ok := cssScanUnquotedURL(s, i+4)
@@ -650,6 +681,41 @@ const cssWhitespace = " \t\n\r\f"
 func cssNoSpaceAfter(c byte) bool { return c != 0 && strings.IndexByte("{};,>~(:", c) >= 0 }
 
 func cssNoSpaceBefore(c byte) bool { return strings.IndexByte("{};,>~)!", c) >= 0 }
+
+// cssCommentDroppable reports whether a comment between the output byte
+// before and the source byte after it can be removed without the two
+// merging into another token: one side is a delimiter that is a token of its
+// own. "(" only qualifies before the comment, since "f/**/(" would become
+// the function token "f(".
+func cssCommentDroppable(before, after byte) bool {
+	return strings.IndexByte("{}();,:[]>", before) >= 0 || strings.IndexByte("{});,:[]>~!", after) >= 0
+}
+
+// cssEscape returns the escape starting at s[i] == '\\' and the index after
+// it. A hex escape is up to six hex digits and one whitespace character
+// (CRLF counts as one) ending it. That whitespace is part of the escape, so
+// it stays with the escape, as a space, instead of collapsing with any
+// whitespace after it: `.a\31  .b` is class "a1" and then a descendant.
+func cssEscape(s string, i int) (string, int) {
+	j := i + 1
+	if j >= len(s) {
+		return s[i:j], j
+	}
+	if !jsHexDigit(s[j]) {
+		_, size := utf8.DecodeRuneInString(s[j:])
+		return s[i : j+size], j + size
+	}
+	for digits := 0; digits < 6 && j < len(s) && jsHexDigit(s[j]); digits++ {
+		j++
+	}
+	switch {
+	case strings.HasPrefix(s[j:], "\r\n"):
+		return s[i:j] + " ", j + 2
+	case j < len(s) && strings.IndexByte(cssWhitespace, s[j]) >= 0:
+		return s[i:j] + " ", j + 1
+	}
+	return s[i:j], j
+}
 
 func cssScanString(s string, i int) (int, error) {
 	quote := s[i]
