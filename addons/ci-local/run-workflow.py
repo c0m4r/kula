@@ -21,7 +21,10 @@ equivalent at all. Supported step keys are `name`, `uses`, `with`, `run`,
 subset documented by GitHub (see Expression).
 
 GitHub's command files are honoured: a step that appends to $GITHUB_PATH,
-$GITHUB_ENV or $GITHUB_OUTPUT affects the steps after it.
+$GITHUB_ENV or $GITHUB_OUTPUT affects the steps after it. As on GitHub, a
+failed step does not end the job: later steps still evaluate their `if`, whose
+implicit `success()` skips them unless they ask for `always()` or `failure()`.
+A job-level `if` is evaluated too.
 
 Usage:
     run-workflow.py list [WORKFLOW...]
@@ -32,6 +35,7 @@ Usage:
 import argparse
 import dataclasses
 import json
+import math
 import os
 import re
 import shutil
@@ -44,11 +48,6 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-
-try:
-    import yaml
-except ImportError:  # pragma: no cover - the ci-local image installs python3-yaml
-    sys.exit("ci-local: PyYAML is missing; it is installed in the ci-local image")
 
 WORKFLOW_DIR = ".github/workflows"
 
@@ -115,10 +114,16 @@ TOKEN_RE = re.compile(
   | (?P<operator>==|!=|&&|\|\||!)
   | (?P<punct>[()\[\],.])
   | (?P<star>\*)
-  | (?P<ident>[A-Za-z_][A-Za-z0-9_]*)
+  | (?P<literal>(?:true|false|null)(?![A-Za-z0-9_-]))
+  | (?P<ident>[A-Za-z_][A-Za-z0-9_-]*)
     """,
     re.VERBOSE,
 )
+
+LITERALS: Dict[str, Any] = {"true": True, "false": False, "null": None}
+
+# A condition that calls none of these is implicitly `success() && (...)`.
+STATUS_FUNCTIONS = {"always", "cancelled", "failure", "success"}
 
 KNOWN_FUNCTIONS = {
     "always",
@@ -234,6 +239,8 @@ class Expression:
             return float(token.value) if "." in token.value else int(token.value)
         if token.kind == "string":
             return unquote(token.value)
+        if token.kind == "literal":
+            return LITERALS[token.value]
         if token.kind == "operator" and token.value == "!":
             return not truthy(self.parse_unary())
         if token.kind == "punct" and token.value == "(":
@@ -260,7 +267,7 @@ class Expression:
         while True:
             if self.accept("."):
                 token = self.take()
-                if token.kind != "ident":
+                if token.kind not in ("ident", "literal"):
                     raise Unsupported(
                         f"bad property access in expression {self.source!r}"
                     )
@@ -273,7 +280,7 @@ class Expression:
                     parts.append(int(float(token.value)))
                 elif token.kind == "string":
                     parts.append(unquote(token.value))
-                elif token.kind == "ident":
+                elif token.kind in ("ident", "literal"):
                     parts.append(token.value)
                 else:
                     raise Unsupported(f"bad index in expression {self.source!r}")
@@ -322,23 +329,48 @@ def truthy(value: Any) -> bool:
     return True
 
 
-def as_number(value: Any) -> Optional[float]:
+JSON_NUMBER_RE = re.compile(r"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?")
+
+
+def value_kind(value: Any) -> str:
+    if value is None:
+        return "null"
     if isinstance(value, bool):
-        return 1.0 if value else 0.0
+        return "boolean"
     if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return "array" if isinstance(value, list) else "object"
+
+
+def to_number(value: Any) -> float:
+    """GitHub's coercion for comparing mismatched types."""
+    kind = value_kind(value)
+    if kind == "null":
+        return 0.0
+    if kind in ("boolean", "number"):
         return float(value)
-    if isinstance(value, str) and re.fullmatch(r"-?\d+(\.\d+)?", value.strip()):
-        return float(value.strip())
-    return None
+    if kind == "string":
+        text = value.strip()
+        if not text:
+            return 0.0
+        return float(text) if JSON_NUMBER_RE.fullmatch(text) else math.nan
+    return math.nan
 
 
 def equals(left: Any, right: Any) -> bool:
-    left_number, right_number = as_number(left), as_number(right)
-    if left_number is not None and right_number is not None:
-        return left_number == right_number
-    if isinstance(left, str) and isinstance(right, str):
-        return left.lower() == right.lower()
-    return left == right
+    """GitHub's loose equality: mismatched types compare as numbers (NaN never
+    equals anything), strings ignore case, arrays and objects compare by
+    identity."""
+    kind = value_kind(left)
+    if kind != value_kind(right):
+        return to_number(left) == to_number(right)
+    if kind == "string":
+        return str(left).lower() == str(right).lower()
+    if kind in ("array", "object"):
+        return left is right
+    return bool(left == right)
 
 
 def to_string(value: Any) -> str:
@@ -409,19 +441,17 @@ class EvalContext:
             "strategy": {"fail-fast": True, "job-index": 0, "job-total": 1},
         }
         self.job_status = "success"
-        self.missing: set = set()
 
     def lookup(self, parts: Sequence[Any], source: str) -> Any:
         if not parts:
             raise Unsupported(f"empty expression {source!r}")
         name = str(parts[0])
         if name not in self.contexts:
-            if name not in self.missing:
-                self.missing.add(name)
-                warn(
-                    f"expression {source!r} reads unknown context {name!r}; treating it as empty"
-                )
-            return None
+            # GitHub rejects the workflow for an unrecognized named-value;
+            # guessing a value here could silently flip a condition.
+            raise Unsupported(
+                f"expression {source!r} reads context {name!r}, which ci-local does not provide"
+            )
         value: Any = self.contexts[name]
         for part in parts[1:]:
             if isinstance(value, dict):
@@ -452,19 +482,66 @@ def interpolate(text: str, context: EvalContext) -> str:
     return EXPR_RE.sub(replace, text)
 
 
+def strip_expression(text: str) -> str:
+    """The body of a whole-value `${{ ... }}`, or the text unchanged."""
+    match = re.fullmatch(r"\$\{\{(.*)\}\}", text.strip(), re.S)
+    return match.group(1).strip() if match else text.strip()
+
+
+def calls_status_function(expression: Expression) -> bool:
+    tokens = expression.tokens
+    return any(
+        token.kind == "ident"
+        and token.value in STATUS_FUNCTIONS
+        and index + 1 < len(tokens)
+        and tokens[index + 1].value == "("
+        for index, token in enumerate(tokens)
+    )
+
+
 def evaluate_condition(condition: Any, context: EvalContext) -> bool:
-    """Evaluate a step/job `if`. A missing condition means `success()`."""
+    """Evaluate a step/job `if`. A missing condition means `success()`, and a
+    condition that calls no status function means `success() && (...)`."""
+    succeeded = context.job_status == "success"
     if condition is None:
-        return context.job_status == "success"
+        return succeeded
     if isinstance(condition, bool):
-        return condition
-    text = str(condition).strip()
+        return succeeded and condition
+    text = strip_expression(str(condition))
     if not text:
-        return context.job_status == "success"
-    match = re.fullmatch(r"\$\{\{(.*)\}\}", text, re.S)
-    if match:
-        text = match.group(1).strip()
-    return truthy(Expression(text, context).parse())
+        return succeeded
+    expression = Expression(text, context)
+    if calls_status_function(expression):
+        return truthy(expression.parse())
+    # GitHub skips the step without evaluating the rest once the job failed.
+    return succeeded and truthy(expression.parse())
+
+
+def evaluate_flag(value: Any, key: str, context: EvalContext) -> bool:
+    """A boolean step/job key that may also be an expression."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lower() in ("true", "false"):
+            return text.lower() == "true"
+        if text.startswith("${{"):
+            return truthy(Expression(strip_expression(text), context).parse())
+    raise Unsupported(f"{key} must be a boolean or an expression, not {value!r}")
+
+
+def evaluate_minutes(value: Any, key: str, context: EvalContext) -> Optional[float]:
+    """A timeout-minutes value that may also be an expression."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str) and value.strip().startswith("${{"):
+        value = Expression(strip_expression(value), context).parse()
+    number = to_number(value) if not isinstance(value, bool) else math.nan
+    if math.isnan(number) or number <= 0:
+        raise Unsupported(f"{key} must be a positive number, not {value!r}")
+    return number
 
 
 # ---------------------------------------------------------------------------
@@ -972,6 +1049,10 @@ def load_workflow(workspace: str, name: str) -> Path:
 
 
 def read_workflow(path: Path) -> Dict[str, Any]:
+    try:
+        import yaml  # pylint: disable=import-outside-toplevel
+    except ImportError:  # pragma: no cover - the ci-local image installs python3-yaml
+        sys.exit("ci-local: PyYAML is missing; it is installed in the ci-local image")
     workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(workflow, dict):
         raise Unsupported(f"{path.name} does not contain a workflow mapping")
@@ -1057,6 +1138,12 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
     runner = runner_context()
     state = JobState(workspace, runner_temp)
     base_context = EvalContext(github, {}, runner, matrix)
+    # No `needs` job ran here, so a job condition sees success(); one that
+    # reads the needs context fails loudly as an unknown context.
+    if not evaluate_condition(job.get("if"), base_context):
+        print()
+        print(f"{yellow('⤼')} {job.get('name', job_id)} {yellow('(job skipped: if)')}")
+        return 0
     job_env = {
         **parse_env(workflow.get("env"), base_context),
         **parse_env(job.get("env"), base_context),
@@ -1079,8 +1166,10 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
         default_shell = run_defaults.get("shell", default_shell)
         default_cwd = run_defaults.get("working-directory", default_cwd)
 
-    job_timeout = job.get("timeout-minutes")
-    job_deadline = time.monotonic() + float(job_timeout) * 60 if job_timeout else None
+    job_timeout = evaluate_minutes(
+        job.get("timeout-minutes"), "job timeout-minutes", base_context
+    )
+    job_deadline = time.monotonic() + job_timeout * 60 if job_timeout else None
     records: List[StepRecord] = []
     failed = False
 
@@ -1097,6 +1186,9 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
         try:
             condition = evaluate_condition(step.get("if"), context)
             label = interpolate(step_label(step, index), context)
+            continue_on_error = evaluate_flag(
+                step.get("continue-on-error"), "continue-on-error", context
+            )
         except Unsupported as exc:
             print(red(f"✗ {step_label(step, index)}: {exc}"), flush=True)
             records.append(
@@ -1130,14 +1222,19 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
                 job_deadline,
             )
         except Unsupported as exc:
-            status, detail = "failure", str(exc)
+            # An unemulated construct stops the job: nothing after it can be
+            # trusted to mean what it says.
+            elapsed = time.monotonic() - started
             print(red(f"ci-local: {exc}"), flush=True)
+            records.append(StepRecord(label, "failure", elapsed, str(exc)))
+            failed = True
+            break
         elapsed = time.monotonic() - started
         records.append(StepRecord(label, status, elapsed, detail))
         if status != "failure":
             print(green(f"✓ {label}") + f" ({elapsed:.1f}s)", flush=True)
             continue
-        if truthy(step.get("continue-on-error")):
+        if continue_on_error:
             print(
                 yellow(
                     f"⚠ {label} failed but continue-on-error is set ({elapsed:.1f}s)"
@@ -1149,7 +1246,8 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
         print(red(f"✗ {label} failed after {elapsed:.1f}s"), flush=True)
         if detail:
             print(red(f"  {detail}"), flush=True)
-        break
+        if job_deadline is not None and time.monotonic() >= job_deadline:
+            break
 
     print_summary(records)
     return 1 if failed else 0
@@ -1228,7 +1326,10 @@ def execute_step(
     script_path = Path(state.runner_temp) / f"_ci_local_step_{os.getpid()}_{index}.sh"
     script_path.write_text(script + "\n", encoding="utf-8")
 
-    timeouts = [float(value) * 60 for value in (step.get("timeout-minutes"),) if value]
+    step_minutes = evaluate_minutes(
+        step.get("timeout-minutes"), "timeout-minutes", context
+    )
+    timeouts = [step_minutes * 60] if step_minutes else []
     if job_deadline is not None:
         remaining = job_deadline - time.monotonic()
         if remaining <= 0:

@@ -275,9 +275,18 @@ instance.
 The operator/build Python scripts are checked with:
 
 ```bash
-black addons/*.py
-pylint addons/*.py
-mypy --strict addons/*.py
+black addons/*.py addons/ci-local/*.py
+pylint addons/*.py addons/ci-local/*.py
+mypy --strict addons/*.py addons/ci-local/*.py
+```
+
+The `addons/ci-local.sh` step runner has its own tests — expression tables that pin GitHub's
+semantics (literals, loose equality, implicit `success()`) and small workflows run end to end.
+They need only the standard library (the end-to-end part also PyYAML, and skips without it) and
+run in `ci.yml`:
+
+```bash
+python3 -m unittest discover -s addons/ci-local -v
 ```
 
 Next: [kula-scan](13-kula-scan.md).

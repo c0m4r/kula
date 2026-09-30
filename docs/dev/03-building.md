@@ -175,9 +175,14 @@ live in named volumes, so only the first run pays for them (`--clean-cache`, or 
 over). [`addons/ci-local/run-workflow.py`](../../addons/ci-local/run-workflow.py) executes the
 steps: it implements the first-party actions the workflows use (`actions/checkout`,
 `actions/setup-go`, `actions/setup-node`, `actions/setup-python`), honours `if`, `env`,
-`working-directory`, `shell`, timeouts and the `GITHUB_PATH`/`GITHUB_ENV`/`GITHUB_OUTPUT`
-command files, and fails loudly on a construct it does not emulate rather than skipping the
-step. The container holds no token, so the workflows' read-only security model holds trivially;
+`working-directory`, `shell`, timeouts, `continue-on-error` and the
+`GITHUB_PATH`/`GITHUB_ENV`/`GITHUB_OUTPUT` command files, and fails loudly on a construct it does
+not emulate rather than skipping the step. Conditions follow GitHub's rules: `true`/`false`/`null`
+literals, loose equality (mismatched types compare as numbers), an implicit `success() && …`
+unless the condition calls a status function, and a failed step skips the rest of the job except
+`always()`/`failure()` steps; a job-level `if` is evaluated too. An expression that reads a
+context ci-local does not provide (`needs`, for instance) fails the job instead of evaluating to
+empty. The container holds no token, so the workflows' read-only security model holds trivially;
 steps that genuinely need GitHub (a push, a release upload) cannot work here by design.
 `--step PATTERN` runs only the matching steps, which is the fast way to iterate on one failure.
 
