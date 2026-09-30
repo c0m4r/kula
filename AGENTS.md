@@ -13,6 +13,7 @@ runtime dependency.
 | Cross-compile amd64 / arm64 / riscv64 | `./addons/build.sh cross` |
 | Full gate — required before a change is done | `./addons/check.sh` |
 | Browser frontend regressions (needs node + Chromium) | `./addons/test-frontend-regressions.sh` |
+| GitHub Actions workflows locally, in Docker | `./addons/ci-local.sh [run WORKFLOW [JOB]]` |
 | Native fuzzing over every `Fuzz*` target | `./addons/fuzz.sh [duration] [filter]` |
 | Storage engine benchmarks | `./addons/benchmark.sh` |
 | Rebuild the vendored Chart.js bundle (needs node + npm) | `./addons/build-chartjs.sh [--update]` |
@@ -96,7 +97,10 @@ per-application reducer branches.
   `./addons/build-chartjs.sh`; never hand-edit it. It registers only the line controller,
   line/point elements, linear/time scales, Legend, Tooltip and zoom, with a native-`Date` time
   adapter. Any other chart type, scale or plugin (e.g. Filler for `fill`) must be added to
-  `addons/chartjs/entry.js` and rebuilt. `TestChartBundle` pins the registered set.
+  `addons/chartjs/entry.js` and rebuilt. `TestChartBundle` pins the registered set. A distro
+  build swaps the bundle for the upstream UMD trio with
+  `addons/packaging/replace_chartjs.sh`, which rewrites the template, the fixtures and those
+  tests accordingly — the "never hand-edit" rule applies to this repo, not to that helper.
 - npm is used only through `addons/build-chartjs.sh` (or by hand in `addons/chartjs/`, whose
   `.npmrc` applies the same guards): `ignore-scripts=true`, `min-release-age=14`, exact pins.
   `verify-lock.js` rejects any locked package that is unpinned, off-registry, lacks sha512
