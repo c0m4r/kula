@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -486,6 +487,43 @@ func TestCustomCollector(t *testing.T) {
 	if latest["fans"][0].Value != 1234 {
 		t.Errorf("Expected 1234, got %.2f", latest["fans"][0].Value)
 	}
+}
+
+// A second collector on the same path must not take over the socket a
+// running collector (another kula process) serves.
+func TestCustomCollectorKeepsLiveSocket(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "kula.sock")
+	cfg := map[string][]config.CustomMetricConfig{"fans": {{Name: "fan1"}}}
+
+	first, err := newCustomCollector(context.Background(), sockPath, cfg, time.Minute, false)
+	if err != nil {
+		t.Fatalf("first collector: %v", err)
+	}
+	defer first.Close()
+
+	if second, err := newCustomCollector(context.Background(), sockPath, cfg, time.Minute, false); err == nil {
+		second.Close()
+		t.Fatal("second collector replaced a live socket")
+	}
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("live socket gone after the refused takeover: %v", err)
+	}
+	_ = conn.Close()
+
+	// A socket file nobody serves is stale and is replaced.
+	first.Close()
+	stale, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	_ = stale.Close()
+	replacement, err := newCustomCollector(context.Background(), sockPath, cfg, time.Minute, false)
+	if err != nil {
+		t.Fatalf("stale socket not replaced: %v", err)
+	}
+	replacement.Close()
 }
 
 // TestCustomCollectorDedup verifies that a single message collapses to one value

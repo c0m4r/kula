@@ -103,6 +103,13 @@ type customMessage struct {
 // staleAfter must be > 0; callers resolve a zero config value to a default
 // (see defaultCustomStaleAfter) before constructing.
 func newCustomCollector(ctx context.Context, sockPath string, configs map[string][]config.CustomMetricConfig, staleAfter time.Duration, debug bool) (*customCollector, error) {
+	// A socket another process still serves is live, not stale: a connection
+	// to it succeeds. Removing it would silently cut that process (a running
+	// `kula serve`) off from every client, so refuse instead.
+	if conn, err := net.DialTimeout("unix", sockPath, time.Second); err == nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("custom metrics socket %s is in use by another process", sockPath)
+	}
 	// Remove any stale socket file
 	_ = os.Remove(sockPath)
 

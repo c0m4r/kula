@@ -72,6 +72,9 @@ done
 
 - The socket path follows `storage.directory`; if Kula fell back to `~/.kula`, the socket is
   there instead.
+- One process owns the socket. If another Kula process is already serving it, a new one logs
+  that the socket is in use and runs without custom metrics instead of taking it over, and
+  `kula tui` never opens it, so the running service keeps its clients.
 - Group and metric names should be stable — they key the charts. Values may be integers or
   floats. Sending the same name twice in one message keeps only the last value.
 - Messages are newline-delimited JSON — one object per line, at most 64 KB per line. Only

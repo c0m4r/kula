@@ -271,7 +271,12 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 }
 
 func runTUI(cfg *config.Config, osName, kernelVersion, cpuArch string) {
-	coll := collector.New(cfg.Global, cfg.Collection, cfg.Applications, cfg.Storage.Directory)
+	// The TUI shows no custom metrics, and their listener lives at
+	// <storage>/kula.sock: with the service's config it would contend for the
+	// socket a running `kula serve` owns.
+	apps := cfg.Applications
+	apps.Custom = nil
+	coll := collector.New(cfg.Global, cfg.Collection, apps, cfg.Storage.Directory)
 	defer coll.Stop()
 	coll.StartApplications()
 
