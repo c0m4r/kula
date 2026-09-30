@@ -25,8 +25,9 @@
 #
 # The working tree (tracked plus untracked, minus ignored files) is snapshotted
 # into the container and committed there, so a job sees the code as it is right
-# now; the snapshot is written to .ci-local/src.tar (a self-ignoring directory)
-# because the Docker daemon must be able to read the bind-mounted path. Caches
+# now. Each run writes its own snapshot into .ci-local/ (self-ignoring and
+# private to you) because the Docker daemon must be able to read the
+# bind-mounted path, and removes it on exit, Ctrl-C included. Caches
 # live in named volumes, so a second run does not re-download the Go module
 # cache or rebuild the world; --clean-cache or `clean` starts over. The
 # container gets a 1 GiB /dev/shm, since Docker's 64 MiB default makes Chrome
@@ -143,17 +144,34 @@ require_docker() {
     fi
 }
 
-snapshot_tree() { # OUT
-    local out=$1
+SNAPSHOT=""
+remove_snapshot() {
+    [ -z "$SNAPSHOT" ] || rm -f "$SNAPSHOT"
+}
+trap remove_snapshot EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+snapshot_tree() { # prints the snapshot path
     mkdir -p "$SNAPSHOT_DIR"
+    # The snapshot holds untracked files too; only its owner may reach it.
+    chmod 0700 "$SNAPSHOT_DIR"
     # The directory ignores itself, so the snapshot is never an input to itself.
     [ -f "$SNAPSHOT_DIR/.gitignore" ] || printf '*\n' > "$SNAPSHOT_DIR/.gitignore"
+    # Left behind by versions that used one fixed, world-readable name.
+    rm -f "$SNAPSHOT_DIR/src.tar" 2>/dev/null || true
+    # A private name per run: concurrent runs must not share or delete it.
+    local out
+    out="$(mktemp "$SNAPSHOT_DIR/src.XXXXXXXX")"
+    SNAPSHOT="$out"
     if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         git ls-files -z --cached --others --exclude-standard | tar --null --files-from=- --create --file="$out"
     else
-        tar --exclude=./.git --create --file="$out" .
+        tar --exclude=./.git --exclude=./.ci-local --create --file="$out" .
     fi
-    chmod 0644 "$out" # the container runs as uid 1001 and must read it
+    # The container runs as uid 1001 and must read it; the 0700 directory
+    # keeps other local users out.
+    chmod 0644 "$out"
 }
 
 remote_url() {
@@ -170,8 +188,8 @@ ref_name() {
 }
 
 run_container() { # ARGS...
-    local snapshot="$SNAPSHOT_DIR/src.tar" status=0 tty=()
-    snapshot_tree "$snapshot"
+    local status=0 tty=()
+    snapshot_tree
     if [ -t 0 ] && [ -t 1 ]; then
         tty+=(-t)
     fi
@@ -193,13 +211,16 @@ run_container() { # ARGS...
     # --shm-size: Docker defaults /dev/shm to 64 MiB, which makes Chrome crawl;
     # the hosted runner has a normally sized /dev/shm, and the browser fixtures
     # notice the difference.
+    # --mount, unlike -v, fails on a missing source instead of creating a
+    # root-owned directory in its place.
     docker run --rm --init -i "${tty[@]+"${tty[@]}"}" \
         --shm-size=1g \
-        -v "$snapshot:/ci/src.tar:ro" \
+        --mount "type=bind,\"source=$SNAPSHOT\",target=/ci/src.tar,readonly" \
         "${volumes[@]}" \
         "${env[@]}" \
         "$IMAGE_TAG" "$@" || status=$?
-    rm -f "$snapshot"
+    remove_snapshot
+    SNAPSHOT=""
     return "$status"
 }
 
