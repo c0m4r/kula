@@ -17,12 +17,14 @@ import { attachRangeCalendar } from './date-range-calendar.js';
 import { attachClockPicker } from './clock-picker.js';
 import { isTvModeActive } from './tv-mode.js';
 import {
+    existingDateTimeInput,
     formatDateTimeInput,
     formatRangeTimestamp,
     formatTimeOfDay,
     parseDateTimeInput,
     parseTimeOfDay,
     stepTimeOfDay,
+    timeOfDayMs,
     timeOfDayParts,
 } from './format.js';
 
@@ -391,7 +393,24 @@ function customRangeDraft() {
     return { from, to, error };
 }
 
+// A local time the clock skips when daylight saving time begins does not
+// exist, and loads as the time an hour later. Show that time instead, except
+// in a field being typed in, which catches up when it loses focus.
+function showExistingTimes() {
+    if (state.timeZone === 'utc') return;
+    for (const which of Object.keys(ENDPOINTS)) {
+        const value = endpointValue(which);
+        if (!value || document.activeElement === endpointElement(which, 'time')) continue;
+        const existing = existingDateTimeInput(value, state.timeZone, subSecondPicker());
+        if (existing && (existing.slice(0, 10) !== value.slice(0, 10) ||
+            timeOfDayMs(existing.slice(11)) !== timeOfDayMs(value.slice(11)))) {
+            setEndpoint(which, existing.slice(0, 10), existing.slice(11));
+        }
+    }
+}
+
 function updateCustomRangePreview() {
+    showExistingTimes();
     if (clockEndpoint) clockPicker.update();
     const draft = customRangeDraft();
     document.getElementById('btn-apply-custom').disabled = !!draft.error;
@@ -527,6 +546,7 @@ export function initCustomTimePicker() {
         for (const type of ['change', 'blur']) {
             input.addEventListener(type, () => {
                 if (input.dataset.time) input.value = formatTimeOfDay(input.dataset.time, i18n.currentLang);
+                if (type === 'blur') updateCustomRangePreview();
             });
         }
         // Up/Down step the hours, minutes, seconds or day period at the caret.

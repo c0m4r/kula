@@ -48,6 +48,7 @@ const {
 } = await importSource('../static/js/app/history-data.js');
 const {
     clockFace,
+    existingDateTimeInput,
     formatChartTick,
     formatDateTimeInput,
     formatFullTimestamp,
@@ -445,6 +446,25 @@ test('the picker clock labels its dial and wheels on the UI language clock', () 
         assert.equal(new Set(face.hours).size, twelve ? 12 : 24, lang);
         assert.equal(new Set(face.sixty).size, 60, lang);
         assert.ok(!twelve || (face.periods.every(Boolean) && face.periods[0] !== face.periods[1]), lang);
+    }
+});
+
+test('a local time skipped by daylight saving time reads as the time it loads', () => {
+    const zone = process.env.TZ;
+    try {
+        process.env.TZ = 'Europe/Warsaw';
+        assert.equal(existingDateTimeInput('2026-03-29T02:30:00'), '2026-03-29T03:30:00');
+        assert.equal(existingDateTimeInput('2026-03-29T01:59:59'), '2026-03-29T01:59:59');
+        assert.equal(existingDateTimeInput('2026-10-25T02:30:00'), '2026-10-25T02:30:00',
+            'a repeated autumn hour exists');
+        assert.equal(existingDateTimeInput('2026-03-29T02:30:00', 'utc'), '2026-03-29T02:30:00');
+        process.env.TZ = 'America/Santiago';
+        assert.equal(existingDateTimeInput('2024-09-08T00:00:00'), '2024-09-08T01:00:00',
+            'midnight itself can be skipped');
+        assert.equal(existingDateTimeInput('not a date'), null);
+    } finally {
+        if (zone === undefined) delete process.env.TZ;
+        else process.env.TZ = zone;
     }
 });
 

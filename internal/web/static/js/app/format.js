@@ -168,6 +168,15 @@ export function parseDateTimeInput(value, mode = 'local') {
     return Number.isFinite(date.getTime()) ? date : null;
 }
 
+// A local wall-clock time the clock skips when daylight saving time begins
+// (02:30 that night in most of Europe) does not exist, and Date reads it an
+// hour later. Returns the input value of the instant `value` is read as: the
+// same value, unless it names a skipped time.
+export function existingDateTimeInput(value, mode = 'local', includeMilliseconds = false) {
+    const date = parseDateTimeInput(value, mode);
+    return date ? formatDateTimeInput(date, mode, true, includeMilliseconds) : null;
+}
+
 // Times of day in the custom range picker. Values are 24-hour 'HH:MM:SS' with
 // optional '.mmm'; the text uses the UI language's clock, like the header
 // clock, rather than the browser's, so Polish shows 16:57:33 and English
