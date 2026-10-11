@@ -39,7 +39,10 @@ sandbox**:
 
 > Note: `/proc`-hiding (`ProtectProc`/`ProcSubset`) and syscall filtering are intentionally
 > **omitted** — a monitoring daemon must read system-wide `/proc`, `/sys/fs/cgroup`, and
-> runtime sockets, so over-restricting them would break collection.
+> runtime sockets, so over-restricting them would break collection. `ProtectClock` is omitted
+> as well: its seccomp filter also denies the read-only `adjtimex()` call Kula uses to detect
+> clock synchronization, which would report every clock as unsynchronized. Clock writes remain
+> impossible because `CAP_SYS_TIME` is dropped.
 
 ## OpenRC
 

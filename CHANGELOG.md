@@ -9,6 +9,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ## [Unreleased]
 
+### Changed
+
+- remove systemd service ProtectClock that prevents reading clock
+
 ### Fixed
 
 - collector: fix clock sync detection with local-time RTC

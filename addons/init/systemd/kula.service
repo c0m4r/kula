@@ -23,14 +23,16 @@ RuntimeDirectoryMode=0750
 # Tuned for a monitoring daemon: it must still read system-wide /proc,
 # /sys/fs/cgroup and sockets under /run (docker/podman/mysql/postgres), so
 # /proc-hiding (ProcSubset/ProtectProc) and a syscall filter are intentionally
-# omitted to avoid breaking collection.
+# omitted to avoid breaking collection. ProtectClock is omitted too: its
+# seccomp filter denies even the read-only adjtimex() kula uses to detect
+# clock sync, so every host would report an unsynchronized clock. Clock writes
+# stay blocked anyway, as CapabilityBoundingSet= drops CAP_SYS_TIME.
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/kula
 ReadOnlyPaths=/etc/kula
 PrivateTmp=true
 PrivateDevices=true
-ProtectClock=true
 ProtectHostname=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
