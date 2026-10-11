@@ -118,13 +118,13 @@ parts:
     plugin: go
     source: .
     # Track the newest stable Go. go.mod pins a `go` version (currently
-    # 1.26.4); when the snap's bundled Go is older, Go's GOTOOLCHAIN feature
+    # 1.26.9); when the snap's bundled Go is older, Go's GOTOOLCHAIN feature
     # fetches the pinned toolchain on demand at build time.
     #
     # GOTOOLCHAIN is forced to `local` here for the snapcraft go plugin's
     # environment check only: that check parses the output of a bare
     # `go version`, and under the default GOTOOLCHAIN=auto that command emits a
-    # `go: downloading go1.26.4 ...` progress line on stderr, which the plugin
+    # `go: downloading go1.26.9 ...` progress line on stderr, which the plugin
     # mis-reads as the compiler version ("invalid go compiler version 'go:
     # downloading ...'"). `local` keeps the check quiet; the override-build
     # step below restores `auto` so the pinned toolchain is still fetched.
