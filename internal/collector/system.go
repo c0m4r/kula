@@ -51,9 +51,8 @@ func (c *Collector) collectSystem() SystemStats {
 func checkClockSync() bool {
 	// 1. Try kernel adjtimex syscall - most robust, works in containers
 	var tx unix.Timex
-	if status, err := unix.Adjtimex(&tx); err == nil {
-		// TIME_ERROR (5) means clock is not synchronized
-		return status != unix.TIME_ERROR
+	if _, err := unix.Adjtimex(&tx); err == nil {
+		return clockSyncedFromTimex(&tx)
 	}
 
 	// 2. Fallback: check for systemd-timesyncd state file
@@ -73,6 +72,20 @@ func checkClockSync() bool {
 		}
 	}
 	return false
+}
+
+// ntpMaxErrorLimit is the kernel's NTP_PHASE_LIMIT (16 s, in µs). The kernel
+// resets maxerror to this value when unsynchronized, and NTP daemons (chrony,
+// ntpd, systemd-timesyncd) report it when they lose sync.
+const ntpMaxErrorLimit = 16000000
+
+// clockSyncedFromTimex mirrors systemd's ntp_synced() (used by timedatectl):
+// the clock is synchronized when maxerror is below the 16 s limit. STA_UNSYNC
+// (and thus the TIME_ERROR return value) is deliberately ignored, because
+// systemd-timesyncd keeps it set when the RTC runs in local time (LocalRTC=yes)
+// to stop the kernel's 11-minute mode from writing to the RTC.
+func clockSyncedFromTimex(tx *unix.Timex) bool {
+	return tx.Maxerror < ntpMaxErrorLimit
 }
 
 // countLoggedInUsers reads /var/run/utmp to count logged-in users.

@@ -3,8 +3,31 @@ package collector
 import (
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"kula/internal/config"
 )
+
+func TestClockSyncedFromTimex(t *testing.T) {
+	tests := []struct {
+		name string
+		tx   unix.Timex
+		want bool
+	}{
+		{"synced", unix.Timex{Status: unix.STA_PLL, Maxerror: 250000}, true},
+		// systemd-timesyncd with LocalRTC=yes keeps STA_UNSYNC set while synced.
+		{"synced local rtc", unix.Timex{Status: unix.STA_PLL | unix.STA_UNSYNC, Maxerror: 250000}, true},
+		{"unsynced at limit", unix.Timex{Status: unix.STA_UNSYNC, Maxerror: ntpMaxErrorLimit}, false},
+		{"unsynced no flag", unix.Timex{Maxerror: ntpMaxErrorLimit}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := clockSyncedFromTimex(&tt.tx); got != tt.want {
+				t.Errorf("clockSyncedFromTimex() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestCollectSystem(t *testing.T) {
 	procPath = "testdata/proc"
