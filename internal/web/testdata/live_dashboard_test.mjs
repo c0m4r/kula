@@ -86,6 +86,7 @@ try {
     let id = 0;
     const pending = new Map();
     let historyRequests = 0;
+    const historyUrls = [];
     socket.addEventListener('message', event => {
         const message = JSON.parse(event.data);
         if (pending.has(message.id)) {
@@ -96,6 +97,7 @@ try {
         } else if (message.method === 'Network.requestWillBeSent' &&
             message.params.request.url.includes('/api/history?')) {
             historyRequests++;
+            historyUrls.push(new URL(message.params.request.url));
         } else if (message.method === 'Runtime.exceptionThrown') {
             errors.push(message.params.exceptionDetails?.exception?.description ||
                 message.params.exceptionDetails?.text);
@@ -140,6 +142,12 @@ try {
     const check = (condition, message, state) => {
         if (!condition) throw new Error(`${message}: ${JSON.stringify(state)}`);
     };
+    // Bucketed rolling views refresh their trailing buckets, not the window:
+    // every refresh after the first snapshot spans a few output steps, far
+    // less than the window it extends.
+    const tailRefreshes = (since, rangeSeconds) => historyUrls.slice(since).filter(url =>
+        Date.parse(url.searchParams.get('to')) - Date.parse(url.searchParams.get('from')) <
+            rangeSeconds * 1000 / 4).length;
     const selectRange = seconds => evaluate(`document.querySelector('.time-btn[data-range="${seconds}"]').click()`);
     const settle = async (predicate, message) => waitFor(async () => {
         const state = await snapshot();
@@ -153,11 +161,16 @@ try {
     let state = await settle(s => /^2s\b/.test(s.sampling), 'phone view did not load 2s buckets');
     check(state.aggregation === 'max' && state.choices, 'phone view lost the Max selection', state);
     let requests = historyRequests;
+    const phonePoints = state.points;
     await delay(10000);
     state = await snapshot();
     check(historyRequests - requests >= 2, 'bucketed phone view did not refresh its snapshot', state);
+    check(tailRefreshes(requests, 300) === historyRequests - requests,
+        'bucketed phone view refetched its whole window', { ...state, urls: historyUrls.slice(requests).map(String) });
     check(state.blank === 0 && state.unavailable === 0, 'Max drew blank points', state);
     check(state.lastAge <= 6, 'bucketed Max view stopped advancing', state);
+    check(state.points >= phonePoints && state.points <= phonePoints + 8,
+        'tail refreshes did not extend the phone view by its new buckets', { ...state, phonePoints });
     const bucketed = state;
 
     // A desktop 5-minute view is raw: no Min/Max, and live samples stream in
@@ -195,6 +208,15 @@ try {
     check(historyRequests > requests, 'bucketed desktop hour did not refresh its snapshot', state);
     check(state.blank === 0 && state.unavailable === 0 && state.lastAge <= 15,
         'bucketed desktop hour stopped advancing in Max', state);
+    // The first refresh after a resize may be whole: the settled layout gives
+    // a new point budget. With the budget stable, the hour refreshes its tail.
+    const settled = historyRequests;
+    await waitFor(() => historyRequests > settled, 'bucketed desktop hour stopped refreshing', 25000);
+    state = await snapshot();
+    check(tailRefreshes(settled, 3600) === historyRequests - settled,
+        'bucketed desktop hour refetched its whole window', { ...state, urls: historyUrls.slice(settled).map(String) });
+    check(state.blank === 0 && state.unavailable === 0 && state.lastAge <= 15,
+        'tail refresh left the desktop hour blank in Max', state);
 
     const hour = state;
 

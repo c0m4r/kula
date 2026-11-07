@@ -88,8 +88,8 @@ holds the main thread, and the static page should be on screen first.
 | `card-layout.js` | The one placement authority: registers template cards, places every dynamic card, arranges sections or Focus Mode's combined grid |
 | `rearrange.js` | Rearrange mode: grips, pointer drag, keyboard moves and announcements; stores the order through `card-layout.js` |
 | `format.js` | Metric and Local/UTC formatting, datetime conversion, and bucket-tooltip semantics |
-| `history-request.js` | Abortable, generation-safe latest-history-request controller |
-| `history-data.js` | Canonical history items, aggregation validity, missing-observation gaps, and Focus Mode API sections |
+| `history-request.js` | Abortable, generation-safe latest-history-request controller; live-refresh cadence and rolling tail requests |
+| `history-data.js` | Canonical history items, aggregation validity, view signatures, tail merging, missing-observation gaps, and Focus Mode API sections |
 | `date-range-calendar.js` | Single-month range calendar; retention disables days, never times |
 | `clock-picker.js` | Clock dial and hour/minute/second wheels for one end of the custom range, in the UI language's clock |
 | `gauges.js` | Bar gauges, sparkline backgrounds, live gauge updates |
@@ -159,6 +159,23 @@ extrema and would otherwise render as gaps in Min/Max. Their axes remain at the
 last successful snapshot until replacement, including during network failures. The refresh
 cadence and snapshot time appear in the resolution tooltip. Still-selected history is never
 removed to make room for a stream of raw points.
+
+A bucketed tier-0 rolling view refreshes by its **tail**, not the whole window
+(`fetchRollingTail` in `charts-data.js`). `rollingTailRequest` re-fetches the last three
+buckets — the trailing one is still filling, and the one before it can still lack the part of a
+source record that ends in the next bucket — from a bucket boundary, asking for exactly one
+point per bucket. Every finer server step would need more buckets (consecutive steps differ by
+at least 1.5×), so the server answers at the same tier, step and epoch alignment and computes
+each bucket exactly as a full refresh would. `mergeHistoryTail` replaces the buffered buckets
+from that boundary on and re-derives the gap markers; the merged buffer is then rendered like a
+full response, and its coverage combines the previous left edge with the tail's right edge.
+The tail is used only when its `historyViewSignature` (tier, step, source resolution,
+aggregations, extrema profiles) matches the snapshot it extends, with the same point budget
+and Focus Mode sections; anything else, a failed or empty tail, or a snapshot older than five
+minutes, falls back to a full refresh. On a 30-minute view that is a few kilobytes per step
+instead of megabytes. `TestHistoryResponsesMatchDashboardContract` checks against a real store
+that the tail is answered at the view's step and that the merged buffer equals a fresh full
+refresh.
 The live cadence estimate uses a bounded median of observed live timestamp differences, so
 supported slower collectors are not permanently treated as one-second sources. Reconnects
 reset that estimate; historical responses never supply its timestamp baseline.

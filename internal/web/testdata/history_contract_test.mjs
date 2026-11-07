@@ -15,12 +15,15 @@ const {
     historyViewAcceptsLiveSamples,
     liveHistoryRefreshInterval,
     resolutionMilliseconds,
+    rollingTailRequest,
 } = await importSource('../static/js/app/history-request.js');
 const {
     annotateHistoryItems,
     historyItemContext,
     historyItemExtrema,
+    historyViewSignature,
     insertHistoryGaps,
+    mergeHistoryTail,
     resolutionMilliseconds: gapResolutionMilliseconds,
 } = await importSource('../static/js/app/history-data.js');
 const { minimumZoomSpan } = await importSource('../static/js/app/history-navigation.js');
@@ -125,6 +128,47 @@ for (const scenario of fixture.scenarios) {
 
         const gaps = insertHistoryGaps(items, response.resolution).filter(item => item?._gap).length;
         assert.equal(gaps, expect.gaps, 'missing-observation markers');
+    });
+}
+
+// A rolling tail refresh must plan the request the server answered at the
+// view's step, and splicing it onto the earlier snapshot must reproduce the
+// full refresh bucket for bucket (the left edge excepted: the full window
+// clips its first bucket at the new start, the buffer keeps it whole).
+for (const tail of fixture.tails ?? []) {
+    test(tail.name, () => {
+        const { before, refresh, after } = tail;
+        const beforeItems = insertHistoryGaps(annotateHistoryItems(before.samples, before), before.resolution);
+        const last = historyItemContext(beforeItems.filter(item => !item._gap).at(-1));
+        const plan = rollingTailRequest({
+            rangeMs: tail.range_ms,
+            points: tail.points,
+            toMs: Date.parse(tail.tail_to),
+            stepMs: resolutionMilliseconds(before.resolution),
+            lastBucketStart: last.bucketStart,
+        });
+        assert.deepEqual(plan, { fromMs: Date.parse(tail.tail_from), points: tail.tail_points }, 'tail request');
+        assert.notEqual(liveHistoryRefreshInterval(tail.range_ms / 1000, tail.points, 1000, {
+            tier: before.tier, resolution: before.resolution, sourceResolution: before.source_resolution,
+            availableAggregations: before.available_aggregations,
+        }), 0, 'a tail-refreshed view is a bucketed view');
+        assert.equal(historyViewSignature(refresh), historyViewSignature(before), 'tail describes the same view');
+        assert.equal(historyViewSignature(after), historyViewSignature(before), 'full refresh describes the same view');
+
+        const merged = mergeHistoryTail(beforeItems, refresh.samples, refresh, plan.fromMs, refresh.resolution);
+        assert.ok(merged, 'tail merges onto the snapshot');
+        const afterItems = annotateHistoryItems(after.samples, after);
+        const interiorFrom = historyItemContext(afterItems[1]).bucketStart;
+        const shape = item => {
+            const context = historyItemContext(item);
+            return JSON.stringify([item.ts, item.bucket_start, item.bucket_end, item.sample_count, item.coverage,
+                item.extrema_profile, item.data, item.min, item.max, context.source.resolution]);
+        };
+        const window = items => items.filter(item => !item._gap &&
+            historyItemContext(item).bucketStart >= interiorFrom).map(shape);
+        assert.deepEqual(window(merged), window(afterItems), 'merged view equals the full refresh');
+        assert.equal(merged.filter(item => item._gap).length,
+            insertHistoryGaps(afterItems, after.resolution).filter(item => item._gap).length, 'gap markers');
     });
 }
 

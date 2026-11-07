@@ -107,6 +107,39 @@ export function liveHistoryRefreshInterval(rangeSeconds, points, sampleIntervalM
     return Math.max(1000, Math.ceil(resolutionMilliseconds(view.resolution) ?? step));
 }
 
+// Mirrors storage alignedBucketCount: the epoch-aligned buckets of stepMs that
+// the interval [fromMs, toMs) touches, with toMs exclusive.
+export function alignedBucketCount(fromMs, toMs, stepMs) {
+    if (!(stepMs > 0) || toMs < fromMs) return 0;
+    if (toMs === fromMs) return 1;
+    return Math.ceil(toMs / stepMs) - Math.floor(fromMs / stepMs);
+}
+
+// A tail refresh re-fetches this many trailing buckets of a rolling bucketed
+// view: the last one is still filling, and the one before it can still lack
+// the part of a source record that ends in the next bucket. It must be at
+// least three: a request starting on a bucket boundary that asks for exactly
+// as many points as it has buckets is answered at the same step only if every
+// finer step needs more buckets, and consecutive server steps differ by at
+// least 1.5x, which guarantees that from three buckets on.
+export const ROLLING_TAIL_BUCKETS = 3;
+
+// Plan the tail request for a rolling view of rangeMs shown in stepMs buckets,
+// or return null when it must be refreshed whole: the tail would reach the
+// window's start, or the window no longer fits the point budget at this step
+// (a full refresh would then answer a coarser one).
+export function rollingTailRequest({ rangeMs, points, toMs, stepMs, lastBucketStart }) {
+    if (![rangeMs, points, toMs, stepMs, lastBucketStart].every(Number.isFinite)) return null;
+    if (stepMs <= 0 || lastBucketStart % stepMs !== 0 || lastBucketStart > toMs) return null;
+    const windowFrom = toMs - rangeMs;
+    if (alignedBucketCount(windowFrom, toMs, stepMs) > points) return null;
+    let fromMs = lastBucketStart - (ROLLING_TAIL_BUCKETS - 1) * stepMs;
+    // A view end exactly on a boundary touches one bucket fewer.
+    while (alignedBucketCount(fromMs, toMs, stepMs) < ROLLING_TAIL_BUCKETS) fromMs -= stepMs;
+    if (fromMs <= windowFrom) return null;
+    return { fromMs, points: alignedBucketCount(fromMs, toMs, stepMs) };
+}
+
 // Keep a short robust window rather than remembering the smallest interval
 // forever. One early/late tick must not turn a supported 5s collector into a
 // permanent 1s estimate (or vice versa).

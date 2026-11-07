@@ -15,6 +15,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Changed
 
+- Rolling views shown in buckets (such as 30 minutes and 1 hour) refresh only their newest
+  buckets instead of downloading the whole range every few seconds (a few kilobytes per
+  refresh instead of megabytes)
 - Cards keep one consistent order everywhere
 - Split charts expand and collapse like every other chart
 - Remove systemd service ProtectClock that prevents reading clock

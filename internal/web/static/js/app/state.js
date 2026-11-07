@@ -29,6 +29,8 @@ export const state = {
     historyPointLimit: 5000,
     historyViewEnd: null, // last successful rolling snapshot, when refreshed in buckets
     historyRefreshAttempt: 0,
+    // The last full rolling snapshot a tail refresh may extend (charts-data.js).
+    rollingTail: null,
     liveSampleIntervalMs: null,
     collectionIntervalMs: 1000,
     retainedRanges: null,

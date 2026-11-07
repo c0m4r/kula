@@ -22,6 +22,8 @@ import { apiUrl } from './api.js';
 import {
     HistoryRequestController,
     liveHistoryRefreshInterval,
+    resolutionMilliseconds,
+    rollingTailRequest,
     updateLiveSampleInterval,
 } from './history-request.js';
 import {
@@ -32,7 +34,9 @@ import {
     historyItemSample,
     historyItemTimestamp,
     historySectionsForFocus,
+    historyViewSignature,
     insertHistoryGaps,
+    mergeHistoryTail,
     normalizeHistoryItem,
     resolveAggregation,
 } from './history-data.js';
@@ -1235,7 +1239,11 @@ function latestHistoryItem(items) {
 }
 
 function replaceHistoryBuffer(samples, resolution, response = null) {
-    const processed = insertGapsInHistory(annotateHistoryItems(samples, response), resolution);
+    return renderHistoryBuffer(insertGapsInHistory(annotateHistoryItems(samples, response), resolution));
+}
+
+// Make processed (annotated, gap-marked) items the buffer and redraw from it.
+function renderHistoryBuffer(processed) {
     if (processed.length > state.maxBufferSize) throw new Error('History response exceeds point budget');
     const latest = latestHistoryItem(processed);
     if (latest) updateSelectors(historyItemSample(latest));
@@ -1262,10 +1270,20 @@ function updateLatestHistorySample(item) {
     evaluateAlerts(sample);
 }
 
+function currentHistorySections() {
+    return historySectionsForFocus(state.focusMode, state.focusVisible);
+}
+
+// merge, when given, turns the response into the view to show: it returns
+// { response, samples } describing the whole view, or null to leave the shown
+// view untouched (the caller then decides how to recover). pointLimit is the
+// view's point budget when the request itself asks for fewer points.
 function requestHistory(fromDate, toDate, points, apply, {
     label = 'History',
     showSpinner = true,
     queueLive = true,
+    pointLimit = points,
+    merge = null,
 } = {}) {
     // A delayed zoom must not start a new request after this newer view and
     // supersede it through the latest-request-wins controller.
@@ -1275,7 +1293,7 @@ function requestHistory(fromDate, toDate, points, apply, {
         to: toDate.toISOString(),
         points: String(points),
     });
-    const sections = historySectionsForFocus(state.focusMode, state.focusVisible);
+    const sections = currentHistorySections();
     if (sections) query.set('sections', sections.join(','));
 
     return historyRequests.fetchJSON(apiUrl(`/api/history?${query.toString()}`), {
@@ -1288,7 +1306,13 @@ function requestHistory(fromDate, toDate, points, apply, {
             spinner?.classList.toggle('hidden', !showSpinner);
         },
         onApply: (response, { isCurrent }) => {
-            const samples = historyPayloadSamples(response);
+            let samples = historyPayloadSamples(response);
+            if (samples.length > points) throw new Error('History response exceeds requested point budget');
+            if (merge) {
+                const merged = merge(response, samples);
+                if (!merged) return;
+                ({ response, samples } = merged);
+            }
             if (!Array.isArray(response)) {
                 updateSamplingInfo(
                     response.tier,
@@ -1301,8 +1325,7 @@ function requestHistory(fromDate, toDate, points, apply, {
             } else {
                 applyAggregationValidity(['data']);
             }
-            if (samples.length > points) throw new Error('History response exceeds requested point budget');
-            state.historyPointLimit = points;
+            state.historyPointLimit = pointLimit;
             apply(response, samples);
             if (!isCurrent()) return;
             setHistoryStatus(historyPayloadStatus(response, samples), response);
@@ -1364,6 +1387,7 @@ function settleLocalHistoryView(fromDate, toDate, visible) {
 
 export function cancelHistoryRequest() {
     supersedeHistoryRequest();
+    state.rollingTail = null;
     state.historyViewEnd = null;
     state.historyCoverage = null;
     setHistoryStatus('idle');
@@ -1935,26 +1959,122 @@ function refreshRollingHistory(interval) {
         state.historyViewEnd = Number.isFinite(end) ? end : now;
     }
     if (state.loadingHistory || now - Math.max(state.historyRefreshAttempt, state.historyViewEnd) < interval) return;
-    void fetchHistory(state.timeRange, { background: true });
+    void fetchHistory(state.timeRange, { background: true, tail: true });
 }
 
-export function fetchHistory(rangeSeconds, { background = false } = {}) {
+// ---- Rolling tail refresh ----
+//
+// A rolling view refreshed in buckets gains one bucket per output step.
+// Re-fetching the whole window for that costs the server a full reduction and
+// the client every bucket's data/min/max graphs (megabytes for 30 minutes) on
+// every step. Instead only the last ROLLING_TAIL_BUCKETS buckets are fetched
+// and spliced onto the buffer. The tail starts on a bucket boundary and asks
+// for one point per bucket, so the server answers it from the same raw tier
+// at the same step and epoch alignment, and computes each bucket exactly as a
+// full refresh would. A response that does not describe the same view falls
+// back to a full refresh, and the view is resynced in full periodically.
+const ROLLING_TAIL_RESYNC_MS = 5 * 60 * 1000;
+
+function historySectionsKey() {
+    return (currentHistorySections() ?? []).join(',');
+}
+
+function rollingTailPlan(rangeSeconds, points, toMs) {
+    const base = state.rollingTail;
+    if (!base || base.range !== rangeSeconds || base.points !== points ||
+        base.sections !== historySectionsKey() || toMs - base.syncedAt >= ROLLING_TAIL_RESYNC_MS) return null;
+    if (state.historyViewEnd === null || !['complete', 'partial'].includes(state.historyStatus)) return null;
+    // Only a reduced raw-tier view: a short tail of a coarse tier's window is
+    // served from raw data and would never describe the same view.
+    if (state.currentTier !== 0 || !state.currentDownsampled) return null;
+    const last = historyItemContext(latestHistoryItem(state.dataBuffer));
+    const request = rollingTailRequest({
+        rangeMs: rangeSeconds * 1000,
+        points,
+        toMs,
+        stepMs: resolutionMilliseconds(state.currentResolution),
+        lastBucketStart: last?.bucketStart,
+    });
+    return request && { ...request, signature: base.signature };
+}
+
+// Coverage of the merged view: its left edge as the previous view saw it,
+// its right edge as the tail sees it.
+function rollingTailResponse(tail, fromDate, toDate) {
+    const previous = state.historyCoverage;
+    const priorFrom = Date.parse(previous?.actualFrom);
+    const actualFrom = Number.isFinite(priorFrom) ? Math.max(priorFrom, fromDate.getTime()) : NaN;
+    const actualTo = Date.parse(tail.actual_to);
+    return {
+        tier: tail.tier,
+        resolution: tail.resolution,
+        source_resolution: tail.source_resolution,
+        downsampled: tail.downsampled,
+        valid_aggregations: tail.valid_aggregations,
+        available_aggregations: tail.available_aggregations,
+        extrema_profiles: tail.extrema_profiles,
+        requested_from: fromDate.toISOString(),
+        requested_to: toDate.toISOString(),
+        actual_from: Number.isFinite(actualFrom) ? new Date(actualFrom).toISOString() : null,
+        actual_to: Number.isFinite(actualTo) ? new Date(actualTo).toISOString() : null,
+        complete: previous?.retentionComplete !== false && tail.complete !== false,
+        exact_complete: Number.isFinite(actualFrom) && Number.isFinite(actualTo) &&
+            actualFrom <= fromDate.getTime() && actualTo >= toDate.getTime(),
+    };
+}
+
+function applyRollingView(rangeSeconds, points, toDate, render) {
+    const interval = rollingRefreshInterval(rangeSeconds, points);
+    state.historyViewEnd = interval > 0 ? toDate.getTime() : null;
+    const latest = render();
+    trimChartsToTimeRange();
+    updateAllCharts();
+    updateLatestHistorySample(latest);
+    const info = document.getElementById('sampling-info');
+    if (info && interval > 0) {
+        info.title += ` · ${i18n.t('history_refresh_every')} ${Math.ceil(interval / 1000)}s` +
+            ` · ${i18n.t('updated')}: ${formatRangeTimestamp(toDate, state.timeZone, i18n.currentLang)}`;
+    }
+    return interval;
+}
+
+function fetchRollingTail(rangeSeconds, points, fromDate, toDate, plan) {
+    let unmergeable = false;
+    return requestHistory(new Date(plan.fromMs), toDate, plan.points, (response, items) => {
+        applyRollingView(rangeSeconds, points, toDate, () => renderHistoryBuffer(items));
+    }, {
+        showSpinner: false,
+        queueLive: false,
+        pointLimit: points,
+        merge: (response, samples) => {
+            const items = !Array.isArray(response) && historyViewSignature(response) === plan.signature
+                ? mergeHistoryTail(state.dataBuffer, samples, response, plan.fromMs, response.resolution)
+                : null;
+            unmergeable = !items || items.length > state.maxBufferSize;
+            return unmergeable ? null : { response: rollingTailResponse(response, fromDate, toDate), samples: items };
+        },
+    }).then(outcome => {
+        if (!unmergeable || outcome.status !== 'applied' || state.timeRange !== rangeSeconds) return outcome;
+        state.rollingTail = null;
+        return fetchHistory(rangeSeconds, { background: true });
+    });
+}
+
+export function fetchHistory(rangeSeconds, { background = false, tail = false } = {}) {
     const toDate = new Date();
     const fromDate = new Date(toDate.getTime() - rangeSeconds * 1000);
     const points = historyPointBudget();
     state.historyRefreshAttempt = toDate.getTime();
+    const plan = tail ? rollingTailPlan(rangeSeconds, points, toDate.getTime()) : null;
+    if (plan) return fetchRollingTail(rangeSeconds, points, fromDate, toDate, plan);
+    const sections = historySectionsKey();
     return requestHistory(fromDate, toDate, points, (response, samples) => {
-        const interval = rollingRefreshInterval(rangeSeconds, points);
-        state.historyViewEnd = interval > 0 ? toDate.getTime() : null;
-        const latest = replaceHistoryBuffer(samples, response?.resolution, response);
-        trimChartsToTimeRange();
-        updateAllCharts();
-        updateLatestHistorySample(latest);
-        const info = document.getElementById('sampling-info');
-        if (info && interval > 0) {
-            info.title += ` · ${i18n.t('history_refresh_every')} ${Math.ceil(interval / 1000)}s` +
-                ` · ${i18n.t('updated')}: ${formatRangeTimestamp(toDate, state.timeZone, i18n.currentLang)}`;
-        }
+        const interval = applyRollingView(rangeSeconds, points, toDate,
+            () => replaceHistoryBuffer(samples, response?.resolution, response));
+        const signature = interval > 0 ? historyViewSignature(response) : null;
+        state.rollingTail = signature
+            ? { range: rangeSeconds, points, sections, signature, syncedAt: toDate.getTime() }
+            : null;
     }, { showSpinner: !background, queueLive: !background });
 }
 

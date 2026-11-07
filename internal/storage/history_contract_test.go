@@ -46,8 +46,24 @@ type historyContractResolution struct {
 	MS   float64 `json:"ms"`
 }
 
+// historyContractTail is one rolling tail refresh: the snapshot the dashboard
+// holds, the tail it fetches some seconds later, and the full window it must
+// end up showing.
+type historyContractTail struct {
+	Name     string          `json:"name"`
+	RangeMS  int64           `json:"range_ms"`
+	Points   int             `json:"points"`
+	TailFrom time.Time       `json:"tail_from"`
+	TailTo   time.Time       `json:"tail_to"`
+	Tail     int             `json:"tail_points"`
+	Before   json.RawMessage `json:"before"`
+	Refresh  json.RawMessage `json:"refresh"`
+	After    json.RawMessage `json:"after"`
+}
+
 type historyContractFixture struct {
 	Scenarios   []historyContractScenario   `json:"scenarios"`
+	Tails       []historyContractTail       `json:"tails"`
 	Resolutions []historyContractResolution `json:"resolutions"`
 }
 
@@ -186,6 +202,71 @@ func TestHistoryResponsesMatchDashboardContract(t *testing.T) {
 				t.Fatalf("mixed: profiles=%v", got)
 			}
 		})
+
+	// A rolling view refreshed by its tail. Records end 0.37s into each second
+	// so source intervals straddle every bucket boundary, as they do live.
+	rolling := newTestStore(t)
+	t.Cleanup(func() { _ = rolling.Close() })
+	writeRolling := func(first, last int) {
+		t.Helper()
+		for i := first; i <= last; i++ {
+			if err := rolling.WriteSample(makeSampleWithCPU(at(float64(i)+0.37), float64(10+i%23))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	marshal := func(result *HistoryResult) json.RawMessage {
+		t.Helper()
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
+	const rollingRange, rollingPoints = 300 * time.Second, 300
+	writeRolling(1, 990)
+	before := contractQuery(t, rolling, at(990.9).Add(-rollingRange), at(990.9), rollingPoints)
+	metadata("tail before", before, 0, "2s", true, extrema)
+	writeRolling(991, 1000)
+	step := 2 * time.Second
+	tailFrom := before.Samples[len(before.Samples)-1].BucketStart.Add(-2 * step)
+	tailPoints := int(alignedBucketCount(tailFrom, at(1000.9), step))
+	refresh := contractQuery(t, rolling, tailFrom, at(1000.9), tailPoints)
+	after := contractQuery(t, rolling, at(1000.9).Add(-rollingRange), at(1000.9), rollingPoints)
+	if refresh.Tier != after.Tier || refresh.Resolution != after.Resolution ||
+		refresh.SourceResolution != after.SourceResolution || refresh.Downsampled != after.Downsampled ||
+		!reflect.DeepEqual(refresh.AvailableAggregations, after.AvailableAggregations) ||
+		!reflect.DeepEqual(refresh.ValidAggregations, after.ValidAggregations) ||
+		!reflect.DeepEqual(refresh.ExtremaProfiles, after.ExtremaProfiles) {
+		t.Fatalf("tail answered as tier=%d %s/%s downsampled=%v available=%v profiles=%v, want the full view's tier=%d %s/%s",
+			refresh.Tier, refresh.Resolution, refresh.SourceResolution, refresh.Downsampled,
+			refresh.AvailableAggregations, refresh.ExtremaProfiles, after.Tier, after.Resolution, after.SourceResolution)
+	}
+	fullBuckets := make(map[int64]json.RawMessage, len(after.Samples))
+	for _, sample := range after.Samples {
+		fullBuckets[sample.BucketStart.UnixNano()] = marshal(&HistoryResult{Samples: []*AggregatedSample{sample}})
+	}
+	if len(refresh.Samples) != tailPoints {
+		t.Fatalf("tail: %d buckets, want %d", len(refresh.Samples), tailPoints)
+	}
+	for _, sample := range refresh.Samples {
+		want, ok := fullBuckets[sample.BucketStart.UnixNano()]
+		if got := marshal(&HistoryResult{Samples: []*AggregatedSample{sample}}); !ok || string(got) != string(want) {
+			t.Fatalf("tail bucket %s differs from the full refresh:\n got %s\nwant %s",
+				sample.BucketStart.Format(time.RFC3339Nano), got, want)
+		}
+	}
+	fixture.Tails = append(fixture.Tails, historyContractTail{
+		Name:     "rolling five minutes in 2s buckets",
+		RangeMS:  rollingRange.Milliseconds(),
+		Points:   rollingPoints,
+		TailFrom: tailFrom,
+		TailTo:   at(1000.9),
+		Tail:     tailPoints,
+		Before:   marshal(before),
+		Refresh:  marshal(refresh),
+		After:    marshal(after),
+	})
 
 	// Every output step and supported tier resolution the server can format.
 	seen := make(map[string]bool)

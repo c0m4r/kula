@@ -570,8 +570,10 @@ func TestHistoryFrontendUsesSharedLifecycleAndCanonicalItems(t *testing.T) {
 	}
 	source := string(chartsData)
 
-	if got := strings.Count(source, "return requestHistory("); got != 3 {
-		t.Fatalf("history loaders using the shared controller = %d, want 3", got)
+	// Rolling, rolling tail, custom and zoomed history all load through the
+	// shared latest-request-wins controller.
+	if got := strings.Count(source, "return requestHistory("); got != 4 {
+		t.Fatalf("history loaders using the shared controller = %d, want 4", got)
 	}
 	for _, obsolete := range []string{
 		"if (state.loadingHistory) return;",

@@ -168,6 +168,48 @@ export function historyItemContext(item) {
     return item?.[historyContext] || null;
 }
 
+// Everything in a response that decides how its buckets were produced and
+// which aggregations they offer. Two responses with equal signatures describe
+// the same view, so their buckets can be combined into one buffer.
+export function historyViewSignature(response) {
+    const source = responseSource(response);
+    if (!source) return null;
+    const profiles = Object.keys(source.extremaProfiles).sort()
+        .map(name => [name, [...source.extremaProfiles[name]].sort()]);
+    return JSON.stringify([
+        source.tier,
+        source.resolution,
+        source.sourceResolution,
+        source.downsampled,
+        [...source.availableAggregations].sort(),
+        normalizeValidAggregations(source.validAggregations).sort(),
+        source.hasExtremaProfiles,
+        profiles,
+    ]);
+}
+
+// Replace every buffered bucket starting at or after fromMs with the buckets of
+// a tail response, then re-derive the gap markers across the whole buffer.
+// Returns null when the buffer or the tail is not made of bucket-bounded
+// items, or when the tail holds a bucket that starts before fromMs.
+export function mergeHistoryTail(buffer, samples, response, fromMs, resolution) {
+    if (!Array.isArray(buffer) || !Array.isArray(samples) || !Number.isFinite(fromMs)) return null;
+    const kept = [];
+    for (const item of buffer) {
+        if (!item || item._gap) continue;
+        const start = historyItemContext(item)?.bucketStart;
+        if (!Number.isFinite(start)) return null;
+        if (start < fromMs) kept.push(item);
+    }
+    const tail = annotateHistoryItems(samples, response);
+    if (tail.length === 0) return null;
+    for (const item of tail) {
+        const start = historyItemContext(item)?.bucketStart;
+        if (item?._gap || !Number.isFinite(start) || start < fromMs) return null;
+    }
+    return insertHistoryGaps([...kept, ...tail], resolution);
+}
+
 // Restrict extrema before any chart consumer sees them. Partial profiles use
 // exact scalar JSON paths; they never certify whole sections or collections.
 // Missing/unknown profiles fail closed. Older API responses retain the strict

@@ -118,7 +118,10 @@ Long live windows refresh the whole selected interval at display resolution. Thi
 older history as new samples arrive. A short window is streamed point by point only when its
 history arrived as raw samples; if the chart is too narrow to show every raw sample (a
 5-minute window on a phone, for example), the server returns bucketed history and that window
-refreshes like a long one, so Avg/Min/Max stay consistent across the whole range. The range stays at its last successful snapshot during a
+refreshes like a long one, so Avg/Min/Max stay consistent across the whole range. Each refresh
+downloads only the newest few buckets and splices them onto the chart; the whole range is
+fetched again every five minutes, or whenever the chart width or the selected cards change.
+The range stays at its last successful snapshot during a
 refresh; hover the resolution for the refresh interval and last update. Failed refreshes are
 reported while the previous chart remains visible. Gauges and status continue to update live.
 

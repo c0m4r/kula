@@ -11,8 +11,11 @@ async function importSource(relativePath) {
 
 const {
     HistoryRequestController,
+    ROLLING_TAIL_BUCKETS,
+    alignedBucketCount,
     historyViewAcceptsLiveSamples,
     liveHistoryRefreshInterval,
+    rollingTailRequest,
     updateLiveSampleInterval,
 } = await importSource('../static/js/app/history-request.js');
 const { diskKey, diskMember, diskLabel, diskDOMKey, migrateDiskSelection } =
@@ -40,6 +43,8 @@ const {
     historyItemContext,
     historyItemExtrema,
     historySectionsForFocus,
+    historyViewSignature,
+    mergeHistoryTail,
     normalizeHistoryItem,
     normalizeValidAggregations,
     historyItemSample,
@@ -928,6 +933,84 @@ test('live interval estimation learns slow collectors without one jitter becomin
     assert.equal(observed.estimate, 5000);
     assert.equal(liveHistoryRefreshInterval(3600, 1000, observed.estimate), 0);
     assert.equal(liveHistoryRefreshInterval(3600, 1000, 1000), 3604);
+});
+
+test('aligned bucket counts match the server with an exclusive end', () => {
+    assert.equal(alignedBucketCount(0, 0, 2000), 1);
+    assert.equal(alignedBucketCount(0, 2000, 2000), 1);
+    assert.equal(alignedBucketCount(0, 2001, 2000), 2);
+    assert.equal(alignedBucketCount(1500, 2500, 2000), 2);
+    assert.equal(alignedBucketCount(700377, 1000377, 2000), 151);
+    assert.equal(alignedBucketCount(10, 5, 2000), 0);
+});
+
+test('a rolling tail request starts on a bucket boundary and asks one point per bucket', () => {
+    const view = { rangeMs: 1800000, points: 1000, stepMs: 2000 };
+    // The last buffered bucket [1000s, 1002s) holds the previous view end.
+    const plan = rollingTailRequest({ ...view, toMs: 1003500, lastBucketStart: 1000000 });
+    assert.deepEqual(plan, { fromMs: 996000, points: 4 });
+    assert.equal(plan.fromMs % view.stepMs, 0);
+    assert.equal(alignedBucketCount(plan.fromMs, 1003500, view.stepMs), plan.points);
+
+    // A view end exactly on a boundary still refetches three buckets.
+    const edge = rollingTailRequest({ ...view, toMs: 1000000, lastBucketStart: 1000000 });
+    assert.equal(edge.points, ROLLING_TAIL_BUCKETS);
+    assert.equal(edge.fromMs, 994000);
+
+    // Whole refreshes: unaligned or missing state, a tail reaching the window
+    // start, or a window that a full refresh would answer at a coarser step.
+    assert.equal(rollingTailRequest({ ...view, toMs: 1003500, lastBucketStart: 1000500 }), null);
+    assert.equal(rollingTailRequest({ ...view, toMs: 1003500, lastBucketStart: undefined }), null);
+    assert.equal(rollingTailRequest({ ...view, rangeMs: 6000, toMs: 1003500, lastBucketStart: 1000000 }), null);
+    assert.equal(rollingTailRequest({ ...view, points: 900, toMs: 1003500, lastBucketStart: 1000000 }), null);
+    assert.equal(rollingTailRequest({ ...view, toMs: 999000, lastBucketStart: 1000000 }), null);
+});
+
+test('a merged tail replaces trailing buckets and re-derives gaps across the join', () => {
+    const response = {
+        tier: 0, resolution: '2s', source_resolution: '1s', downsampled: true,
+        valid_aggregations: ['data', 'min', 'max'], available_aggregations: ['data', 'min', 'max'],
+        extrema_profiles: { current: ['*'] },
+    };
+    const bucket = (startSeconds, cpu) => ({
+        ts: new Date((startSeconds + 2) * 1000).toISOString(),
+        bucket_start: new Date(startSeconds * 1000).toISOString(),
+        bucket_end: new Date((startSeconds + 2) * 1000).toISOString(),
+        sample_count: 2, coverage: 1, extrema_profile: 'current',
+        data: { cpu: { total: { usage: cpu } } },
+    });
+    const buffer = insertHistoryGaps(annotateHistoryItems(
+        [bucket(990, 1), bucket(992, 2), bucket(994, 3), bucket(996, 4), bucket(998, 5)], response), '2s');
+    const merged = mergeHistoryTail(buffer, [bucket(996, 40), bucket(998, 50), bucket(1006, 9)], response, 996000, '2s');
+    const real = merged.filter(item => !item._gap);
+    assert.deepEqual(real.map(item => item.data.cpu.total.usage), [1, 2, 3, 40, 50, 9]);
+    assert.equal(merged.filter(item => item._gap).length, 1, 'the missing tail buckets become one gap');
+    assert.equal(historyItemContext(real[3]).source.resolution, '2s');
+
+    // A tail bucket before the replaced range, or buffer items without bucket
+    // bounds, cannot be merged.
+    assert.equal(mergeHistoryTail(buffer, [bucket(994, 30)], response, 996000, '2s'), null);
+    assert.equal(mergeHistoryTail(buffer, [], response, 996000, '2s'), null);
+    assert.equal(mergeHistoryTail([{ ts: '1970-01-01T00:16:40Z', data: {} }], [bucket(996, 4)], response, 996000, '2s'), null);
+});
+
+test('history view signatures change with anything that shapes the buckets', () => {
+    const response = {
+        tier: 0, resolution: '2s', source_resolution: '1s', downsampled: true,
+        valid_aggregations: ['data', 'min', 'max'], available_aggregations: ['max', 'min', 'data'],
+        extrema_profiles: { current: ['*'] },
+    };
+    const same = { ...response, available_aggregations: ['data', 'min', 'max'], samples: [{}] };
+    assert.equal(historyViewSignature(response), historyViewSignature(same));
+    for (const change of [
+        { tier: 1 }, { resolution: '5s' }, { source_resolution: '1m' }, { downsampled: false },
+        { available_aggregations: ['data'] }, { valid_aggregations: ['data'] },
+        { extrema_profiles: { current: ['*'], legacy: ['cpu.total.usage'] } },
+    ]) {
+        assert.notEqual(historyViewSignature({ ...response, ...change }), historyViewSignature(response),
+            JSON.stringify(change));
+    }
+    assert.equal(historyViewSignature([]), null);
 });
 
 test('shared crosshair hover clears while a pinned timestamp persists', () => {
