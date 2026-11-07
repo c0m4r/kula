@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,13 +76,51 @@ type dockerContainer struct {
 	State string   `json:"State"`
 }
 
-// knownSocketPaths lists default socket paths to try in order.
-var knownSocketPaths = []string{
-	"/var/run/docker.sock",
-	"/run/docker.sock",
-	"/var/run/podman/podman.sock",
-	"/run/podman/podman.sock",
-	"/run/user/1000/podman/podman.sock", // rootless podman
+// defaultSocketPaths lists the runtime sockets auto-detection tries, in order:
+// Docker, rootful Podman, then rootless Podman — the running user's
+// ($XDG_RUNTIME_DIR, /run/user/<uid>) and, for a Kula running as root, the
+// first regular user's (/run/user/1000).
+func defaultSocketPaths() []string {
+	paths := []string{
+		"/var/run/docker.sock",
+		"/run/docker.sock",
+		"/var/run/podman/podman.sock",
+		"/run/podman/podman.sock",
+	}
+	add := func(path string) {
+		if !slices.Contains(paths, path) {
+			paths = append(paths, path)
+		}
+	}
+	if dir := os.Getenv("XDG_RUNTIME_DIR"); filepath.IsAbs(dir) {
+		add(filepath.Join(dir, "podman", "podman.sock"))
+	}
+	add(rootlessPodmanSocket(os.Getuid()))
+	add(rootlessPodmanSocket(1000))
+	return paths
+}
+
+func rootlessPodmanSocket(uid int) string {
+	return fmt.Sprintf("/run/user/%d/podman/podman.sock", uid)
+}
+
+// knownSocketPaths is the auto-detection list; tests replace it.
+var knownSocketPaths = defaultSocketPaths
+
+// ContainerSocketPaths returns every socket the container collector may use,
+// in the order it tries them: the configured path, then auto-detection. The
+// sandbox derives its rule from the same list, so the two cannot drift.
+func ContainerSocketPaths(configured string) []string {
+	var paths []string
+	if configured != "" {
+		paths = append(paths, configured)
+	}
+	for _, path := range knownSocketPaths() {
+		if path != configured {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 func newContainerCollector(cfg ContainersCollectorConfig) *containerCollector {
@@ -114,7 +153,7 @@ func (cc *containerCollector) resolveSocket() {
 	}
 
 	// Auto-detect
-	for _, path := range knownSocketPaths {
+	for _, path := range knownSocketPaths() {
 		if _, err := os.Stat(path); err == nil {
 			if err := probeSocket(path); err != nil {
 				logSocketAccessError(path, err)
@@ -151,8 +190,15 @@ func probeSocket(path string) error {
 // logSocketAccessError logs a socket access failure with a hint when the error is
 // permission-related.
 func logSocketAccessError(path string, err error) {
+	var owner int
 	if errors.Is(err, os.ErrPermission) {
-		log.Printf("[containers] socket %s found but permission denied — add the current user to the docker/podman group or run as root", path)
+		if _, scanErr := fmt.Sscanf(path, "/run/user/%d/", &owner); scanErr == nil && owner != os.Getuid() {
+			// A group cannot help here: rootless sockets live in the owner's
+			// private runtime directory.
+			log.Printf("[containers] socket %s belongs to another user's rootless Podman — run Kula as that user, or set applications.containers.socket_path to a socket it can open", path)
+		} else {
+			log.Printf("[containers] socket %s found but permission denied — add the current user to the docker/podman group or run as root", path)
+		}
 	} else {
 		log.Printf("[containers] socket %s found but not accessible: %v", path, err)
 	}

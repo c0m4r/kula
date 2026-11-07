@@ -2,10 +2,12 @@ package collector
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -159,7 +161,7 @@ func TestReadContainerMemory(t *testing.T) {
 func TestContainerCollectorCgroupDetect(t *testing.T) {
 	// Temporarily clear auto-detect paths to force cgroup fallback
 	oldPaths := knownSocketPaths
-	knownSocketPaths = nil
+	knownSocketPaths = func() []string { return nil }
 	defer func() { knownSocketPaths = oldPaths }()
 
 	cfg := ContainersCollectorConfig{
@@ -356,5 +358,52 @@ func TestCollectViaSocketShortContainerID(t *testing.T) {
 	}
 	if stats[0].Name != "abc" {
 		t.Errorf("Name = %q, want %q", stats[0].Name, "abc")
+	}
+}
+
+// TestContainerSocketPathsSharedOrder pins the one candidate list the
+// collector and the sandbox share: configured socket first, then Docker,
+// rootful Podman and the rootless Podman sockets of the running user.
+func TestContainerSocketPathsSharedOrder(t *testing.T) {
+	runtimeDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+
+	paths := ContainerSocketPaths("/srv/podman.sock")
+	if paths[0] != "/srv/podman.sock" {
+		t.Fatalf("configured socket is not tried first: %v", paths)
+	}
+	for _, want := range []string{
+		"/var/run/docker.sock",
+		"/run/podman/podman.sock",
+		filepath.Join(runtimeDir, "podman", "podman.sock"),
+		rootlessPodmanSocket(os.Getuid()),
+		rootlessPodmanSocket(1000),
+	} {
+		if !slices.Contains(paths, want) {
+			t.Errorf("candidates lack %s: %v", want, paths)
+		}
+	}
+	seen := map[string]bool{}
+	for _, path := range ContainerSocketPaths("/var/run/docker.sock") {
+		if seen[path] {
+			t.Fatalf("candidate %s listed twice", path)
+		}
+		seen[path] = true
+	}
+}
+
+func TestSocketAccessErrorNamesRootlessOwner(t *testing.T) {
+	var out strings.Builder
+	log.SetOutput(&out)
+	defer log.SetOutput(os.Stderr)
+
+	logSocketAccessError(rootlessPodmanSocket(os.Getuid()+4242), os.ErrPermission)
+	if !strings.Contains(out.String(), "another user's rootless Podman") {
+		t.Errorf("rootless socket of another user: %q", out.String())
+	}
+	out.Reset()
+	logSocketAccessError("/var/run/docker.sock", os.ErrPermission)
+	if !strings.Contains(out.String(), "docker/podman group") {
+		t.Errorf("rootful socket: %q", out.String())
 	}
 }

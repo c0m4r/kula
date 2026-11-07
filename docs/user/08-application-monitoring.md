@@ -89,8 +89,12 @@ applications:
 - **`none`** — neither a runtime socket nor a cgroups v2 tree was found; container monitoring
   stays disabled.
 
-The `socket_path` is auto-detected; set it explicitly for non-standard locations or rootless
-Podman. Leave the `containers` filter empty to monitor all running containers.
+The `socket_path` is auto-detected: Docker (`/var/run/docker.sock`, `/run/docker.sock`), rootful
+Podman (`/run/podman/podman.sock`), then the rootless Podman socket of the user Kula runs as
+(`$XDG_RUNTIME_DIR/podman/podman.sock`, `/run/user/<uid>/podman/podman.sock`) and, for a Kula
+running as root, `/run/user/1000/podman/podman.sock`. Set it explicitly for any other location —
+another user's rootless socket is only reachable by running Kula as that user. Leave the
+`containers` filter empty to monitor all running containers.
 
 **Metrics:** per-container CPU%, memory used/limit/%, network RX/TX bytes/s, disk read/write
 bytes/s. Each metric type gets its own multi-series chart (CPU, memory, network RX, network TX,

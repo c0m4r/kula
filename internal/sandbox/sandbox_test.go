@@ -166,3 +166,33 @@ func TestNeedsSystemRoots(t *testing.T) {
 		}
 	}
 }
+
+// TestPickContainerSocket mirrors the collector's choice: the first candidate
+// that accepts a connection, else the first that exists.
+func TestPickContainerSocket(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing.sock")
+	dead := filepath.Join(dir, "dead.sock")
+	if err := os.WriteFile(dead, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(dir, "live.sock")
+	listener, err := net.Listen("unix", live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	for _, tc := range []struct {
+		candidates []string
+		want       string
+	}{
+		{[]string{missing, dead, live}, live},
+		{[]string{missing, dead}, dead},
+		{[]string{missing}, ""},
+	} {
+		if got := pickContainerSocket(tc.candidates); got != tc.want {
+			t.Errorf("pickContainerSocket(%v) = %q, want %q", tc.candidates, got, tc.want)
+		}
+	}
+}

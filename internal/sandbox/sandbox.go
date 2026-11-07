@@ -16,12 +16,15 @@ import (
 	"crypto/x509"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"kula/internal/collector"
 	"kula/internal/config"
 
 	"github.com/landlock-lsm/go-landlock/landlock"
@@ -42,7 +45,7 @@ import (
 //
 // When application monitoring is enabled, additional rules are added:
 //   - Nginx: ConnectTCP to the status URL port (for HTTP GET)
-//   - Containers: ROFiles on the Docker/Podman Unix socket
+//   - Containers: RWFiles on the Docker/Podman Unix socket the collector uses
 //   - PostgreSQL: ConnectTCP to the configured port, or RODirs for
 //     Unix socket directories
 //
@@ -154,24 +157,10 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 		}
 	}
 
-	// Containers: allow read access to the runtime socket
+	// Containers: allow access to the runtime socket the collector will use,
+	// chosen from the collector's own candidate list.
 	if appCfg.Containers.Enabled {
-		socketPath := appCfg.Containers.SocketPath
-		if socketPath == "" {
-			// Auto-detect: try known paths
-			for _, p := range []string{
-				"/var/run/docker.sock",
-				"/run/docker.sock",
-				"/var/run/podman/podman.sock",
-				"/run/podman/podman.sock",
-			} {
-				if _, err := os.Stat(p); err == nil {
-					socketPath = p
-					break
-				}
-			}
-		}
-		if socketPath != "" {
+		if socketPath := pickContainerSocket(collector.ContainerSocketPaths(appCfg.Containers.SocketPath)); socketPath != "" {
 			fsRules = append(fsRules, landlock.RWFiles(socketPath).IgnoreIfMissing())
 			appInfo = append(appInfo, fmt.Sprintf("containers:rw(%s)", socketPath))
 		}
@@ -286,6 +275,26 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 		abi, absConfigPath, absStorageDir, netStatus, appStatus)
 
 	return nil
+}
+
+// pickContainerSocket mirrors the container collector's choice: the first
+// candidate that exists and accepts a connection, or else the first that
+// exists, so the collector reports the real reason it cannot use it.
+func pickContainerSocket(candidates []string) string {
+	first := ""
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if first == "" {
+			first = path
+		}
+		if conn, err := net.DialTimeout("unix", path, time.Second); err == nil {
+			_ = conn.Close()
+			return path
+		}
+	}
+	return first
 }
 
 // postgresUsesTLS reports whether a PostgreSQL sslmode can negotiate TLS.

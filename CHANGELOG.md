@@ -39,6 +39,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - TCP retransmissions are stored in history; they used to chart as 0 after a reload or for
   any past range (older binaries cannot read the extended records, so back up before a
   downgrade)
+- Container monitoring finds the rootless Podman socket of the user Kula runs as (it only tried
+  uid 1000), and says so when a socket belongs to another user's rootless Podman instead of
+  suggesting the docker group
 - `https://` status and Ollama URLs and PostgreSQL `verify-ca`/`verify-full` verify certificates
   under the sandbox (the CA bundle was unreadable, so every TLS verification failed); a private
   PostgreSQL CA or client certificate in `~/.postgresql` is readable too

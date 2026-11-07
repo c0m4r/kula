@@ -311,8 +311,9 @@ applications:
   #     (supports Podman Quadlets, including rootless services)
   #   - "cgroups": scans Docker, Podman, and Quadlet cgroups when no socket is
   #     available (no container name mapping)
-  # The socket_path is auto-detected by default; set it explicitly if using a
-  # non-standard location or rootless Podman.
+  # The socket_path is auto-detected by default (Docker, rootful Podman, then the
+  # rootless Podman socket of the user Kula runs as); set it explicitly for any
+  # other location.
   containers:
     enabled: true
     # socket_path: "/var/run/docker.sock"

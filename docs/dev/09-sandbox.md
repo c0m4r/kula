@@ -44,13 +44,21 @@ It is **non-fatal**: on unsupported kernels the warning is logged and Kula runs 
 | `/etc/hosts`, `/etc/resolv.conf`, `/etc/nsswitch.conf` | read-only (for DNS) |
 | `/run/utmp`, `/var/run/utmp`, `/run/systemd/sessions` | read-only (logged-in user count) |
 | parent directory of `web.unix_socket` | read-write (when a Unix socket is configured) |
-| container runtime socket (`applications.containers.socket_path`, auto-detected when empty) | read-write (when containers are enabled) |
+| container runtime socket the collector will use (`applications.containers.socket_path`, else the first reachable of `collector.ContainerSocketPaths`) | read-write (when containers are enabled) |
 | `applications.postgres.host` | read-write (Unix socket mode) |
 | `applications.mysql.host` | read-write (Unix socket file mode) |
 | `~/.postgresql`, `PGSSLROOTCERT`/`PGSSLCERT`/`PGSSLKEY`/`PGSSLCRL` paths | read-only (PostgreSQL with `sslmode` other than `disable`) |
 
 The read-write grant on the storage directory is what lets the storage engine, the custom-metrics
 socket, and the backup writer function under confinement.
+
+The container socket is chosen from the collector's own candidate list
+(`collector.ContainerSocketPaths`: configured path, Docker, rootful Podman, rootless Podman of the
+running user, `/run/user/1000`), picking what the collector will pick — the first candidate that
+accepts a connection — so the two cannot drift apart. Note that the filesystem rights Kula
+requests (Landlock ABI ≤ 5) do not mediate `connect(2)` on a pathname Unix socket; the socket
+grants (containers, PostgreSQL and MySQL socket modes) document intent and would apply to a
+ruleset that handles such connects, but today a socket's own permissions decide.
 
 ## TLS certificates
 
