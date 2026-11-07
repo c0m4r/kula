@@ -245,6 +245,116 @@ try {
     check(tv.stored === null && tv.focus && tv.controls && tv.cards.length === 3,
         'leaving TV mode did not return to Focus Mode', tv);
 
+    // Rearranging with real input: a mouse drag on a card body moves Processes
+    // to the top and the Swap gauge to the end without touching the charts,
+    // the order survives a reload and drives Focus mode, Escape abandons a
+    // drag, a grip takes arrow keys, and Reset brings back the template order.
+    await resize(1920, 2600);
+    await evaluate(`localStorage.removeItem('kula_focus_visible'); localStorage.removeItem('kula_focus_tv');
+        localStorage.removeItem('kula_card_order')`);
+    await call('Page.navigate', { url: `${base}/?range=300` });
+    await settle(s => s.lastAge <= 2.5, 'the dashboard did not load for rearranging');
+    const cardLayout = () => evaluate(`(() => {
+        window.scrollTo(0, 0);
+        const ids = selector => Array.from(document.querySelectorAll(selector))
+            .filter(card => card.getClientRects().length).map(card => card.id);
+        const rects = {};
+        document.querySelectorAll('[data-card-section]').forEach(card => {
+            if (card.getClientRects().length) rects[card.id] = card.getBoundingClientRect().toJSON();
+        });
+        const stored = localStorage.getItem('kula_card_order');
+        return {
+            system: ids('#charts-grid > .chart-card'),
+            gauges: ids('#gauges-row > .gauge-card'),
+            visible: ids('#charts-grid > .chart-card.focus-visible'),
+            rects,
+            stored: stored === null ? null : JSON.parse(stored),
+            rearranging: !!document.getElementById('rearrange-bar'),
+            search: location.search,
+        };
+    })()`);
+    const startRearranging = async () => {
+        await evaluate(`document.getElementById('btn-settings').click(); document.getElementById('btn-rearrange').click()`);
+        await waitFor(() => evaluate(`!!document.querySelector('#rearrange-bar') &&
+            !!document.querySelector('#card-cpu > .card-grip')`), 'Rearrange mode did not start');
+    };
+    const mouse = (type, x, y) => call('Input.dispatchMouseEvent', {
+        type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1,
+    });
+    const centre = rect => ({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
+    const dragMouse = async (from, to, release = true) => {
+        await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y });
+        await mouse('mousePressed', from.x, from.y);
+        for (let step = 1; step <= 12; step++) {
+            await mouse('mouseMoved', from.x + (to.x - from.x) * step / 12, from.y + (to.y - from.y) * step / 12);
+            await delay(40);
+        }
+        if (release) await mouse('mouseReleased', to.x, to.y);
+        await delay(300);
+    };
+    const key = async (name, code, keyCode) => {
+        await call('Input.dispatchKeyEvent', { type: 'keyDown', key: name, code, windowsVirtualKeyCode: keyCode });
+        await call('Input.dispatchKeyEvent', { type: 'keyUp', key: name, code, windowsVirtualKeyCode: keyCode });
+        await delay(200);
+    };
+
+    let cards = await cardLayout();
+    const templateSystem = cards.system;
+    const templateGauges = cards.gauges;
+    check(templateSystem[0] === 'card-cpu' && templateGauges.at(-1) === 'gauge-ul' && cards.stored === null,
+        'the dashboard did not start in template order', cards);
+    await startRearranging();
+    cards = await cardLayout();
+    const cpuRect = cards.rects['card-cpu'];
+    await dragMouse(centre(cards.rects['card-processes']), { x: cpuRect.x + cpuRect.width / 4, y: centre(cpuRect).y });
+    cards = await cardLayout();
+    check(cards.system[0] === 'card-processes' && cards.system[1] === 'card-cpu' &&
+        cards.stored?.system?.[0] === 'card-processes', 'dragging Processes onto CPU did not move it first', cards);
+    check(cards.search === '?range=300', 'dragging a card zoomed its chart', cards);
+    const lastGauge = cards.rects[cards.gauges.at(-1)];
+    await dragMouse(centre(cards.rects['gauge-swap']), { x: lastGauge.x + lastGauge.width - 4, y: centre(lastGauge).y });
+    cards = await cardLayout();
+    check(cards.gauges.at(-1) === 'gauge-swap' && cards.stored?.gauges?.at(-1) === 'gauge-swap',
+        'dragging the Swap gauge to the end did not move it', cards);
+    // Escape abandons a drag in progress; nothing is stored.
+    const beforeEscape = cards;
+    await dragMouse(centre(cards.rects['card-memory']), centre(cards.rects['card-processes']), false);
+    await key('Escape', 'Escape', 27);
+    await mouse('mouseReleased', centre(cards.rects['card-processes']).x, centre(cards.rects['card-processes']).y);
+    await delay(300);
+    cards = await cardLayout();
+    check(cards.system.join() === beforeEscape.system.join() && JSON.stringify(cards.stored) === JSON.stringify(beforeEscape.stored) &&
+        cards.rearranging, 'Escape did not abandon the drag', cards);
+    // A grip takes real arrow keys.
+    await evaluate(`document.querySelector('#card-cpu > .card-grip').focus()`);
+    await key('ArrowRight', 'ArrowRight', 39);
+    cards = await cardLayout();
+    check(cards.system.indexOf('card-cpu') === 2, 'ArrowRight on a grip did not move CPU', cards);
+    await evaluate(`document.getElementById('btn-rearrange-done').click()`);
+
+    await call('Page.navigate', { url: `${base}/?range=300` });
+    await settle(s => s.lastAge <= 2.5, 'the dashboard did not reload after rearranging');
+    cards = await cardLayout();
+    check(cards.system[0] === 'card-processes' && cards.system.indexOf('card-cpu') === 2 &&
+        cards.gauges.at(-1) === 'gauge-swap' && !cards.rearranging, 'the order did not survive a reload', cards);
+    await evaluate(`localStorage.setItem('kula_focus_visible', JSON.stringify(['card-cpu', 'card-processes']))`);
+    await call('Page.navigate', { url: `${base}/?range=300` });
+    await settle(s => s.lastAge <= 2.5, 'Focus mode did not load');
+    cards = await waitFor(async () => {
+        const layout = await cardLayout();
+        return layout.visible.length === 2 ? layout : null;
+    }, 'Focus mode did not show the selection');
+    check(cards.visible.join() === 'card-processes,card-cpu', 'Focus mode ignored the stored order', cards);
+    await evaluate(`localStorage.removeItem('kula_focus_visible')`);
+    await call('Page.navigate', { url: `${base}/?range=300` });
+    await settle(s => s.lastAge <= 2.5, 'the dashboard did not reload before Reset');
+    await startRearranging();
+    await evaluate(`document.getElementById('btn-rearrange-reset').click(); document.getElementById('btn-rearrange-done').click()`);
+    cards = await cardLayout();
+    check(cards.system.join() === templateSystem.join() && cards.gauges.join() === templateGauges.join() &&
+        cards.stored === null, 'Reset order did not restore the template order', cards);
+    await resize(1920, 1080);
+
     // Blocked site data makes every localStorage access throw, as it does from
     // here on for this page. The dashboard still starts and streams, and its
     // toggles work for the page; so does the game, where a packaged build
@@ -270,6 +380,17 @@ try {
         };
     })()`);
     check(blocked.list && blocked.themed, 'layout and theme toggles failed with storage blocked', blocked);
+    const blockedMove = await evaluate(`(() => {
+        document.getElementById('btn-rearrange').click();
+        const grip = document.querySelector('#card-cpu > .card-grip');
+        grip.focus();
+        grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+        const system = Array.from(document.querySelectorAll('#charts-grid > .chart-card'))
+            .filter(card => card.getClientRects().length).map(card => card.id);
+        document.getElementById('btn-rearrange-done').click();
+        return system.at(-1);
+    })()`);
+    check(blockedMove === 'card-cpu', 'rearranging failed with storage blocked', { blockedMove });
     const game = await evaluate(`fetch('game.html').then(r => r.ok ? r.text() : '').then(t => t.includes('game.js'))`);
     if (game) {
         await call('Page.navigate', { url: `${base}/game.html` });
