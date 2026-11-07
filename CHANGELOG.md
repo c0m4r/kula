@@ -41,6 +41,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
   downgrade)
 - nginx request and handled rates no longer spike to ~1.8e19/s after an nginx restart, and a
   failed status poll no longer doubles the next rate
+- PostgreSQL checkpoint and backend write rates no longer report lifetime totals as one
+  second's writes after the background-writer query fails once, and a failed poll no longer
+  doubles the next rates
 - History no longer goes missing for up to a full ring after a storage tier wraps while
   records are growing (for example when a container or interface appears); the data stayed
   on disk but reads skipped it and the dashboard showed an outage

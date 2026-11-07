@@ -334,6 +334,7 @@ func TestPostgresCollectorMath(t *testing.T) {
 			xactCommit: 100,
 			blksRead:   50,
 			blksHit:    50,
+			valid:      true,
 		},
 	}
 
@@ -341,6 +342,7 @@ func TestPostgresCollectorMath(t *testing.T) {
 		xactCommit: 150,
 		blksRead:   60,
 		blksHit:    140,
+		valid:      true,
 	}
 
 	stats := &PostgresStats{}
@@ -351,6 +353,42 @@ func TestPostgresCollectorMath(t *testing.T) {
 	}
 	if stats.BlksHitPct != 70.0 { // 140 / (60+140) * 100
 		t.Errorf("Expected 70%% hit ratio, got %.2f", stats.BlksHitPct)
+	}
+}
+
+// TestPostgresRatesNeedValidCountersAtBothEnds covers a background-writer
+// query that fails for one poll: its zeroed counters used to become the
+// baseline, so the next poll reported lifetime totals as one interval's rate.
+func TestPostgresRatesNeedValidCountersAtBothEnds(t *testing.T) {
+	pc := &postgresCollector{}
+	poll := func(commits, checkpoint int64, bgValid bool) *PostgresStats {
+		t.Helper()
+		stats := &PostgresStats{}
+		pc.calculateStats(stats, pgRaw{xactCommit: commits, bufCheckpoint: checkpoint, valid: true, bgValid: bgValid}, 1)
+		return stats
+	}
+
+	if s := poll(1000, 5_000_000, true); s.TxCommitPS != 0 || s.BufCheckpointPS != 0 {
+		t.Fatalf("first poll: %+v, want no rates without a baseline", s)
+	}
+	if s := poll(1010, 5_000_040, true); s.TxCommitPS != 10 || s.BufCheckpointPS != 40 {
+		t.Fatalf("steady poll: %+v", s)
+	}
+	if s := poll(1020, 0, false); s.TxCommitPS != 10 || s.BufCheckpointPS != 0 {
+		t.Fatalf("bgwriter failure: %+v, want commits/s kept and no checkpoint rate", s)
+	}
+	if s := poll(1030, 5_000_100, true); s.TxCommitPS != 10 || s.BufCheckpointPS != 0 {
+		t.Fatalf("bgwriter back: %+v, want no checkpoint rate until a new baseline (not 5e6/s)", s)
+	}
+	if s := poll(1040, 5_000_130, true); s.BufCheckpointPS != 30 {
+		t.Fatalf("bgwriter baseline restored: %+v, want 30/s", s)
+	}
+
+	// A fresh database with no commits yet still establishes a baseline.
+	pc = &postgresCollector{}
+	poll(0, 0, true)
+	if s := poll(5, 0, true); s.TxCommitPS != 5 {
+		t.Fatalf("zero-commit baseline: %+v, want 5 commits/s", s)
 	}
 }
 

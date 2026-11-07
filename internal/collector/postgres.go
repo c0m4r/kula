@@ -27,6 +27,11 @@ type pgRaw struct {
 	deadlocks     int64
 	bufCheckpoint int64
 	bufBackend    int64
+	// valid marks the pg_stat_database counters as read from the server and
+	// bgValid the background-writer pair, which is queried separately and
+	// can fail on its own (privileges, version). A rate needs both ends.
+	valid   bool
+	bgValid bool
 }
 
 // postgresCollector manages the PostgreSQL connection and metrics.
@@ -142,6 +147,16 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 	ctx, cancel := context.WithTimeout(context.Background(), c.collCfg.Interval)
 	defer cancel()
 
+	// Rates are deltas between consecutive successful polls. A poll that
+	// fails before its counters are recorded drops the baseline, so the next
+	// one starts over instead of dividing two intervals' growth by one.
+	recorded := false
+	defer func() {
+		if !recorded {
+			c.pgCollector.prev = pgRaw{}
+		}
+	}()
+
 	stats := &PostgresStats{}
 
 	// Connection states from pg_stat_activity:
@@ -202,6 +217,7 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 		c.appErrorf("[postgres] pg_stat_database query error: %v", err)
 		return nil
 	}
+	cur.valid = true
 
 	c.debugf("[postgres] raw: commit=%d, rollback=%d, hit=%d, read=%d, deadlocks=%d",
 		cur.xactCommit, cur.xactRollback, cur.blksHit, cur.blksRead, cur.deadlocks)
@@ -231,10 +247,16 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 	row = c.pgCollector.db.QueryRowContext(ctx, bgQuery)
 	if err := row.Scan(&cur.bufCheckpoint, &cur.bufBackend); err != nil {
 		c.debugf("[postgres] bgwriter query error: %v", err)
-		// non-fatal: continue without bgwriter data
+		// Non-fatal: continue without bgwriter data. The zeroed pair must not
+		// become a baseline, or the next good poll would report the lifetime
+		// totals as one interval's writes.
+		cur.bufCheckpoint, cur.bufBackend = 0, 0
+	} else {
+		cur.bgValid = true
 	}
 
 	c.pgCollector.calculateStats(stats, cur, elapsed)
+	recorded = true
 
 	// Table health across all user tables: dead/live tuples and autovacuum activity
 	row = c.pgCollector.db.QueryRowContext(ctx, `
@@ -317,15 +339,16 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 	return stats
 }
 
-// calculateStats computes per-second rates from raw cumulative counters.
+// calculateStats computes per-second rates from raw cumulative counters. Each
+// counter group needs a valid reading at both ends of the interval.
 func (pc *postgresCollector) calculateStats(stats *PostgresStats, cur pgRaw, elapsed float64) {
-	if pc.prev.xactCommit > 0 && elapsed > 0 {
-		rate := func(cur, prev int64) float64 {
-			if cur < prev {
-				return 0 // counter reset on server restart
-			}
-			return round2(float64(cur-prev) / elapsed)
+	rate := func(cur, prev int64) float64 {
+		if cur < prev {
+			return 0 // counter reset on server restart
 		}
+		return round2(float64(cur-prev) / elapsed)
+	}
+	if pc.prev.valid && cur.valid && elapsed > 0 {
 		stats.TxCommitPS = rate(cur.xactCommit, pc.prev.xactCommit)
 		stats.TxRollbackPS = rate(cur.xactRollback, pc.prev.xactRollback)
 		stats.TupFetchedPS = rate(cur.tupFetched, pc.prev.tupFetched)
@@ -336,6 +359,8 @@ func (pc *postgresCollector) calculateStats(stats *PostgresStats, cur pgRaw, ela
 		stats.BlksReadPS = rate(cur.blksRead, pc.prev.blksRead)
 		stats.BlksHitPS = rate(cur.blksHit, pc.prev.blksHit)
 		stats.DeadlocksPS = rate(cur.deadlocks, pc.prev.deadlocks)
+	}
+	if pc.prev.bgValid && cur.bgValid && elapsed > 0 {
 		stats.BufCheckpointPS = rate(cur.bufCheckpoint, pc.prev.bufCheckpoint)
 		stats.BufBackendPS = rate(cur.bufBackend, pc.prev.bufBackend)
 	}
