@@ -34,6 +34,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
   after enabling auth; stored sessions are cleared on runs with auth off and dropped when
   their user is no longer configured (delete `sessions.json` once if upgrading straight
   into auth)
+- Bound concurrent password hashing so a login flood from many addresses cannot exhaust memory
 
 ## [0.21.0] - 2026-10-01
 

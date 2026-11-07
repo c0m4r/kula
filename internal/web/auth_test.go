@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -859,5 +860,48 @@ func TestUserLimiterKeyBoundsUsername(t *testing.T) {
 	}
 	if got, want := userLimiterKey("10.0.0.9\x00admin", "1.2.3.4"), "1.2.3.4\x0010.0.0.9\x00admin"; got != want {
 		t.Fatalf("key = %q, want %q (IP prefix must stay unforgeable)", got, want)
+	}
+}
+
+// TestPasswordHashConcurrencyBounded pins the global Argon2id bound: the
+// per-address limiters alone let many sources keep hundreds of 32 MiB hashes
+// in flight at once.
+func TestPasswordHashConcurrencyBounded(t *testing.T) {
+	n := passwordHashConcurrency()
+	if n < 1 || n > maxConcurrentPasswordHashes {
+		t.Fatalf("passwordHashConcurrency() = %d, want 1..%d", n, maxConcurrentPasswordHashes)
+	}
+
+	am := NewAuthManager(config.AuthConfig{Enabled: true}, "", false, config.SecurityConfig{OriginValidation: true})
+	if got := cap(am.hashSlots); got != n {
+		t.Fatalf("hash slots = %d, want %d", got, n)
+	}
+
+	releases := make([]func(), 0, n)
+	for i := 0; i < n; i++ {
+		release, ok := am.acquireHashSlot(context.Background())
+		if !ok {
+			t.Fatalf("slot %d of %d refused while capacity remained", i+1, n)
+		}
+		releases = append(releases, release)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, ok := am.acquireHashSlot(ctx); ok {
+		t.Fatal("acquired a hash slot beyond the concurrency bound")
+	}
+
+	releases[0]()
+	release, ok := am.acquireHashSlot(ctx)
+	if !ok {
+		t.Fatal("a released slot could not be reacquired")
+	}
+	release()
+	for _, r := range releases[1:] {
+		r()
+	}
+	if got := len(am.hashSlots); got != 0 {
+		t.Errorf("slots still held after every release: %d", got)
 	}
 }

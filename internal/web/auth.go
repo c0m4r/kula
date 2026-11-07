@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +33,32 @@ type AuthManager struct {
 	UserLimiter *RateLimiter
 	trustProxy  bool
 	security    config.SecurityConfig
+	// hashSlots is a counting semaphore bounding concurrent Argon2id
+	// computations process-wide; see acquireHashSlot.
+	hashSlots chan struct{}
+}
+
+// Argon2id concurrency bound. Every login attempt costs one hash of
+// web.auth.argon2.memory (32 MiB by default) — unknown usernames included, by
+// design, so timing does not reveal which accounts exist. The rate limiters are
+// per source address only, so without a global bound enough addresses could
+// keep hundreds of hashes in flight at once and exhaust memory. Each hash
+// already runs on several threads, so a quarter of the usable CPUs is enough
+// for legitimate logins; the cap keeps memory bounded on large hosts too.
+const (
+	maxConcurrentPasswordHashes = 4
+
+	// passwordHashWait is how long a login waits for a free hashing slot
+	// before it is refused as busy. A legitimate login during a flood gets a
+	// fair chance; a flood cannot queue unboundedly behind the semaphore.
+	passwordHashWait = 2 * time.Second
+)
+
+// passwordHashConcurrency returns the number of Argon2id computations allowed
+// at once: a quarter of the usable CPUs, between 1 and
+// maxConcurrentPasswordHashes.
+func passwordHashConcurrency() int {
+	return min(max(1, runtime.GOMAXPROCS(0)/4), maxConcurrentPasswordHashes)
 }
 
 // RateLimiter tracks recent rapid login attempts by IP.
@@ -148,7 +176,30 @@ func NewAuthManager(cfg config.AuthConfig, storageDir string, trustProxy bool, s
 		},
 		trustProxy: trustProxy,
 		security:   security,
+		hashSlots:  make(chan struct{}, passwordHashConcurrency()),
 	}
+}
+
+// acquireHashSlot reserves one of the process-wide Argon2id slots, waiting up
+// to passwordHashWait or until ctx ends. On success the caller must call the
+// returned release once its hash is done. ok is false when no slot freed up in
+// time; the caller should answer that the server is busy.
+func (a *AuthManager) acquireHashSlot(ctx context.Context) (release func(), ok bool) {
+	release = func() { <-a.hashSlots }
+	select {
+	case a.hashSlots <- struct{}{}:
+		return release, true
+	default:
+	}
+	timer := time.NewTimer(passwordHashWait)
+	defer timer.Stop()
+	select {
+	case a.hashSlots <- struct{}{}:
+		return release, true
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	return nil, false
 }
 
 // purge removes entries older than cutoff. Must be called with rl.mu held.

@@ -607,3 +607,32 @@ func TestLoginLimitersBothReachable(t *testing.T) {
 		t.Fatalf("attempt %d after the IP budget: status = %d, want 429 from the IP limiter", attempts, res.status)
 	}
 }
+
+// TestRuntimeLoginBusyWhenHashSlotsExhausted verifies that a login arriving
+// while every Argon2id slot is taken is refused as busy (503 + Retry-After)
+// after the bounded wait, instead of starting yet another hash.
+func TestRuntimeLoginBusyWhenHashSlotsExhausted(t *testing.T) {
+	s, ts := newSecuredTestServer(t, nil)
+
+	for i := 0; i < cap(s.auth.hashSlots); i++ {
+		s.auth.hashSlots <- struct{}{}
+	}
+	start := time.Now()
+	res := login(t, ts, secUser, secPass)
+	if res.status != http.StatusServiceUnavailable {
+		t.Fatalf("login with all hash slots busy: status = %d, want 503 (body %q)", res.status, res.body)
+	}
+	if res.session != "" {
+		t.Error("busy login issued a session cookie")
+	}
+	if waited := time.Since(start); waited < passwordHashWait/2 {
+		t.Errorf("busy login answered after %v, want it to wait for a slot first", waited)
+	}
+
+	for i := 0; i < cap(s.auth.hashSlots); i++ {
+		<-s.auth.hashSlots
+	}
+	if res := login(t, ts, secUser, secPass); res.status != http.StatusOK {
+		t.Fatalf("login after slots freed: status = %d, want 200 (body %q)", res.status, res.body)
+	}
+}

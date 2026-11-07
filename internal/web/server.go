@@ -906,7 +906,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.auth.ValidateCredentials(creds.Username, creds.Password) {
+	release, ok := s.auth.acquireHashSlot(r.Context())
+	if !ok {
+		w.Header().Set("Retry-After", "1")
+		jsonError(w, "server busy", http.StatusServiceUnavailable)
+		return
+	}
+	valid := s.auth.ValidateCredentials(creds.Username, creds.Password)
+	release()
+	if !valid {
 		jsonError(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}

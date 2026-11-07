@@ -118,6 +118,11 @@ counter includes the IP precisely so that a flood of bad passwords aimed at one 
 throttles only the caller — it cannot lock that account out for everyone else. Exceeding
 either limit temporarily refuses further attempts.
 
+Each attempt costs one Argon2id hash (`argon2.memory`, 32 MiB by default), so Kula also caps
+how many hashes run at once across all clients: a quarter of the CPUs, between 1 and 4. A login
+that finds them all busy for 2 seconds is refused with `503 Service Unavailable` and
+`Retry-After: 1`, which keeps a flood from many addresses from exhausting memory.
+
 > **Reverse proxy caution.** Behind a proxy, configure `trust_proxy` correctly. Kula uses the
 > rightmost (most-trusted) IP in `X-Forwarded-For`. A misconfigured `trust_proxy` can let a
 > client spoof its IP to evade the login limiter — `kula-scan`'s `BYPASS-XFF` check tests for
