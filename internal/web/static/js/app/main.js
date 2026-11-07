@@ -44,6 +44,7 @@ import { addExpandButton, addSaveImageButton, attachHoverPauseToCard } from './c
 import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
 import { applyStoredTvMode, initTvMode } from './tv-mode.js';
 import { initSplitModule } from './split.js';
+import { arrangeCards, initCardLayout } from './card-layout.js';
 import { initOllama } from './ollama.js';
 import { chartsGridForTitle, sectionHeadForTitle } from './section-utils.js';
 import {
@@ -372,6 +373,12 @@ function afterNextPaint() {
 }
 
 async function init() {
+    // Put the cards in the visitor's order before anything is fetched, so the
+    // page settles as early as possible. Every later card goes through
+    // card-layout.js too.
+    initCardLayout();
+    arrangeCards();
+
     // Initialize i18n before everything else
     await i18n.init();
 

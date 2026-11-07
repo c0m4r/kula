@@ -1179,6 +1179,115 @@ check(new URL(location.href).searchParams.get('agg') === 'max', 'Restored Max wa
 document.querySelector('#agg-presets-list [data-agg="avg"]').click();
 window.Date = NativeDate;
 window.fetch = compatibilityFetch;
+
+// One placement authority (card-layout.js) decides where every card sits, so
+// the layout depends only on which cards exist and the stored order: not on
+// Focus mode, on cards arriving late or on cards being re-created.
+const layout = await import('./js/app/card-layout.js');
+const focusMode = await import('./js/app/focus-mode.js');
+const { initCharts } = await import('./js/app/charts-init.js');
+const SECTIONS = ['gauges', 'system', 'thermals', 'applications'];
+const sectionIds = section => layout.sectionCards(section).map(card => card.id);
+const allCardIds = () => SECTIONS.flatMap(sectionIds);
+const renderedIds = section => layout.sectionCards(section).filter(card => card.getClientRects().length).map(card => card.id);
+const dashboardCards = () => Array.from(document.querySelectorAll('#dashboard-home .chart-card, #dashboard-home .gauge-card'));
+const sameIds = (a, b) => a.length === b.length && a.every((id, index) => id === b[index]);
+const settleHistory = async () => {
+    for (let waits = 0; state.loadingHistory && waits < 500; waits++) await pause(2);
+};
+const noCardOrders = () => dashboardCards().every(card => getComputedStyle(card).order === '0');
+layout.setStoredCardOrder(null);
+check(dashboardCards().every(card => card.dataset.cardSection), 'A dashboard card bypassed the placement authority');
+check(noCardOrders(), 'A card was ordered by inline CSS order instead of its DOM position');
+
+let orderTs = Date.parse(state.lastSample.ts);
+const orderSample = mutate => {
+    const sample = structuredClone(state.lastSample);
+    orderTs += 1000;
+    sample.ts = new Date(orderTs).toISOString();
+    sample.apps = { ...(sample.apps || {}) };
+    mutate(sample);
+    return sample;
+};
+const feed = sample => data.addSampleToCharts(sample, Date.parse(sample.ts));
+const battery = name => ({ name, type: 'Battery', capacity: 80, power_w: 5 });
+const postgres = replicas => ({ active_conns: 1, idle_conns: 2, idle_in_tx_conns: 0, waiting_conns: 0,
+    max_conns: 100, is_in_recovery: false, replica_count: replicas });
+feed(orderSample(sample => { sample.psu = [battery('BAT0')]; sample.apps.postgres = postgres(0); }));
+check(sectionIds('system').at(-1) === 'card-psu_BAT0', 'A battery card was not placed after the system cards');
+check(!sectionIds('applications').includes('card-pg-replication'), 'Fixture created Postgres replication too early');
+feed(orderSample(sample => { sample.psu = [battery('BAT0')]; sample.apps.postgres = postgres(1); }));
+const appOrder = sectionIds('applications');
+check(appOrder.indexOf('card-pg-replication') === appOrder.indexOf('card-pg-bgwriter') + 1,
+    'Late Postgres replication left the Postgres group');
+check(appOrder.filter(id => id.startsWith('card-mysql-')).every(id => appOrder.indexOf(id) > appOrder.indexOf('card-pg-replication')),
+    'Postgres replication landed among the MySQL cards');
+check(noCardOrders(), 'Application cards are ordered by CSS order');
+const settledLayout = allCardIds();
+
+// Focus mode concatenates the sections in their own order, shows a battery
+// created while it is on, and leaves every section as it found it.
+state.focusVisible = ['card-cpu', 'card-psu_BAT0'];
+focusMode.applyStoredFocusMode();
+const mainGrid = document.getElementById('charts-grid');
+const combined = Array.from(mainGrid.children).filter(el => el.dataset.cardSection).map(el => el.id);
+check(sameIds(combined, ['system', 'thermals', 'applications'].flatMap(sectionIds)),
+    'Focus mode did not combine the sections in their order');
+check(sameIds(allCardIds(), settledLayout), 'Focus mode reordered the cards');
+check(mainGrid.classList.contains('focus-active') && !mainGrid.classList.contains('focus-hidden'),
+    'Focus mode hid the combined grid');
+feed(orderSample(sample => { sample.psu = [battery('BAT1'), battery('BAT0')]; sample.apps.postgres = postgres(1); }));
+const lateBattery = document.getElementById('card-psu_BAT1');
+check(lateBattery?.parentElement === mainGrid && sectionIds('system').slice(-2).join() === 'card-psu_BAT0,card-psu_BAT1',
+    'A battery created in Focus mode was not placed with the other batteries');
+check(document.getElementById('card-psu_BAT0').classList.contains('focus-visible') &&
+    !lateBattery.classList.contains('focus-visible'), 'Focus mode did not apply the selection to placed cards');
+focusMode.toggleFocusMode();
+await settleHistory();
+const withLateBattery = settledLayout.slice();
+withLateBattery.splice(withLateBattery.indexOf('card-psu_BAT0') + 1, 0, 'card-psu_BAT1');
+check(sameIds(allCardIds(), withLateBattery), 'Leaving Focus mode did not restore every section in order');
+check(document.getElementById('card-psu_BAT0').parentElement === mainGrid &&
+    document.getElementById('card-pg-replication').parentElement.id === 'applications-grid',
+    'Leaving Focus mode left cards outside their sections');
+
+// Re-created cards come back in the same places, whatever order they arrive in.
+initCharts();
+data.redrawChartsFromBuffer();
+feed(orderSample(sample => { sample.psu = [battery('BAT1'), battery('BAT0')]; sample.apps.postgres = postgres(1); }));
+// Cards whose data left the buffer are gone; the rest keep their order.
+check(['card-psu_BAT0', 'card-psu_BAT1', 'card-pg-replication', 'card-nginx-connections'].every(id => document.getElementById(id)),
+    'Fixture did not re-create the cards');
+check(sameIds(allCardIds(), withLateBattery.filter(id => document.getElementById(id))), 'Re-created cards changed the layout');
+check(noCardOrders(), 'Re-created cards carry a CSS order');
+
+// Split cards share the expand behaviour of every other card.
+const splitCard = document.querySelector('.chart-card[data-split-type="network"]:not(.hidden)');
+const splitExpand = splitCard?.querySelector('.btn-expand-chart');
+check(splitExpand, 'Fixture has no visible split card');
+splitExpand.click();
+check(splitCard.classList.contains('chart-expanded') && splitExpand.getAttribute('aria-expanded') === 'true',
+    'Expanding a split card did not use the shared expand control');
+splitExpand.click();
+check(!splitCard.classList.contains('chart-expanded') && noCardOrders(),
+    'Collapsing a split card left temporary CSS orders behind');
+
+// A thermal split card rebuilt during Focus mode joins the combined grid
+// instead of the hidden thermals grid, and goes back with its section.
+check(state.splitDiskTemp, 'Fixture lost the disk-temperature split');
+state.focusVisible = ['card-cpu'];
+focusMode.applyStoredFocusMode();
+const tempSample = orderSample(sample => {
+    sample.disk.devices = [{ id: 'wwid:T', name: 'sdt', temp: 41, reads_ps: 0, writes_ps: 0, read_bps: 0, write_bps: 0 }];
+});
+state.lastSample = tempSample;
+data.updateSelectors(tempSample);
+const tempSplit = document.getElementById(`card-split-disktemp-${diskDOMKey('wwid:T')}`);
+check(tempSplit?.parentElement === mainGrid && tempSplit.dataset.cardSection === 'thermals',
+    'A disk-temperature split card built in Focus mode left the combined grid');
+focusMode.toggleFocusMode();
+await settleHistory();
+check(tempSplit.parentElement?.id === 'thermals-grid', 'A split card did not return to its section');
 await (await import('./audit-system-info.js')).testSystemInfo();
 window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math.round(layoutMs), system_info: true,
     session_expiry_relogin: true,
@@ -1190,6 +1299,7 @@ window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math
     shaded_measurement_gaps: true, historical_device_selection: true, stable_disk_identity: true,
     gesture_request_isolation: true, minimum_zoom_points: 12, legacy_metric_compatibility: true,
     unavailable_replication_lag: true, filesystem_aggregation_tooltips: true,
-    bucketed_live_preset: true, suspended_aggregation: true, chart_image_export: true, errors };
+    bucketed_live_preset: true, suspended_aggregation: true, chart_image_export: true,
+    card_order: true, errors };
 check(errors.length === 0, errors.join('; '));
 window.ready = true;

@@ -6,15 +6,12 @@
 import { state } from './state.js';
 import { readPref, removePref, writeJsonPref, writePref } from './prefs.js';
 import { i18n } from './i18n.js';
-import {
-    chartsGridForTitle,
-    setSectionFocusChrome,
-    clearAllSectionFocusChrome,
-} from './section-utils.js';
+import { setSectionFocusChrome, clearAllSectionFocusChrome } from './section-utils.js';
 // The Applications header carries the shared container colour legend, which is
 // the only labelling for the multi-series container charts.
 import { syncApplicationsHeaderFocus } from './container-apps.js';
 import { enterTvMode, exitTvMode, isTvModeStored } from './tv-mode.js';
+import { arrangeCards, chartCards, registerCardDecorator } from './card-layout.js';
 
 // Container metrics moved from "one card per container × metric" to a fixed set
 // of multi-series cards. Focus selections are persisted, so stored ids from the
@@ -66,29 +63,24 @@ function migrateLegacyFocusIds() {
 // Run before any consumer reads state.focusVisible.
 migrateLegacyFocusIds();
 
-export const chartCardIds = [
-    'card-cpu', 'card-loadavg', 'card-memory', 'card-swap',
-    'card-network', 'card-pps', 'card-connections',
-    'card-disk-io', 'card-disk-space',
-    'card-gpu-load', 'card-vram',
-    'card-processes', 'card-entropy', 'card-self',
-    'card-cpu-temp', 'card-disk-temp', 'card-gpu-temp'
-];
-
-// Returns all currently visible split chart card elements
-function _getSplitCards() {
-    return Array.from(document.querySelectorAll('.chart-card[data-split-type]'));
+function attachFocusClick(card) {
+    if (card._focusClick) return;
+    card._focusClick = () => card.classList.toggle('focus-selected');
+    card.addEventListener('click', card._focusClick);
 }
 
-// Returns all dynamically created system chart cards (batteries/UPS)
-function _getDynamicSystemCards() {
-    return Array.from(document.querySelectorAll('.chart-card[data-system-chart]'));
-}
-
-// Returns all dynamically created app chart cards (nginx, containers, postgres, custom)
-function _getAppCards() {
-    return Array.from(document.querySelectorAll('.chart-card[data-app-chart]'));
-}
+// Cards created after Focus mode was applied (split, battery/UPS and
+// application cards) join it the moment card-layout.js places them.
+registerCardDecorator(card => {
+    if (!card.classList.contains('chart-card')) return;
+    const selected = !!state.focusVisible?.includes(card.id);
+    if (state.focusSelecting) {
+        card.classList.toggle('focus-selected', selected);
+        attachFocusClick(card);
+    } else if (state.focusMode) {
+        card.classList.toggle('focus-visible', selected);
+    }
+});
 
 export function toggleFocusMode() {
     const grids = document.querySelectorAll('.charts-grid');
@@ -103,13 +95,7 @@ export function toggleFocusMode() {
         btn.classList.remove('focus-active');
         document.getElementById('gauges-row')?.classList.remove('focus-hidden');
         document.getElementById('chart-search')?.classList.remove('focus-hidden');
-        chartCardIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.classList.remove('focus-visible', 'focus-selected');
-        });
-        _getSplitCards().forEach(card => card.classList.remove('focus-visible', 'focus-selected'));
-        _getDynamicSystemCards().forEach(card => card.classList.remove('focus-visible', 'focus-selected'));
-        _getAppCards().forEach(card => card.classList.remove('focus-visible', 'focus-selected'));
+        chartCards().forEach(card => card.classList.remove('focus-visible', 'focus-selected'));
         removeFocusBar();
         removePref('kula_focus_visible');
         state.focusVisible = null;
@@ -121,20 +107,9 @@ export function toggleFocusMode() {
     if (state.focusSelecting) {
         // Apply selection
         const tvRequested = document.getElementById('focus-tv-mode-chk')?.checked === true;
-        const selected = [];
-        chartCardIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el?.classList.contains('focus-selected')) selected.push(id);
-        });
-        _getSplitCards().forEach(card => {
-            if (card.classList.contains('focus-selected')) selected.push(card.id);
-        });
-        _getDynamicSystemCards().forEach(card => {
-            if (card.classList.contains('focus-selected')) selected.push(card.id);
-        });
-        _getAppCards().forEach(card => {
-            if (card.classList.contains('focus-selected')) selected.push(card.id);
-        });
+        const selected = chartCards()
+            .filter(card => card.classList.contains('focus-selected'))
+            .map(card => card.id);
 
         if (selected.length === 0) {
             // No selection = exit
@@ -154,58 +129,9 @@ export function toggleFocusMode() {
         state.focusVisible = selected;
         writeJsonPref('kula_focus_visible', selected);
         state.focusSelecting = false;
+        chartCards().forEach(card => card.classList.remove('focus-selected'));
 
-        grids.forEach(g => {
-            g.classList.remove('focus-selecting');
-            const hasVisible = Array.from(g.querySelectorAll('.chart-card')).some(el => {
-                const id = el.id;
-                const isSelected = selected.includes(id);
-                const isHidden = el.classList.contains('hidden');
-                return isSelected && !isHidden;
-            });
-            g.classList.toggle('focus-active', hasVisible);
-            g.classList.toggle('focus-hidden', !hasVisible);
-        });
-
-        document.querySelectorAll('.section-title').forEach(t => {
-            const grid = chartsGridForTitle(t);
-            const hasVisible = grid?.classList.contains('charts-grid') && grid.classList.contains('focus-active');
-            setSectionFocusChrome(t, { active: !!hasVisible, selecting: false, hidden: !hasVisible });
-        });
-
-        chartCardIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                const isSelected = selected.includes(id);
-                const isHidden = el.classList.contains('hidden');
-                el.classList.toggle('focus-visible', isSelected && !isHidden);
-                el.classList.remove('focus-selected');
-            }
-        });
-        _getSplitCards().forEach(card => {
-            const isSelected = selected.includes(card.id);
-            const isHidden = card.classList.contains('hidden');
-            card.classList.toggle('focus-visible', isSelected && !isHidden);
-            card.classList.remove('focus-selected');
-        });
-        _getDynamicSystemCards().forEach(card => {
-            const isSelected = selected.includes(card.id);
-            const isHidden = card.classList.contains('hidden');
-            card.classList.toggle('focus-visible', isSelected && !isHidden);
-            card.classList.remove('focus-selected');
-        });
-        _getAppCards().forEach(card => {
-            const isSelected = selected.includes(card.id);
-            card.classList.toggle('focus-visible', isSelected);
-            card.classList.remove('focus-selected');
-        });
-
-        if (readPref('kula_focus_hide_gauges') === 'true') {
-            document.getElementById('gauges-row')?.classList.add('focus-hidden');
-        }
-        document.getElementById('chart-search')?.classList.add('focus-hidden');
-
-        combineGrids();
+        applyFocusLayout();
         removeFocusBar();
         if (tvRequested) enterTvMode();
         else exitTvMode();
@@ -225,69 +151,14 @@ export function toggleFocusMode() {
     });
     btn.classList.add('focus-active');
 
-    // Pre-select previously visible cards
-    chartCardIds.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            if (state.focusVisible?.includes(id)) {
-                el.classList.add('focus-selected');
-            } else {
-                el.classList.remove('focus-selected');
-            }
-        }
-    });
-    _getSplitCards().forEach(card => {
-        if (!card.classList.contains('hidden')) {
-            if (state.focusVisible?.includes(card.id)) {
-                card.classList.add('focus-selected');
-            } else {
-                card.classList.remove('focus-selected');
-            }
-        }
-    });
-    _getDynamicSystemCards().forEach(card => {
-        if (!card.classList.contains('hidden')) {
-            if (state.focusVisible?.includes(card.id)) {
-                card.classList.add('focus-selected');
-            } else {
-                card.classList.remove('focus-selected');
-            }
-        }
-    });
-    _getAppCards().forEach(card => {
-        if (state.focusVisible?.includes(card.id)) {
-            card.classList.add('focus-selected');
-        } else {
-            card.classList.remove('focus-selected');
-        }
+    // Pre-select previously visible cards; a click toggles a card.
+    const visible = new Set(state.focusVisible || []);
+    chartCards().forEach(card => {
+        card.classList.toggle('focus-selected', visible.has(card.id));
+        attachFocusClick(card);
     });
 
     showFocusBar();
-
-    // Click handler for selection
-    chartCardIds.forEach(id => {
-        const el = document.getElementById(id);
-        if (el && !el.classList.contains('hidden')) {
-            el._focusClick = () => el.classList.toggle('focus-selected');
-            el.addEventListener('click', el._focusClick);
-        }
-    });
-    _getSplitCards().forEach(card => {
-        if (!card.classList.contains('hidden')) {
-            card._focusClick = () => card.classList.toggle('focus-selected');
-            card.addEventListener('click', card._focusClick);
-        }
-    });
-    _getDynamicSystemCards().forEach(card => {
-        if (!card.classList.contains('hidden')) {
-            card._focusClick = () => card.classList.toggle('focus-selected');
-            card.addEventListener('click', card._focusClick);
-        }
-    });
-    _getAppCards().forEach(card => {
-        card._focusClick = () => card.classList.toggle('focus-selected');
-        card.addEventListener('click', card._focusClick);
-    });
 }
 
 // The bar is built after the translations were applied to the page, so it
@@ -363,6 +234,7 @@ export function showFocusBar() {
         document.getElementById('btn-focus').classList.remove('focus-active');
         document.getElementById('gauges-row')?.classList.remove('focus-hidden');
         document.getElementById('chart-search')?.classList.remove('focus-hidden');
+        chartCards().forEach(card => card.classList.remove('focus-selected'));
         removeFocusBar();
         restoreGrids();
     });
@@ -371,155 +243,51 @@ export function showFocusBar() {
 export function removeFocusBar() {
     const bar = document.getElementById('focus-bar');
     if (bar) bar.remove();
-    chartCardIds.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            if (el._focusClick) {
-                el.removeEventListener('click', el._focusClick);
-                delete el._focusClick;
-            }
-        }
-    });
-    _getSplitCards().forEach(card => {
+    chartCards().forEach(card => {
         if (card._focusClick) {
             card.removeEventListener('click', card._focusClick);
             delete card._focusClick;
         }
     });
-    _getDynamicSystemCards().forEach(card => {
-        if (card._focusClick) {
-            card.removeEventListener('click', card._focusClick);
-            delete card._focusClick;
-        }
+}
+
+// Show the stored selection: every section's cards in #charts-grid (in their
+// sections' order, see card-layout.js), only the selected ones visible.
+// Hidden cards keep focus-visible; the stylesheet shows them once they are
+// no longer hidden, so no per-sample pass is needed.
+function applyFocusLayout() {
+    const selected = new Set(state.focusVisible || []);
+    const mainGrid = document.getElementById('charts-grid');
+    document.querySelectorAll('.charts-grid').forEach(grid => {
+        grid.classList.remove('focus-selecting');
+        grid.classList.toggle('focus-active', grid === mainGrid);
+        grid.classList.toggle('focus-hidden', grid !== mainGrid);
     });
-    _getAppCards().forEach(card => {
-        if (card._focusClick) {
-            card.removeEventListener('click', card._focusClick);
-            delete card._focusClick;
-        }
+    document.querySelectorAll('.section-title').forEach(t => {
+        setSectionFocusChrome(t, { active: false, selecting: false, hidden: true });
     });
+    chartCards().forEach(card => card.classList.toggle('focus-visible', selected.has(card.id)));
+
+    if (readPref('kula_focus_hide_gauges') === 'true') {
+        document.getElementById('gauges-row')?.classList.add('focus-hidden');
+    }
+    document.getElementById('chart-search')?.classList.add('focus-hidden');
+
+    arrangeCards();
+    // Container cards just left the Applications grid; keep their legend with them.
+    syncApplicationsHeaderFocus();
 }
 
 export function applyStoredFocusMode() {
     if (state.focusVisible && state.focusVisible.length > 0) {
         state.focusMode = true;
         document.getElementById('btn-focus')?.classList.add('focus-active');
-
-        const grids = document.querySelectorAll('.charts-grid');
-        grids.forEach(g => {
-            const hasVisible = Array.from(g.querySelectorAll('.chart-card')).some(el => {
-                const id = el.id;
-                const isSelected = state.focusVisible.includes(id);
-                const isHidden = el.classList.contains('hidden');
-                return isSelected && !isHidden;
-            });
-            g.classList.toggle('focus-active', hasVisible);
-            g.classList.toggle('focus-hidden', !hasVisible);
-        });
-
-        document.querySelectorAll('.section-title').forEach(t => {
-            const grid = chartsGridForTitle(t);
-            const hasVisible = grid?.classList.contains('charts-grid') && grid.classList.contains('focus-active');
-            setSectionFocusChrome(t, { active: !!hasVisible, selecting: false, hidden: !hasVisible });
-        });
-
-        chartCardIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                const isSelected = state.focusVisible.includes(id);
-                const isHidden = el.classList.contains('hidden');
-                // Only show if selected AND not logically hidden by telemetry
-                el.classList.toggle('focus-visible', isSelected && !isHidden);
-            }
-        });
-        _getSplitCards().forEach(card => {
-            const isSelected = state.focusVisible.includes(card.id);
-            const isHidden = card.classList.contains('hidden');
-            card.classList.toggle('focus-visible', isSelected && !isHidden);
-        });
-        _getDynamicSystemCards().forEach(card => {
-            const isSelected = state.focusVisible.includes(card.id);
-            const isHidden = card.classList.contains('hidden');
-            card.classList.toggle('focus-visible', isSelected && !isHidden);
-        });
-        _getAppCards().forEach(card => {
-            const isSelected = state.focusVisible.includes(card.id);
-            card.classList.toggle('focus-visible', isSelected);
-        });
-
-        if (readPref('kula_focus_hide_gauges') === 'true') {
-            document.getElementById('gauges-row')?.classList.add('focus-hidden');
-        }
-        document.getElementById('chart-search')?.classList.add('focus-hidden');
-
-        combineGrids();
+        applyFocusLayout();
     }
 }
 
-export function combineGrids() {
-    const mainGrid = document.getElementById('charts-grid');
-    if (!mainGrid) return;
-    chartCardIds.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) mainGrid.appendChild(el);
-    });
-    // Also move split cards into the main grid for a unified focus layout
-    _getSplitCards().forEach(card => mainGrid.appendChild(card));
-    // Keep dynamic system cards after the canonical system and split cards.
-    _getDynamicSystemCards().forEach(card => mainGrid.appendChild(card));
-    // Move app cards (nginx, containers, postgres, custom) into the main grid
-    _getAppCards().forEach(card => mainGrid.appendChild(card));
-    // Container cards just left the Applications grid; keep their legend with them.
-    syncApplicationsHeaderFocus();
-}
-
-export function restoreGrids() {
-    const mainGrid = document.getElementById('charts-grid');
-    const thermalsGrid = document.getElementById('thermals-grid');
-    if (!mainGrid || !thermalsGrid) return;
-
-    // Restore static cards to their canonical grids
-    const thermalsIds = ['card-cpu-temp', 'card-disk-temp', 'card-gpu-temp'];
-    chartCardIds.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            if (thermalsIds.includes(id)) {
-                thermalsGrid.appendChild(el);
-            } else {
-                mainGrid.appendChild(el);
-            }
-        }
-    });
-
-    // Re-insert split cards after their respective anchor cards so they stay
-    // in the correct position (e.g. network splits after card-pps, not at the end).
-    const insertConfigs = [
-        { afterId: 'card-pps',        type: 'network',   filter: null },
-        { afterId: 'card-disk-io',    type: 'diskio',    filter: null },
-        { afterId: 'card-disk-space', type: 'diskspace', filter: null },
-        { afterId: 'card-vram',       type: 'gpu',       filter: id => !id.startsWith('card-split-gputemp-') },
-        { afterId: 'card-disk-temp',  type: 'disktemp',  filter: null },
-        { afterId: 'card-gpu-temp',   type: 'gpu',       filter: id => id.startsWith('card-split-gputemp-') },
-    ];
-    for (const cfg of insertConfigs) {
-        const anchor = document.getElementById(cfg.afterId);
-        if (!anchor) continue;
-        let insertAfter = anchor;
-        const cards = Array.from(document.querySelectorAll(`[data-split-type="${cfg.type}"]`))
-            .filter(card => !cfg.filter || cfg.filter(card.id));
-        for (const card of cards) {
-            insertAfter.insertAdjacentElement('afterend', card);
-            insertAfter = card;
-        }
-    }
-
-    // Dynamic system cards are normally created at the end of the system grid.
-    _getDynamicSystemCards().forEach(card => mainGrid.appendChild(card));
-
-    // Restore app cards back to applications-grid
-    const appsGrid = document.getElementById('applications-grid');
-    if (appsGrid) {
-        _getAppCards().forEach(card => appsGrid.appendChild(card));
-    }
+// Return every card to its own section, in that section's order.
+function restoreGrids() {
+    arrangeCards();
     syncApplicationsHeaderFocus();
 }

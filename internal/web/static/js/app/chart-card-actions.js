@@ -174,6 +174,37 @@ export function toggleExpandChart(cardId) {
     resizeCardChart(card);
 }
 
+/** Collapse every expanded card under root, restoring the cards' own order. */
+export function collapseExpandedCards(root = document) {
+    root.querySelectorAll('.chart-card.chart-expanded').forEach(card => {
+        if (card.id) toggleExpandChart(card.id);
+    });
+}
+
+// A card added to a grid while one of its cards is expanded would have no
+// temporary order and sort before all of them. Give it one just after its DOM
+// predecessor so it shows where it sits; the last collapse restores it.
+export function adoptExpandOrder(card) {
+    const grid = card?.closest('.charts-grid');
+    if (!grid || card.dataset.expandOrigOrder !== undefined) return;
+    if (!grid.querySelector('.chart-card.chart-expanded')) return;
+    let previous = card.previousElementSibling;
+    while (previous && previous.dataset.expandOrigOrder === undefined) {
+        previous = previous.previousElementSibling;
+    }
+    const base = previous ? parseInt(previous.style.order, 10) : NaN;
+    card.dataset.expandOrigOrder = card.style.order;
+    card.style.order = String(Number.isFinite(base) ? base + 1 : 0);
+}
+
+// An expanded card can be removed while expanded (a split rebuild replaces its
+// cards), leaving the others on their temporary orders; restore them.
+export function settleExpandOrders(grid) {
+    if (grid?.matches?.('.charts-grid') && !grid.querySelector('.chart-card.chart-expanded')) {
+        restoreOriginalOrders(grid);
+    }
+}
+
 function headerActions(card) {
     const header = card.querySelector('.chart-header');
     if (!header) return null;

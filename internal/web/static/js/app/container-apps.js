@@ -35,7 +35,7 @@ const CONTAINER_METRICS = [
         chartId: 'chart-containers-cpu',
         subtitleId: 'containers-cpu-subtitle',
         i18nKeys: ['cpu_usage'],
-        order: 20,
+        rank: 0,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatMetricNumber(v) + '%' } },
         field: 'cpu_pct',
     },
@@ -45,7 +45,7 @@ const CONTAINER_METRICS = [
         chartId: 'chart-containers-mem',
         subtitleId: 'containers-mem-subtitle',
         i18nKeys: ['memory_usage'],
-        order: 21,
+        rank: 1,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) } },
         field: 'mem_used',
     },
@@ -57,7 +57,7 @@ const CONTAINER_METRICS = [
         // System has a single "Network Throughput" chart with RX/TX series;
         // we split direction into two cards and keep the same base label.
         i18nKeys: ['network_throughput', 'rx'],
-        order: 22,
+        rank: 2,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'net_rx_bps',
     },
@@ -67,7 +67,7 @@ const CONTAINER_METRICS = [
         chartId: 'chart-containers-net-tx',
         subtitleId: 'containers-net-tx-subtitle',
         i18nKeys: ['network_throughput', 'tx'],
-        order: 23,
+        rank: 3,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'net_tx_bps',
     },
@@ -77,7 +77,7 @@ const CONTAINER_METRICS = [
         chartId: 'chart-containers-disk-r',
         subtitleId: 'containers-disk-r-subtitle',
         i18nKeys: ['disk_io', 'disk_read'],
-        order: 24,
+        rank: 4,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'disk_r_bps',
     },
@@ -87,7 +87,7 @@ const CONTAINER_METRICS = [
         chartId: 'chart-containers-disk-w',
         subtitleId: 'containers-disk-w-subtitle',
         i18nKeys: ['disk_io', 'disk_write'],
-        order: 25,
+        rank: 5,
         yConfig: { beginAtZero: true, ticks: { callback: v => formatBytesShort(v) + '/s' } },
         field: 'disk_w_bps',
     },
@@ -300,7 +300,7 @@ function ensureMetricCharts(createAppChartCard) {
     if (!state.containerCharts) state.containerCharts = {};
     for (const m of CONTAINER_METRICS) {
         if (state.containerCharts[m.key]) continue;
-        createAppChartCard(m.cardId, m.chartId, m.subtitleId, metricTitle(m), m.order);
+        createAppChartCard(m.cardId, m.chartId, m.subtitleId, metricTitle(m), 'containers', m.rank);
         applyMetricCardTitle(m);
         const chart = createTimeSeriesChart(m.chartId, [], m.yConfig);
         if (chart) {

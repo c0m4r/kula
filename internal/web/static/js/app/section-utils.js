@@ -54,7 +54,7 @@ export function clearAllSectionFocusChrome() {
 
 /**
  * Keep a .section-head visible while any of the cards it describes is visible,
- * even after combineGrids() has moved those cards into the main grid.
+ * even after Focus mode has combined those cards into the main grid.
  *
  * Focus mode relocates app cards out of their own grid, so the usual
  * "is my grid focus-active?" test hides the header — which for Applications
