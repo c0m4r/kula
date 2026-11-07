@@ -74,6 +74,9 @@ type Tier struct {
 	seekReady bool
 	// passMax is the greatest timestamp written in pass writeCycle.
 	passMax int64
+	// seekFromSidecar records that OpenTier adopted the saved index instead
+	// of walking the ring.
+	seekFromSidecar bool
 }
 
 func OpenTier(path string, maxSize int64) (*Tier, error) {
@@ -671,88 +674,20 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 	return samples, nil
 }
 
-// ReadLatest returns the n most recent samples.
+// ReadLatest returns the n most recent samples, oldest first. With a seek
+// index it walks only the end of the ring.
 func (t *Tier) ReadLatest(n int) ([]*AggregatedSample, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	if t.count == 0 {
+	if t.count == 0 || n <= 0 {
 		return nil, nil
 	}
 
-	type segment struct {
-		start, size int64
-		// resync mirrors ReadRange: skip holes in the active head segment, but
-		// stop at the end-of-segment sentinel in the old wrapped segment.
-		resync bool
-	}
-	var segments []segment
-
-	if t.wrapped {
-		segments = append(segments, segment{start: t.oldestOff, size: t.maxData - t.oldestOff})
-		segments = append(segments, segment{start: 0, size: t.writeOff, resync: true})
-	} else {
-		segments = append(segments, segment{start: 0, size: t.writeOff, resync: true})
-	}
-
-	// First pass: find the offsets of all records
-	type recordLoc struct {
-		offset int64
-		length uint32
-	}
-	locs := make([]recordLoc, 0, n)
-
-	for _, seg := range segments {
-		bytesRead := int64(0)
-		sr := io.NewSectionReader(t.file, headerSize+seg.start, seg.size)
-		br := bufio.NewReaderSize(sr, 1024*1024)
-
-		for bytesRead < seg.size {
-			if seg.size-bytesRead < 4 {
-				break
-			}
-			peekN := int64(13)
-			if peekN > seg.size-bytesRead {
-				peekN = seg.size - bytesRead
-			}
-			hdr, _ := br.Peek(int(peekN))
-			if len(hdr) < 4 {
-				break
-			}
-			dataLen := binary.LittleEndian.Uint32(hdr[0:4])
-			if !t.validRecordLen(dataLen) || bytesRead+4+int64(dataLen) > seg.size {
-				// Active segment: skip an unclean-shutdown hole; old segment: the
-				// sentinel ends the segment. (See ReadRange for the rationale.)
-				if !seg.resync || !t.resyncToNextRecord(br, &bytesRead, seg.size) {
-					break
-				}
-				continue
-			}
-
-			recordLen := int64(4 + dataLen)
-
-			loc := recordLoc{
-				offset: headerSize + seg.start + bytesRead,
-				length: dataLen,
-			}
-			if len(locs) < n {
-				locs = append(locs, loc)
-			} else {
-				copy(locs, locs[1:])
-				locs[len(locs)-1] = loc
-			}
-
-			if _, err := br.Discard(int(recordLen)); err != nil {
-				break
-			}
-			bytesRead += recordLen
-		}
-	}
-
 	var samples []*AggregatedSample
-	for _, loc := range locs {
+	for _, loc := range t.latestRecords(n) {
 		data := make([]byte, loc.length)
-		if _, err := t.file.ReadAt(data, loc.offset+4); err != nil {
+		if _, err := t.file.ReadAt(data, headerSize+loc.offset+4); err != nil {
 			continue
 		}
 		sample, err := t.readRecord(data)
@@ -786,6 +721,14 @@ func (t *Tier) Close() error {
 	if err := t.file.Sync(); err != nil {
 		_ = t.file.Close()
 		return fmt.Errorf("syncing tier %s on close: %w", t.path, err)
+	}
+	// The saved index lets the next start skip walking the ring. Losing it
+	// costs only that walk.
+	if t.seekReady {
+		if err := t.saveSeekIndex(); err != nil {
+			fmt.Printf("Storage: tier %s: could not save its seek index (%v); the next start rebuilds it.\n",
+				filepath.Base(t.path), err)
+		}
 	}
 	return t.file.Close()
 }

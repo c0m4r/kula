@@ -50,7 +50,9 @@ Backup enabled (schedule "0 0 * * *", maxtier 3, retention 1d, compress true)
 To restore, stop Kula, copy the backed-up `tier_*.dat` (decompressing `.gz` first if
 compressed) back into `storage.directory`, and start Kula again. On startup the storage engine
 restores its latest-sample cache and reconstructs pending aggregation buffers from the files,
-so it resumes serving recent data and continuing tier rollups.
+so it resumes serving recent data and continuing tier rollups. Backups leave out the `tier_N.idx`
+seek indexes; a restored tier no longer matches its old index, so Kula rebuilds it at the first
+start (one read of each tier file).
 
 > Keep `storage.directory` and the tier resolutions consistent between backup and restore. The
 > binary format is forward-compatible (old records are skipped cleanly when new metric fields

@@ -138,57 +138,47 @@ func NewStore(cfg config.StorageConfig) (*Store, error) {
 		s.tiers = append(s.tiers, tier)
 	}
 
-	// Warm the latest-sample cache so QueryLatest is O(1) from the first call.
-	// This is the only full-tier scan at startup; every subsequent QueryLatest
-	// uses the in-memory pointer set by WriteSample.
-	s.warmLatestCache()
-
-	// Reconstruct any partially-aggregated buffers so we don't drop intervals
-	// after a process restart.
-	s.reconstructAggregationState()
+	// Restore the latest-sample cache, so QueryLatest is O(1) from the first
+	// call, and any partially aggregated rollup buffers, so intervals are not
+	// dropped across a restart. Each tier's seek index lets this read only the
+	// tails of tiers 0 and 1.
+	s.restoreTailState()
 
 	return s, nil
 }
 
-// warmLatestCache reads the most recent sample from tier 0 and stores it
-// in latestCache. Called once during NewStore to avoid the first QueryLatest
-// being a full disk scan after a process restart.
-func (s *Store) warmLatestCache() {
+// restoreTailState reads the newest records of the lower tiers once: tier 0's
+// tail supplies both the latest-sample cache and the samples not yet rolled
+// into tier 1, and tier 1's tail the rollups not yet rolled into tier 2.
+func (s *Store) restoreTailState() {
 	if len(s.tiers) == 0 {
 		return
 	}
-	samples, err := s.tiers[0].ReadLatest(1)
-	if err == nil && len(samples) > 0 {
-		s.latestCache = samples[0]
+	t0Samples, err := s.tiers[0].ReadLatest(max(1, s.ratio1))
+	if err != nil {
+		return
 	}
-}
-
-// reconstructAggregationState reads the tails of lower tiers to restore
-// the unaggregated memory buffers (tier1Buf, tier2Buf) and counters on startup.
-func (s *Store) reconstructAggregationState() {
-	if len(s.tiers) <= 1 {
+	if len(t0Samples) > 0 {
+		s.latestCache = t0Samples[len(t0Samples)-1]
+	}
+	if len(s.tiers) <= 1 || s.ratio1 <= 0 {
 		return
 	}
 
-	// Reconstruct Tier 1 state using the cached ratio.
+	// Tier-1 state: the raw samples newer than tier 1's newest rollup.
 	t1Newest := s.tiers[1].NewestTimestamp()
-	t0Samples, err := s.tiers[0].ReadLatest(s.ratio1)
-	if err == nil {
-		var pending []*AggregatedSample
-		for _, as := range t0Samples {
-			if as.Timestamp.After(t1Newest) {
-				if as.Data != nil {
-					as.ExtremaProfile = "raw"
-					pending = append(pending, as)
-				}
-			}
+	var pending []*AggregatedSample
+	for _, as := range t0Samples[max(0, len(t0Samples)-s.ratio1):] {
+		if as.Timestamp.After(t1Newest) && as.Data != nil {
+			as.ExtremaProfile = "raw"
+			pending = append(pending, as)
 		}
-		s.tier1Buf = pending
-		s.tier1Count = len(pending)
 	}
+	s.tier1Buf = pending
+	s.tier1Count = len(pending)
 
-	// Reconstruct Tier 2 state.
-	if len(s.tiers) > 2 {
+	// Tier-2 state.
+	if len(s.tiers) > 2 && s.ratio2 > 0 {
 		t2Newest := s.tiers[2].NewestTimestamp()
 		t1Samples, err := s.tiers[1].ReadLatest(s.ratio2)
 		if err == nil {

@@ -50,7 +50,8 @@ Full walkthrough: [Adding a Metric Type](docs/dev/14-adding-metrics.md),
 
 ### Tier seek index
 
-`internal/storage/tier_index.go` keeps a sparse in-memory record index per tier. `Tier.Write`
+`internal/storage/tier_index.go` keeps a sparse record index per tier and saves it at clean
+shutdown as `tier_N.idx`, adopted only when it matches the tier header exactly. `Tier.Write`
 maintains it; any other code that writes records into an open tier (test helpers simulating
 older writers) must call `seekAppend` like `Write` does, or seeking scans skip those records.
 `TestSeekIndexScansMatchFullScans` requires seeking scans to equal full scans.

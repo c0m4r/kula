@@ -151,6 +151,12 @@ Changing `max_size` on a tier that already has data:
   with and logs a line saying so at startup. To actually shrink a tier, stop Kula and move its
   file (`<storage.directory>/tier_N.dat`) aside — that discards the tier's history.
 
+Next to each tier file Kula keeps a small seek index, `tier_N.idx` (tens of KB), saved on a
+clean shutdown. It lets history queries jump to their time range instead of reading the whole
+tier file, and lets a restart read only the end of each tier. It is only a cache: Kula uses it
+only when it matches the tier file exactly, and otherwise rebuilds it from the tier with one
+read of the file (after a crash, a restore or a `max_size` change). Deleting it is always safe.
+
 Changing the default resolutions can cause unexpected behavior, and very coarse Tier 1/2
 resolutions raise memory use and risk losing buffered samples on shutdown. See
 [Storage Engine](../dev/05-storage-engine.md) for internals.

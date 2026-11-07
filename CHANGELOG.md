@@ -20,6 +20,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
   refresh instead of megabytes)
 - History queries jump to their time range instead of reading the whole tier file (a few MB
   at most instead of the full 250 MB tier 0)
+- Restarts read only the end of each tier instead of scanning tier 0 twice; each tier keeps
+  a small `tier_N.idx` seek index, rebuilt automatically when missing or out of date
 - Cards keep one consistent order everywhere
 - Split charts expand and collapse like every other chart
 - Remove systemd service ProtectClock that prevents reading clock
