@@ -23,6 +23,11 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
 
 - **Token-only validation** — sessions are *not* bound to client IP or User-Agent (so they
   survive roaming/proxying); validated purely on expiry/validity.
+- **No sessions without auth** — with `web.auth.enabled: false`, `/api/login` answers `404`
+  and `ValidateCredentials` accepts nothing, so no session can be minted. Sessions are not
+  loaded either, and the empty set saved at shutdown clears `sessions.json`.
+- **Configured users only** — a session read from `sessions.json` whose username is no longer
+  in the config (primary account or `users`) is dropped on load.
 - **SHA-256 token hashing at rest** — plaintext token only on the wire; only its hash is stored
   in `sessions.json` (mode `0600`).
 - **Sliding expiration** — a successful request extends the session by `session_timeout`.

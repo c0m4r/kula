@@ -873,6 +873,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	// Without auth there is nothing to log in to. Refusing here also keeps the
+	// endpoint from minting sessions that would outlive a later switch to auth.
+	if !s.cfg.Auth.Enabled {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
 	if r.Method != http.MethodPost {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

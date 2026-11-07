@@ -40,6 +40,12 @@ web:
 
 You'll now get a login screen before the dashboard loads.
 
+> **Upgrading from 0.21.x or earlier?** Before 0.22.0, `/api/login` accepted any username and
+> password while auth was disabled and issued a real session that stayed valid once auth was
+> turned on. If an untrusted client could reach Kula while auth was off, stop Kula and delete
+> `sessions.json` from the storage directory before enabling auth. Current versions refuse
+> login while auth is disabled and clear stored sessions on any run with auth off.
+
 ## Multiple users
 
 Add extra accounts under `users`. Each uses the same `argon2` parameters as the primary
@@ -84,6 +90,9 @@ Generate each user's hash with `./kula hash-password`.
   session, the dashboard clears its readings and shows the login form. Signing in again
   reloads the selected history range without a page refresh.
 - A cleanup goroutine purges expired sessions every 5 minutes.
+- Sessions are restored from `sessions.json` on restart only for usernames still in the
+  config — removing an account from `users` signs it out. A run with auth disabled restores
+  none and leaves the file empty, and `/api/login` answers `404` while auth is off.
 
 ### Cookie flags
 

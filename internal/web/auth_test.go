@@ -69,10 +69,83 @@ func TestGenerateSalt(t *testing.T) {
 	}
 }
 
+// TestValidateCredentialsDisabled pins that disabled auth validates nothing:
+// answering true let /api/login mint real sessions for any name while auth was
+// off, and those sessions stayed valid once it was turned on.
 func TestValidateCredentialsDisabled(t *testing.T) {
 	am := NewAuthManager(config.AuthConfig{Enabled: false}, "", false, config.SecurityConfig{OriginValidation: true})
-	if !am.ValidateCredentials("any", "any") {
-		t.Error("With auth disabled, ValidateCredentials should return true")
+	if am.ValidateCredentials("any", "any") {
+		t.Error("With auth disabled, ValidateCredentials must return false")
+	}
+}
+
+// TestLoadSessionsDropsUnconfiguredUsers covers sessions persisted for a name
+// the config no longer has: a removed account, or one minted by an older
+// version's auth-off login. They must not survive a restart.
+func TestLoadSessionsDropsUnconfiguredUsers(t *testing.T) {
+	tmpDir := t.TempDir()
+	now := time.Now().UTC().Format(time.RFC3339)
+	saved := `[` +
+		`{"token":"primary","username":"admin","created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"extra","username":"alice","created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"removed","username":"bob","created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"nameless","username":"","created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"}` +
+		`]`
+	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), []byte(saved), 0600); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	am := NewAuthManager(config.AuthConfig{
+		Enabled:        true,
+		Username:       "admin",
+		Users:          []config.UserConfig{{Username: "alice"}},
+		SessionTimeout: time.Hour,
+	}, tmpDir, false, config.SecurityConfig{OriginValidation: true})
+	if err := am.LoadSessions(); err != nil {
+		t.Fatalf("LoadSessions error: %v", err)
+	}
+
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	for _, kept := range []string{"primary", "extra"} {
+		if _, ok := am.sessions[kept]; !ok {
+			t.Errorf("session %q of a configured user was not restored", kept)
+		}
+	}
+	for _, dropped := range []string{"removed", "nameless"} {
+		if _, ok := am.sessions[dropped]; ok {
+			t.Errorf("session %q of an unconfigured user was restored", dropped)
+		}
+	}
+}
+
+// TestLoadSessionsSkippedWhenAuthDisabled pins that a run with auth off loads
+// no sessions, so the empty set saved at shutdown clears any stored earlier.
+func TestLoadSessionsSkippedWhenAuthDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "sessions.json")
+	saved := `[{"token":"minted","username":"admin","created_at":"` + time.Now().UTC().Format(time.RFC3339) + `","expires_at":"2999-01-01T00:00:00Z"}]`
+	if err := os.WriteFile(path, []byte(saved), 0600); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+
+	am := NewAuthManager(config.AuthConfig{Enabled: false, Username: "admin"}, tmpDir, false, config.SecurityConfig{OriginValidation: true})
+	if err := am.LoadSessions(); err != nil {
+		t.Fatalf("LoadSessions error: %v", err)
+	}
+	if n := len(am.sessions); n != 0 {
+		t.Fatalf("auth disabled: loaded %d session(s), want 0", n)
+	}
+	if err := am.SaveSessions(); err != nil {
+		t.Fatalf("SaveSessions error: %v", err)
+	}
+
+	enabled := NewAuthManager(config.AuthConfig{Enabled: true, Username: "admin", SessionTimeout: time.Hour}, tmpDir, false, config.SecurityConfig{OriginValidation: true})
+	if err := enabled.LoadSessions(); err != nil {
+		t.Fatalf("LoadSessions error: %v", err)
+	}
+	if n := len(enabled.sessions); n != 0 {
+		t.Errorf("after an auth-off run, enabling auth restored %d session(s), want 0", n)
 	}
 }
 
@@ -354,6 +427,7 @@ func TestLoadSessionsLegacyFingerprintFields(t *testing.T) {
 
 	am := NewAuthManager(config.AuthConfig{
 		Enabled:        true,
+		Username:       "admin",
 		SessionTimeout: time.Hour,
 	}, tmpDir, false, config.SecurityConfig{OriginValidation: true})
 	if err := am.LoadSessions(); err != nil {
@@ -491,6 +565,7 @@ func TestLoadSessionsEnforcesAbsoluteLifetime(t *testing.T) {
 
 	am := NewAuthManager(config.AuthConfig{
 		Enabled:            true,
+		Username:           "admin",
 		SessionTimeout:     time.Hour,
 		SessionMaxLifetime: 7 * 24 * time.Hour,
 	}, tmpDir, false, config.SecurityConfig{OriginValidation: true})

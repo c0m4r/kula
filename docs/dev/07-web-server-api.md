@@ -43,7 +43,7 @@ Routes are registered on an inner mux, then wrapped so everything is served unde
 | GET/HEAD | `/api/system-info` | current hardware inventory and utilization | yes¹ |
 | GET | `/api/history` | time-range history | yes¹ |
 | GET | `/api/config` | UI config (theme, langs, graph bounds, custom metrics, ollama) | yes¹ |
-| POST | `/api/login` | login | public |
+| POST | `/api/login` | login (`404` while `web.auth.enabled` is false) | public |
 | POST | `/api/logout` | logout | public |
 | GET | `/api/auth/status` | whether auth is on / logged in | public |
 | GET | `/api/i18n?lang=` | locale strings | yes¹ |

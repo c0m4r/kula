@@ -28,6 +28,13 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - A Focus mode selection of only application charts no longer starts out hidden
 - Collapsing a split chart no longer reorders the application charts
 
+### Security
+
+- Login is refused while auth is disabled instead of issuing sessions that stayed valid
+  after enabling auth; stored sessions are cleared on runs with auth off and dropped when
+  their user is no longer configured (delete `sessions.json` once if upgrading straight
+  into auth)
+
 ## [0.21.0] - 2026-10-01
 
 ### Added

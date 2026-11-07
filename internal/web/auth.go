@@ -263,9 +263,13 @@ const (
 // whether the username exists: a non-matching username falls through to a
 // throwaway hash over dummySalt so the response time does not reveal which
 // usernames are valid (enumeration timing side channel).
+//
+// With auth disabled there are no credentials to check, so nothing validates.
+// Answering true would let /api/login mint real sessions for any name, which
+// persist in sessions.json and stay valid once auth is turned on.
 func (a *AuthManager) ValidateCredentials(username, password string) bool {
 	if !a.cfg.Enabled {
-		return true
+		return false
 	}
 
 	if subtle.ConstantTimeCompare([]byte(username), []byte(a.cfg.Username)) == 1 {
@@ -431,10 +435,38 @@ func (a *AuthManager) CleanupSessions() {
 	a.UserLimiter.mu.Unlock()
 }
 
+// isConfiguredUser reports whether username names an account in the current
+// config. It compares server-side state only, so it need not be constant-time.
+func (a *AuthManager) isConfiguredUser(username string) bool {
+	if username == "" {
+		return false
+	}
+	if username == a.cfg.Username {
+		return true
+	}
+	for _, u := range a.cfg.Users {
+		if username == u.Username {
+			return true
+		}
+	}
+	return false
+}
+
 // LoadSessions loads sessions from disk.
+//
+// With auth disabled nothing is loaded: no session can be needed, and the
+// empty set SaveSessions writes at shutdown then clears any left behind. A
+// session is also dropped when its user is no longer configured. The config is
+// fixed for the life of the process and CreateSession runs only after
+// ValidateCredentials succeeds, so sessions created in this process always
+// belong to a configured user; only those read from disk need the check.
 func (a *AuthManager) LoadSessions() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	if !a.cfg.Enabled {
+		return nil
+	}
 
 	path := filepath.Join(a.storageDir, "sessions.json")
 	data, err := os.ReadFile(path)
@@ -453,6 +485,9 @@ func (a *AuthManager) LoadSessions() error {
 	now := time.Now()
 	for _, sd := range saved {
 		if !now.Before(sd.ExpiresAt) {
+			continue
+		}
+		if !a.isConfiguredUser(sd.Username) {
 			continue
 		}
 		sess := &session{

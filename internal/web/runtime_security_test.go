@@ -194,6 +194,58 @@ func TestRuntimeLoginGrantsAccess(t *testing.T) {
 	}
 }
 
+// TestRuntimeLoginRefusedWhenAuthDisabled reproduces the auth-off session leak:
+// a login attempt while auth is disabled must neither mint a session nor leave
+// one in sessions.json that a later auth-enabled run would accept.
+func TestRuntimeLoginRefusedWhenAuthDisabled(t *testing.T) {
+	storageDir := t.TempDir()
+	params := config.Argon2Config{Time: 1, Memory: 8, Threads: 1}
+	authCfg := config.AuthConfig{
+		Username:           secUser,
+		PasswordHash:       HashPassword(secPass, secSalt, params),
+		PasswordSalt:       secSalt,
+		SessionTimeout:     time.Hour,
+		SessionMaxLifetime: secSessionMaxLifetime,
+		Argon2:             params,
+	}
+	newServer := func(enabled bool) (*Server, *httptest.Server) {
+		a := authCfg
+		a.Enabled = enabled
+		cfg := config.WebConfig{
+			Enabled:  true,
+			UI:       true,
+			Security: config.SecurityConfig{OriginValidation: true},
+			Auth:     a,
+		}
+		s := NewServer(cfg, config.GlobalConfig{Hostname: "testhost"}, &collector.Collector{}, nil, storageDir, config.OllamaConfig{})
+		if err := s.auth.LoadSessions(); err != nil {
+			t.Fatalf("LoadSessions: %v", err)
+		}
+		ts := httptest.NewServer(s.buildHandler())
+		t.Cleanup(ts.Close)
+		return s, ts
+	}
+
+	off, offTS := newServer(false)
+	res := login(t, offTS, secUser, "anything")
+	if res.status != http.StatusNotFound {
+		t.Errorf("auth disabled: login status = %d, want 404 (body %q)", res.status, res.body)
+	}
+	if res.session != "" {
+		t.Error("auth disabled: login issued a session cookie")
+	}
+	if err := off.auth.SaveSessions(); err != nil {
+		t.Fatalf("SaveSessions: %v", err)
+	}
+
+	_, onTS := newServer(true)
+	if res.session != "" {
+		if code, _ := get(t, onTS, "/api/i18n?lang=en", res.session); code != http.StatusUnauthorized {
+			t.Errorf("session minted with auth off: GET after enabling auth = %d, want 401", code)
+		}
+	}
+}
+
 // TestRuntimeUsernameEnumerationResistance is a regression guard for the login
 // timing/enumeration fix: a wrong password for an existing username and a wrong
 // password for a nonexistent username must be indistinguishable in the response
