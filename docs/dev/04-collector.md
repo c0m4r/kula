@@ -66,6 +66,17 @@ API and WebSocket payloads.
   failed sub-query drops that counter's), so the next delta is never two intervals of growth
   divided by one (`nginx.go`, `postgres.go`).
 - **Lazy-allocate clients.** HTTP/DB clients are created on first use.
+- **Database collectors own exactly one session.** `postgres.go` and `mysql.go` poll through
+  `dbsession.go`: a pinned `sql.Conn` from a pool capped at one; polls in their own goroutine,
+  one at a time (`dbPoller`, read by `Collect` through `Latest()`), with a hard timeout of
+  `max(10s, 2×interval)` instead of the collection interval; server-side statement, lock, idle
+  and keepalive limits set on every session; a session given up on is ended by the next
+  connection (matched by PostgreSQL pid + `backend_start`, MySQL connection id + user + server
+  start) before polling resumes, and the collector closes its probe connection and backs off
+  while it lives; failed attempts back off exponentially to 5 minutes. lib/pq keeps reading
+  after a context ends, so its dialer uses short TCP keepalives to bound a half-open
+  connection. `dbsession_test.go` checks the bounds (one client connection, at most two server
+  sessions) against a fake driver.
 - **Debug logging** goes through the `debugf` helper, gated by `collection.DebugLog` (which is
   set when `web.logging.level == "debug"`).
 

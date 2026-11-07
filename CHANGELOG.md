@@ -39,7 +39,14 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - TCP retransmissions are stored in history; they used to chart as 0 after a reload or for
   any past range (older binaries cannot read the extended records, so back up before a
   downgrade)
+- PostgreSQL and MySQL monitoring can no longer pile up server connections: a poll slower than
+  the collection interval used to be abandoned while the server kept running it, and the next
+  second opened another session beside it. Kula now keeps one labelled session per server,
+  lets slow polls finish in the background, sets server-side statement, lock and idle limits,
+  ends any session it gave up on before polling again, and backs off when the server is down
 - MySQL rates no longer double after a failed poll
+- MySQL passwords containing `@`, `/` or `:` and IPv6 hosts work; PostgreSQL connection values
+  are quoted so a configured value cannot add connection parameters
 - Container monitoring finds the rootless Podman socket of the user Kula runs as (it only tried
   uid 1000), and says so when a socket belongs to another user's rootless Podman instead of
   suggesting the docker group

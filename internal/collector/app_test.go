@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"kula/internal/config"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 func TestNginxCollector(t *testing.T) {
@@ -395,37 +397,55 @@ func TestPostgresRatesNeedValidCountersAtBothEnds(t *testing.T) {
 func TestPostgresDSN(t *testing.T) {
 	// TCP
 	pc1 := newPostgresCollector("localhost", 5432, "user", "pass", "db", "disable", false, time.Second)
-	if !strings.Contains(pc1.dsn, "host=localhost") || !strings.Contains(pc1.dsn, "port=5432") {
-		t.Errorf("Unexpected TCP DSN: %s", pc1.dsn)
+	for _, want := range []string{"host='localhost'", "port=5432", "user='user'", "password='pass'",
+		"application_name='kula'", "statement_timeout=5000", "lock_timeout=2000",
+		"idle_in_transaction_session_timeout=10000", "tcp_keepalives_idle=30"} {
+		if !strings.Contains(pc1.dsn, want) {
+			t.Errorf("TCP DSN lacks %s: %s", want, pc1.dsn)
+		}
 	}
 
 	// Unix socket
 	pc2 := newPostgresCollector("/var/run/postgresql", 0, "user", "", "db", "disable", false, time.Second)
-	if !strings.Contains(pc2.dsn, "host=/var/run/postgresql") || strings.Contains(pc2.dsn, "port=") {
+	if !strings.Contains(pc2.dsn, "host='/var/run/postgresql'") || strings.Contains(pc2.dsn, "port=") {
 		t.Errorf("Unexpected Unix DSN: %s", pc2.dsn)
+	}
+
+	// A configured value cannot add parameters of its own.
+	pc3 := newPostgresCollector("localhost", 5432, "user", "x' sslmode='disable", "db name", "verify-full", false, time.Second)
+	if pc3.session.connector == nil {
+		t.Fatalf("quoted DSN did not parse: %s", pc3.dsn)
+	}
+	if !strings.Contains(pc3.dsn, `password='x\' sslmode=\'disable'`) || !strings.Contains(pc3.dsn, "dbname='db name'") {
+		t.Errorf("values not quoted: %s", pc3.dsn)
 	}
 }
 
 func TestMysqlDSN(t *testing.T) {
-	// TCP connection
-	mc1 := newMysqlCollector("localhost", 3306, "user", "pass", "mydb", false, time.Second)
-	if !strings.Contains(mc1.dsn, "tcp(localhost:3306)") {
-		t.Errorf("Unexpected TCP DSN: %s", mc1.dsn)
+	// TCP connection; the password holds DSN delimiters.
+	mc1 := newMysqlCollector("localhost", 3306, "user", "p@ss/word:1", "mydb", false, time.Second)
+	parsed, err := mysql.ParseDSN(mc1.config.FormatDSN())
+	if err != nil {
+		t.Fatalf("formatted DSN does not parse: %v", err)
 	}
-	if !strings.Contains(mc1.dsn, "user:pass@") {
-		t.Errorf("DSN missing credentials: %s", mc1.dsn)
+	if parsed.Net != "tcp" || parsed.Addr != "localhost:3306" || parsed.User != "user" ||
+		parsed.Passwd != "p@ss/word:1" || parsed.DBName != "mydb" {
+		t.Errorf("config round trip: %+v", parsed)
 	}
-	if !strings.Contains(mc1.dsn, "/mydb") {
-		t.Errorf("DSN missing dbname: %s", mc1.dsn)
+	if parsed.Params["wait_timeout"] != "60" || parsed.Params["lock_wait_timeout"] != "2" ||
+		parsed.ReadTimeout != 10*time.Second || parsed.ConnectionAttributes != "program_name:kula" {
+		t.Errorf("session bounds missing: params=%v read=%s attrs=%q", parsed.Params, parsed.ReadTimeout, parsed.ConnectionAttributes)
+	}
+
+	// IPv6 hosts get brackets.
+	if got := newMysqlCollector("::1", 3306, "user", "", "", false, time.Second).config.Addr; got != "[::1]:3306" {
+		t.Errorf("IPv6 address = %q", got)
 	}
 
 	// Unix socket connection (port == 0)
 	mc2 := newMysqlCollector("/var/run/mysqld/mysqld.sock", 0, "user", "", "mydb", false, time.Second)
-	if !strings.Contains(mc2.dsn, "unix(/var/run/mysqld/mysqld.sock)") {
-		t.Errorf("Unexpected Unix DSN: %s", mc2.dsn)
-	}
-	if strings.Contains(mc2.dsn, "tcp(") {
-		t.Errorf("Unix DSN should not contain tcp(): %s", mc2.dsn)
+	if mc2.config.Net != "unix" || mc2.config.Addr != "/var/run/mysqld/mysqld.sock" {
+		t.Errorf("Unexpected Unix config: %s %s", mc2.config.Net, mc2.config.Addr)
 	}
 }
 

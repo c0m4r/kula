@@ -209,6 +209,35 @@ IO state, replicas connected).
 > **Caveat on `Seconds_Behind_Source`:** this is the SQL thread's view of how far behind it is
 > on what it currently sees, *not* the true lag from the primary.
 
+## Database connections
+
+Kula is built never to be the reason a PostgreSQL or MySQL server runs out of connections:
+
+- **One session per database, per Kula process.** `kula serve` holds exactly one connection to
+  each monitored server and reuses it for every poll; each running `kula tui` holds one more.
+  The session is labelled: `application_name = kula` in PostgreSQL's `pg_stat_activity`, and
+  the `program_name: kula` connection attribute in MySQL/MariaDB.
+- **Slow polls wait instead of piling up.** Polls run in the background, one at a time. A poll
+  that takes longer than the collection interval delays the next one; it never runs beside it.
+- **The server ends runaway work by itself.** Kula's session carries its own limits:
+  statements stop after 5 s (`statement_timeout`; MariaDB `max_statement_time`; MySQL
+  `max_execution_time` for SELECTs), lock waits after 2 s (`lock_timeout` /
+  `lock_wait_timeout`), and a session nothing is sent on for a minute is closed
+  (PostgreSQL 14+ `idle_session_timeout` plus TCP keepalives; MySQL `wait_timeout`). If the
+  Kula host vanishes (network loss, crash), its session is gone within about a minute rather
+  than the hours the server defaults allow. The limits scale up with longer collection
+  intervals.
+- **No session is left behind.** If a poll cannot finish within 10 s, Kula closes that
+  connection and, from its next connection, ends the old session (`pg_terminate_backend` /
+  `KILL CONNECTION` — its own session only, identified so that no other client's can match).
+  While that old session is still alive, Kula does not poll beside it. So even during an
+  incident there are at most two Kula sessions per server, one of them on its way out.
+- **Failures back off.** A server that is down or refusing connections is retried after 1 s,
+  then 2 s, 4 s … up to 5 minutes, not every second.
+- **Clean shutdown.** Stopping Kula closes its sessions.
+
+No extra privilege is needed: a database user may always end its own sessions.
+
 ---
 
 ## Custom metrics

@@ -3,14 +3,15 @@ package collector
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"strconv"
 	"strings"
 	"time"
 
-	// PostgreSQL driver — imported for side-effect registration.
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // pgRaw holds the raw cumulative counters used to compute per-second rates.
@@ -34,129 +35,238 @@ type pgRaw struct {
 	bgValid bool
 }
 
-// postgresCollector manages the PostgreSQL connection and metrics.
+// postgresCollector polls one PostgreSQL database through a single session
+// (see dbsession.go for the connection rules).
 type postgresCollector struct {
 	dsn          string
-	db           *sql.DB
 	dbName       string
-	prev         pgRaw
 	debug        bool
-	wasConnected bool          // tracks connection state for log transitions
-	timeout      time.Duration // per-query/connect timeout, derived from collection interval
-	serverVerNum int           // server_version_num (e.g. 170000 = PG17); 0 until detected
+	debugDone    bool
+	session      dbSession
+	poller       dbPoller[PostgresStats]
+	prev         pgRaw
+	prevAt       time.Time
+	serverVerNum int // server_version_num (e.g. 170000 = PG17); 0 until connected
 }
 
-// newPostgresCollector builds the DSN and returns a collector (without connecting yet).
-// Connection is lazy — established on first Collect() call.
-func newPostgresCollector(host string, port int, user, password, dbname, sslmode string, debug bool, timeout time.Duration) *postgresCollector {
-	var dsn string
-	if port == 0 {
-		// Unix socket mode: host is the socket directory
-		dsn = fmt.Sprintf("host=%s user=%s dbname=%s sslmode=%s",
-			host, user, dbname, sslmode)
-	} else {
-		dsn = fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=%s",
-			host, port, user, dbname, sslmode)
+// pgValue quotes a libpq connection-string value, so no configured value can
+// end its own field and add parameters of its own.
+func pgValue(v string) string {
+	escaped := strings.ReplaceAll(v, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `'`, `\'`)
+	return "'" + escaped + "'"
+}
+
+// postgresDSN builds the connection string. Besides the connection target it
+// carries the session settings every PostgreSQL 10+ server accepts at
+// startup, so they apply from the first statement of every connection:
+// statement, lock and idle-in-transaction timeouts end runaway work, and the
+// server-side TCP keepalives end the session within about a minute if this
+// host vanishes. application_name marks the session as Kula's in
+// pg_stat_activity.
+func postgresDSN(host string, port int, user, password, dbname, sslmode string, t dbTimeouts) string {
+	parts := []string{"host=" + pgValue(host)}
+	if port != 0 {
+		parts = append(parts, fmt.Sprintf("port=%d", port))
 	}
+	parts = append(parts,
+		"user="+pgValue(user),
+		"dbname="+pgValue(dbname),
+		"sslmode="+pgValue(sslmode),
+	)
 	if password != "" {
-		// libpq key=value format requires single-quoting values that contain
-		// spaces or special characters; backslashes and single quotes within
-		// the quoted value must themselves be escaped with a backslash.
-		escaped := strings.ReplaceAll(password, `\`, `\\`)
-		escaped = strings.ReplaceAll(escaped, `'`, `\'`)
-		dsn += " password='" + escaped + "'"
+		parts = append(parts, "password="+pgValue(password))
 	}
-
-	return &postgresCollector{
-		dsn:     dsn,
-		dbName:  dbname,
-		debug:   debug,
-		timeout: timeout,
-	}
+	parts = append(parts,
+		"application_name='kula'",
+		fmt.Sprintf("statement_timeout=%d", t.statement.Milliseconds()),
+		fmt.Sprintf("lock_timeout=%d", t.lock.Milliseconds()),
+		fmt.Sprintf("idle_in_transaction_session_timeout=%d", t.poll.Milliseconds()),
+		"tcp_keepalives_idle=30",
+		"tcp_keepalives_interval=10",
+		"tcp_keepalives_count=3",
+	)
+	return strings.Join(parts, " ")
 }
 
-// connect establishes (or verifies) the DB connection.
-func (pc *postgresCollector) connect() error {
-	if pc.db != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), pc.timeout)
-		defer cancel()
-		if err := pc.db.PingContext(ctx); err == nil {
-			return nil // already connected
-		}
-		// Connection lost, close and retry.
-		// Clear prev counters so we don't compute bogus rates against
-		// stale values from a previous postgres instance.
-		_ = pc.db.Close()
-		pc.db = nil
-		pc.prev = pgRaw{}
-		pc.serverVerNum = 0
-		if pc.wasConnected {
-			log.Printf("[postgres] connection to %q lost, will retry", pc.dbName)
-			pc.wasConnected = false
-		}
-	}
+// pgKeepaliveDialer probes an idle TCP connection after 15 s and gives up
+// after three unanswered probes 5 s apart. lib/pq does not close a socket when
+// a query's context ends (it sends a cancel request and keeps reading), so on
+// a half-open connection only TCP itself can end the wait; the default
+// keepalive takes minutes.
+type pgKeepaliveDialer struct{ d net.Dialer }
 
-	db, err := sql.Open("postgres", pc.dsn)
-	if err != nil {
-		return fmt.Errorf("postgres open: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(5 * time.Minute)
+func newPgKeepaliveDialer() pgKeepaliveDialer {
+	return pgKeepaliveDialer{d: net.Dialer{KeepAliveConfig: net.KeepAliveConfig{
+		Enable: true, Idle: 15 * time.Second, Interval: 5 * time.Second, Count: 3,
+	}}}
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), pc.timeout)
+func (d pgKeepaliveDialer) Dial(network, address string) (net.Conn, error) {
+	return d.d.Dial(network, address)
+}
+
+func (d pgKeepaliveDialer) DialTimeout(network, address string, timeout time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("postgres ping: %w", err)
-	}
-	pc.db = db
-
-	var verStr string
-	if err := db.QueryRowContext(ctx, "SHOW server_version_num").Scan(&verStr); err == nil {
-		if v, err := strconv.Atoi(verStr); err == nil {
-			pc.serverVerNum = v
-		}
-	}
-
-	if !pc.wasConnected {
-		log.Printf("[postgres] connected to database %q", pc.dbName)
-		pc.wasConnected = true
-	}
-	return nil
+	return d.d.DialContext(ctx, network, address)
 }
 
-// Close closes the database connection.
+func (d pgKeepaliveDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return d.d.DialContext(ctx, network, address)
+}
+
+// newPostgresCollector prepares the collector without connecting; the first
+// poll connects.
+func newPostgresCollector(host string, port int, user, password, dbname, sslmode string, debug bool, interval time.Duration) *postgresCollector {
+	t := newDBTimeouts(interval)
+	pc := &postgresCollector{
+		dsn:    postgresDSN(host, port, user, password, dbname, sslmode, t),
+		dbName: dbname,
+		debug:  debug,
+	}
+	pc.poller.stale = t.stale
+	pc.session = dbSession{
+		name:     "[postgres]",
+		label:    dbname,
+		timeouts: t,
+		dialect: dbDialect{
+			setup:    pc.setupSession,
+			reap:     reapPostgresSession,
+			describe: func(ref dbSessionRef) string { return fmt.Sprintf("pid %d", ref.id) },
+		},
+	}
+	if connector, err := pq.NewConnector(pc.dsn); err == nil {
+		connector.Dialer(newPgKeepaliveDialer())
+		pc.session.connector = connector
+	} else {
+		log.Printf("[postgres] invalid connection settings for %q: %v", dbname, err)
+	}
+	return pc
+}
+
+// setupSession records the session's identity and server version and adds
+// the settings only newer servers know: idle_session_timeout (14+) ends a
+// session nothing is sent on, client_connection_check_interval (14+) lets a
+// long query notice that this client has gone, tcp_user_timeout (12+) ends a
+// connection whose data goes unacknowledged.
+func (pc *postgresCollector) setupSession(ctx context.Context, conn *sql.Conn) (dbSessionRef, error) {
+	var ref dbSessionRef
+	var version int
+	if err := conn.QueryRowContext(ctx, `
+		SELECT pid, backend_start::text, current_setting('server_version_num')::int
+		FROM pg_stat_activity WHERE pid = pg_backend_pid()
+	`).Scan(&ref.id, &ref.started, &version); err != nil {
+		return ref, err
+	}
+	pc.serverVerNum = version
+	var settings []string
+	if version >= 120000 {
+		settings = append(settings, "SET tcp_user_timeout = 30000")
+	}
+	if version >= 140000 {
+		settings = append(settings,
+			fmt.Sprintf("SET idle_session_timeout = %d", pc.session.timeouts.idle.Milliseconds()),
+			"SET client_connection_check_interval = 5000")
+	}
+	for _, statement := range settings {
+		if _, err := conn.ExecContext(ctx, statement); err != nil {
+			pc.debugf("[postgres] %s: %v", statement, err)
+		}
+	}
+	return ref, nil
+}
+
+// reapPostgresSession terminates an abandoned backend. pid and backend_start
+// together identify one backend for the server's lifetime, so a pid reused by
+// another client's session never matches. pg_terminate_backend works on the
+// same role's backends without extra privileges.
+func reapPostgresSession(ctx context.Context, conn *sql.Conn, ref dbSessionRef) (bool, error) {
+	alive := func() (bool, error) {
+		var exists bool
+		err := conn.QueryRowContext(ctx, `
+			SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND backend_start = $2::timestamptz)
+		`, ref.id, ref.started).Scan(&exists)
+		return exists, err
+	}
+	exists, err := alive()
+	if err != nil || !exists {
+		return err == nil, err
+	}
+	var signalled sql.NullBool
+	err = conn.QueryRowContext(ctx, `
+		SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid = $1 AND backend_start = $2::timestamptz
+	`, ref.id, ref.started).Scan(&signalled)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	// The backend exits once it handles the signal; give it a moment.
+	for range 10 {
+		if exists, err = alive(); err != nil || !exists {
+			return err == nil, err
+		}
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
+	return false, nil
+}
+
+func (pc *postgresCollector) debugf(format string, args ...any) {
+	if pc.debug && !pc.debugDone {
+		log.Printf(format, args...)
+	}
+}
+
+// Start begins polling in the background.
+func (pc *postgresCollector) Start(ctx context.Context) {
+	pc.poller.start(ctx, pc.session.timeouts.interval, pc.poll, pc.session.release)
+}
+
+// Latest returns the newest metrics while they are current.
+func (pc *postgresCollector) Latest() *PostgresStats {
+	return pc.poller.Latest()
+}
+
+// Close waits for the poller, stopped by its context, to end its session.
 func (pc *postgresCollector) Close() {
-	if pc.db != nil {
-		_ = pc.db.Close()
-	}
+	pc.poller.wait(5 * time.Second)
 }
 
-// collectPostgres gathers PostgreSQL metrics. Returns nil on any error.
-func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
-	if c.pgCollector == nil {
+// poll runs one collection on the collector's session.
+func (pc *postgresCollector) poll(ctx context.Context) *PostgresStats {
+	if pc.session.connector == nil {
 		return nil
 	}
-
-	if err := c.pgCollector.connect(); err != nil {
-		// Logged via state transitions in connect(); suppress per-cycle noise.
+	conn, err := pc.session.acquire(ctx)
+	if err != nil {
+		pc.prev = pgRaw{}
 		return nil
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), c.collCfg.Interval)
+	pollCtx, cancel := context.WithTimeout(ctx, pc.session.timeouts.poll)
 	defer cancel()
+	stats, err := pc.query(pollCtx, conn)
+	if err == nil {
+		// A non-fatal query cut short by the deadline still means the
+		// session may be busy on the server.
+		err = pollCtx.Err()
+	}
+	if err != nil {
+		// Rates are deltas between consecutive successful polls.
+		pc.prev = pgRaw{}
+		pc.session.fail(ctx, err)
+		return nil
+	}
+	pc.session.succeed()
+	pc.debugDone = true
+	return stats
+}
 
-	// Rates are deltas between consecutive successful polls. A poll that
-	// fails before its counters are recorded drops the baseline, so the next
-	// one starts over instead of dividing two intervals' growth by one.
-	recorded := false
-	defer func() {
-		if !recorded {
-			c.pgCollector.prev = pgRaw{}
-		}
-	}()
-
+// query gathers PostgreSQL metrics. Errors of the queries every poll needs
+// fail it; the others are left out of the result.
+func (pc *postgresCollector) query(ctx context.Context, conn *sql.Conn) (*PostgresStats, error) {
 	stats := &PostgresStats{}
 
 	// Connection states from pg_stat_activity:
@@ -164,8 +274,8 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 	// idle      — open but doing nothing
 	// idle_in_tx — started a transaction but not committed/rolled back (dangerous)
 	// waiting   — blocked waiting for a lock
-	c.debugf("[postgres] querying pg_stat_activity for %q", c.pgCollector.dbName)
-	row := c.pgCollector.db.QueryRowContext(ctx, `
+	pc.debugf("[postgres] querying pg_stat_activity for %q", pc.dbName)
+	row := conn.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(SUM(CASE WHEN state = 'active'
 			                   AND (wait_event_type IS DISTINCT FROM 'Lock') THEN 1 ELSE 0 END), 0),
@@ -178,13 +288,12 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 	`)
 	if err := row.Scan(&stats.ActiveConns, &stats.IdleConns,
 		&stats.IdleInTxConns, &stats.WaitingConns); err != nil {
-		c.debugf("[postgres] scan activity error: %v", err)
-		return nil
+		return nil, fmt.Errorf("pg_stat_activity: %w", err)
 	}
 
 	// Max connections setting
 	var maxConnsStr string
-	if err := c.pgCollector.db.QueryRowContext(ctx, "SHOW max_connections").Scan(&maxConnsStr); err == nil {
+	if err := conn.QueryRowContext(ctx, "SHOW max_connections").Scan(&maxConnsStr); err == nil {
 		if v, err := strconv.Atoi(maxConnsStr); err == nil {
 			stats.MaxConns = v
 		}
@@ -192,7 +301,7 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 
 	// Database-level cumulative counters from pg_stat_database
 	var cur pgRaw
-	row = c.pgCollector.db.QueryRowContext(ctx, `
+	row = conn.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(xact_commit,   0),
 			COALESCE(xact_rollback, 0),
@@ -206,7 +315,7 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 			COALESCE(deadlocks,     0)
 		FROM pg_stat_database
 		WHERE datname = $1
-	`, c.pgCollector.dbName)
+	`, pc.dbName)
 	if err := row.Scan(
 		&cur.xactCommit, &cur.xactRollback,
 		&cur.tupFetched, &cur.tupReturned,
@@ -214,12 +323,12 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 		&cur.blksRead, &cur.blksHit,
 		&cur.deadlocks,
 	); err != nil {
-		c.appErrorf("[postgres] pg_stat_database query error: %v", err)
-		return nil
+		return nil, fmt.Errorf("pg_stat_database: %w", err)
 	}
 	cur.valid = true
+	readAt := time.Now()
 
-	c.debugf("[postgres] raw: commit=%d, rollback=%d, hit=%d, read=%d, deadlocks=%d",
+	pc.debugf("[postgres] raw: commit=%d, rollback=%d, hit=%d, read=%d, deadlocks=%d",
 		cur.xactCommit, cur.xactRollback, cur.blksHit, cur.blksRead, cur.deadlocks)
 
 	// Background writer cumulative counters.
@@ -228,7 +337,7 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 	// the closest equivalent is now SUM(writes) over pg_stat_io for
 	// non-bgwriter/non-checkpointer backends.
 	var bgQuery string
-	if c.pgCollector.serverVerNum >= 170000 {
+	if pc.serverVerNum >= 170000 {
 		bgQuery = `
 			SELECT
 				COALESCE((SELECT buffers_written FROM pg_stat_checkpointer), 0),
@@ -244,9 +353,9 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 			FROM pg_stat_bgwriter
 		`
 	}
-	row = c.pgCollector.db.QueryRowContext(ctx, bgQuery)
+	row = conn.QueryRowContext(ctx, bgQuery)
 	if err := row.Scan(&cur.bufCheckpoint, &cur.bufBackend); err != nil {
-		c.debugf("[postgres] bgwriter query error: %v", err)
+		pc.debugf("[postgres] bgwriter query error: %v", err)
 		// Non-fatal: continue without bgwriter data. The zeroed pair must not
 		// become a baseline, or the next good poll would report the lifetime
 		// totals as one interval's writes.
@@ -255,11 +364,15 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 		cur.bgValid = true
 	}
 
-	c.pgCollector.calculateStats(stats, cur, elapsed)
-	recorded = true
+	elapsed := 0.0
+	if !pc.prevAt.IsZero() {
+		elapsed = readAt.Sub(pc.prevAt).Seconds()
+	}
+	pc.calculateStats(stats, cur, elapsed)
+	pc.prevAt = readAt
 
 	// Table health across all user tables: dead/live tuples and autovacuum activity
-	row = c.pgCollector.db.QueryRowContext(ctx, `
+	row = conn.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(SUM(n_dead_tup),       0),
 			COALESCE(SUM(n_live_tup),       0),
@@ -281,8 +394,8 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 
 	// Database size
 	var dbSize sql.NullInt64
-	if err := c.pgCollector.db.QueryRowContext(ctx,
-		"SELECT pg_database_size($1)", c.pgCollector.dbName,
+	if err := conn.QueryRowContext(ctx,
+		"SELECT pg_database_size($1)", pc.dbName,
 	).Scan(&dbSize); err == nil && dbSize.Valid {
 		stats.DBSizeBytes = dbSize.Int64
 	}
@@ -294,22 +407,22 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 	// pg_last_wal_receive_lsn/pg_last_wal_replay_lsn and
 	// pg_last_xact_replay_timestamp.
 	var inRecovery bool
-	if err := c.pgCollector.db.QueryRowContext(ctx,
+	if err := conn.QueryRowContext(ctx,
 		"SELECT pg_is_in_recovery()",
 	).Scan(&inRecovery); err == nil {
 		stats.IsInRecovery = inRecovery
 	} else {
-		c.debugf("[postgres] pg_is_in_recovery error: %v", err)
+		pc.debugf("[postgres] pg_is_in_recovery error: %v", err)
 	}
 
 	if !stats.IsInRecovery {
 		var rcount sql.NullInt64
-		if err := c.pgCollector.db.QueryRowContext(ctx,
+		if err := conn.QueryRowContext(ctx,
 			"SELECT COUNT(*) FROM pg_stat_replication",
 		).Scan(&rcount); err == nil && rcount.Valid {
 			stats.ReplicaCount = int(rcount.Int64)
 		} else if err != nil {
-			c.debugf("[postgres] pg_stat_replication query error: %v", err)
+			pc.debugf("[postgres] pg_stat_replication query error: %v", err)
 		}
 	} else {
 		var lagBytes sql.NullInt64
@@ -319,7 +432,7 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 		// guards against brief negative values caused by clock skew between
 		// primary and standby (NTP drift can leave the standby clock a few
 		// hundred ms ahead of the primary's last commit timestamp).
-		if err := c.pgCollector.db.QueryRowContext(ctx, `
+		if err := conn.QueryRowContext(ctx, `
 			SELECT
 				COALESCE(pg_wal_lsn_diff(pg_last_wal_receive_lsn(),
 				                         pg_last_wal_replay_lsn())::bigint, 0),
@@ -332,11 +445,11 @@ func (c *Collector) collectPostgres(elapsed float64) *PostgresStats {
 				stats.ReplicationLagSeconds = round2(lagSecs.Float64)
 			}
 		} else {
-			c.debugf("[postgres] replication lag query error: %v", err)
+			pc.debugf("[postgres] replication lag query error: %v", err)
 		}
 	}
 
-	return stats
+	return stats, nil
 }
 
 // calculateStats computes per-second rates from raw cumulative counters. Each

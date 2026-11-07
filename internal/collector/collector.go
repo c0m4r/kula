@@ -101,6 +101,7 @@ func (c *Collector) StartApplications() {
 			collCfg.DebugLog,
 			collCfg.Interval,
 		)
+		c.pgCollector.Start(ctx)
 		log.Printf("[postgres] monitoring enabled for database %q", appCfg.Postgres.DBName)
 	}
 
@@ -114,6 +115,7 @@ func (c *Collector) StartApplications() {
 			collCfg.DebugLog,
 			collCfg.Interval,
 		)
+		c.myCollector.Start(ctx)
 		log.Printf("[mysql] monitoring enabled for database %q", appCfg.Mysql.DBName)
 	}
 
@@ -238,12 +240,12 @@ func (c *Collector) collectApps(elapsed float64) ApplicationsStats {
 		apps.Containers = c.containerColl.Latest()
 	}
 
-	if c.appCfg.Postgres.Enabled {
-		apps.Postgres = c.collectPostgres(elapsed)
+	if c.pgCollector != nil {
+		apps.Postgres = c.pgCollector.Latest()
 	}
 
-	if c.appCfg.Mysql.Enabled {
-		apps.Mysql = c.collectMysql(elapsed)
+	if c.myCollector != nil {
+		apps.Mysql = c.myCollector.Latest()
 	}
 
 	if c.customColl != nil {

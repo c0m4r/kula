@@ -3,12 +3,15 @@ package collector
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"strconv"
+	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 )
 
 type mysqlRaw struct {
@@ -26,143 +29,239 @@ type mysqlRaw struct {
 	valid bool
 }
 
+// mysqlCollector polls one MySQL or MariaDB server through a single session
+// (see dbsession.go for the connection rules).
 type mysqlCollector struct {
-	dsn          string
-	db           *sql.DB
-	label        string
-	prev         mysqlRaw
-	debug        bool
-	wasConnected bool
-	lastErr      string
-	timeout      time.Duration
+	label     string
+	debug     bool
+	debugDone bool
+	config    *mysql.Config
+	session   dbSession
+	poller    dbPoller[MysqlStats]
+	prev      mysqlRaw
+	prevAt    time.Time
 }
 
-func newMysqlCollector(host string, port int, user, password, dbname string, debug bool, timeout time.Duration) *mysqlCollector {
-	var dsn string
+// mysqlConfig builds the driver configuration. Every I/O operation is bounded
+// by the poll timeout, and two session settings that MySQL and MariaDB both
+// know are applied on connect: wait_timeout ends the session once nothing has
+// been sent on it for a while (a vanished client), lock_wait_timeout keeps a
+// statement from queueing behind a metadata lock. The program_name connection
+// attribute marks the session as Kula's.
+func mysqlConfig(host string, port int, user, password, dbname string, t dbTimeouts) *mysql.Config {
+	cfg := mysql.NewConfig()
+	cfg.User, cfg.Passwd, cfg.DBName = user, password, dbname
 	if port == 0 {
-		dsn = fmt.Sprintf("%s:%s@unix(%s)/%s", user, password, host, dbname)
+		cfg.Net, cfg.Addr = "unix", host
 	} else {
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", user, password, host, port, dbname)
+		cfg.Net, cfg.Addr = "tcp", net.JoinHostPort(host, strconv.Itoa(port))
 	}
-	dsn += "?timeout=5s&readTimeout=5s"
+	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = t.poll, t.poll, t.poll
+	cfg.ConnectionAttributes = "program_name:kula"
+	cfg.Params = map[string]string{
+		"wait_timeout":      strconv.Itoa(int(t.idle.Seconds())),
+		"lock_wait_timeout": strconv.Itoa(max(1, int(t.lock.Seconds()))),
+	}
+	return cfg
+}
 
+func newMysqlCollector(host string, port int, user, password, dbname string, debug bool, interval time.Duration) *mysqlCollector {
+	t := newDBTimeouts(interval)
 	label := dbname
 	if label == "" {
 		if port == 0 {
 			label = fmt.Sprintf("socket %s", host)
 		} else {
-			label = fmt.Sprintf("%s:%d", host, port)
+			label = net.JoinHostPort(host, strconv.Itoa(port))
 		}
 	}
-
-	return &mysqlCollector{
-		dsn:     dsn,
-		label:   label,
-		debug:   debug,
-		timeout: timeout,
+	mc := &mysqlCollector{
+		label:  label,
+		debug:  debug,
+		config: mysqlConfig(host, port, user, password, dbname, t),
 	}
+	mc.poller.stale = t.stale
+	mc.session = dbSession{
+		name:     "[mysql]",
+		label:    label,
+		timeouts: t,
+		dialect: dbDialect{
+			setup:    mc.setupSession,
+			reap:     reapMysqlSession,
+			describe: func(ref dbSessionRef) string { return fmt.Sprintf("connection %d", ref.id) },
+		},
+	}
+	if connector, err := mysql.NewConnector(mc.config); err == nil {
+		mc.session.connector = connector
+	} else {
+		log.Printf("[mysql] invalid connection settings for %q: %v", label, err)
+	}
+	return mc
 }
 
-func (mc *mysqlCollector) connect() error {
-	if mc.db != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), mc.timeout)
-		defer cancel()
-		if err := mc.db.PingContext(ctx); err == nil {
-			return nil
-		}
-		_ = mc.db.Close()
-		mc.db = nil
-		mc.prev = mysqlRaw{}
-		mc.lastErr = ""
-		if mc.wasConnected {
-			log.Printf("[mysql] connection to %q lost, will retry", mc.label)
-			mc.wasConnected = false
-		}
+// mysqlServerStart returns when the server started, in Unix seconds by its
+// own clock. Connection ids are unique only within one server run.
+func mysqlServerStart(ctx context.Context, conn *sql.Conn) (int64, error) {
+	var name string
+	var uptime, now int64
+	if err := conn.QueryRowContext(ctx, "SHOW GLOBAL STATUS LIKE 'Uptime'").Scan(&name, &uptime); err != nil {
+		return 0, err
 	}
+	if err := conn.QueryRowContext(ctx, "SELECT UNIX_TIMESTAMP()").Scan(&now); err != nil {
+		return 0, err
+	}
+	return now - uptime, nil
+}
 
-	db, err := sql.Open("mysql", mc.dsn)
+// setupSession records the session's identity and bounds its statements on
+// the server: MariaDB's max_statement_time covers every statement, MySQL's
+// max_execution_time (5.7.8+) SELECT statements. An older server without the
+// variable keeps its default.
+func (mc *mysqlCollector) setupSession(ctx context.Context, conn *sql.Conn) (dbSessionRef, error) {
+	var ref dbSessionRef
+	var version string
+	if err := conn.QueryRowContext(ctx, "SELECT CONNECTION_ID(), VERSION()").Scan(&ref.id, &version); err != nil {
+		return ref, err
+	}
+	if err := conn.QueryRowContext(ctx,
+		"SELECT USER FROM information_schema.PROCESSLIST WHERE ID = CONNECTION_ID()").Scan(&ref.user); err != nil {
+		return ref, err
+	}
+	started, err := mysqlServerStart(ctx, conn)
 	if err != nil {
-		errStr := err.Error()
-		if errStr != mc.lastErr {
-			log.Printf("[mysql] failed to open database %q: %v", mc.label, err)
-			mc.lastErr = errStr
-		}
-		return fmt.Errorf("mysql open: %w", err)
+		return ref, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	ref.started = strconv.FormatInt(started, 10)
 
-	ctx, cancel := context.WithTimeout(context.Background(), mc.timeout)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		errStr := err.Error()
-		if errStr != mc.lastErr {
-			log.Printf("[mysql] failed to ping database %q: %v", mc.label, err)
-			mc.lastErr = errStr
-		}
-		return fmt.Errorf("mysql ping: %w", err)
+	statement := fmt.Sprintf("SET SESSION max_execution_time = %d", mc.session.timeouts.statement.Milliseconds())
+	if strings.Contains(strings.ToLower(version), "mariadb") {
+		statement = fmt.Sprintf("SET SESSION max_statement_time = %g", mc.session.timeouts.statement.Seconds())
 	}
-	mc.db = db
-	mc.lastErr = ""
-	if !mc.wasConnected {
-		log.Printf("[mysql] connected to %q", mc.label)
-		mc.wasConnected = true
+	if _, err := conn.ExecContext(ctx, statement); err != nil {
+		mc.debugf("[mysql] %s: %v", statement, err)
 	}
-	return nil
+	return ref, nil
 }
 
+// reapMysqlSession kills an abandoned connection. It acts only on a
+// connection of the same user in the same server run, so an id the server
+// has since given to another client is never touched; killing one's own
+// connections needs no privilege.
+func reapMysqlSession(ctx context.Context, conn *sql.Conn, ref dbSessionRef) (bool, error) {
+	started, err := mysqlServerStart(ctx, conn)
+	if err != nil {
+		return false, err
+	}
+	if recorded, _ := strconv.ParseInt(ref.started, 10, 64); started-recorded > 5 || recorded-started > 5 {
+		return true, nil // the server restarted: the session is gone with it
+	}
+	alive := func() (bool, error) {
+		var n int
+		err := conn.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE ID = ? AND USER = ?", ref.id, ref.user).Scan(&n)
+		return n > 0, err
+	}
+	exists, err := alive()
+	if err != nil || !exists {
+		return err == nil, err
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("KILL CONNECTION %d", ref.id)); err != nil {
+		var serverErr *mysql.MySQLError
+		if !errors.As(err, &serverErr) || serverErr.Number != 1094 { // 1094: unknown thread, already gone
+			return false, err
+		}
+	}
+	// A killed connection ends once its thread notices; give it a moment.
+	for range 10 {
+		if exists, err = alive(); err != nil || !exists {
+			return err == nil, err
+		}
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
+	return false, nil
+}
+
+func (mc *mysqlCollector) debugf(format string, args ...any) {
+	if mc.debug && !mc.debugDone {
+		log.Printf(format, args...)
+	}
+}
+
+// Start begins polling in the background.
+func (mc *mysqlCollector) Start(ctx context.Context) {
+	mc.poller.start(ctx, mc.session.timeouts.interval, mc.poll, mc.session.release)
+}
+
+// Latest returns the newest metrics while they are current.
+func (mc *mysqlCollector) Latest() *MysqlStats {
+	return mc.poller.Latest()
+}
+
+// Close waits for the poller, stopped by its context, to end its session.
 func (mc *mysqlCollector) Close() {
-	if mc.db != nil {
-		_ = mc.db.Close()
-	}
+	mc.poller.wait(5 * time.Second)
 }
 
-func (c *Collector) collectMysql(elapsed float64) *MysqlStats {
-	if c.myCollector == nil {
+// poll runs one collection on the collector's session.
+func (mc *mysqlCollector) poll(ctx context.Context) *MysqlStats {
+	if mc.session.connector == nil {
 		return nil
 	}
-
-	if err := c.myCollector.connect(); err != nil {
-		return nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), c.collCfg.Interval)
-	defer cancel()
-
-	// Rates are deltas between consecutive successful polls. A poll that
-	// fails before its counters are recorded drops the baseline, so the next
-	// one starts over instead of dividing two intervals' growth by one.
-	recorded := false
-	defer func() {
-		if !recorded {
-			c.myCollector.prev = mysqlRaw{}
-		}
-	}()
-
-	stats := &MysqlStats{}
-
-	rows, err := c.myCollector.db.QueryContext(ctx, "SHOW GLOBAL STATUS")
+	conn, err := mc.session.acquire(ctx)
 	if err != nil {
-		c.debugf("[mysql] SHOW GLOBAL STATUS error: %v", err)
+		mc.prev = mysqlRaw{}
 		return nil
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, mc.session.timeouts.poll)
+	defer cancel()
+	stats, err := mc.query(pollCtx, conn)
+	if err == nil {
+		err = pollCtx.Err()
+	}
+	if err != nil {
+		// Rates are deltas between consecutive successful polls.
+		mc.prev = mysqlRaw{}
+		mc.session.fail(ctx, err)
+		return nil
+	}
+	mc.session.succeed()
+	mc.debugDone = true
+	return stats
+}
+
+// mysqlGlobalStatus reads SHOW GLOBAL STATUS. Its rows are closed on return,
+// before the session's next statement.
+func mysqlGlobalStatus(ctx context.Context, conn *sql.Conn) (map[string]string, error) {
+	rows, err := conn.QueryContext(ctx, "SHOW GLOBAL STATUS")
+	if err != nil {
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-
-	statusVars := make(map[string]string)
+	vars := make(map[string]string)
 	for rows.Next() {
 		var name, val string
 		if err := rows.Scan(&name, &val); err != nil {
-			return nil
+			return nil, err
 		}
-		statusVars[name] = val
+		vars[name] = val
 	}
+	return vars, rows.Err()
+}
 
-	if err := rows.Err(); err != nil {
-		c.debugf("[mysql] SHOW GLOBAL STATUS iteration error: %v", err)
-		return nil
+// query gathers MySQL metrics. Errors of SHOW GLOBAL STATUS fail the poll;
+// the other queries are left out of the result.
+func (mc *mysqlCollector) query(ctx context.Context, conn *sql.Conn) (*MysqlStats, error) {
+	stats := &MysqlStats{}
+
+	statusVars, err := mysqlGlobalStatus(ctx, conn)
+	if err != nil {
+		return nil, fmt.Errorf("SHOW GLOBAL STATUS: %w", err)
 	}
+	readAt := time.Now()
 
 	parseI := func(key string) int {
 		v, _ := strconv.Atoi(statusVars[key])
@@ -189,39 +288,43 @@ func (c *Collector) collectMysql(elapsed float64) *MysqlStats {
 	cur.tableLocksWaited = parseI64("Table_locks_waited")
 	cur.rowLockWaits = parseI64("Innodb_row_lock_waits")
 
-	c.debugf("[mysql] raw: questions=%d, select=%d, insert=%d, update=%d, delete=%d, slow=%d, bp_reads=%d, bp_reqs=%d",
+	mc.debugf("[mysql] raw: questions=%d, select=%d, insert=%d, update=%d, delete=%d, slow=%d, bp_reads=%d, bp_reqs=%d",
 		cur.questions, cur.comSelect, cur.comInsert, cur.comUpdate, cur.comDelete,
 		cur.slowQueries, cur.innodbBPReads, cur.innodbBPRequests)
 
 	var maxConnsStr string
-	if err := c.myCollector.db.QueryRowContext(ctx, "SELECT @@max_connections").Scan(&maxConnsStr); err == nil {
+	if err := conn.QueryRowContext(ctx, "SELECT @@max_connections").Scan(&maxConnsStr); err == nil {
 		if v, err := strconv.Atoi(maxConnsStr); err == nil {
 			stats.MaxConnections = v
 		}
 	}
 
-	c.myCollector.calculateStats(stats, cur, elapsed)
-	recorded = true
+	elapsed := 0.0
+	if !mc.prevAt.IsZero() {
+		elapsed = readAt.Sub(mc.prevAt).Seconds()
+	}
+	mc.calculateStats(stats, cur, elapsed)
+	mc.prevAt = readAt
 
 	// Replication: sentinel -1 means "not configured / NULL". Queries here
 	// are non-fatal — a server without replication or a user without
 	// REPLICATION CLIENT privilege should still get all the other metrics.
 	stats.ReplicaSecondsBehind = -1
-	c.collectMysqlReplicaStatus(ctx, stats)
-	c.collectMysqlReplicaCount(ctx, stats)
+	mc.replicaStatus(ctx, conn, stats)
+	mc.replicaCount(ctx, conn, stats)
 
-	return stats
+	return stats, nil
 }
 
 // collectMysqlReplicaStatus fills ReplicaIORunning, ReplicaSQLRunning, and
 // ReplicaSecondsBehind from SHOW REPLICA STATUS, falling back to the legacy
 // SHOW SLAVE STATUS syntax for older MySQL/MariaDB.
-func (c *Collector) collectMysqlReplicaStatus(ctx context.Context, stats *MysqlStats) {
-	rows, err := c.myCollector.db.QueryContext(ctx, "SHOW REPLICA STATUS")
+func (mc *mysqlCollector) replicaStatus(ctx context.Context, conn *sql.Conn, stats *MysqlStats) {
+	rows, err := conn.QueryContext(ctx, "SHOW REPLICA STATUS")
 	if err != nil {
-		rows, err = c.myCollector.db.QueryContext(ctx, "SHOW SLAVE STATUS")
+		rows, err = conn.QueryContext(ctx, "SHOW SLAVE STATUS")
 		if err != nil {
-			c.debugf("[mysql] SHOW REPLICA/SLAVE STATUS error: %v", err)
+			mc.debugf("[mysql] SHOW REPLICA/SLAVE STATUS error: %v", err)
 			return
 		}
 	}
@@ -229,7 +332,7 @@ func (c *Collector) collectMysqlReplicaStatus(ctx context.Context, stats *MysqlS
 
 	cols, err := rows.Columns()
 	if err != nil {
-		c.debugf("[mysql] replica status columns error: %v", err)
+		mc.debugf("[mysql] replica status columns error: %v", err)
 		return
 	}
 	if !rows.Next() {
@@ -237,7 +340,7 @@ func (c *Collector) collectMysqlReplicaStatus(ctx context.Context, stats *MysqlS
 		// Surface the error in debug logs so a transient network failure
 		// isn't silently misread as "not configured as a replica".
 		if err := rows.Err(); err != nil {
-			c.debugf("[mysql] replica status iter error: %v", err)
+			mc.debugf("[mysql] replica status iter error: %v", err)
 		}
 		return
 	}
@@ -248,7 +351,7 @@ func (c *Collector) collectMysqlReplicaStatus(ctx context.Context, stats *MysqlS
 		scanArgs[i] = &vals[i]
 	}
 	if err := rows.Scan(scanArgs...); err != nil {
-		c.debugf("[mysql] replica status scan error: %v", err)
+		mc.debugf("[mysql] replica status scan error: %v", err)
 		return
 	}
 
@@ -299,12 +402,12 @@ func (c *Collector) collectMysqlReplicaStatus(ctx context.Context, stats *MysqlS
 
 // collectMysqlReplicaCount fills ReplicaCount from SHOW REPLICAS, falling back
 // to SHOW SLAVE HOSTS for older servers.
-func (c *Collector) collectMysqlReplicaCount(ctx context.Context, stats *MysqlStats) {
-	rows, err := c.myCollector.db.QueryContext(ctx, "SHOW REPLICAS")
+func (mc *mysqlCollector) replicaCount(ctx context.Context, conn *sql.Conn, stats *MysqlStats) {
+	rows, err := conn.QueryContext(ctx, "SHOW REPLICAS")
 	if err != nil {
-		rows, err = c.myCollector.db.QueryContext(ctx, "SHOW SLAVE HOSTS")
+		rows, err = conn.QueryContext(ctx, "SHOW SLAVE HOSTS")
 		if err != nil {
-			c.debugf("[mysql] SHOW REPLICAS/SLAVE HOSTS error: %v", err)
+			mc.debugf("[mysql] SHOW REPLICAS/SLAVE HOSTS error: %v", err)
 			return
 		}
 	}
@@ -315,7 +418,7 @@ func (c *Collector) collectMysqlReplicaCount(ctx context.Context, stats *MysqlSt
 		count++
 	}
 	if err := rows.Err(); err != nil {
-		c.debugf("[mysql] replica count iteration error: %v", err)
+		mc.debugf("[mysql] replica count iteration error: %v", err)
 		return
 	}
 	stats.ReplicaCount = count
