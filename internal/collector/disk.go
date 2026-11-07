@@ -34,6 +34,10 @@ type diskRaw struct {
 	writes    uint64
 	readSect  uint64
 	writeSect uint64
+	// ioTicks is column 12 (0-based) of /proc/diskstats, the kernel's "field
+	// 10" io_ticks: milliseconds the device had at least one request in
+	// flight. Its rate is the device's busy time.
+	ioTicks uint64
 }
 
 // readDiskStats enumerates monitorable block devices before configured filters.
@@ -56,8 +60,9 @@ func (c *Collector) readDiskStats(includePartitions bool) (map[string]diskRaw, e
 
 		// Walk the columns once, capturing only the fields we use as sub-slices
 		// of the line: name=2, reads=3, sectors_read=5, writes=7,
-		// sectors_written=9. Nothing is allocated until the device is kept.
-		var nameB, readsB, readSectB, writesB, writeSectB []byte
+		// sectors_written=9, io_ticks=12. Nothing is allocated until the
+		// device is kept.
+		var nameB, readsB, readSectB, writesB, writeSectB, ioTicksB []byte
 		fieldIdx := 0
 		pos := 0
 		for pos < len(line) {
@@ -82,6 +87,8 @@ func (c *Collector) readDiskStats(includePartitions bool) (map[string]diskRaw, e
 				writesB = line[start:pos]
 			case 9:
 				writeSectB = line[start:pos]
+			case 12:
+				ioTicksB = line[start:pos]
 			}
 			fieldIdx++
 		}
@@ -132,6 +139,7 @@ func (c *Collector) readDiskStats(includePartitions bool) (map[string]diskRaw, e
 			readSect:  parseUintBytes(readSectB),
 			writes:    parseUintBytes(writesB),
 			writeSect: parseUintBytes(writeSectB),
+			ioTicks:   parseUintBytes(ioTicksB),
 		}
 		result[name] = d
 	}
@@ -262,6 +270,9 @@ func (c *Collector) collectDisks(elapsed float64) DiskStats {
 			if cur.writeSect >= prev.writeSect {
 				dev.WriteBytesPS = float64(cur.writeSect-prev.writeSect) * 512.0 / elapsed
 			}
+			if cur.ioTicks >= prev.ioTicks {
+				dev.Utilization = diskUtilization(cur.ioTicks-prev.ioTicks, elapsed)
+			}
 		}
 
 		dev.Temperature, dev.Sensors = c.getDiskTemperature(name)
@@ -280,6 +291,14 @@ func (c *Collector) collectDisks(elapsed float64) DiskStats {
 	})
 	stats.FileSystems = c.collectFileSystems()
 	return stats
+}
+
+// diskUtilization converts an io_ticks delta (milliseconds busy) over elapsed
+// seconds into a busy percentage. Tick accounting and the sampling interval
+// are not perfectly aligned, so a fully busy device can read slightly above
+// 100; it is clamped.
+func diskUtilization(busyMs uint64, elapsed float64) float64 {
+	return min(round2(float64(busyMs)/(elapsed*1000.0)*100.0), 100)
 }
 
 // realFSTypes is the set of filesystem types considered "real" for monitoring purposes.

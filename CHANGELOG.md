@@ -27,6 +27,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Disk and GPU temperature split charts no longer go missing in Focus mode
 - A Focus mode selection of only application charts no longer starts out hidden
 - Collapsing a split chart no longer reorders the application charts
+- Disk utilization is measured again; since 0.7.0 it read 0% in the TUI, Prometheus
+  (`kula_disk_utilization_percent`), the AI context and stored history
 
 ### Security
 

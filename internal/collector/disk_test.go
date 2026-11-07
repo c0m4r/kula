@@ -24,6 +24,9 @@ func TestParseDiskStats(t *testing.T) {
 	if sda.readSect != 20000 || sda.writeSect != 10000 {
 		t.Errorf("unexpected sda sectors: %+v", sda)
 	}
+	if sda.ioTicks != 150 {
+		t.Errorf("sda io_ticks = %d, want 150", sda.ioTicks)
+	}
 }
 
 func TestCollectFileSystems(t *testing.T) {

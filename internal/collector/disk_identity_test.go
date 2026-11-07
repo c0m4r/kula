@@ -116,6 +116,46 @@ func TestDiskIdentityRenameReplacementAndReset(t *testing.T) {
 	}
 }
 
+// TestDiskUtilizationFromIOTicks pins util_pct to the io_ticks rate: busy
+// milliseconds over elapsed time, clamped to 100, and zero rather than a wrapped
+// value when the counter rolls back.
+func TestDiskUtilizationFromIOTicks(t *testing.T) {
+	c := diskTestEnvironment(t)
+	diskTestFile(t, sysPath, "class/block/sda/device/serial", "A")
+	write := func(ioTicks int) {
+		diskTestFile(t, procPath, "diskstats", fmt.Sprintf("8 0 sda 1 0 1 0 1 0 1 0 0 %d 0\n", ioTicks))
+	}
+	util := func(elapsed float64) float64 {
+		t.Helper()
+		devs := c.collectDisks(elapsed).Devices
+		if len(devs) != 1 {
+			t.Fatalf("devices = %+v, want one", devs)
+		}
+		return devs[0].Utilization
+	}
+
+	write(10_000)
+	if got := util(1); got != 0 {
+		t.Fatalf("first sample util = %v, want 0 (no baseline)", got)
+	}
+	write(10_500)
+	if got := util(1); got != 50 {
+		t.Errorf("500 ms busy in 1 s = %v%%, want 50", got)
+	}
+	write(11_250)
+	if got := util(2); got != 37.5 {
+		t.Errorf("750 ms busy in 2 s = %v%%, want 37.5", got)
+	}
+	write(12_300)
+	if got := util(1); got != 100 {
+		t.Errorf("1050 ms busy in 1 s = %v%%, want clamped 100", got)
+	}
+	write(5)
+	if got := util(1); got != 0 {
+		t.Errorf("io_ticks rollback util = %v%%, want 0", got)
+	}
+}
+
 func TestDiskIdentityFilterPartitionsAndDuplicates(t *testing.T) {
 	c := diskTestEnvironment(t)
 	diskTestFile(t, sysPath, "class/block/sda/device/serial", "A")

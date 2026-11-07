@@ -27,7 +27,7 @@ Lifecycle:
 | [`cpu.go`](../../internal/collector/cpu.go) | `/proc/stat`, `/proc/loadavg`, hwmon/thermal sysfs | CPU usage breakdown, load averages, CPU temps |
 | [`memory*`](../../internal/collector/) (in `cpu.go`/types) | `/proc/meminfo` | memory + swap |
 | [`network.go`](../../internal/collector/network.go) | `/proc/net/dev`, `/proc/net/snmp`, `/proc/net/netstat`, `/proc/net/sockstat` | per-iface throughput, TCP errors/resets/retrans/established, sockets |
-| [`disk.go`](../../internal/collector/disk.go) | `/proc/diskstats`, `statfs`, hwmon | per-device I/O, filesystem usage, disk temps (skips virtual/LVM/loop) |
+| [`disk.go`](../../internal/collector/disk.go) | `/proc/diskstats`, `statfs`, hwmon | per-device I/O and busy % (`io_ticks`), filesystem usage, disk temps (skips virtual/LVM/loop) |
 | [`disk_identity.go`](../../internal/collector/disk_identity.go) | sysfs (`wwid`, `serial`, `uuid`), `kula disks` | persistent disk IDs and stable per-disk series keys |
 | [`system.go`](../../internal/collector/system.go) | hostname, `/proc/uptime`, entropy, `adjtimex`, utmp | uptime, entropy, clock sync, user count |
 | [`process.go`](../../internal/collector/process.go) | `/proc/<pid>/stat` | running/sleeping/blocked/zombie counts, threads |
