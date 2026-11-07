@@ -173,6 +173,43 @@ func TestWrapTailTrackingVariableSize(t *testing.T) {
 	t.Logf("survived %d writes / many wraps; min full-read = %d records", N, minReturned)
 }
 
+// TestWrapWhileStillWrappedKeepsFinishedPass covers a pass that ends with
+// larger records than the pass before it: the writer wraps while a few of the
+// older pass's records still lie past it. Those must be dropped, not kept as
+// the oldest segment, or every scan reads them, stops at their sentinel and
+// misses the whole pass just finished — up to a ring of history.
+func TestWrapWhileStillWrappedKeepsFinishedPass(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, stride := range []int{4, 7, 11} {
+		tier, err := OpenTier(t.TempDir()+"/tier_0.dat", 16*1024)
+		if err != nil {
+			t.Fatalf("OpenTier: %v", err)
+		}
+		risky := 0
+		for i := 0; i < 3000; i++ {
+			size := 1 + (i*stride)%12
+			record, err := encodeSampleV(varSample(base, size))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tier.wrapped && tier.writeOff+int64(4+len(record)) > tier.maxData {
+				risky++
+			}
+			ts := base.Add(time.Duration(i) * time.Second)
+			if err := tier.Write(varSample(ts, size)); err != nil {
+				t.Fatalf("Write(%d): %v", i, err)
+			}
+			if tier.count > 1 {
+				fullReadChecked(t, tier, base, ts)
+			}
+		}
+		_ = tier.Close()
+		if risky == 0 {
+			t.Fatalf("stride %d never wrapped while still wrapped; the case is not exercised", stride)
+		}
+	}
+}
+
 // TestWrapTailPersistsAcrossReopen verifies the tail offset + wrap state + oldest
 // timestamp survive a close/reopen and that reads return the same data.
 func TestWrapTailPersistsAcrossReopen(t *testing.T) {

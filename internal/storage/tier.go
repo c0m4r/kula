@@ -355,12 +355,16 @@ func (t *Tier) Write(s *AggregatedSample) error {
 			_, _ = t.file.WriteAt(sentinel[:], headerSize+t.writeOff)
 		}
 		t.writeOff = 0
-		if !t.wrapped {
-			// First wrap: every record from the just-finished pass becomes the
-			// "old" segment and the oldest one sits at offset 0.
-			t.wrapped = true
-			t.oldestOff = 0
-		}
+		// Every record of the just-finished pass becomes the "old" segment,
+		// and the oldest one sits at offset 0. That holds even when the ring
+		// was still wrapped: a pass that ends with larger records than the one
+		// before it wraps while a few of the older pass's records still lie
+		// past the writer. Those are older than anything else and are dropped
+		// here (the sentinel above now ends the old segment before them).
+		// Keeping oldestOff on them would instead make every scan read them,
+		// stop at their sentinel and skip the whole pass just finished.
+		t.wrapped = true
+		t.oldestOff = 0
 		t.writeCycle++
 		t.writeEnd = 0
 	}
