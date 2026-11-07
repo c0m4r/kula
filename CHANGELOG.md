@@ -7,15 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
-## [Unreleased]
+## [0.22.0] - TBA
+
+### Added
+
+- Rearrange gauges and chart cards in the Customization menu
 
 ### Changed
 
-- remove systemd service ProtectClock that prevents reading clock
+- Cards keep one consistent order everywhere
+- Split charts expand and collapse like every other chart
+- Remove systemd service ProtectClock that prevents reading clock
 
 ### Fixed
 
 - collector: fix clock sync detection with local-time RTC
+- Battery/UPS charts no longer jump to the top of the dashboard
+- PostgreSQL replication no longer appears among the MySQL charts
+- Disk and GPU temperature split charts no longer go missing in Focus mode
+- A Focus mode selection of only application charts no longer starts out hidden
+- Collapsing a split chart no longer reorders the application charts
 
 ## [0.21.0] - 2026-10-01
 
