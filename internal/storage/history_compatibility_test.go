@@ -15,17 +15,14 @@ import (
 func legacyHistoryPayload(t *testing.T, sample *AggregatedSample) []byte {
 	t.Helper()
 	payload := appendPreamble(nil, sample)
-	flags := binary.LittleEndian.Uint16(payload[16:]) &^ (flagReducerV2 | flagHasMeanStats | flagHasDiskIDs)
+	flags := binary.LittleEndian.Uint16(payload[16:]) &^ (flagReducerV2 | flagHasMeanStats | flagHasDiskIDs | flagHasTCPExt)
 	binary.LittleEndian.PutUint16(payload[16:], flags)
 	for _, block := range []*collector.Sample{sample.Data, sample.Min, sample.Max} {
 		if block == nil {
 			continue
 		}
 		payload = appendFixed(payload, block)
-		variable, err := appendVariable(nil, block)
-		if err != nil {
-			t.Fatal(err)
-		}
+		variable := preTCPExtVariable(t, block)
 		ids, err := appendDiskIDs(nil, block)
 		if err != nil {
 			t.Fatal(err)

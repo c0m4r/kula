@@ -23,7 +23,8 @@ package storage
 //     error codes and the human-readable IO thread state).
 //
 //  3. To add an entirely new section, append it AFTER all existing variable
-//     sections (currently disk IDs, after PSU) and use a new preamble flag (bit 13 next).
+//     sections (currently the TCP extension, after disk IDs) and use a new
+//     preamble flag (bit 14 next).
 //     Keep the record-level MeanStats trailer after all Data/Min/Max blocks. flagHasApps
 //     gates the whole apps section). Old records without the flag will not
 //     attempt to read the new section. See the power-supply section
@@ -69,7 +70,8 @@ const (
 	flagHasMysql     uint16 = 1 << 9  // variable block includes MySQL metrics
 	flagHasPSU       uint16 = 1 << 10 // variable block includes power-supply metrics
 	flagHasMeanStats uint16 = 1 << 11 // record ends with contributing mean statistics
-	flagHasDiskIDs   uint16 = 1 << 12 // variable block ends with persistent disk identities
+	flagHasDiskIDs   uint16 = 1 << 12 // variable block includes persistent disk identities
+	flagHasTCPExt    uint16 = 1 << 13 // variable block ends with the TCP extension (retransmits)
 )
 
 // fixedBlockSize is the size in bytes of the encoded fixed scalar block.
@@ -262,6 +264,7 @@ func appendPreamble(buf []byte, a *AggregatedSample) []byte {
 	flags |= flagHasMysql   // always set: MySQL metrics byte follows Postgres
 	flags |= flagHasPSU     // always set: power-supply section follows custom metrics
 	flags |= flagHasDiskIDs // always set: disk identities follow power supplies
+	flags |= flagHasTCPExt  // always set: TCP extension follows disk identities
 	if a.AggregationVersion >= currentAggregationVersion {
 		flags |= flagReducerV2
 	}
@@ -749,7 +752,10 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 		buf = append(buf, pb[:]...)
 	}
 
-	return appendDiskIDs(buf, s)
+	if buf, err = appendDiskIDs(buf, s); err != nil {
+		return buf, err
+	}
+	return appendTCPExt(buf, s), nil
 }
 
 // ---- Decoder ----------------------------------------------------------------
@@ -773,6 +779,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 	hasMysql := flags&flagHasMysql != 0
 	hasPSU := flags&flagHasPSU != 0
 	hasDiskIDs := flags&flagHasDiskIDs != 0
+	hasTCPExt := flags&flagHasTCPExt != 0
 	if hasDiskIDs && (!hasApps || !hasPSU) {
 		return nil, fmt.Errorf("disk identities require apps and PSU sections")
 	}
@@ -784,7 +791,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, fmt.Errorf("decode data fixed: %w", err)
 		}
 		off += n
-		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs)
+		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs, hasTCPExt)
 		if err != nil {
 			return nil, fmt.Errorf("decode data variable: %w", err)
 		}
@@ -799,7 +806,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, fmt.Errorf("decode min fixed: %w", err)
 		}
 		off += n
-		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs)
+		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs, hasTCPExt)
 		if err != nil {
 			return nil, fmt.Errorf("decode min variable: %w", err)
 		}
@@ -814,7 +821,7 @@ func decodeSample(data []byte) (*AggregatedSample, error) {
 			return nil, fmt.Errorf("decode max fixed: %w", err)
 		}
 		off += n
-		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs)
+		vn, err := decodeVariable(data[off:], s, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs, hasTCPExt)
 		if err != nil {
 			return nil, fmt.Errorf("decode max variable: %w", err)
 		}
@@ -904,11 +911,13 @@ func decodeFixed(data []byte) (*collector.Sample, int, error) {
 // fixed+variable block (min/max) in multi-block aggregated records.
 // hasApache2 gates the Apache2 presence byte (flagHasApache2).
 // hasMysql gates the MySQL presence byte (flagHasMysql).
-// hasPSU gates the trailing power-supply section (flagHasPSU).
+// hasPSU gates the power-supply section (flagHasPSU), hasDiskIDs the disk
+// identities (flagHasDiskIDs) and hasTCPExt the trailing TCP extension
+// (flagHasTCPExt).
 // Records written before each type existed omit the flag, so the decoder
 // skips that section's bytes and subsequent offsets stay correct.
 // Returns the number of bytes consumed and any error.
-func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs bool) (int, error) {
+func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMysql, hasPSU, hasDiskIDs, hasTCPExt bool) (int, error) {
 	off := 0
 
 	need := func(n int, ctx string) error {
@@ -1564,6 +1573,15 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	}
 	if hasDiskIDs {
 		n, err := decodeDiskIDs(data[off:], s)
+		off += n
+		if err != nil {
+			return off, err
+		}
+	}
+	// TCP extension — gated by flagHasTCPExt. Records written before it lack
+	// the flag, so their retransmit rate reads 0 as it always did.
+	if hasTCPExt {
+		n, err := decodeTCPExt(data[off:], s)
 		off += n
 		if err != nil {
 			return off, err

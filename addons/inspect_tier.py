@@ -32,6 +32,9 @@ FLAG_HAS_APACHE2 = 1 << 8
 FLAG_HAS_MYSQL = 1 << 9
 FLAG_HAS_PSU = 1 << 10
 FLAG_HAS_DISK_IDS = 1 << 12
+FLAG_HAS_TCP_EXT = 1 << 13
+TCP_EXT_VERSION = 1
+TCP_EXT_V1_SIZE = 4  # retrans_ps float32
 
 FIXED_BLOCK_SIZE = 218  # must match fixedBlockSize in codec.go
 
@@ -245,6 +248,9 @@ def _decode_fixed(data: bytes, off: int) -> Tuple[Dict[str, Any], int]:
             "curr_estab": tcp_estab,
             "in_errs_ps": tcp_inerrs,
             "out_rsts_ps": tcp_outrst,
+            # Not in the fixed block: set by the TCP extension (section 10)
+            # and 0 for records written before it, as in the Go decoder.
+            "retrans_ps": 0.0,
         },
         "sockets": {"tcp_inuse": sock_tcp, "tcp_tw": sock_tw, "udp_inuse": sock_udp},
         "process": {
@@ -278,6 +284,8 @@ def _decode_fixed(data: bytes, off: int) -> Tuple[Dict[str, Any], int]:
 #   7. Application metrics: nginx (1B+52B), containers (u16+var),
 #                           postgres (1B version + 56B or 104B), custom (u16 groups+var)
 #   8. Power supplies:      1B version + u16 count + per-supply entries
+#   9. Disk identities:     1B version + u16 count + per-disk u16-prefixed ID
+#  10. TCP extension:       1B version + 4B v1 block (retrans_ps float32)
 # ---------------------------------------------------------------------------
 
 
@@ -290,6 +298,7 @@ def _decode_variable(
     has_mysql: bool = False,
     has_psu: bool = False,
     has_disk_ids: bool = False,
+    has_tcp_ext: bool = False,
 ) -> Tuple[Dict[str, Any], int]:
     # pylint: disable=too-many-locals, too-many-statements
     # 1. Network interfaces
@@ -816,6 +825,18 @@ def _decode_variable(
             if identity:
                 dev["id"] = identity
 
+    # 10. TCP extension: rates the fixed block has no room for.
+    if has_tcp_ext:
+        if len(data) - off < 1:
+            raise ValueError("truncated tcp extension version")
+        version, off = _get_u8(data, off)
+        if version != TCP_EXT_VERSION:
+            raise ValueError(f"unsupported tcp extension version {version}")
+        if len(data) - off < TCP_EXT_V1_SIZE:
+            raise ValueError("truncated tcp extension")
+        retrans, off = _get_f32(data, off)
+        s.setdefault("tcp", {})["retrans_ps"] = retrans
+
     return s, off
 
 
@@ -862,6 +883,7 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
             "has_mysql": bool(flags & FLAG_HAS_MYSQL),
             "has_psu": bool(flags & FLAG_HAS_PSU),
             "has_disk_ids": bool(flags & FLAG_HAS_DISK_IDS),
+            "has_tcp_ext": bool(flags & FLAG_HAS_TCP_EXT),
         },
     }
 
@@ -870,6 +892,7 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
     has_mysql = bool(flags & FLAG_HAS_MYSQL)
     has_psu = bool(flags & FLAG_HAS_PSU)
     has_disk_ids = bool(flags & FLAG_HAS_DISK_IDS)
+    has_tcp_ext = bool(flags & FLAG_HAS_TCP_EXT)
     if has_disk_ids and (not has_apps or not has_psu):
         raise ValueError("disk identities require apps and PSU sections")
     for label, flag in [
@@ -880,7 +903,8 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
         if flags & flag:
             block, off = _decode_fixed(payload, off)
             block, off = _decode_variable(
-                payload, off, block, has_apps, has_apache2, has_mysql, has_psu, has_disk_ids
+                payload, off, block, has_apps, has_apache2, has_mysql, has_psu,
+                has_disk_ids, has_tcp_ext,
             )
             result[label] = block
 

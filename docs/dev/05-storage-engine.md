@@ -20,6 +20,7 @@ jobs, and no GC pressure from unbounded growth.
 | [`tier.go`](../../internal/storage/tier.go) | One ring-buffer file: header + records, wrap handling, chronological reads |
 | [`codec.go`](../../internal/storage/codec.go) | The binary record format (see [Codec](06-storage-codec.md)) |
 | [`disk_identity_codec.go`](../../internal/storage/disk_identity_codec.go) | Persistent disk IDs appended after the power-supply section |
+| [`tcp_ext_codec.go`](../../internal/storage/tcp_ext_codec.go) | TCP extension (retransmit rate) appended after the disk IDs |
 
 On disk, each tier is a file `tier_N.dat` in `storage.directory`.
 

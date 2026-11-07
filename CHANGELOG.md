@@ -29,6 +29,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Collapsing a split chart no longer reorders the application charts
 - Disk utilization is measured again; since 0.7.0 it read 0% in the TUI, Prometheus
   (`kula_disk_utilization_percent`), the AI context and stored history
+- TCP retransmissions are stored in history; they used to chart as 0 after a reload or for
+  any past range (older binaries cannot read the extended records, so back up before a
+  downgrade)
 
 ### Security
 

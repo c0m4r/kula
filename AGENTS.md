@@ -34,14 +34,16 @@ Each item below is enforced by a test, or fails silently and corrupts stored his
 identified by its byte offset in a fixed sequence, so **section order is the contract**.
 
 - A new metric type gets a **new preamble flag bit** and its section is appended **after every
-  existing section** (after disk IDs). Never insert a section between existing ones.
-- Next free flag bit: **13**. Used: 0–4, 8–12. Free: 5–7, 13–15. Never reuse a bit.
+  existing section** (after the TCP extension). Never insert a section between existing ones.
+- Next free flag bit: **14**. Used: 0–4, 8–13. Free: 5–7, 14–15. Never reuse a bit.
 - Growing an existing block does not add a flag: bump that section's **version-tagged presence
   byte** (`0` absent, `1` v1, `2` v2) and dispatch on it. The section's position never moves.
 - The record-level contributing-statistics trailer (bit 11) follows **all** Data/Min/Max blocks.
 - Mirror every codec change in the Python decoder `addons/inspect_tier.py` (same flag constants,
   same order) or it mis-decodes records.
 - `FuzzDecodeSample` must never panic on malformed input.
+- `TestCodecPersistsEveryAggregatedNumericField` fails when a numeric field with an `agg`
+  policy does not survive encode → decode; a new field needs a codec home, not just a tag.
 
 Full walkthrough: [Adding a Metric Type](docs/dev/14-adding-metrics.md),
 [Binary Codec](docs/dev/06-storage-codec.md).

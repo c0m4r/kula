@@ -39,6 +39,7 @@ legacy v1 JSON records).
 │         f. Custom      (2B group count + variable)        │
 │    8. Power supplies  (version + count + variable)        │
 │    9. Disk IDs        (version + count + u16-length IDs)  │
+│   10. TCP extension   (version + 4B v1: retrans_ps f32)   │
 │                                                           │
 │       ← NEW sections go HERE, after every existing one.   │
 └──────────────────────────────────────────────────────────┘
@@ -58,7 +59,8 @@ const (
     flagHasPSU     uint16 = 1 << 10 // power-supply section present
     flagHasMeanStats uint16 = 1 << 11 // record-level contributing statistics
     flagHasDiskIDs   uint16 = 1 << 12 // persistent disk identities after power supplies
-    // bits 5–7 and 13–15 are free for new metric types
+    flagHasTCPExt    uint16 = 1 << 13 // TCP extension (retransmits) after disk identities
+    // bits 5–7 and 14–15 are free for new metric types
 )
 ```
 
@@ -74,13 +76,26 @@ const (
 | 10 | `flagHasPSU` | Power-supply section present |
 | 11 | `flagHasMeanStats` | Trailing contributing statistics |
 | 12 | `flagHasDiskIDs` | Persistent disk identities, after power supplies |
-| 5–7, 13–15 | — | **Available** — use bit 13 next |
+| 13 | `flagHasTCPExt` | TCP extension (retransmit rate), after disk identities |
+| 5–7, 14–15 | — | **Available** — use bit 14 next |
 
 `flagReducerV2` adds no payload bytes. It distinguishes complete policy-reducer envelopes
 from older Min/Max blocks. The history compatibility layer additionally exposes an audited
 scalar subset for legacy binary envelopes lacking the mean-statistics and disk-ID extensions.
 The decoded/query-only `extrema_profile` is never written into the positional codec and never
 promotes an old record to `flagReducerV2`. The Python inspector reports the same decoded profile.
+
+## TCP extension
+
+The fixed block has no room for `net.tcp.retrans_ps`, and it cannot grow without breaking every
+stored record, so the rate lives in a section of its own
+([`tcp_ext_codec.go`](../../internal/storage/tcp_ext_codec.go)), gated by bit 13. It closes each
+Data/Min/Max variable block: `version:u8` (`1`), then the v1 block `retrans_ps:f32`. Growing it
+means a new version with a larger block; an unknown version is a decode error, as for power
+supplies and disk IDs. Records written before 0.22.0 lack the flag and decode the rate as `0`,
+as they always did; older binaries cannot read the extended rollup records, so keep a backup if
+you may downgrade. `TestCodecPersistsEveryAggregatedNumericField` fails for any numeric field
+with an `agg` policy that does not survive encode → decode, which is how this gap went unseen.
 
 ## Contributing statistics extension
 

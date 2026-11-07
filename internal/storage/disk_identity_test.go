@@ -52,13 +52,10 @@ func TestDiskIdentityCodecCompatibility(t *testing.T) {
 	// Construct the exact pre-extension multi-block format, including PSU and
 	// the record-level contributing-statistics trailer.
 	legacy := appendPreamble(nil, a)
-	binary.LittleEndian.PutUint16(legacy[16:], binary.LittleEndian.Uint16(legacy[16:])&^flagHasDiskIDs)
+	binary.LittleEndian.PutUint16(legacy[16:], binary.LittleEndian.Uint16(legacy[16:])&^(flagHasDiskIDs|flagHasTCPExt))
 	for _, block := range []*collector.Sample{a.Data, a.Min, a.Max} {
 		legacy = appendFixed(legacy, block)
-		variable, encodeErr := appendVariable(nil, block)
-		if encodeErr != nil {
-			t.Fatal(encodeErr)
-		}
+		variable := preTCPExtVariable(t, block)
 		extension, _ := appendDiskIDs(nil, block)
 		legacy = append(legacy, variable[:len(variable)-len(extension)]...)
 	}
