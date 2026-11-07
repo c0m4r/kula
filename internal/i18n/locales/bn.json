@@ -389,5 +389,11 @@
     "observations_per_series": "টি পর্যবেক্ষণ প্রতি সিরিজে",
     "users": "ব্যবহারকারী",
     "self": "Kula প্রক্রিয়া",
-    "cores": "কোর"
+    "cores": "কোর",
+    "rearrange_cards": "কার্ড পুনর্বিন্যাস করুন",
+    "rearrange_hint": "কার্ড টেনে ক্রম বদলান, অথবা কার্ডের হ্যান্ডেলে তীর কী, Home ও End ব্যবহার করুন।",
+    "reset_order": "ক্রম রিসেট করুন",
+    "move_card": "{name} সরান",
+    "card_moved": "{name} {total}-এর মধ্যে {position} নম্বর অবস্থানে সরানো হয়েছে",
+    "card_order_reset": "ডিফল্ট ক্রম ফিরিয়ে আনা হয়েছে"
 }

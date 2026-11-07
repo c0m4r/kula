@@ -389,5 +389,11 @@
     "observations_per_series": "osservazioni per serie",
     "users": "utenti",
     "self": "processo Kula",
-    "cores": "core"
+    "cores": "core",
+    "rearrange_cards": "Riordina le schede",
+    "rearrange_hint": "Trascina le schede per riordinarle, oppure usa le frecce, Home e Fine sulla maniglia di una scheda.",
+    "reset_order": "Ripristina ordine",
+    "move_card": "Sposta {name}",
+    "card_moved": "{name}: posizione {position} di {total}",
+    "card_order_reset": "Ordine predefinito ripristinato"
 }

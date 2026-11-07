@@ -389,5 +389,11 @@
     "observations_per_series": "спостережень на ряд",
     "users": "користувачі",
     "self": "процес Kula",
-    "cores": "ядер"
+    "cores": "ядер",
+    "rearrange_cards": "Упорядкувати картки",
+    "rearrange_hint": "Перетягуйте картки, щоб змінити порядок, або використовуйте стрілки, Home і End на маркері картки.",
+    "reset_order": "Скинути порядок",
+    "move_card": "Перемістити {name}",
+    "card_moved": "{name}: позиція {position} з {total}",
+    "card_order_reset": "Типовий порядок відновлено"
 }

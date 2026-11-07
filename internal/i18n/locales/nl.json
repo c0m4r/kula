@@ -389,5 +389,11 @@
     "observations_per_series": "waarnemingen per reeks",
     "users": "gebruikers",
     "self": "Kula-proces",
-    "cores": "kernen"
+    "cores": "kernen",
+    "rearrange_cards": "Kaarten herschikken",
+    "rearrange_hint": "Sleep kaarten om de volgorde te wijzigen, of gebruik de pijltoetsen, Home en End op de greep van een kaart.",
+    "reset_order": "Volgorde herstellen",
+    "move_card": "{name} verplaatsen",
+    "card_moved": "{name} verplaatst naar positie {position} van {total}",
+    "card_order_reset": "Standaardvolgorde hersteld"
 }

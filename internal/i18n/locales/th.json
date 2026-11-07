@@ -389,5 +389,11 @@
     "observations_per_series": "ค่าที่สังเกตต่อชุดข้อมูล",
     "users": "ผู้ใช้",
     "self": "กระบวนการ Kula",
-    "cores": "คอร์"
+    "cores": "คอร์",
+    "rearrange_cards": "จัดเรียงการ์ดใหม่",
+    "rearrange_hint": "ลากการ์ดเพื่อเปลี่ยนลำดับ หรือใช้ปุ่มลูกศร, Home และ End ที่ที่จับของการ์ด",
+    "reset_order": "รีเซ็ตลำดับ",
+    "move_card": "ย้าย {name}",
+    "card_moved": "ย้าย {name} ไปยังตำแหน่ง {position} จาก {total} แล้ว",
+    "card_order_reset": "คืนค่าลำดับเริ่มต้นแล้ว"
 }

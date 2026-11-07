@@ -389,5 +389,11 @@
     "observations_per_series": "pozorování na řadu",
     "users": "uživatelé",
     "self": "proces Kula",
-    "cores": "jader"
+    "cores": "jader",
+    "rearrange_cards": "Uspořádat karty",
+    "rearrange_hint": "Přetažením změňte pořadí karet, nebo na úchytu karty použijte šipky, Home a End.",
+    "reset_order": "Obnovit pořadí",
+    "move_card": "Přesunout {name}",
+    "card_moved": "{name}: pozice {position} z {total}",
+    "card_order_reset": "Výchozí pořadí obnoveno"
 }

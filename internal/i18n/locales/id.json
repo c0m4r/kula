@@ -389,5 +389,11 @@
     "observations_per_series": "pengamatan per seri",
     "users": "pengguna",
     "self": "proses Kula",
-    "cores": "inti"
+    "cores": "inti",
+    "rearrange_cards": "Atur ulang kartu",
+    "rearrange_hint": "Seret kartu untuk mengubah urutannya, atau gunakan tombol panah, Home, dan End pada pegangan kartu.",
+    "reset_order": "Setel ulang urutan",
+    "move_card": "Pindahkan {name}",
+    "card_moved": "{name} dipindahkan ke posisi {position} dari {total}",
+    "card_order_reset": "Urutan bawaan dipulihkan"
 }

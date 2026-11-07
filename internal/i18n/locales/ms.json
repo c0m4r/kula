@@ -389,5 +389,11 @@
     "observations_per_series": "cerapan setiap siri",
     "users": "pengguna",
     "self": "proses Kula",
-    "cores": "teras"
+    "cores": "teras",
+    "rearrange_cards": "Susun semula kad",
+    "rearrange_hint": "Seret kad untuk mengubah susunannya, atau gunakan kekunci anak panah, Home dan End pada pemegang kad.",
+    "reset_order": "Set semula susunan",
+    "move_card": "Alihkan {name}",
+    "card_moved": "{name} dialihkan ke kedudukan {position} daripada {total}",
+    "card_order_reset": "Susunan lalai dipulihkan"
 }

@@ -389,5 +389,11 @@
     "observations_per_series": "observationer per serie",
     "users": "användare",
     "self": "Kula-process",
-    "cores": "kärnor"
+    "cores": "kärnor",
+    "rearrange_cards": "Ordna om kort",
+    "rearrange_hint": "Dra korten för att ändra ordning, eller använd piltangenterna, Home och End på ett korts handtag.",
+    "reset_order": "Återställ ordning",
+    "move_card": "Flytta {name}",
+    "card_moved": "{name} flyttad till position {position} av {total}",
+    "card_order_reset": "Standardordningen återställd"
 }

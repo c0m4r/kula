@@ -389,5 +389,11 @@
     "observations_per_series": "个观测值（每个序列）",
     "users": "用户",
     "self": "Kula 进程",
-    "cores": "核"
+    "cores": "核",
+    "rearrange_cards": "重新排列卡片",
+    "rearrange_hint": "拖动卡片以调整顺序，或在卡片的拖动手柄上使用方向键、Home 和 End。",
+    "reset_order": "重置顺序",
+    "move_card": "移动{name}",
+    "card_moved": "已将{name}移至第 {position} 位（共 {total} 个）",
+    "card_order_reset": "已恢复默认顺序"
 }

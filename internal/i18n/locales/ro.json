@@ -389,5 +389,11 @@
     "observations_per_series": "observații pe serie",
     "users": "utilizatori",
     "self": "proces Kula",
-    "cores": "nuclee"
+    "cores": "nuclee",
+    "rearrange_cards": "Rearanjează cardurile",
+    "rearrange_hint": "Trageți cardurile pentru a le reordona sau folosiți săgețile, Home și End pe mânerul unui card.",
+    "reset_order": "Resetează ordinea",
+    "move_card": "Mută {name}",
+    "card_moved": "{name}: poziția {position} din {total}",
+    "card_order_reset": "Ordinea implicită a fost restabilită"
 }

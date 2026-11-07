@@ -389,5 +389,11 @@
     "observations_per_series": "תצפיות לכל סדרה",
     "users": "משתמשים",
     "self": "תהליך Kula",
-    "cores": "ליבות"
+    "cores": "ליבות",
+    "rearrange_cards": "סידור מחדש של כרטיסים",
+    "rearrange_hint": "גררו כרטיסים כדי לשנות את סדרם, או השתמשו במקשי החצים, Home ו-End על הידית של כרטיס.",
+    "reset_order": "איפוס הסדר",
+    "move_card": "הזזת {name}",
+    "card_moved": "{name}: מיקום {position} מתוך {total}",
+    "card_order_reset": "סדר ברירת המחדל שוחזר"
 }

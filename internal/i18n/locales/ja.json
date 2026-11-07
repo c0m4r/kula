@@ -389,5 +389,11 @@
     "observations_per_series": "件の観測値（系列ごと）",
     "users": "ユーザー",
     "self": "Kulaプロセス",
-    "cores": "コア"
+    "cores": "コア",
+    "rearrange_cards": "カードを並べ替え",
+    "rearrange_hint": "カードをドラッグして並べ替えるか、カードのハンドルで矢印キー、Home、End を使用してください。",
+    "reset_order": "並び順をリセット",
+    "move_card": "{name} を移動",
+    "card_moved": "{name} を {total} 件中 {position} 番目に移動しました",
+    "card_order_reset": "既定の並び順に戻しました"
 }

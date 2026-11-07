@@ -389,5 +389,11 @@
     "observations_per_series": "مشاہدات فی سیریز",
     "users": "صارفین",
     "self": "Kula عمل",
-    "cores": "کور"
+    "cores": "کور",
+    "rearrange_cards": "کارڈز کو دوبارہ ترتیب دیں",
+    "rearrange_hint": "ترتیب بدلنے کے لیے کارڈز کو گھسیٹیں، یا کارڈ کے ہینڈل پر تیر والی کلیدیں، Home اور End استعمال کریں۔",
+    "reset_order": "ترتیب بحال کریں",
+    "move_card": "{name} منتقل کریں",
+    "card_moved": "{name} کو {total} میں سے مقام {position} پر منتقل کر دیا گیا",
+    "card_order_reset": "طے شدہ ترتیب بحال کر دی گئی"
 }

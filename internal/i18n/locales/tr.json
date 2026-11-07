@@ -389,5 +389,11 @@
     "observations_per_series": "gözlem",
     "users": "kullanıcılar",
     "self": "Kula işlemi",
-    "cores": "çekirdek"
+    "cores": "çekirdek",
+    "rearrange_cards": "Kartları yeniden düzenle",
+    "rearrange_hint": "Sırasını değiştirmek için kartları sürükleyin veya bir kartın tutamacında ok tuşlarını, Home ve End'i kullanın.",
+    "reset_order": "Sırayı sıfırla",
+    "move_card": "{name} öğesini taşı",
+    "card_moved": "{name}: konum {position}/{total}",
+    "card_order_reset": "Varsayılan sıra geri yüklendi"
 }

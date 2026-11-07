@@ -389,5 +389,11 @@
     "observations_per_series": "quan sát mỗi chuỗi",
     "users": "người dùng",
     "self": "tiến trình Kula",
-    "cores": "lõi"
+    "cores": "lõi",
+    "rearrange_cards": "Sắp xếp lại thẻ",
+    "rearrange_hint": "Kéo thẻ để đổi thứ tự, hoặc dùng các phím mũi tên, Home và End trên tay nắm của thẻ.",
+    "reset_order": "Đặt lại thứ tự",
+    "move_card": "Di chuyển {name}",
+    "card_moved": "Đã chuyển {name} đến vị trí {position}/{total}",
+    "card_order_reset": "Đã khôi phục thứ tự mặc định"
 }

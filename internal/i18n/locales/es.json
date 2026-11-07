@@ -389,5 +389,11 @@
     "observations_per_series": "observaciones por serie",
     "users": "usuarios",
     "self": "propio",
-    "cores": "núcleos"
+    "cores": "núcleos",
+    "rearrange_cards": "Reorganizar tarjetas",
+    "rearrange_hint": "Arrastra las tarjetas para reordenarlas, o usa las flechas, Inicio y Fin en el asa de una tarjeta.",
+    "reset_order": "Restablecer orden",
+    "move_card": "Mover {name}",
+    "card_moved": "{name}: posición {position} de {total}",
+    "card_order_reset": "Orden predeterminado restablecido"
 }

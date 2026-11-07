@@ -389,5 +389,11 @@
     "observations_per_series": "observações por série",
     "users": "utilizadores",
     "self": "processo Kula",
-    "cores": "núcleos"
+    "cores": "núcleos",
+    "rearrange_cards": "Reorganizar cartões",
+    "rearrange_hint": "Arraste os cartões para alterar a ordem, ou use as teclas de seta, Home e End na pega de um cartão.",
+    "reset_order": "Repor ordem",
+    "move_card": "Mover {name}",
+    "card_moved": "{name}: posição {position} de {total}",
+    "card_order_reset": "Ordem predefinida reposta"
 }

@@ -389,5 +389,11 @@
     "observations_per_series": "قياس لكل سلسلة",
     "users": "المستخدمون",
     "self": "عملية Kula",
-    "cores": "أنوية"
+    "cores": "أنوية",
+    "rearrange_cards": "إعادة ترتيب البطاقات",
+    "rearrange_hint": "اسحب البطاقات لإعادة ترتيبها، أو استخدم مفاتيح الأسهم وHome وEnd على مقبض البطاقة.",
+    "reset_order": "إعادة تعيين الترتيب",
+    "move_card": "نقل {name}",
+    "card_moved": "تم نقل {name} إلى الموضع {position} من {total}",
+    "card_order_reset": "تمت استعادة الترتيب الافتراضي"
 }

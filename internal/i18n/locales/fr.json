@@ -389,5 +389,11 @@
     "observations_per_series": "observations par série",
     "users": "utilisateurs",
     "self": "processus Kula",
-    "cores": "cœurs"
+    "cores": "cœurs",
+    "rearrange_cards": "Réorganiser les cartes",
+    "rearrange_hint": "Faites glisser les cartes pour les réordonner, ou utilisez les flèches, Début et Fin sur la poignée d'une carte.",
+    "reset_order": "Réinitialiser l'ordre",
+    "move_card": "Déplacer {name}",
+    "card_moved": "{name} : position {position} sur {total}",
+    "card_order_reset": "Ordre par défaut rétabli"
 }

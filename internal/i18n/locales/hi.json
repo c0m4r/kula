@@ -389,5 +389,11 @@
     "observations_per_series": "अवलोकन प्रति सीरीज़",
     "users": "उपयोगकर्ता",
     "self": "Kula प्रक्रिया",
-    "cores": "कोर"
+    "cores": "कोर",
+    "rearrange_cards": "कार्ड फिर से व्यवस्थित करें",
+    "rearrange_hint": "क्रम बदलने के लिए कार्ड खींचें, या कार्ड के हैंडल पर तीर कुंजियाँ, Home और End इस्तेमाल करें।",
+    "reset_order": "क्रम रीसेट करें",
+    "move_card": "{name} खिसकाएँ",
+    "card_moved": "{name} को {total} में से स्थान {position} पर ले जाया गया",
+    "card_order_reset": "डिफ़ॉल्ट क्रम बहाल किया गया"
 }

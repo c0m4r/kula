@@ -389,5 +389,11 @@
     "not_synced": "not synced",
     "users": "users",
     "self": "self",
-    "cores": "cores"
+    "cores": "cores",
+    "rearrange_cards": "Rearrange cards",
+    "rearrange_hint": "Drag cards to reorder them, or use the arrow keys, Home and End on a card's handle.",
+    "reset_order": "Reset order",
+    "move_card": "Move {name}",
+    "card_moved": "{name} moved to position {position} of {total}",
+    "card_order_reset": "Default order restored"
 }

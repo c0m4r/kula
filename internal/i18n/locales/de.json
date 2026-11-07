@@ -389,5 +389,11 @@
     "observations_per_series": "Messwerte pro Reihe",
     "users": "Benutzer",
     "self": "Eigenverbrauch",
-    "cores": "Kerne"
+    "cores": "Kerne",
+    "rearrange_cards": "Karten anordnen",
+    "rearrange_hint": "Karten zum Umordnen ziehen oder am Griff einer Karte die Pfeiltasten, Pos1 und Ende verwenden.",
+    "reset_order": "Reihenfolge zurücksetzen",
+    "move_card": "{name} verschieben",
+    "card_moved": "{name} auf Position {position} von {total} verschoben",
+    "card_order_reset": "Standardreihenfolge wiederhergestellt"
 }

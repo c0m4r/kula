@@ -389,5 +389,11 @@
     "observations_per_series": "obserwacji na serię",
     "users": "użytkownicy",
     "self": "proces Kula",
-    "cores": "rdzeni"
+    "cores": "rdzeni",
+    "rearrange_cards": "Zmień układ kafelków",
+    "rearrange_hint": "Przeciągnij kafelki, aby zmienić ich kolejność, lub użyj strzałek, Home i End na uchwycie kafelka.",
+    "reset_order": "Przywróć kolejność",
+    "move_card": "Przenieś {name}",
+    "card_moved": "{name}: pozycja {position} z {total}",
+    "card_order_reset": "Przywrócono domyślną kolejność"
 }

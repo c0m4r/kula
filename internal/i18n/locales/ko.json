@@ -389,5 +389,11 @@
     "observations_per_series": "개 관측값(계열당)",
     "users": "사용자",
     "self": "Kula 프로세스",
-    "cores": "코어"
+    "cores": "코어",
+    "rearrange_cards": "카드 재정렬",
+    "rearrange_hint": "카드를 끌어서 순서를 바꾸거나, 카드 핸들에서 화살표 키, Home, End를 사용하세요.",
+    "reset_order": "순서 초기화",
+    "move_card": "{name} 이동",
+    "card_moved": "{name}: {total}개 중 {position}번째",
+    "card_order_reset": "기본 순서로 복원했습니다"
 }
