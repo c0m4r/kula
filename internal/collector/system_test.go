@@ -1,6 +1,9 @@
 package collector
 
 import (
+	"encoding/binary"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -72,5 +75,59 @@ func TestCollectSelf(t *testing.T) {
 	}
 	if self.MemRSS != 16000*1024 {
 		t.Errorf("expected 16MB RSS, got %d", self.MemRSS)
+	}
+}
+
+// utmpRecord builds one 384-byte x86_64 utmp record.
+func utmpRecord(utType int32, line, user string) []byte {
+	record := make([]byte, 384)
+	binary.LittleEndian.PutUint32(record[0:], uint32(utType))
+	copy(record[8:40], line)
+	copy(record[44:76], user)
+	return record
+}
+
+func TestLoggedInUsersFromUtmpLogindOrUnknown(t *testing.T) {
+	oldRun, oldVarRun := runPath, varRunPath
+	t.Cleanup(func() { runPath, varRunPath = oldRun, oldVarRun })
+	runPath, varRunPath = t.TempDir(), t.TempDir()
+
+	// Neither source: unknown, not zero.
+	if got := countLoggedInUsers(); got != -1 {
+		t.Fatalf("no utmp and no logind: %d, want -1 (unknown)", got)
+	}
+
+	// logind: only open sessions of class "user" are logins.
+	sessions := filepath.Join(runPath, "systemd", "sessions")
+	if err := os.MkdirAll(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"1":  "USER=alice\nSTATE=active\nCLASS=user\nTYPE=tty\n",
+		"2":  "USER=bob\nSTATE=online\nCLASS=user\nREMOTE=1\n",
+		"3":  "USER=alice\nSTATE=active\nCLASS=manager\n",
+		"4":  "USER=carol\nSTATE=closing\nCLASS=user\n",
+		"c1": "USER=gdm\nSTATE=active\nCLASS=greeter\n",
+	} {
+		if err := os.WriteFile(filepath.Join(sessions, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := countLoggedInUsers(); got != 2 {
+		t.Fatalf("logind sessions: %d, want 2", got)
+	}
+
+	// utmp wins when present: USER_PROCESS records with a user name.
+	var utmp []byte
+	utmp = append(utmp, utmpRecord(2, "~", "reboot")...) // BOOT_TIME
+	utmp = append(utmp, utmpRecord(7, "tty1", "alice")...)
+	utmp = append(utmp, utmpRecord(7, "pts/0", "bob")...)
+	utmp = append(utmp, utmpRecord(6, "tty2", "LOGIN")...) // LOGIN_PROCESS
+	utmp = append(utmp, utmpRecord(7, "pts/1", "")...)
+	if err := os.WriteFile(filepath.Join(varRunPath, "utmp"), utmp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := countLoggedInUsers(); got != 2 {
+		t.Fatalf("utmp: %d, want 2", got)
 	}
 }

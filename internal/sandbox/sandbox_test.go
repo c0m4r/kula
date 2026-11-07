@@ -67,6 +67,10 @@ func runHelperProcess() {
 		os.Exit(helperSkipCode)
 	}
 
+	// Sources the sandbox must keep readable, when this host has them.
+	_, utmpErr := os.ReadFile("/run/utmp")
+	_, sessionsErr := os.ReadDir("/run/systemd/sessions")
+
 	webCfg := config.WebConfig{Enabled: true, Port: 27999}
 	if err := Enforce(configPath, storageDir, webCfg, config.ApplicationsConfig{}, config.OllamaConfig{}); err != nil {
 		fmt.Printf("SKIP: Enforce failed: %v\n", err)
@@ -104,6 +108,20 @@ func runHelperProcess() {
 	if err := os.WriteFile(filepath.Join(storageDir, "test.txt"), []byte("ok"), 0644); err != nil {
 		fmt.Printf("FAIL: write to storage directory failed: %v\n", err)
 		os.Exit(1)
+	}
+
+	// 5. The logged-in user count keeps its sources (utmp, logind sessions).
+	if utmpErr == nil {
+		if _, err := os.ReadFile("/run/utmp"); err != nil {
+			fmt.Printf("FAIL: /run/utmp readable before the sandbox but not after: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if sessionsErr == nil {
+		if _, err := os.ReadDir("/run/systemd/sessions"); err != nil {
+			fmt.Printf("FAIL: logind sessions readable before the sandbox but not after: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	fmt.Printf("OK: sandbox assertions passed (ABI %d)\n", abi)

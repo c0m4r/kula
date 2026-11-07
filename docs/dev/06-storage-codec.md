@@ -45,6 +45,10 @@ legacy v1 JSON records).
 └──────────────────────────────────────────────────────────┘
 ```
 
+The fixed block's `user_count` byte holds `0–254`; `255` means unknown (the collector's `-1`,
+for hosts with neither utmp nor systemd-logind sessions) and decodes as `-1`. The byte was an
+unclamped `uint8` before, so `255` only ever held a count that had wrapped.
+
 ## Preamble flags
 
 ```go

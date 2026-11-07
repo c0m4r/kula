@@ -189,6 +189,29 @@ func appendF32(b []byte, v float64) []byte {
 	return append(b, x[:]...)
 }
 
+// userCountUnknown is the fixed-block byte for an unknown logged-in user count
+// (collector value -1). Counts are clamped below it; the field was an
+// unclamped uint8 before, so 255 only ever meant a count that had wrapped.
+const userCountUnknown = 255
+
+func encodeUserCount(n int) byte {
+	switch {
+	case n < 0:
+		return userCountUnknown
+	case n >= userCountUnknown:
+		return userCountUnknown - 1
+	default:
+		return byte(n)
+	}
+}
+
+func decodeUserCount(b byte) int {
+	if b == userCountUnknown {
+		return -1
+	}
+	return int(b)
+}
+
 // ---- Encoder ----------------------------------------------------------------
 
 // encodeSample encodes an AggregatedSample to a binary payload (no length prefix).
@@ -299,7 +322,7 @@ func appendPreamble(buf []byte, a *AggregatedSample) []byte {
 //	[166:190] proc[6] int32
 //	[190:198] uptime_sec float64
 //	[198:202] entropy    int32
-//	[202:203] user_count uint8
+//	[202:203] user_count uint8 (0–254; 255 = unknown, decoded as -1)
 //	[203:204] clock_sync uint8
 //	[204:212] self_rss   uint64
 //	[212:216] self_cpu_pct float32
@@ -375,7 +398,7 @@ func appendFixed(buf []byte, s *collector.Sample) []byte {
 		ent = math.MaxInt32
 	}
 	binary.LittleEndian.PutUint32(b[198:], uint32(int32(ent)))
-	b[202] = uint8(s.System.UserCount)
+	b[202] = encodeUserCount(s.System.UserCount)
 	if s.System.ClockSync {
 		b[203] = 1
 	}
@@ -894,7 +917,7 @@ func decodeFixed(data []byte) (*collector.Sample, int, error) {
 	// System
 	s.System.Uptime = math.Float64frombits(binary.LittleEndian.Uint64(data[190:]))
 	s.System.Entropy = int(int32(binary.LittleEndian.Uint32(data[198:])))
-	s.System.UserCount = int(data[202])
+	s.System.UserCount = decodeUserCount(data[202])
 	s.System.ClockSync = data[203] != 0
 	s.System.UptimeHuman = collector.FormatUptime(s.System.Uptime)
 	// Self

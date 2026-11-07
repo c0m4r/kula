@@ -1,10 +1,9 @@
 package collector
 
 import (
-	"bufio"
+	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -88,11 +87,28 @@ func clockSyncedFromTimex(tx *unix.Timex) bool {
 	return tx.Maxerror < ntpMaxErrorLimit
 }
 
-// countLoggedInUsers reads /var/run/utmp to count logged-in users.
+// countLoggedInUsers counts login sessions the way `who` does, from the
+// USER_PROCESS entries in utmp. Where utmp is missing (distributions that
+// dropped it, most containers) it counts systemd-logind user sessions instead.
+// It returns -1 when neither source exists: the count is unknown, which is
+// not the same as nobody being logged in.
 func countLoggedInUsers() int {
-	f, err := os.Open(filepath.Join(varRunPath, "utmp"))
+	for _, path := range []string{filepath.Join(runPath, "utmp"), filepath.Join(varRunPath, "utmp")} {
+		if n, ok := countUtmpUsers(path); ok {
+			return n
+		}
+	}
+	if n, ok := countLogindSessions(filepath.Join(runPath, "systemd", "sessions")); ok {
+		return n
+	}
+	return -1
+}
+
+// countUtmpUsers counts USER_PROCESS records with a user name in a utmp file.
+func countUtmpUsers(path string) (int, bool) {
+	f, err := os.Open(path)
 	if err != nil {
-		return countUsersFromProc()
+		return 0, false
 	}
 	defer func() { _ = f.Close() }()
 
@@ -100,12 +116,13 @@ func countLoggedInUsers() int {
 	// utmp record size on x86_64 Linux is 384 bytes
 	const recordSize = 384
 	const utTypeOffset = 0
-	const utUserOffset = 8
+	// ut_user follows ut_type (4), ut_pid (4), ut_line (32) and ut_id (4).
+	const utUserOffset = 44
 	const userProcess = 7
 
 	buf := make([]byte, recordSize)
 	for {
-		n, err := f.Read(buf)
+		n, err := io.ReadFull(f, buf)
 		if n < recordSize || err != nil {
 			break
 		}
@@ -121,44 +138,38 @@ func countLoggedInUsers() int {
 			count++
 		}
 	}
-	return count
+	return count, true
 }
 
-func countUsersFromProc() int {
-	seen := make(map[string]bool)
-
-	entries, err := os.ReadDir(procPath)
+// countLogindSessions counts the open user sessions systemd-logind records in
+// dir, one file per session. Sessions of class "user" are logins (tty, SSH,
+// desktop); "manager" (the per-user service manager), "background" and greeter
+// sessions are not, and a session in state "closing" has logged out.
+func countLogindSessions(dir string) (int, bool) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0
+		return 0, false
 	}
-
+	count := 0
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.Type().IsRegular() {
 			continue
 		}
-		pid := entry.Name()
-		if _, err := strconv.ParseInt(pid, 10, 64); err != nil {
-			continue
-		}
-
-		statusPath := filepath.Join(procPath, pid, "status")
-		f, err := os.Open(statusPath)
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			continue
 		}
-
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "Uid:") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 && fields[1] != "0" && !seen[fields[1]] {
-					seen[fields[1]] = true
-				}
+		var class, state string
+		for _, line := range strings.Split(string(data), "\n") {
+			if v, ok := strings.CutPrefix(line, "CLASS="); ok {
+				class = v
+			} else if v, ok := strings.CutPrefix(line, "STATE="); ok {
+				state = v
 			}
 		}
-		_ = f.Close()
+		if class == "user" && state != "closing" {
+			count++
+		}
 	}
-
-	return len(seen)
+	return count, true
 }

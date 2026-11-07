@@ -1393,3 +1393,24 @@ func TestDecodeRecordWithoutPSUSection(t *testing.T) {
 		}
 	}
 }
+
+// TestUserCountUnknownAndClamped pins the user-count byte: -1 (unknown) uses
+// the reserved 255 and comes back as -1; counts past the byte saturate
+// instead of wrapping.
+func TestUserCountUnknownAndClamped(t *testing.T) {
+	for _, tc := range []struct{ in, want int }{{-1, -1}, {0, 0}, {7, 7}, {254, 254}, {255, 254}, {300, 254}} {
+		sample := makeSampleFull(time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC))
+		sample.Data.System.UserCount = tc.in
+		encoded, err := encodeSample(sample)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := decodeSample(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := decoded.Data.System.UserCount; got != tc.want {
+			t.Errorf("user count %d round-tripped as %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}

@@ -22,7 +22,10 @@ export function updateHeader(s) {
     }
     if (s.sys?.clock_source) sysInfo.push(`${text('source')}: ${escapeHTML(s.sys.clock_source)}`);
     if (s.sys?.entropy) sysInfo.push(`${text('entropy')}: ${escapeHTML(s.sys.entropy)}`);
-    if (s.sys?.user_count !== undefined) sysInfo.push(`${text('users')}: ${escapeHTML(s.sys.user_count)}`);
+    // A negative count means the host has nothing to count logins from.
+    if (Number.isFinite(s.sys?.user_count) && s.sys.user_count >= 0) {
+        sysInfo.push(`${text('users')}: ${escapeHTML(s.sys.user_count)}`);
+    }
     if (s.self) {
         sysInfo.push(`${text('self')}: ${s.self.cpu_pct.toFixed(1)}% ${text('cpu')}, ` +
             `${formatBytesShort(s.self.mem_rss)} ${text('rss')}`);

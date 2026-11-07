@@ -145,7 +145,7 @@ type SystemStats struct {
 	Entropy     int     `json:"entropy" agg:"mean"`
 	ClockSync   bool    `json:"clock_synced"`
 	ClockSource string  `json:"clock_source"`
-	UserCount   int     `json:"user_count" agg:"mean"`
+	UserCount   int     `json:"user_count" agg:"mean_nonnegative"` // -1 when unknown
 }
 
 type ProcessStats struct {

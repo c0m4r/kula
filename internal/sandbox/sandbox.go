@@ -3,6 +3,7 @@
 // After calling Enforce(), the process is restricted to only the filesystem
 // paths and network ports it needs:
 //   - /proc, /sys: read-only (system metrics collection)
+//   - utmp and systemd-logind sessions: read-only (logged-in user count)
 //   - config file: read-only
 //   - storage directory: read-write
 //   - web port: TCP bind only
@@ -81,6 +82,12 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 		landlock.ROFiles("/etc/hosts").IgnoreIfMissing(),
 		landlock.ROFiles("/etc/resolv.conf").IgnoreIfMissing(),
 		landlock.ROFiles("/etc/nsswitch.conf").IgnoreIfMissing(),
+
+		// Logged-in user count: utmp, or systemd-logind's session files
+		// where a distribution no longer keeps utmp.
+		landlock.ROFiles("/run/utmp").IgnoreIfMissing(),
+		landlock.ROFiles("/var/run/utmp").IgnoreIfMissing(),
+		landlock.RODirs("/run/systemd/sessions").IgnoreIfMissing(),
 
 		// Data storage: read-write access
 		landlock.RWDirs(absStorageDir),

@@ -127,7 +127,7 @@ def _get_str(data: bytes, off: int) -> Tuple[str, int]:
 #   [166:190] proc[6] int32 (total,running,sleeping,zombie,blocked,threads)
 #   [190:198] uptime_sec float64  (NOT float32!)
 #   [198:202] entropy    int32
-#   [202:203] user_count uint8
+#   [202:203] user_count uint8 (255 = unknown, decoded as -1)
 #   [203:204] clock_sync uint8
 #   [204:212] self_rss   uint64
 #   [212:216] self_cpu_pct float32
@@ -264,7 +264,7 @@ def _decode_fixed(data: bytes, off: int) -> Tuple[Dict[str, Any], int]:
         "system": {
             "uptime_sec": uptime,
             "entropy": entropy,
-            "user_count": user_count,
+            "user_count": -1 if user_count == 255 else user_count,
             "clock_synced": bool(clock_sync),
         },
         "self": {"cpu_pct": self_cpu, "mem_rss": self_rss, "fds": self_fds},

@@ -471,7 +471,7 @@ func (m model) overviewLines(width int) []string {
 		{"Uptime", fallback(sample.System.UptimeHuman, "—")},
 		{"Processes", fmt.Sprintf("%d · %d running", sample.Process.Total, sample.Process.Running)},
 		{"Clock", clockText(sample.System.ClockSync, sample.System.ClockSource)},
-		{"Users", fmt.Sprintf("%d", sample.System.UserCount)},
+		{"Users", userCountText(sample.System.UserCount)},
 	}
 	lines = append(lines, metricGrid(hostItems, width, responsiveColumns(width, 1, 4))...)
 
@@ -1530,4 +1530,13 @@ func clamp(value, low, high int) int {
 		return high
 	}
 	return value
+}
+
+// userCountText renders the logged-in user count, which is -1 when the host
+// has neither utmp nor systemd-logind sessions to count.
+func userCountText(n int) string {
+	if n < 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%d", n)
 }

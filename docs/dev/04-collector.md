@@ -29,7 +29,7 @@ Lifecycle:
 | [`network.go`](../../internal/collector/network.go) | `/proc/net/dev`, `/proc/net/snmp`, `/proc/net/netstat`, `/proc/net/sockstat` | per-iface throughput, TCP errors/resets/retrans/established, sockets |
 | [`disk.go`](../../internal/collector/disk.go) | `/proc/diskstats`, `statfs`, hwmon | per-device I/O and busy % (`io_ticks`), filesystem usage, disk temps (skips virtual/LVM/loop) |
 | [`disk_identity.go`](../../internal/collector/disk_identity.go) | sysfs (`wwid`, `serial`, `uuid`), `kula disks` | persistent disk IDs and stable per-disk series keys |
-| [`system.go`](../../internal/collector/system.go) | hostname, `/proc/uptime`, entropy, `adjtimex`, utmp | uptime, entropy, clock sync, user count |
+| [`system.go`](../../internal/collector/system.go) | hostname, `/proc/uptime`, entropy, `adjtimex`, utmp or systemd-logind sessions | uptime, entropy, clock sync, user count (`-1` when neither source exists) |
 | [`process.go`](../../internal/collector/process.go) | `/proc/<pid>/stat` | running/sleeping/blocked/zombie counts, threads |
 | [`self.go`](../../internal/collector/self.go) | `/proc/self/*` | Kula's own CPU%, RSS, open FDs |
 | [`gpu.go`](../../internal/collector/gpu.go) | `/sys/class/drm` discovery | GPU enumeration (NVIDIA/AMD/Intel) |

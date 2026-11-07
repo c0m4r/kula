@@ -42,6 +42,7 @@ It is **non-fatal**: on unsupported kernels the warning is logged and Kula runs 
 | config file | read-only |
 | storage directory | read-write |
 | `/etc/hosts`, `/etc/resolv.conf`, `/etc/nsswitch.conf` | read-only (for DNS) |
+| `/run/utmp`, `/var/run/utmp`, `/run/systemd/sessions` | read-only (logged-in user count) |
 | parent directory of `web.unix_socket` | read-write (when a Unix socket is configured) |
 | container runtime socket (`applications.containers.socket_path`, auto-detected when empty) | read-write (when containers are enabled) |
 | `applications.postgres.host` | read-write (Unix socket mode) |
@@ -81,6 +82,7 @@ sandbox so it can reach that port. The pattern (parse the port from the configur
 - Writing outside the storage directory fails.
 - Executing outside the allowed paths fails.
 - Dialing an external (non-allowed) network address fails.
+- utmp and systemd-logind sessions, when the host has them, stay readable.
 
 These are the negative tests proving the confinement actually holds.
 

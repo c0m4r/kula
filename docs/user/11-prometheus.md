@@ -76,7 +76,8 @@ All metrics are prefixed `kula_`. The exporter covers the full collection surfac
 `kula_filesystem_used_percent`.
 
 **System:** `kula_system_uptime_seconds`, `kula_system_entropy_available`,
-`kula_system_clock_synced`, `kula_system_logged_in_users`.
+`kula_system_clock_synced`, `kula_system_logged_in_users` (counted from utmp, or from
+systemd-logind sessions where there is no utmp; omitted when the host has neither).
 
 **GPU:** `kula_gpu_temperature_celsius`, `kula_gpu_load_percent`, `kula_gpu_power_watts`,
 `kula_gpu_vram_total_bytes`, `kula_gpu_vram_used_bytes`, `kula_gpu_vram_used_percent`.

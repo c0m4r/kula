@@ -280,9 +280,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	gauge("kula_system_clock_synced",
 		"1 if the system clock is synchronized (NTP/PTP), 0 otherwise.",
 		host, clockSync)
-	gauge("kula_system_logged_in_users",
-		"Number of users currently logged in.",
-		host, float64(d.System.UserCount))
+	// Omitted while unknown (no utmp and no systemd-logind sessions).
+	if d.System.UserCount >= 0 {
+		gauge("kula_system_logged_in_users",
+			"Number of users currently logged in.",
+			host, float64(d.System.UserCount))
+	}
 
 	// ---- Processes ---------------------------------------------------------
 	gauge("kula_processes_sleeping",

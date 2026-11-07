@@ -274,6 +274,30 @@ func TestDiskMetricsFollowStableIdentity(t *testing.T) {
 	}
 }
 
+// TestLoggedInUsersOmittedWhileUnknown: a host with neither utmp nor logind
+// sessions reports no logged-in-users sample rather than a false count.
+func TestLoggedInUsersOmittedWhileUnknown(t *testing.T) {
+	store := newTestStoreWithSample(t)
+	defer func() { _ = store.Close() }()
+	srv := newTestServer(t, store)
+	for _, tc := range []struct {
+		users int
+		want  bool
+	}{{-1, false}, {3, true}} {
+		sample := &collector.Sample{Timestamp: time.Now(), System: collector.SystemStats{Hostname: "host", UserCount: tc.users}}
+		if err := store.WriteSample(sample); err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		srv.handleMetrics(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		got := strings.Contains(w.Body.String(), `kula_system_logged_in_users{host="host"} 3`)
+		present := strings.Contains(w.Body.String(), `kula_system_logged_in_users{`)
+		if present != tc.want || (tc.want && !got) {
+			t.Errorf("users=%d: logged-in users sample present=%v, want %v", tc.users, present, tc.want)
+		}
+	}
+}
+
 // TestHandleMetricsMethodNotAllowed verifies that POST /metrics returns 405.
 func TestHandleMetricsMethodNotAllowed(t *testing.T) {
 	store := newTestStoreWithSample(t)
