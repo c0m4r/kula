@@ -52,6 +52,8 @@ export const state = {
     joinMetrics: false, // fetched from server config
     focusMode: false,
     focusSelecting: false,
+    // Rearrange mode (rearrange.js) owns the card layout while it is on.
+    rearranging: false,
     focusVisible: readJsonPref('kula_focus_visible', null),
     currentResolution: '1s', // resolution of data currently loaded in charts
     currentSourceResolution: '1s',

@@ -1272,6 +1272,80 @@ splitExpand.click();
 check(!splitCard.classList.contains('chart-expanded') && noCardOrders(),
     'Collapsing a split card left temporary CSS orders behind');
 
+// Rearrange mode: keyboard moves on a card's grip, stored per browser.
+const storedOrder = () => JSON.parse(localStorage.getItem('kula_card_order') || 'null');
+const pressGrip = (grip, key) => grip.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+document.getElementById('card-memory').querySelector('.btn-expand-chart').click();
+check(document.getElementById('card-memory').classList.contains('chart-expanded'), 'Fixture could not expand a card');
+const beforeRearrange = allCardIds();
+document.getElementById('btn-settings').click();
+const rearrangeButton = document.getElementById('btn-rearrange');
+check(!rearrangeButton.disabled, 'Rearrange cards was unavailable');
+rearrangeButton.click();
+const rearrangeBar = document.getElementById('rearrange-bar');
+check(state.rearranging && rearrangeBar && document.getElementById('settings-menu').classList.contains('hidden'),
+    'Rearrange cards did not open its bar and close the menu');
+check(!document.querySelector('.chart-expanded') && noCardOrders(), 'Rearranging kept an expanded card out of order');
+check(document.getElementById('btn-focus').disabled, 'Focus mode stayed available while rearranging');
+const cpuCard = document.getElementById('card-cpu');
+const cpuGrip = cpuCard.querySelector(':scope > .card-grip');
+const cpuName = cpuCard.querySelector('h3').textContent.trim();
+check(cpuGrip?.getAttribute('aria-label') === i18n.t('move_card').replace('{name}', cpuName),
+    'The CPU grip is not labelled with its card');
+check(cpuCard.querySelector(':scope > .chart-body').inert && !cpuGrip.inert,
+    'Rearranging left the chart interactive or the grip inert');
+check(dashboardCards().filter(card => card.getClientRects().length).every(card => card.querySelector(':scope > .card-grip')),
+    'A visible card has no grip');
+const systemBefore = renderedIds('system');
+cpuGrip.focus();
+pressGrip(cpuGrip, 'ArrowRight');
+let systemNow = renderedIds('system');
+check(systemNow[0] === systemBefore[1] && systemNow[1] === 'card-cpu', 'ArrowRight did not move CPU one place later');
+check(document.activeElement === cpuGrip, 'Moving a card took focus from its grip');
+check(storedOrder()?.system.indexOf('card-cpu') > storedOrder()?.system.indexOf(systemBefore[1]),
+    'A keyboard move was not stored');
+check(rearrangeBar.querySelector('[role="status"]').textContent === i18n.t('card_moved').replace('{name}', cpuName)
+    .replace('{position}', '2').replace('{total}', String(systemNow.length)), 'A keyboard move was not announced');
+pressGrip(cpuGrip, 'End');
+check(renderedIds('system').at(-1) === 'card-cpu', 'End did not move CPU last');
+pressGrip(cpuGrip, 'Home');
+check(renderedIds('system')[0] === 'card-cpu', 'Home did not move CPU first');
+const dir = document.documentElement.dir;
+document.documentElement.dir = 'rtl';
+pressGrip(cpuGrip, 'ArrowLeft');
+check(renderedIds('system')[1] === 'card-cpu', 'ArrowLeft did not move a card later in right-to-left layout');
+document.documentElement.dir = dir;
+const swapGrip = document.querySelector('#gauge-swap > .card-grip');
+pressGrip(swapGrip, 'End');
+check(sectionIds('gauges').at(-1) === 'gauge-swap', 'The Swap gauge did not move last');
+focusMode.toggleFocusMode();
+check(!state.focusMode && !document.getElementById('focus-bar'), 'Focus mode started while rearranging');
+document.getElementById('btn-rearrange-cancel').click();
+check(!state.rearranging && !document.getElementById('rearrange-bar') && !document.querySelector('.card-grip') &&
+    !document.querySelector('[data-rearrange-inert]') && !document.getElementById('btn-focus').disabled,
+    'Leaving Rearrange mode left its controls behind');
+check(storedOrder() === null && sameIds(allCardIds(), beforeRearrange), 'Cancel did not restore the order');
+
+rearrangeButton.click();
+pressGrip(document.querySelector('#card-processes > .card-grip'), 'Home');
+pressGrip(document.querySelector('#gauge-swap > .card-grip'), 'End');
+document.getElementById('btn-rearrange-done').click();
+check(renderedIds('system')[0] === 'card-processes' && sectionIds('gauges').at(-1) === 'gauge-swap' &&
+    storedOrder()?.system[0] === 'card-processes', 'Done did not keep the new order');
+state.focusVisible = ['card-cpu', 'card-processes'];
+focusMode.applyStoredFocusMode();
+const focused = Array.from(mainGrid.children).filter(card => card.classList.contains('focus-visible')).map(card => card.id);
+check(focused.join() === 'card-processes,card-cpu', 'Focus mode ignored the stored order');
+focusMode.toggleFocusMode();
+await settleHistory();
+rearrangeButton.click();
+document.getElementById('btn-rearrange-reset').click();
+check(storedOrder() === null && sameIds(allCardIds(), beforeRearrange), 'Reset order did not restore the default order');
+check(document.querySelector('#rearrange-bar [role="status"]').textContent === i18n.t('card_order_reset'),
+    'Reset order was not announced');
+document.getElementById('btn-rearrange-done').click();
+check(storedOrder() === null, 'Done after Reset stored an order');
+
 // A thermal split card rebuilt during Focus mode joins the combined grid
 // instead of the hidden thermals grid, and goes back with its section.
 check(state.splitDiskTemp, 'Fixture lost the disk-temperature split');
@@ -1300,6 +1374,6 @@ window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math
     gesture_request_isolation: true, minimum_zoom_points: 12, legacy_metric_compatibility: true,
     unavailable_replication_lag: true, filesystem_aggregation_tooltips: true,
     bucketed_live_preset: true, suspended_aggregation: true, chart_image_export: true,
-    card_order: true, errors };
+    card_order: true, card_rearrange: true, errors };
 check(errors.length === 0, errors.join('; '));
 window.ready = true;

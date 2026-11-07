@@ -83,6 +83,8 @@ registerCardDecorator(card => {
 });
 
 export function toggleFocusMode() {
+    // Rearranging owns the cards until it is finished.
+    if (state.rearranging) return;
     const grids = document.querySelectorAll('.charts-grid');
     const btn = document.getElementById('btn-focus');
 

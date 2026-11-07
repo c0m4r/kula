@@ -45,6 +45,7 @@ import { toggleFocusMode, applyStoredFocusMode } from './focus-mode.js';
 import { applyStoredTvMode, initTvMode } from './tv-mode.js';
 import { initSplitModule } from './split.js';
 import { arrangeCards, initCardLayout } from './card-layout.js';
+import { initRearrange } from './rearrange.js';
 import { initOllama } from './ollama.js';
 import { chartsGridForTitle, sectionHeadForTitle } from './section-utils.js';
 import {
@@ -436,6 +437,7 @@ async function init() {
     });
     document.getElementById('btn-focus').addEventListener('click', toggleFocusMode);
     initSettingsMenu();
+    initRearrange();
     document.getElementById('login-form')?.addEventListener('submit', handleLogin);
     document.getElementById('btn-logout')?.addEventListener('click', handleLogout);
     document.getElementById('btn-custom-range').addEventListener('click', toggleCustomTimePicker);

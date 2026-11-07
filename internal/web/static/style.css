@@ -12,7 +12,9 @@
 .dashboard.system-info-active .chart-search-input,
 .dashboard.system-info-active #btn-pause,
 .dashboard.system-info-active #btn-focus,
-.dashboard.system-info-active #btn-layout {
+.dashboard.system-info-active #btn-layout,
+.dashboard.system-info-active #btn-rearrange,
+.dashboard.system-info-active .rearrange-bar {
     display: none !important;
 }
 
@@ -3231,6 +3233,112 @@ body.light-mode .focus-selecting .chart-card::after {
     gap: 0.4rem;
     margin: 0 0.5rem;
     cursor: pointer;
+}
+
+/* ---- Rearrange mode (rearrange.js) ----
+   Cards keep their own look; an outline and a grip mark them movable, and
+   everything inside them stops taking pointer input (rearrange.js also makes
+   it inert for keyboards and assistive technology). */
+.rearrange-bar {
+    flex-wrap: wrap;
+}
+
+/* Focus moves here when the mode starts; a pointer user needs no ring. */
+.rearrange-bar:focus:not(:focus-visible) {
+    outline: none;
+}
+
+.rearranging .gauge-card,
+.rearranging .chart-card {
+    position: relative;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    outline: 1px dashed var(--accent-blue);
+    outline-offset: -1px;
+}
+
+.rearranging .gauge-card > :not(.card-grip),
+.rearranging .chart-card > :not(.card-grip) {
+    pointer-events: none;
+}
+
+.rearranging .chart-card > .chart-header {
+    padding-inline-start: 2.1rem;
+}
+
+.rearranging .card-grip,
+.rearranging .gauge-card > .card-grip {
+    position: absolute;
+    inset-block-start: 0.6rem;
+    inset-inline-start: 0.5rem;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.75rem;
+    padding: 0;
+    color: var(--accent-blue);
+    background: var(--bg-card);
+    border: 1px solid var(--accent-blue);
+    border-radius: var(--radius-sm);
+    cursor: grab;
+    /* Touch drags start here; anywhere else on a card scrolls the page. */
+    touch-action: none;
+}
+
+/* Gauges centre their text: the inline-start middle is free. */
+.rearranging .gauge-card > .card-grip {
+    inset-block-start: 50%;
+    transform: translateY(-50%);
+}
+
+.rearranging .card-grip:hover {
+    background: rgba(59, 130, 246, 0.15);
+}
+
+.rearranging .card-grip:focus-visible {
+    outline: 3px solid var(--accent-yellow);
+    outline-offset: 2px;
+}
+
+/* The lifted card is opaque: the translucent card colour over a solid base. */
+.rearranging .card-dragging {
+    z-index: 20;
+    background-color: var(--bg-primary);
+    background-image: linear-gradient(var(--bg-card), var(--bg-card));
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.card-shifting {
+    transition: transform 0.15s ease;
+}
+
+.card-drag-active,
+.card-drag-active * {
+    cursor: grabbing !important;
+}
+
+.settings-action {
+    width: 100%;
+    font-family: inherit;
+    text-align: start;
+    background: transparent;
+    border: 0;
+}
+
+.settings-action-icon {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    color: var(--accent-blue);
+}
+
+.settings-action:disabled {
+    cursor: default;
+    opacity: 0.5;
+    background: transparent;
 }
 
 /* ---- TV mode ----

@@ -49,6 +49,7 @@
     <link rel="modulepreload" href="js/app/settings.js" integrity="{{sri `js/app/settings.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/tv-mode.js" integrity="{{sri `js/app/tv-mode.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/focus-mode.js" integrity="{{sri `js/app/focus-mode.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/rearrange.js" integrity="{{sri `js/app/rearrange.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/split.js" integrity="{{sri `js/app/split.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/ollama.js" integrity="{{sri `js/app/ollama.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/main.js" integrity="{{sri `js/app/main.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
@@ -153,6 +154,10 @@
                                 <input type="checkbox" id="set-gauges">
                                 <span data-i18n="show_gauges">Show gauges</span>
                             </label>
+                            <button type="button" id="btn-rearrange" class="settings-row settings-action">
+                                <svg class="settings-action-icon" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><circle cx="3" cy="3" r="1.5" fill="currentColor"></circle><circle cx="3" cy="8" r="1.5" fill="currentColor"></circle><circle cx="3" cy="13" r="1.5" fill="currentColor"></circle><circle cx="7" cy="3" r="1.5" fill="currentColor"></circle><circle cx="7" cy="8" r="1.5" fill="currentColor"></circle><circle cx="7" cy="13" r="1.5" fill="currentColor"></circle></svg>
+                                <span data-i18n="rearrange_cards">Rearrange cards</span>
+                            </button>
                         </div>
                         <div class="settings-group">
                             <div class="settings-group-title" data-i18n="accessibility">Accessibility</div>

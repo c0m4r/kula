@@ -264,16 +264,19 @@ export function applyServerSettings(cfg) {
     applyTheme();
 }
 
+/** Close the customization menu, as a click outside it does. */
+export function closeSettingsMenu() {
+    document.getElementById('settings-menu')?.classList.add('hidden');
+    document.getElementById('btn-settings')?.setAttribute('aria-expanded', 'false');
+}
+
 /** Wire the header button, the dropdown and the controls. */
 export function initSettingsMenu() {
     const btn = document.getElementById('btn-settings');
     const menu = document.getElementById('settings-menu');
     if (!btn || !menu) return;
 
-    const close = () => {
-        menu.classList.add('hidden');
-        btn.setAttribute('aria-expanded', 'false');
-    };
+    const close = closeSettingsMenu;
 
     btn.addEventListener('click', (e) => {
         e.stopPropagation();
