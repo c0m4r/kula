@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -259,7 +260,7 @@ Reading: 0 Writing: 1 Waiting: 0
 				StatusURL: server.URL,
 			},
 		},
-		prevNginx: nginxRaw{accepts: 50000000, handled: 50000000, requests: 100000000},
+		prevNginx: nginxRaw{accepts: 50000000, handled: 50000000, requests: 100000000, seen: true},
 	}
 
 	stats := c.collectNginx(1.0)
@@ -269,6 +270,61 @@ Reading: 0 Writing: 1 Waiting: 0
 	if stats.AcceptsPS != 0 || stats.HandledPS != 0 || stats.RequestsPS != 0 {
 		t.Errorf("Expected 0 PS after nginx counter reset, got A=%g H=%g R=%g",
 			stats.AcceptsPS, stats.HandledPS, stats.RequestsPS)
+	}
+}
+
+// TestNginxRatesAcrossPartialResetsAndFailures covers the deltas the reset
+// guard used to miss: counters that went backwards while accepts did not, and
+// a failed poll followed by a good one.
+func TestNginxRatesAcrossPartialResetsAndFailures(t *testing.T) {
+	body := func(accepts, handled, requests int) string {
+		return "Active connections: 1\nserver accepts handled requests\n " +
+			strconv.Itoa(accepts) + " " + strconv.Itoa(handled) + " " + strconv.Itoa(requests) +
+			"\nReading: 0 Writing: 1 Waiting: 0\n"
+	}
+	var current string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if current == "" {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = w.Write([]byte(current))
+	}))
+	defer server.Close()
+	c := &Collector{
+		nginxClient: &http.Client{},
+		appCfg:      config.ApplicationsConfig{Nginx: config.NginxConfig{Enabled: true, StatusURL: server.URL}},
+	}
+	poll := func(b string) *NginxStats {
+		t.Helper()
+		current = b
+		return c.collectNginx(1)
+	}
+
+	if s := poll(body(1000, 1000, 3000)); s == nil || s.RequestsPS != 0 {
+		t.Fatalf("first poll: %+v, want no rates without a baseline", s)
+	}
+	if s := poll(body(1010, 1010, 3050)); s == nil || s.AcceptsPS != 10 || s.RequestsPS != 50 {
+		t.Fatalf("steady poll: %+v, want 10 accepts/s and 50 requests/s", s)
+	}
+	// nginx restarted and has already accepted more connections than before,
+	// but its request counter started over.
+	if s := poll(body(1500, 1500, 20)); s == nil || s.AcceptsPS != 0 || s.HandledPS != 0 || s.RequestsPS != 0 {
+		t.Fatalf("partial reset: %+v, want no rates instead of an underflow", s)
+	}
+	if s := poll(body(1505, 1505, 40)); s == nil || s.RequestsPS != 20 {
+		t.Fatalf("after reset: %+v, want 20 requests/s from the new baseline", s)
+	}
+	// A failed poll drops the baseline: the next good poll must not divide two
+	// intervals of growth by one.
+	if s := poll(""); s != nil {
+		t.Fatalf("failed poll returned %+v", s)
+	}
+	if s := poll(body(1525, 1525, 140)); s == nil || s.RequestsPS != 0 {
+		t.Fatalf("after a failed poll: %+v, want no rate until a new baseline", s)
+	}
+	if s := poll(body(1530, 1530, 150)); s == nil || s.RequestsPS != 10 {
+		t.Fatalf("baseline restored: %+v, want 10 requests/s", s)
 	}
 }
 

@@ -35,7 +35,8 @@ applications:
 ```
 
 **Metrics:** active connections, reading/writing/waiting, accepts/handled/requests per second
-(and cumulative totals). Counter resets on nginx restart are handled gracefully.
+(and cumulative totals). Counter resets on nginx restart are handled gracefully: the poll that
+sees the restart reports no rates, and a failed poll never inflates the next one.
 
 ---
 

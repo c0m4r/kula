@@ -60,7 +60,11 @@ API and WebSocket payloads.
   whole sample. The encoder treats `nil` sections as absent.
 - **Guard cumulative counters against resets.** Sources like nginx/apache2 reset their counters
   on restart; the delta computation guards against negative deltas to avoid absurd rates (see
-  `nginx.go` and `apache2.go`).
+  `nginx.go` and `apache2.go`). Guard *every* counter, not one representative: nginx reports no
+  rates for a poll in which any of its counters went backwards, since they reset together.
+- **Rates span consecutive successful polls only.** A failed poll drops the baseline (and a
+  failed sub-query drops that counter's), so the next delta is never two intervals of growth
+  divided by one (`nginx.go`, `postgres.go`).
 - **Lazy-allocate clients.** HTTP/DB clients are created on first use.
 - **Debug logging** goes through the `debugf` helper, gated by `collection.DebugLog` (which is
   set when `web.logging.level == "debug"`).

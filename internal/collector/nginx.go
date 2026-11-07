@@ -14,6 +14,9 @@ type nginxRaw struct {
 	accepts  uint64
 	handled  uint64
 	requests uint64
+	// seen is set once the counters come from a successful poll, so a
+	// zero-valued baseline is never mistaken for one.
+	seen bool
 }
 
 // collectNginx fetches the nginx stub_status page and parses it.
@@ -26,6 +29,17 @@ type nginxRaw struct {
 //	 7 7 7
 //	Reading: 0 Writing: 3 Waiting: 1
 func (c *Collector) collectNginx(elapsed float64) *NginxStats {
+	stats := c.fetchNginx(elapsed)
+	if stats == nil {
+		// Rates are deltas between consecutive successful polls. Dropping the
+		// baseline here keeps the next poll from dividing two intervals'
+		// growth by one.
+		c.prevNginx = nginxRaw{}
+	}
+	return stats
+}
+
+func (c *Collector) fetchNginx(elapsed float64) *NginxStats {
 	if c.nginxClient == nil {
 		c.nginxClient = &http.Client{Timeout: c.collCfg.Interval}
 	}
@@ -86,14 +100,16 @@ func (c *Collector) parseNginxStatus(body string, elapsed float64) *NginxStats {
 	stats.Handled = handled
 	stats.Requests = requests
 
-	// Compute per-second rates from deltas
-	cur := nginxRaw{accepts: accepts, handled: handled, requests: requests}
-	if c.prevNginx.accepts > 0 && elapsed > 0 {
-		if cur.accepts >= c.prevNginx.accepts {
-			stats.AcceptsPS = round2(float64(cur.accepts-c.prevNginx.accepts) / elapsed)
-			stats.HandledPS = round2(float64(cur.handled-c.prevNginx.handled) / elapsed)
-			stats.RequestsPS = round2(float64(cur.requests-c.prevNginx.requests) / elapsed)
-		}
+	// Compute per-second rates from deltas. A restart resets all three
+	// counters together, so any one going backwards means every delta of this
+	// poll spans the restart: report no rates rather than an underflowed one.
+	cur := nginxRaw{accepts: accepts, handled: handled, requests: requests, seen: true}
+	prev := c.prevNginx
+	if prev.seen && elapsed > 0 &&
+		cur.accepts >= prev.accepts && cur.handled >= prev.handled && cur.requests >= prev.requests {
+		stats.AcceptsPS = round2(float64(cur.accepts-prev.accepts) / elapsed)
+		stats.HandledPS = round2(float64(cur.handled-prev.handled) / elapsed)
+		stats.RequestsPS = round2(float64(cur.requests-prev.requests) / elapsed)
 	}
 	c.prevNginx = cur
 

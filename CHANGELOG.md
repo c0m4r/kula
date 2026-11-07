@@ -39,6 +39,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - TCP retransmissions are stored in history; they used to chart as 0 after a reload or for
   any past range (older binaries cannot read the extended records, so back up before a
   downgrade)
+- nginx request and handled rates no longer spike to ~1.8e19/s after an nginx restart, and a
+  failed status poll no longer doubles the next rate
 - History no longer goes missing for up to a full ring after a storage tier wraps while
   records are growing (for example when a container or interface appears); the data stayed
   on disk but reads skipped it and the dashboard showed an outage
