@@ -47,9 +47,20 @@ It is **non-fatal**: on unsupported kernels the warning is logged and Kula runs 
 | container runtime socket (`applications.containers.socket_path`, auto-detected when empty) | read-write (when containers are enabled) |
 | `applications.postgres.host` | read-write (Unix socket mode) |
 | `applications.mysql.host` | read-write (Unix socket file mode) |
+| `~/.postgresql`, `PGSSLROOTCERT`/`PGSSLCERT`/`PGSSLKEY`/`PGSSLCRL` paths | read-only (PostgreSQL with `sslmode` other than `disable`) |
 
 The read-write grant on the storage directory is what lets the storage engine, the custom-metrics
 socket, and the backup writer function under confinement.
+
+## TLS certificates
+
+TLS verification — `https://` nginx/Apache2 status URLs, an `https://` Ollama URL, PostgreSQL
+`verify-ca`/`verify-full` — uses the system CA roots. `crypto/x509` loads them once, on first
+use, and caches them. The bundle is usually a symlink into a distribution-specific tree
+(`/etc/ca-certificates`, `/usr/share/ca-certificates`, `/etc/pki`), so rather than granting all
+of those, `Enforce` loads the roots *before* confining the process whenever an enabled target
+needs them (`needsSystemRoots`), and logs `tls:system-roots`. CA updates therefore take effect on
+restart. Without this, every such connection failed certificate verification under the sandbox.
 
 ## Network rules
 
@@ -83,6 +94,7 @@ sandbox so it can reach that port. The pattern (parse the port from the configur
 - Executing outside the allowed paths fails.
 - Dialing an external (non-allowed) network address fails.
 - utmp and systemd-logind sessions, when the host has them, stay readable.
+- With an `https://` target configured, the system CA roots are still available.
 
 These are the negative tests proving the confinement actually holds.
 

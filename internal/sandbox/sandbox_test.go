@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -70,9 +71,14 @@ func runHelperProcess() {
 	// Sources the sandbox must keep readable, when this host has them.
 	_, utmpErr := os.ReadFile("/run/utmp")
 	_, sessionsErr := os.ReadDir("/run/systemd/sessions")
+	// Stat (unlike reading) does not load crypto/x509's cached roots.
+	_, bundleErr := os.Stat("/etc/ssl/certs/ca-certificates.crt")
 
+	// An https:// target makes Enforce load the system roots first. Its
+	// connect rule (port 8443) leaves the dial assertion below intact.
+	apps := config.ApplicationsConfig{Nginx: config.NginxConfig{Enabled: true, StatusURL: "https://127.0.0.1:8443/status"}}
 	webCfg := config.WebConfig{Enabled: true, Port: 27999}
-	if err := Enforce(configPath, storageDir, webCfg, config.ApplicationsConfig{}, config.OllamaConfig{}); err != nil {
+	if err := Enforce(configPath, storageDir, webCfg, apps, config.OllamaConfig{}); err != nil {
 		fmt.Printf("SKIP: Enforce failed: %v\n", err)
 		os.Exit(helperSkipCode)
 	}
@@ -124,6 +130,39 @@ func runHelperProcess() {
 		}
 	}
 
+	// 6. TLS targets still verify: the system roots were loaded before the
+	// CA bundle became unreadable.
+	if bundleErr == nil {
+		pool, err := x509.SystemCertPool()
+		if err != nil || len(pool.Subjects()) == 0 { //nolint:staticcheck // counting roots
+			fmt.Printf("FAIL: no system CA roots under the sandbox with an https target configured: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	fmt.Printf("OK: sandbox assertions passed (ABI %d)\n", abi)
 	os.Exit(0)
+}
+
+func TestNeedsSystemRoots(t *testing.T) {
+	https := config.ApplicationsConfig{Nginx: config.NginxConfig{Enabled: true, StatusURL: "https://web/status"}}
+	for _, tc := range []struct {
+		name   string
+		apps   config.ApplicationsConfig
+		ollama config.OllamaConfig
+		want   bool
+	}{
+		{"nothing outbound", config.ApplicationsConfig{}, config.OllamaConfig{}, false},
+		{"nginx over http", config.ApplicationsConfig{Nginx: config.NginxConfig{Enabled: true, StatusURL: "http://web/status"}}, config.OllamaConfig{}, false},
+		{"nginx over https", https, config.OllamaConfig{}, true},
+		{"https nginx disabled", config.ApplicationsConfig{Nginx: config.NginxConfig{StatusURL: "https://web/status"}}, config.OllamaConfig{}, false},
+		{"apache over https", config.ApplicationsConfig{Apache2: config.Apache2Config{Enabled: true, StatusURL: "HTTPS://web/server-status"}}, config.OllamaConfig{}, true},
+		{"ollama over https", config.ApplicationsConfig{}, config.OllamaConfig{Enabled: true, URL: "https://llm:11434"}, true},
+		{"postgres require", config.ApplicationsConfig{Postgres: config.PostgresConfig{Enabled: true, SSLMode: "require"}}, config.OllamaConfig{}, false},
+		{"postgres verify-full", config.ApplicationsConfig{Postgres: config.PostgresConfig{Enabled: true, SSLMode: "verify-full"}}, config.OllamaConfig{}, true},
+	} {
+		if got := needsSystemRoots(tc.apps, tc.ollama); got != tc.want {
+			t.Errorf("%s: needsSystemRoots = %v, want %v", tc.name, got, tc.want)
+		}
+	}
 }

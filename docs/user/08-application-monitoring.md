@@ -147,6 +147,12 @@ recovery state.
 > Prefer the `KULA_POSTGRES_PASSWORD` environment variable over putting the password in the
 > file. Kula escapes it safely for the libpq connection string.
 
+**TLS:** `sslmode` takes the libpq values (`disable`, `allow`, `prefer`, `require`, `verify-ca`,
+`verify-full`). `verify-ca` and `verify-full` check the server certificate against the system
+CA certificates, or against `~/.postgresql/root.crt` (or `PGSSLROOTCERT`) for a private CA; a
+client certificate is read from `~/.postgresql/postgresql.crt` and `.key` (or `PGSSLCERT` and
+`PGSSLKEY`). The sandbox allows reading exactly those files.
+
 ---
 
 ## MySQL / MariaDB

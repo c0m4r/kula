@@ -13,12 +13,14 @@
 package sandbox
 
 import (
+	"crypto/x509"
 	"fmt"
 	"log"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"kula/internal/config"
 
@@ -199,6 +201,20 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 		}
 	}
 
+	// PostgreSQL over TLS: lib/pq reads its CA, client certificate and key
+	// from ~/.postgresql (root.crt, postgresql.crt, postgresql.key) or from
+	// the PGSSL* environment paths, at connect time.
+	if appCfg.Postgres.Enabled && postgresUsesTLS(appCfg.Postgres.SSLMode) {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			fsRules = append(fsRules, landlock.RODirs(filepath.Join(home, ".postgresql")).IgnoreIfMissing())
+		}
+		for _, env := range []string{"PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY", "PGSSLCRL"} {
+			if path := os.Getenv(env); path != "" && path != "system" {
+				fsRules = append(fsRules, landlock.ROFiles(path).IgnoreIfMissing())
+			}
+		}
+	}
+
 	// Ollama: allow outbound TCP connection to the Ollama API port
 	if ollamaCfg.Enabled && ollamaCfg.URL != "" {
 		if u, err := url.Parse(ollamaCfg.URL); err == nil {
@@ -210,6 +226,19 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 			}
 			netRules = append(netRules, landlock.ConnectTCP(uint16(ollamaPort)))
 			appInfo = append(appInfo, fmt.Sprintf("ollama:connect-tcp/%d", ollamaPort))
+		}
+	}
+
+	// TLS verification (https:// status and Ollama URLs, PostgreSQL
+	// verify-ca/verify-full) uses the system roots, which crypto/x509 loads
+	// once, on first use, and then caches. Load them while the CA bundle — and
+	// the distribution-specific tree its symlinks point into — is readable;
+	// once confined, every verification would fail for lack of roots.
+	if needsSystemRoots(appCfg, ollamaCfg) {
+		if pool, err := x509.SystemCertPool(); err != nil || len(pool.Subjects()) == 0 { //nolint:staticcheck // Subjects only counts the roots here
+			log.Printf("Warning: no system CA certificates loaded (%v); TLS connections to monitored targets will fail to verify", err)
+		} else {
+			appInfo = append(appInfo, "tls:system-roots")
 		}
 	}
 
@@ -257,6 +286,30 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 		abi, absConfigPath, absStorageDir, netStatus, appStatus)
 
 	return nil
+}
+
+// postgresUsesTLS reports whether a PostgreSQL sslmode can negotiate TLS.
+func postgresUsesTLS(sslmode string) bool {
+	return sslmode != "" && sslmode != "disable"
+}
+
+// needsSystemRoots reports whether an enabled outbound target verifies a TLS
+// certificate against the system roots.
+func needsSystemRoots(appCfg config.ApplicationsConfig, ollamaCfg config.OllamaConfig) bool {
+	https := func(raw string) bool {
+		u, err := url.Parse(raw)
+		return err == nil && strings.EqualFold(u.Scheme, "https")
+	}
+	switch {
+	case appCfg.Nginx.Enabled && https(appCfg.Nginx.StatusURL),
+		appCfg.Apache2.Enabled && https(appCfg.Apache2.StatusURL),
+		ollamaCfg.Enabled && https(ollamaCfg.URL):
+		return true
+	case appCfg.Postgres.Enabled:
+		mode := appCfg.Postgres.SSLMode
+		return mode == "verify-ca" || mode == "verify-full" || os.Getenv("PGSSLROOTCERT") == "system"
+	}
+	return false
 }
 
 // BuildRuleSummary returns a human-readable summary of the sandbox rules

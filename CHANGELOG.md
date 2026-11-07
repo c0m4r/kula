@@ -39,6 +39,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - TCP retransmissions are stored in history; they used to chart as 0 after a reload or for
   any past range (older binaries cannot read the extended records, so back up before a
   downgrade)
+- `https://` status and Ollama URLs and PostgreSQL `verify-ca`/`verify-full` verify certificates
+  under the sandbox (the CA bundle was unreadable, so every TLS verification failed); a private
+  PostgreSQL CA or client certificate in `~/.postgresql` is readable too
 - The logged-in user count works under the sandbox again (utmp was blocked, so it counted
   every non-root account with a process); hosts without utmp count systemd-logind sessions,
   and the count is shown as unknown rather than guessed when neither exists

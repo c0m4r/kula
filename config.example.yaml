@@ -367,6 +367,8 @@ applications:
     user: "kula_monitor"
     password: ""
     dbname: "postgres"
+    # disable | allow | prefer | require | verify-ca | verify-full. The verify modes
+    # check the server against the system CAs or ~/.postgresql/root.crt.
     sslmode: "disable"
 
   # MySQL / MariaDB monitoring
