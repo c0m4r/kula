@@ -58,7 +58,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: '3.x'
+          python-version: '3.14'
 
       - name: Install semgrep
         # Install into a throwaway venv, pinned to the latest release that was
@@ -69,4 +69,6 @@ jobs:
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Semgrep scan
-        run: semgrep scan --error
+        run: |
+          ulimit -s unlimited
+          semgrep scan --error
