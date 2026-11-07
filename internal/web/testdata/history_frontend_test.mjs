@@ -1277,3 +1277,182 @@ test('preferences survive blocked or full browser storage', () => {
         else delete globalThis.localStorage;
     }
 });
+
+const cardOrder = await importSource('../static/js/app/card-order.js');
+const {
+    CARD_FAMILY_ORDER, defaultCardOrder, dropIndex, mergeSavedOrder, resolveCardOrder, sanitizeCardOrder,
+} = cardOrder;
+
+const staticCards = ids => ids.map((id, rank) => ({ id, family: 'static', rank }));
+const splitCards = (type, anchor, ids) => ids.map((id, rank) => ({ id, family: `split:${type}`, anchor, rank }));
+const appCards = (group, ids) => ids.map((id, rank) => ({ id, family: `app:${group}`, rank }));
+const SYSTEM_CARDS = staticCards(['card-cpu', 'card-loadavg', 'card-memory', 'card-swap', 'card-network',
+    'card-pps', 'card-connections', 'card-disk-io', 'card-disk-space', 'card-gpu-load', 'card-vram',
+    'card-processes', 'card-entropy', 'card-self']);
+const NETWORK_SPLIT = splitCards('network', 'card-pps',
+    ['card-split-net-eth0', 'card-split-pps-eth0', 'card-split-net-wlan0', 'card-split-pps-wlan0']);
+const POSTGRES = appCards('postgres', ['card-pg-connections', 'card-pg-tps', 'card-pg-locks', 'card-pg-tuples',
+    'card-pg-io', 'card-pg-cache-hit', 'card-pg-table-health', 'card-pg-bgwriter', 'card-pg-replication']);
+const MYSQL = appCards('mysql', ['card-mysql-connections', 'card-mysql-queries', 'card-mysql-slow']);
+const metaOf = cards => Object.fromEntries(cards.map(card => [card.id, card]));
+const resolve = (cards, stored) => resolveCardOrder(defaultCardOrder(cards, CARD_FAMILY_ORDER), stored, metaOf(cards));
+const moved = (order, id, before) => {
+    const out = order.filter(other => other !== id);
+    out.splice(before === null ? out.length : out.indexOf(before), 0, id);
+    return out;
+};
+const shuffled = (list, seed) => {
+    const out = list.slice();
+    let state = seed;
+    for (let i = out.length - 1; i > 0; i--) {
+        state = (state * 1103515245 + 12345) % 2147483648;
+        const j = state % (i + 1);
+        [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+};
+
+test('card default order keeps split chains after their card and application groups apart', () => {
+    const psu = [{ id: 'card-psu_BAT1', family: 'psu' }, { id: 'card-psu_BAT0', family: 'psu' }];
+    const system = defaultCardOrder([...psu, ...NETWORK_SPLIT, ...SYSTEM_CARDS], CARD_FAMILY_ORDER);
+    assert.deepEqual(system.slice(5, 11), ['card-pps', 'card-split-net-eth0', 'card-split-pps-eth0',
+        'card-split-net-wlan0', 'card-split-pps-wlan0', 'card-connections'], 'interface pairs follow Packets/sec');
+    assert.deepEqual(system.slice(-3), ['card-self', 'card-psu_BAT0', 'card-psu_BAT1'],
+        'batteries follow the system cards by name');
+
+    // The CSS ranks used to overlap: Postgres replication (30 + 8) tied with
+    // MySQL connections (38) and could land inside the MySQL group.
+    const nginx = appCards('nginx', ['card-nginx-connections', 'card-nginx-requests']);
+    const apps = defaultCardOrder([...MYSQL, ...POSTGRES, ...nginx], CARD_FAMILY_ORDER);
+    assert.deepEqual(apps.slice(0, 2), ['card-nginx-connections', 'card-nginx-requests']);
+    assert.equal(apps.indexOf('card-pg-replication'), apps.indexOf('card-pg-bgwriter') + 1);
+    assert.equal(apps.indexOf('card-mysql-connections'), apps.indexOf('card-pg-replication') + 1);
+
+    const custom = defaultCardOrder(appCards('custom', ['card-custom-b', 'card-custom-a']).map(card => ({ ...card, rank: 0 })),
+        CARD_FAMILY_ORDER);
+    assert.deepEqual(custom, ['card-custom-a', 'card-custom-b'], 'custom groups sort by name, not arrival');
+});
+
+test('card order resolution places unarranged cards with their family', () => {
+    const system = [...SYSTEM_CARDS, ...NETWORK_SPLIT.slice(0, 2)];
+    const base = defaultCardOrder(system, CARD_FAMILY_ORDER);
+    assert.deepEqual(resolve(system, null), base);
+    assert.deepEqual(resolve(system, []), base);
+    assert.deepEqual(resolve(system, ['card-gone']), base, 'only absent ids restore the default');
+
+    // Processes moved to the top, the issue #51 case.
+    const stored = moved(base, 'card-processes', 'card-cpu');
+    assert.deepEqual(resolve(system, stored), stored);
+    assert.deepEqual(resolve(system, resolve(system, stored)), resolve(system, stored), 'resolution is idempotent');
+
+    // A first battery joins the end, not the moved Self card.
+    const selfFirst = moved(base, 'card-self', 'card-cpu');
+    const withBattery = [...system, { id: 'card-psu_BAT0', family: 'psu' }];
+    assert.equal(resolve(withBattery, selfFirst).at(-1), 'card-psu_BAT0');
+    // A second battery joins the first one wherever it was put.
+    const batteryFirst = moved(resolve(withBattery, selfFirst), 'card-psu_BAT0', 'card-cpu');
+    const twoBatteries = [...withBattery, { id: 'card-psu_BAT1', family: 'psu' }];
+    assert.deepEqual(resolve(twoBatteries, batteryFirst).slice(0, 3), ['card-self', 'card-psu_BAT0', 'card-psu_BAT1']);
+
+    // A new interface follows its siblings even when its default successor moved.
+    const connectionsFirst = moved(base, 'card-connections', 'card-cpu');
+    const twoInterfaces = [...SYSTEM_CARDS, ...NETWORK_SPLIT];
+    const resolved = resolve(twoInterfaces, connectionsFirst);
+    assert.equal(resolved[0], 'card-connections');
+    assert.deepEqual(resolved.slice(resolved.indexOf('card-split-pps-eth0') + 1, resolved.indexOf('card-split-pps-eth0') + 3),
+        ['card-split-net-wlan0', 'card-split-pps-wlan0']);
+    // Split cards nobody arranged follow their card when it moved.
+    const ppsFirst = moved(defaultCardOrder(SYSTEM_CARDS, CARD_FAMILY_ORDER), 'card-pps', 'card-cpu');
+    assert.deepEqual(resolve(twoInterfaces, ppsFirst).slice(0, 5), ['card-pps', ...NETWORK_SPLIT.map(card => card.id)]);
+});
+
+test('card order resolution keeps application groups together', () => {
+    const withoutReplication = POSTGRES.slice(0, -1);
+    const bgwriterFirst = moved(defaultCardOrder([...withoutReplication, ...MYSQL], CARD_FAMILY_ORDER),
+        'card-pg-bgwriter', 'card-pg-connections');
+    const resolved = resolve([...POSTGRES, ...MYSQL], bgwriterFirst);
+    assert.deepEqual(resolved.slice(0, 2), ['card-pg-bgwriter', 'card-pg-replication'],
+        'replication arriving later follows its group');
+    // A group never arranged joins the end of the section.
+    const nginx = appCards('nginx', ['card-nginx-connections']);
+    assert.equal(resolve([...POSTGRES, ...MYSQL, ...nginx], resolved).at(-1), 'card-nginx-connections');
+    // Custom group "a" arriving after "b" goes before it.
+    const custom = name => ({ id: `card-custom-${name}`, family: 'app:custom', rank: 0 });
+    assert.deepEqual(resolve([custom('b'), custom('a')], ['card-custom-b']), ['card-custom-a', 'card-custom-b']);
+});
+
+test('card order does not depend on the order cards arrived in', () => {
+    const cards = [...SYSTEM_CARDS, ...NETWORK_SPLIT, { id: 'card-psu_BAT0', family: 'psu' },
+        { id: 'card-psu_AC', family: 'psu' }];
+    const base = defaultCardOrder(cards, CARD_FAMILY_ORDER);
+    const stored = moved(moved(base.filter(id => id !== 'card-split-net-wlan0' && id !== 'card-psu_AC'),
+        'card-processes', 'card-cpu'), 'card-psu_BAT0', 'card-memory');
+    const expected = resolve(cards, stored);
+    for (let seed = 1; seed <= 200; seed++) {
+        const arrival = shuffled(cards, seed);
+        assert.deepEqual(defaultCardOrder(arrival, CARD_FAMILY_ORDER), base, `default order, seed ${seed}`);
+        assert.deepEqual(resolveCardOrder(defaultCardOrder(arrival, CARD_FAMILY_ORDER), stored, metaOf(arrival)),
+            expected, `resolved order, seed ${seed}`);
+    }
+});
+
+test('saved card order keeps absent cards in place and is bounded', () => {
+    assert.deepEqual(mergeSavedOrder(['b', 'a'], ['a', 'x', 'b']), ['b', 'a', 'x'], 'x stays after a');
+    assert.deepEqual(mergeSavedOrder(['b', 'a'], ['x', 'a', 'b']), ['x', 'b', 'a'], 'a leading absent id stays first');
+    assert.deepEqual(mergeSavedOrder(['a', 'a', 'b'], ['b', 'b']), ['a', 'b'], 'duplicates are dropped');
+    assert.deepEqual(mergeSavedOrder(['a', 'b'], null), ['a', 'b']);
+    const absent = Array.from({ length: 10 }, (_, i) => `old-${i}`);
+    assert.deepEqual(mergeSavedOrder(['a', 'b', 'c'], ['a', ...absent, 'b', 'c'], 5), ['a', 'old-0', 'old-1', 'b', 'c'],
+        'absent ids go first, from the end');
+    assert.deepEqual(mergeSavedOrder(['a', 'b', 'c'], absent, 2), ['a', 'b', 'c'], 'present ids are never dropped');
+});
+
+test('stored card order accepts only card ids for the known sections', () => {
+    for (const raw of [null, 'x', 7, [], ['system']]) assert.equal(sanitizeCardOrder(raw), null);
+    const polluted = JSON.parse('{"__proto__": {"system": ["evil"]}, "constructor": ["x"], "gauges": ["gauge-ram", "gauge-cpu"]}');
+    const clean = sanitizeCardOrder(polluted);
+    assert.deepEqual(clean, { gauges: ['gauge-ram', 'gauge-cpu'] });
+    assert.equal(Object.getPrototypeOf(clean), Object.prototype);
+    assert.deepEqual(sanitizeCardOrder({
+        system: ['a', 'a', '', 3, null, 'x'.repeat(201), 'b'],
+        thermals: 'card-cpu-temp',
+        unknown: ['c'],
+    }), { system: ['a', 'b'] });
+    const many = Array.from({ length: 400 }, (_, i) => `card-${i}`);
+    assert.equal(sanitizeCardOrder({ applications: many }).applications.length, 300);
+});
+
+test('drop index follows reading order and is stable across the move it causes', () => {
+    const layout = (count, columns, rtl = false) => Array.from({ length: count }, (_, slot) => {
+        const column = slot % columns;
+        const visual = rtl ? columns - 1 - column : column;
+        const left = visual * 110;
+        const top = Math.floor(slot / columns) * 90;
+        return { left, right: left + 100, top, bottom: top + 80 };
+    });
+    // Pointer on the leading half of the second card in row 2 of a 3-column grid.
+    const grid = layout(8, 3);
+    assert.equal(dropIndex(grid, 120, 100), 4);
+    assert.equal(dropIndex(grid, 190, 100), 5, 'past the centre counts the card as before');
+    assert.equal(dropIndex(grid, 0, 85), 3, 'the gap below a row');
+    assert.equal(dropIndex(grid, 500, 500), 8, 'beyond the last card');
+    assert.equal(dropIndex(grid, -50, -50), 0, 'before the first card');
+    assert.equal(dropIndex(layout(8, 3, true), 310, 100, true), 3, 'rtl mirrors the row');
+    assert.equal(dropIndex(layout(4, 1), 50, 200), 2, 'single column');
+
+    for (const [columns, rtl] of [[3, false], [3, true], [2, false], [1, false]]) {
+        const count = 7;
+        const slots = layout(count, columns, rtl);
+        for (let dragged = 0; dragged < count; dragged++) {
+            for (let x = -20; x <= columns * 110 + 20; x += 15) {
+                for (let y = -20; y <= Math.ceil(count / columns) * 90 + 20; y += 15) {
+                    const othersBefore = slots.filter((_, slot) => slot !== dragged);
+                    const target = dropIndex(othersBefore, x, y, rtl);
+                    const othersAfter = othersBefore.map((_, index) => slots[index < target ? index : index + 1]);
+                    assert.equal(dropIndex(othersAfter, x, y, rtl), target,
+                        `columns ${columns}, rtl ${rtl}, dragged ${dragged}, pointer ${x},${y}`);
+                }
+            }
+        }
+    }
+});
