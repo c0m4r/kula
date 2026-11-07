@@ -22,6 +22,8 @@ type mysqlRaw struct {
 	innodbBPRequests int64
 	tableLocksWaited int64
 	rowLockWaits     int64
+	// valid marks counters read from the server; a rate needs both ends.
+	valid bool
 }
 
 type mysqlCollector struct {
@@ -129,6 +131,16 @@ func (c *Collector) collectMysql(elapsed float64) *MysqlStats {
 	ctx, cancel := context.WithTimeout(context.Background(), c.collCfg.Interval)
 	defer cancel()
 
+	// Rates are deltas between consecutive successful polls. A poll that
+	// fails before its counters are recorded drops the baseline, so the next
+	// one starts over instead of dividing two intervals' growth by one.
+	recorded := false
+	defer func() {
+		if !recorded {
+			c.myCollector.prev = mysqlRaw{}
+		}
+	}()
+
 	stats := &MysqlStats{}
 
 	rows, err := c.myCollector.db.QueryContext(ctx, "SHOW GLOBAL STATUS")
@@ -165,7 +177,7 @@ func (c *Collector) collectMysql(elapsed float64) *MysqlStats {
 	stats.ThreadsRunning = parseI("Threads_running")
 	stats.ThreadsCached = parseI("Threads_cached")
 
-	var cur mysqlRaw
+	cur := mysqlRaw{valid: true}
 	cur.questions = parseI64("Questions")
 	cur.comSelect = parseI64("Com_select")
 	cur.comInsert = parseI64("Com_insert")
@@ -189,6 +201,7 @@ func (c *Collector) collectMysql(elapsed float64) *MysqlStats {
 	}
 
 	c.myCollector.calculateStats(stats, cur, elapsed)
+	recorded = true
 
 	// Replication: sentinel -1 means "not configured / NULL". Queries here
 	// are non-fatal — a server without replication or a user without
@@ -309,7 +322,7 @@ func (c *Collector) collectMysqlReplicaCount(ctx context.Context, stats *MysqlSt
 }
 
 func (mc *mysqlCollector) calculateStats(stats *MysqlStats, cur mysqlRaw, elapsed float64) {
-	if mc.prev.questions > 0 && elapsed > 0 {
+	if mc.prev.valid && cur.valid && elapsed > 0 {
 		rate := func(cur, prev int64) float64 {
 			if cur < prev {
 				return 0

@@ -442,10 +442,12 @@ func TestMysqlCollectorMath(t *testing.T) {
 			innodbBPRequests: 200,
 			tableLocksWaited: 3,
 			rowLockWaits:     4,
+			valid:            true,
 		},
 	}
 
 	cur := mysqlRaw{
+		valid:            true,
 		questions:        200,  // +100 over 10s → 10 q/s
 		comSelect:        100,  // +50  → 5 select/s
 		comInsert:        20,   // +10  → 1 insert/s
@@ -503,10 +505,12 @@ func TestMysqlCollectorCounterReset(t *testing.T) {
 			innodbBPRequests: 5_000_000,
 			tableLocksWaited: 50_000,
 			rowLockWaits:     10_000,
+			valid:            true,
 		},
 	}
 
 	cur := mysqlRaw{
+		valid:            true,
 		questions:        100,
 		comSelect:        50,
 		comInsert:        10,
@@ -530,6 +534,30 @@ func TestMysqlCollectorCounterReset(t *testing.T) {
 			stats.QueriesPS, stats.ComSelectPS, stats.ComInsertPS, stats.ComUpdatePS,
 			stats.ComDeletePS, stats.SlowQueriesPS, stats.InnodbBPReadsPS,
 			stats.TableLocksWaitedPS, stats.RowLockWaitsPS)
+	}
+}
+
+// TestMysqlRatesNeedABaseline: a failed poll leaves no baseline, so the next
+// poll reports no rates instead of two intervals of growth over one; a
+// server with no queries yet still establishes one.
+func TestMysqlRatesNeedABaseline(t *testing.T) {
+	mc := &mysqlCollector{}
+	poll := func(questions int64) *MysqlStats {
+		t.Helper()
+		stats := &MysqlStats{}
+		mc.calculateStats(stats, mysqlRaw{questions: questions, valid: true}, 1)
+		return stats
+	}
+	poll(0)
+	if s := poll(10); s.QueriesPS != 10 {
+		t.Fatalf("from a zero baseline: %+v, want 10 q/s", s)
+	}
+	mc.prev = mysqlRaw{} // what a failed poll leaves
+	if s := poll(30); s.QueriesPS != 0 {
+		t.Fatalf("after a failed poll: %+v, want no rate", s)
+	}
+	if s := poll(35); s.QueriesPS != 5 {
+		t.Fatalf("baseline restored: %+v, want 5 q/s", s)
 	}
 }
 
