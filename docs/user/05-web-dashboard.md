@@ -15,6 +15,7 @@ dashboard is disabled and only `/metrics`, `/health` and `/status` remain.
   the language selector, and (when enabled) the AI assistant 🤖 button and the Space Invaders
   easter-egg button.
 - **Gauges** — at-a-glance circular gauges for the headline metrics (CPU, memory, etc.).
+  Gauges and chart cards can be put in any order; see [Rearranging cards](#rearranging-cards).
 - **Chart cards** — one card per metric group: CPU, Load, Memory, Swap, Network Throughput,
   Packets / sec, Connections & Sockets, Disk I/O, Disk Space, Entropy, Self Monitoring,
   Thermals, GPU (load, VRAM, temperature), Processes, a capacity/power chart per battery or UPS,
@@ -187,7 +188,8 @@ the screen's pixel density. The export happens in the browser and does not conta
 ### Focus mode
 
 Hide everything except the charts you care about. Useful when investigating a specific
-subsystem. While Focus Mode is active, history requests omit unrelated high-cardinality metric
+subsystem. The selected charts keep your [card order](#rearranging-cards): System Metrics
+first, then Thermals, then Applications. While Focus Mode is active, history requests omit unrelated high-cardinality metric
 sections and refetch them automatically when the selection changes or Focus Mode is closed.
 
 #### TV mode
@@ -236,6 +238,30 @@ same physical drive when kernel names change. A drive without a persistent ID is
 
 Switch between a **grid** layout and a **stacked list** layout. Existing charts, history and
 legend selections are preserved; switching does not refetch history.
+
+### Rearranging cards
+
+Choose **Rearrange cards** in the ⚙️ **Customization** menu to change the order of the gauges,
+and of the chart cards within each section (System Metrics, Thermals, Applications). A bar at
+the top of the page explains the controls, and every card shows a grip (⠿).
+
+- **Mouse:** drag a card from anywhere on it to its new place. Near the top or bottom of the
+  window, the page scrolls. <kbd>Esc</kbd> while dragging puts the card back.
+- **Touch screen:** drag a card by its grip.
+- **Keyboard:** Tab to a card's grip. The arrow keys move the card one place, and
+  <kbd>Home</kbd> or <kbd>End</kbd> move it first or last in its section. Screen readers
+  announce the new position.
+- **Done** keeps the new order, **Cancel** returns to the order you started with, and
+  **Reset order** restores the default order.
+
+Cards stay within their section. While you rearrange, charts don't respond to the pointer and
+Focus Mode is unavailable. Expanded charts collapse and the chart search is cleared.
+
+The order is stored in the browser and applies everywhere, Focus Mode and TV mode included.
+Cards that appear later join cards of the same kind, or else the end of their section. These
+include a newly split device, a second battery, or an application that starts reporting. A
+card that disappears keeps its place for when it returns. **Reset to defaults** in the
+Customization menu does not change the card order.
 
 ### Aggregation selector
 
@@ -289,7 +315,8 @@ The dashboard raises in-UI alerts for:
 
 The ⚙️ button in the header opens the **Customization** menu:
 
-- **Appearance** — sticky top bar and gauge row visibility.
+- **Appearance** — sticky top bar, gauge row visibility, and
+  [Rearrange cards](#rearranging-cards).
 - **Accessibility** — high contrast, text size (− / reset / +), reduce motion, underlined links,
   and a strong focus outline.
 - **Charts** — chart data controls, detailed chart tooltips, Min–Max bands for all series, and

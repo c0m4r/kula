@@ -84,13 +84,20 @@ per-application reducer branches.
   controller flushes. `chart-controller.js` calls the vendored private `_updateHiddenIndices()`
   method to preserve hidden-point indices when data is trimmed; do not simply clear
   `_dataChanges`. Recheck this contract when upgrading Chart.js.
+- Dashboard cards enter the page only through `card-layout.js` `placeCard()`, and only
+  `arrangeCards()` moves them. The layout must stay a function of the cards present, the stored
+  order (`kula_card_order`) and the mode. Never append a card yourself or give it a persistent
+  CSS `order`; expand's temporary orders are the exception. A new application group goes in
+  `APP_GROUPS` (`card-order.js`). `history_dashboard_client.js` requires every card to carry
+  `data-card-section` and a computed `order` of 0.
 - Split-card Graph Bounds menus reuse `main.js`'s shared outside-click handler. Do not add
   per-card document listeners that retain discarded cards. Keep opening and menu interactions
   from dismissing the dropdown, and preserve dismissal on unrelated bubbling icon clicks.
 - Run `./addons/test-frontend-regressions.sh` when changing viewport culling, split-card
-  teardown/dropdowns, or the vendored Chart.js version. It covers mutation retention, point
-  visibility after trimming, and split-card listener/instance cleanup, and drives the real
-  `kula serve` in Chromium to check live streaming versus bucketed refreshes. These browser
+  teardown/dropdowns, card placement or Rearrange mode, or the vendored Chart.js version. It
+  covers mutation retention, point visibility after trimming, split-card listener/instance
+  cleanup and card placement, and drives the real `kula serve` in Chromium to check live
+  streaming versus bucketed refreshes and rearranging with real input. These browser
   fixtures require Node.js 22+, Chromium/Chrome and Go. The separate Frontend workflow
   (`.github/workflows/frontend.yml`) runs each with its own timeout; `./addons/check.sh` does not.
 - `js/chartjs/chartjs-bundle.min.js` is generated from `addons/chartjs/` by

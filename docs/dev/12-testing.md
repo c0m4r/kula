@@ -208,6 +208,11 @@ legend and instance preservation, Data opt-in/opt-out, two accelerated hours of 
 horizontal time labels, visible sampling tiers, custom-range validation and time zone
 conversion, frozen custom ranges, sub-three-hour tier-0 aggregation/zoom, slow collection
 cadence, sensor reorder/disappearance, application gaps, and live language switching.
+Card placement checks require every card to go through `card-layout.js` with no CSS `order`.
+They feed a battery and Postgres replication late, and check Focus Mode's combined grid and
+its round trip. They also check that a split card built during Focus Mode and re-created cards
+keep their places. Rearrange mode is driven by keyboard: arrow keys, Home/End and RTL, then
+Cancel, Done, Reset and the announcements.
 History replay reports median preparation time and enforces a DOM-mutation budget proportional
 to chart count. Device-selection checks preserve unrelated datasets and shared gap metadata;
 all chart coordinates must remain valid for disabled Chart.js parsing.
@@ -241,11 +246,15 @@ WebSocket data. A phone-width 5-minute view must load 2s buckets, keep Max, refr
 and never draw blank points. A desktop 5-minute view must be raw and stream without history
 requests. Narrowing again must restore Max, and a desktop hour must stay drawn in Max. TV mode
 restored from storage must fit the Focus Mode cards on screen and keep streaming while the
-cursor rests on a chart. <kbd>Esc</kbd> must return to Focus Mode. Last, every access to
+cursor rests on a chart. <kbd>Esc</kbd> must return to Focus Mode.
+Rearranging uses real input. A mouse drag on a card body must move Processes first without
+zooming its chart, and the Swap gauge last. <kbd>Esc</kbd> must abandon a drag, and arrow keys
+must move a focused grip. The order must survive a reload and order a Focus Mode selection.
+Reset must restore the template order. Last, every access to
 `localStorage` is made to throw, as blocked site data does: the dashboard must still start and
-stream, its layout and theme toggles must work, and the game, when the build still serves it,
-must start and toggle mute. The test builds kula with the Go toolchain unless `KULA_BINARY` names
-a binary, and takes about 40 seconds.
+stream, its layout and theme toggles and a keyboard rearrangement must work, and the game,
+when the build still serves it, must start and toggle mute. The test builds kula with the Go
+toolchain unless `KULA_BINARY` names a binary, and takes about a minute.
 
 Run all three fixtures with
 [`addons/test-frontend-regressions.sh`](../../addons/test-frontend-regressions.sh), which needs

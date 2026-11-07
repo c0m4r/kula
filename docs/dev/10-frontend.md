@@ -59,7 +59,8 @@ Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.
 The server minifies them, like `style.css`, at startup (`web.minify_assets`); set it to `false`
 to read the original sources in browser developer tools.
 
-`main.js` `init()` loads translations, restores the URL state and layout, then waits for one
+`main.js` `init()` first arranges the cards in the stored order (see [Card order](#card-order)),
+then loads translations, restores the URL state and layout, then waits for one
 painted frame (`afterNextPaint()`) before `initCharts()` builds every Chart.js instance: the build
 holds the main thread, and the static page should be on screen first.
 
@@ -83,6 +84,9 @@ holds the main thread, and the static page should be on screen first.
 | `chart-accessibility.js` | Canvas names/summaries, keyboard point cursor, bounded semantic tables, and complete chart CSV |
 | `chart-card-actions.js` | Expand and save-as-image buttons plus hover/touch pause, shared by static, dynamic and split chart cards |
 | `chart-image.js` | Import-free PNG export: composites a chart canvas with its card title, details, host and time range |
+| `card-order.js` | Import-free card ordering rules: default order, stored-order resolution, saved-order merge, drop position |
+| `card-layout.js` | The one placement authority: registers template cards, places every dynamic card, arranges sections or Focus Mode's combined grid |
+| `rearrange.js` | Rearrange mode: grips, pointer drag, keyboard moves and announcements; stores the order through `card-layout.js` |
 | `format.js` | Metric and Local/UTC formatting, datetime conversion, and bucket-tooltip semantics |
 | `history-request.js` | Abortable, generation-safe latest-history-request controller |
 | `history-data.js` | Canonical history items, aggregation validity, missing-observation gaps, and Focus Mode API sections |
@@ -90,7 +94,7 @@ holds the main thread, and the static page should be on screen first.
 | `clock-picker.js` | Clock dial and hour/minute/second wheels for one end of the custom range, in the UI language's clock |
 | `gauges.js` | Bar gauges, sparkline backgrounds, live gauge updates |
 | `controls.js` | Pause/resume, layout toggle, time-range selection, history fetch |
-| `focus-mode.js` | Select/persist a subset of chart cards |
+| `focus-mode.js` | Select/persist a subset of chart cards; `card-layout.js` combines them into one grid |
 | `tv-mode.js` | Import-free TV mode over Focus Mode: viewport-filling grid, idle cursor, wake lock, full screen |
 | `section-utils.js` | Resolves section titles to their charts grid, including the Applications header wrapper |
 | `split.js` | Per-device/interface graph splitting |
@@ -239,6 +243,60 @@ Footer labels wrap to two rows rather than truncating the hostname. Layout mirro
 languages with explicit left/right alignment, because canvas `direction` is not honored
 everywhere. The module has no imports, so `history_frontend_test.mjs` can load it directly.
 
+### Card order
+
+`card-layout.js` is the only code that inserts or moves dashboard cards. `initCardLayout()`
+registers the template's gauges and chart cards in template order. Every card created later
+enters through `placeCard(card, { section, family, anchor, rank })`: split cards (`split.js`),
+battery/UPS cards and application cards (`charts-data.js`, `container-apps.js`). Never append
+a card yourself. `arrangeCards()` computes each section's order (gauges, system, thermals,
+applications) from the cards present and the stored order `kula_card_order`, using the pure
+rules in `card-order.js`, and moves only the cards that are out of place. The layout therefore
+depends only on which cards exist, the stored order and the mode. Focus Mode, telemetry arriving
+late and re-created cards cannot shift anything. Position means DOM position. No card carries a
+persistent inline CSS `order`, so Tab order, TV mode and the screen agree. Expanding a card
+still uses temporary orders, which `chart-card-actions.js` restores.
+
+The default order is:
+
+1. template cards, in template order;
+2. split cards right after the card they replace (`anchor`), in device order;
+3. families without an anchor: batteries/UPSes by name, then the application groups in
+   `APP_GROUPS` order. Each group's cards go by rank; custom groups go by name.
+
+A card the stored order does not know goes after the nearest card of its family, or its anchor,
+that precedes it by default. Failing that, it goes before the nearest card of its family that
+follows it, and otherwise at the end of its section. A second battery joins the first. A new
+interface follows its siblings or its parent card. Postgres replication joins the Postgres
+cards. When saving, `mergeSavedOrder()` keeps the ids of cards that are absent at that moment
+after their old predecessors, up to 300 ids per section. Absent cards include an application
+that is down or a split view that is off.
+
+Focus Mode marks the selected cards `focus-visible` and calls `arrangeCards()`. In Focus Mode
+it concatenates the system, thermals and applications sections into `#charts-grid`, each in
+its own order. Leaving Focus Mode puts every card back in its section. Functions registered
+with `registerCardDecorator()` run on every placed card: they give new cards their Focus
+classes and, while rearranging, their grips.
+
+Rearrange mode (`rearrange.js`) is opened from the Customization menu. It appends its bar to
+the sticky top bar and gives each card a grip. The rest of the card becomes `inert`: chart
+gestures, tooltips and header buttons stop, and Tab moves between grips. Cards move only within
+their section, inside Focus Mode's combined grid too.
+
+- **Pointer.** A drag starts after 4 px: anywhere on a card for mouse and pen, on the grip for
+  touch. The grip has `touch-action: none`, so the rest of the page still scrolls. The pointer
+  is captured on the section container, because moving the captured card would release the
+  capture. Once per animation frame, the card's node moves to `dropIndex()` among the visible
+  siblings, and the page scrolls when the pointer is near the viewport edges. `pointerup` and
+  `pointercancel` drop and store. <kbd>Esc</kbd> restores the stored order instead.
+- **Keyboard.** Arrow keys move a card one place among the visible cards of its section;
+  Left/Right are mirrored in RTL. Home and End move it to the first or last place.
+
+Every move is stored at once and announced in a polite live region inside the bar. **Cancel**
+restores the order the mode was entered with, and **Reset order** removes `kula_card_order`.
+Entering the mode collapses expanded cards and clears the chart search. Focus Mode is
+unavailable until the mode ends.
+
 Focus Mode selects API metric sections through `history-data.js`; leaving or changing
 Focus Mode refreshes the interval to populate newly visible cards. The default dashboard asks
 for all sections. Opening the dashboard does not start a background storage-coverage scan.
@@ -248,7 +306,7 @@ changes the selection or the history sections. The Focus bar's TV checkbox is re
 **Done** applies a selection. `kula_focus_tv` persists the choice, and `main.js` restores it
 after `applyStoredFocusMode()`. `html.tv-mode` hides the chrome in CSS and turns the dashboard
 into a viewport-height flex column with `#charts-grid` taking the remaining space. Focus Mode
-has already moved every selected card into that grid. `tvGridShape()` picks columns and rows
+has already moved every selected card into that grid, in the stored card order. `tvGridShape()` picks columns and rows
 that fit the widest 2:1 chart, among the shapes whose rows all fit at the stylesheet's
 `--tv-row-min` (10rem, so it grows with the text size). A short display therefore gets fewer,
 wider rows rather than a grid that scrolls out of view. The result goes into
@@ -280,8 +338,9 @@ instead of waiting for `/api/config`. Change the resolution in both places toget
 
 ### Adding a chart for a new metric type
 
-When you add an application metric type, the frontend side is: define an `APP_ORDER_*` constant
-in `charts-data.js`, create the chart dynamically on first data (`if (s.apps?.foo) { ... }`), and
+When you add an application metric type, the frontend side is: add the group to `APP_GROUPS` in
+`card-order.js`, create the chart dynamically on first data (`if (s.apps?.foo) { ... }`) with
+`createAppChartCard(..., 'foo', rank)`, which places the card through `card-layout.js`, and
 register the card ID in `charts-init.js`'s `destroyAppCharts()` for cleanup. See
 [Adding a Metric Type](14-adding-metrics.md#11-frontend-charts).
 

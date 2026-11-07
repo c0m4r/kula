@@ -53,7 +53,7 @@ a terminal UI and a Prometheus endpoint.
 Monitoring NVIDIA GPUs might require additional setup — see [GPU troubleshooting][gpu].
 
 - **[Web dashboard][dashboard]** — live charts, pan and zoom through history, Min–Max bands,
-  Focus and TV modes, a System Info hardware page, and 26 languages.
+  Focus and TV modes, rearrangeable cards, a System Info hardware page, and 26 languages.
 - **[Terminal UI][tui]** — a fast live read over SSH, including charts of stored history.
 - **[Tiered storage][how]** — fixed-size ring-buffer files keep raw 1-second samples, then
   1-minute and 5-minute rollups. No database to run.

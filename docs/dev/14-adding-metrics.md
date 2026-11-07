@@ -186,8 +186,11 @@ branch is needed.
 
 ## 11. Frontend charts — `internal/web/static/js/app/charts-data.js`
 
-- Add an `APP_ORDER_FOO` constant (increment by 10).
-- Create charts dynamically on first data: `if (s.apps?.foo) { ... }`.
+- Add `foo` to `APP_GROUPS` in `card-order.js`, at the position the group takes by default.
+- Create charts dynamically on first data: `if (s.apps?.foo) { ... }`. Build each card with
+  `createAppChartCard(cardId, chartId, subtitleId, title, 'foo', rank)`; the rank orders the
+  group's cards. Cards enter the page only through `card-layout.js` `placeCard()`; never append
+  one yourself or give it a CSS `order`.
 - Register the chart card IDs in `charts-init.js` `destroyAppCharts()` for cleanup.
 
 ## 12. Config docs — `config.example.yaml`
