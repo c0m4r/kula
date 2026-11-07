@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,6 +75,49 @@ func contractQuery(t *testing.T, store *Store, from, to time.Time, points int) *
 		t.Fatalf("QueryRangeWithMeta(%s, %s, %d): %v", from.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano), points, err)
 	}
 	return result
+}
+
+// jsonNumbersClose reports whether two JSON documents are equal, numbers
+// within a relative 1e-9.
+func jsonNumbersClose(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	var left, right any
+	if json.Unmarshal(a, &left) != nil || json.Unmarshal(b, &right) != nil {
+		t.Fatal("contract documents are not JSON")
+	}
+	var close func(x, y any) bool
+	close = func(x, y any) bool {
+		switch xv := x.(type) {
+		case float64:
+			yv, ok := y.(float64)
+			return ok && math.Abs(xv-yv) <= 1e-9*math.Max(1, math.Max(math.Abs(xv), math.Abs(yv)))
+		case map[string]any:
+			yv, ok := y.(map[string]any)
+			if !ok || len(xv) != len(yv) {
+				return false
+			}
+			for key, value := range xv {
+				if other, found := yv[key]; !found || !close(value, other) {
+					return false
+				}
+			}
+			return true
+		case []any:
+			yv, ok := y.([]any)
+			if !ok || len(xv) != len(yv) {
+				return false
+			}
+			for i := range xv {
+				if !close(xv[i], yv[i]) {
+					return false
+				}
+			}
+			return true
+		default:
+			return reflect.DeepEqual(x, y)
+		}
+	}
+	return close(left, right)
 }
 
 func contractProfiles(result *HistoryResult) []string {
@@ -249,9 +293,12 @@ func TestHistoryResponsesMatchDashboardContract(t *testing.T) {
 	if len(refresh.Samples) != tailPoints {
 		t.Fatalf("tail: %d buckets, want %d", len(refresh.Samples), tailPoints)
 	}
+	// Equal up to float rounding: where a scan cuts its decode batches depends
+	// on where it starts, and a bucket merged across a batch boundary can
+	// differ in the last bit of a mean or of an extremum taken from one.
 	for _, sample := range refresh.Samples {
 		want, ok := fullBuckets[sample.BucketStart.UnixNano()]
-		if got := marshal(&HistoryResult{Samples: []*AggregatedSample{sample}}); !ok || string(got) != string(want) {
+		if got := marshal(&HistoryResult{Samples: []*AggregatedSample{sample}}); !ok || !jsonNumbersClose(t, got, want) {
 			t.Fatalf("tail bucket %s differs from the full refresh:\n got %s\nwant %s",
 				sample.BucketStart.Format(time.RFC3339Nano), got, want)
 		}

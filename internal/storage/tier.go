@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -66,6 +67,13 @@ type Tier struct {
 	// readOnly tiers are views of a file another process writes (see
 	// OpenReadOnly); they never write, and Close only releases the file.
 	readOnly bool
+
+	// Sparse seek index (tier_index.go), ring order: the previous pass, then
+	// the current one. Only trusted while seekReady.
+	seek      []seekPoint
+	seekReady bool
+	// passMax is the greatest timestamp written in pass writeCycle.
+	passMax int64
 }
 
 func OpenTier(path string, maxSize int64) (*Tier, error) {
@@ -128,6 +136,7 @@ func OpenTier(path string, maxSize int64) (*Tier, error) {
 		fmt.Printf("Storage migration: %s converted to binary v2 successfully.\n", path)
 	}
 
+	t.openSeekIndex()
 	return t, nil
 }
 
@@ -367,6 +376,7 @@ func (t *Tier) Write(s *AggregatedSample) error {
 		t.oldestOff = 0
 		t.writeCycle++
 		t.writeEnd = 0
+		t.passMax = math.MinInt64
 	}
 	t.writeEnd = t.writeOff + int64(recordLen)
 
@@ -406,6 +416,7 @@ func (t *Tier) Write(s *AggregatedSample) error {
 			}
 		}
 	}
+	t.seekTrim()
 
 	var lenBuf [4]byte
 	binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(data)))
@@ -417,6 +428,7 @@ func (t *Tier) Write(s *AggregatedSample) error {
 	if _, err := t.file.WriteAt(data, fileOff+4); err != nil {
 		return err
 	}
+	t.seekAppend(t.writeOff, s.Timestamp.UnixNano())
 
 	t.writeOff += int64(recordLen)
 	t.count++
@@ -518,60 +530,27 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 		return err
 	}
 
-	// Build list of (start, size) segments to scan in chronological order.
-	//
-	// When wrapped two segments exist:
-	//   1. writeOff..maxData  — older records from the previous ring pass
-	//   2. 0..writeOff        — newer records written after the wrap
-	// When not wrapped: one segment 0..writeOff.
-	//
-	// For v2 binary files and wrapped tiers, we check whether 'from' is past
-	// the start of segment 2; if so we skip segment 1 entirely (safe because
-	// each segment always starts on a record boundary).
-	type segment struct {
-		start, size int64
-		cycle       int64
-		// resync is true for the active head segment ([0, writeOff)). There a
-		// zero/garbage record is a hole left by an unclean shutdown, so the scan
-		// must skip it and continue. It is false for the old wrapped segment,
-		// where a zero length is the legitimate end-of-segment sentinel.
-		resync bool
-	}
-	var segments []segment
-
-	if t.wrapped {
-		seg1 := segment{start: t.oldestOff, size: t.maxData - t.oldestOff, cycle: t.writeCycle - 1}
-		seg2 := segment{start: 0, size: t.writeOff, resync: true, cycle: t.writeCycle}
-
-		if t.codecVer >= codecVersion2 && t.writeOff > 0 {
-			// Peek at the oldest record in segment 2 (data region offset 0).
-			// If 'from' is at or after that timestamp we can skip segment 1 entirely.
-			seg2Oldest, err := t.readTimestampAt(0)
-			if err == nil && !from.Before(seg2Oldest) {
-				segments = []segment{seg2}
-			} else {
-				segments = []segment{seg1, seg2}
-			}
-		} else {
-			segments = []segment{seg1, seg2}
-		}
-	} else {
-		segments = []segment{{start: 0, size: t.writeOff, resync: true, cycle: t.writeCycle}}
-	}
-	// The header's geometry is not trusted past the end of the file.
-	if info, err := t.file.Stat(); err == nil {
-		dataSize := info.Size() - headerSize
-		for i := range segments {
-			segments[i].size = max(0, min(segments[i].size, dataSize-segments[i].start))
+	// Segments in chronological order: while wrapped, the previous pass
+	// [oldestOff, maxData) and then the current pass [0, writeOff); otherwise
+	// only the current pass. Each starts on a record boundary, so when `from`
+	// is at or after the oldest record of the current pass the previous pass
+	// is skipped entirely.
+	segments := t.ringSegments()
+	if len(segments) == 2 && t.codecVer >= codecVersion2 && t.writeOff > 0 {
+		if seg2Oldest, err := t.readTimestampAt(0); err == nil && !from.Before(seg2Oldest) {
+			segments = segments[1:]
 		}
 	}
 
 	scanned := 0
 	for _, seg := range segments {
-		bytesRead := int64(0)
+		// Start at the seek point nearest before `from` (tier_index.go); the
+		// records before it would all have been skipped.
+		start := t.seekStart(seg, from)
+		bytesRead := start - seg.start
 
 		// Use buffered reader for drastic performance improvement over thousands of reads.
-		sr := io.NewSectionReader(t.file, headerSize+seg.start, seg.size)
+		sr := io.NewSectionReader(t.file, headerSize+start, seg.size-bytesRead)
 		br := bufio.NewReaderSize(sr, 1024*1024)
 
 		for bytesRead < seg.size {

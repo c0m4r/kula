@@ -18,6 +18,7 @@ jobs, and no GC pressure from unbounded growth.
 | [`query_planner.go`](../../internal/storage/query_planner.go) | Fixed source-selection target, epoch-aligned output steps, query downsampling |
 | [`history_stream.go`](../../internal/storage/history_stream.go) | Bounded batch reads, buckets merged across batch boundaries |
 | [`tier.go`](../../internal/storage/tier.go) | One ring-buffer file: header + records, wrap handling, chronological reads |
+| [`tier_index.go`](../../internal/storage/tier_index.go) | Sparse in-memory seek index per tier |
 | [`codec.go`](../../internal/storage/codec.go) | The binary record format (see [Codec](06-storage-codec.md)) |
 | [`disk_identity_codec.go`](../../internal/storage/disk_identity_codec.go) | Persistent disk IDs appended after the power-supply section |
 | [`tcp_ext_codec.go`](../../internal/storage/tcp_ext_codec.go) | TCP extension (retransmit rate) appended after the disk IDs |
@@ -132,10 +133,30 @@ tier records or used to set the reducer flag. See [Binary Codec](06-storage-code
 
 On startup the store:
 
-1. Opens each tier file and reads its header (version, write offset, wrapped flag).
+1. Opens each tier file and reads its header (version, write offset, wrapped flag), then
+   builds its **seek index** with one walk of the ring (see below).
 2. Restores the **latest-sample cache** so `/api/current` works immediately.
 3. Reconstructs any **pending aggregation buffers** so tier rollups resume correctly after a
    restart without double-counting or gaps.
+
+## Seek index
+
+Records are length-prefixed and chronological within a ring pass but carry no back links, so
+without help a query reads every record from the oldest one on just to reach its `from`.
+`tier_index.go` keeps, about every 64 KiB of a pass, a record boundary with that record's
+timestamp and the greatest timestamp written before it in the same pass. A scan starts at the
+last point whose predecessors all precede `from`, so it skips exactly the records a scan from
+the segment start would have skipped and returns identical results, even across a clock step
+backwards (the prefix maximum, not the point's own timestamp, decides). Each point is confirmed
+against the file — a valid length prefix and its exact nanosecond timestamp — before a scan
+trusts it; otherwise the scan starts at the segment start. `OpenTier` builds the index with one
+walk and `Tier.Write` maintains it: wraps and overwritten records drop points, every new record
+may add one. Anything else that writes records into an open tier (test helpers simulating older
+writers) must call `seekAppend` the same way. Read-only stores (the terminal UI) keep no index
+and scan from the segment start.
+
+On 36 hours of mock history at the default tier sizes (223 MB tier 0), a history query reads
+0.05–6 MB depending on its window instead of the whole 223 MB tier file.
 
 ## Query path
 
@@ -149,8 +170,8 @@ On startup the store:
    unexpectedly unlock a different tier. A denser tier is skipped only when another fully
    covering tier exists. If no tier covers the full window, return the tier with the greatest
    overlap and mark the result `complete: false`.
-3. Read records chronologically (handling buffer wrap) in batches of at most 512 decoded
-   records. Reduce batches into stable output buckets, preserving contributing counts,
+3. Read records chronologically (handling buffer wrap), starting each segment at its seek
+   point for `from`, in batches of at most 512 decoded records. Reduce batches into stable output buckets, preserving contributing counts,
    sparse mean weights, and extrema across batch boundaries. Binary records outside the
    window are skipped using their timestamp headers without allocating metric payloads.
 4. Choose a stable output step from 1/2/5-style intervals (including 10, 15, and 30 units),

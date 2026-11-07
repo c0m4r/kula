@@ -161,12 +161,29 @@ for (const tail of fixture.tails ?? []) {
         const interiorFrom = historyItemContext(afterItems[1]).bucketStart;
         const shape = item => {
             const context = historyItemContext(item);
-            return JSON.stringify([item.ts, item.bucket_start, item.bucket_end, item.sample_count, item.coverage,
-                item.extrema_profile, item.data, item.min, item.max, context.source.resolution]);
+            return [item.ts, item.bucket_start, item.bucket_end, item.sample_count, item.coverage,
+                item.extrema_profile, item.data, item.min, item.max, context.source.resolution];
+        };
+        // Equal up to float rounding: a bucket the server merged across two
+        // decode batches can differ in the last bit of a mean or extremum.
+        const close = (a, b) => {
+            if (typeof a === 'number' && typeof b === 'number') {
+                return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+            }
+            if (a && b && typeof a === 'object' && typeof b === 'object') {
+                const keys = Object.keys(a);
+                return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length &&
+                    keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && close(a[key], b[key]));
+            }
+            return a === b;
         };
         const window = items => items.filter(item => !item._gap &&
             historyItemContext(item).bucketStart >= interiorFrom).map(shape);
-        assert.deepEqual(window(merged), window(afterItems), 'merged view equals the full refresh');
+        const mergedWindow = window(merged);
+        const afterWindow = window(afterItems);
+        assert.equal(mergedWindow.length, afterWindow.length, 'merged view has the full refresh\'s buckets');
+        mergedWindow.forEach((bucket, index) => assert.ok(close(bucket, afterWindow[index]),
+            `merged bucket ${bucket[1]} equals the full refresh`));
         assert.equal(merged.filter(item => item._gap).length,
             insertHistoryGaps(afterItems, after.resolution).filter(item => item._gap).length, 'gap markers');
     });

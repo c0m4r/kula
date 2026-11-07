@@ -48,6 +48,13 @@ identified by its byte offset in a fixed sequence, so **section order is the con
 Full walkthrough: [Adding a Metric Type](docs/dev/14-adding-metrics.md),
 [Binary Codec](docs/dev/06-storage-codec.md).
 
+### Tier seek index
+
+`internal/storage/tier_index.go` keeps a sparse in-memory record index per tier. `Tier.Write`
+maintains it; any other code that writes records into an open tier (test helpers simulating
+older writers) must call `seekAppend` like `Write` does, or seeking scans skip those records.
+`TestSeekIndexScansMatchFullScans` requires seeking scans to equal full scans.
+
 ### Aggregation — schema-driven
 
 Declare a policy for **every numeric field** of a collector type with an `agg` struct tag:
