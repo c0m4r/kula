@@ -169,8 +169,9 @@ func (s *Scheduler) RunBackup(now time.Time) error {
 	return nil
 }
 
-// backupTier copies tier i into dir; gzip compression (when enabled) runs
-// afterwards from the raw copy.
+// backupTier copies tier i into dir, then, when compression is enabled, gzips
+// the raw copy. Only the file that is kept is synced: the raw copy a .gz
+// replaces is deleted unsynced, so the disk need not write it at all.
 func (s *Scheduler) backupTier(i int, dir string) error {
 	rawPath := filepath.Join(dir, fmt.Sprintf("tier_%d.dat", i))
 	raw, err := os.OpenFile(rawPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
@@ -182,11 +183,11 @@ func (s *Scheduler) backupTier(i int, dir string) error {
 	if _, err := s.store.SnapshotTier(i, raw); err != nil {
 		return fmt.Errorf("snapshot: %w", err)
 	}
-	if err := raw.Sync(); err != nil {
-		return fmt.Errorf("syncing snapshot: %w", err)
-	}
 
 	if !s.compress {
+		if err := raw.Sync(); err != nil {
+			return fmt.Errorf("syncing snapshot: %w", err)
+		}
 		return raw.Close()
 	}
 

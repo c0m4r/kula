@@ -63,6 +63,8 @@ start (one read of each tier file).
 - A backup does not pause collection or the dashboard. Each tier is copied while Kula keeps
   writing, and the records written meanwhile are then copied too, so a backup matches its tier
   as it was when that tier's copy finished.
+- With `compress`, only the `.gz` files are synced to disk. The uncompressed copy each is made
+  from is deleted, so on a slow disk it may never be written out at all.
 - Backups live *inside* `storage.directory/backup` by default. For off-host durability, sync
   that directory elsewhere (rsync, object storage) with your own tooling.
 - The sandbox grants read-write access to the storage directory, so backups work under
