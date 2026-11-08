@@ -39,35 +39,37 @@ func (c *Collector) collectApache2(elapsed float64) *Apache2Stats {
 		// baseline here keeps the next poll from dividing two intervals'
 		// growth by one.
 		c.prevApache = apache2Raw{}
+		return nil
 	}
+	c.apacheLog.ok()
 	return stats
 }
 
 func (c *Collector) fetchApache2(elapsed float64) *Apache2Stats {
 	if c.apacheClient == nil {
-		c.apacheClient = &http.Client{
-			Timeout: c.collCfg.Interval,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
+		c.apacheClient = statusPageClient(c.collCfg.Interval)
 	}
 
-	resp, err := c.apacheClient.Get(c.appCfg.Apache2.StatusURL)
+	req, err := http.NewRequestWithContext(c.requestContext(), http.MethodGet, c.appCfg.Apache2.StatusURL, nil)
 	if err != nil {
-		c.appErrorf("[apache2] fetch error: %v", err)
+		c.apacheLog.failf("bad status URL: %v", err)
+		return nil
+	}
+	resp, err := c.apacheClient.Do(req)
+	if err != nil {
+		c.apacheLog.failf("fetch error: %v", err)
 		return nil
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		c.appErrorf("[apache2] unexpected status: %d", resp.StatusCode)
+		c.apacheLog.failf("unexpected status: %d", resp.StatusCode)
 		return nil
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
 	if err != nil {
-		c.debugf("[apache2] read error: %v", err)
+		c.apacheLog.failf("read error: %v", err)
 		return nil
 	}
 
@@ -197,6 +199,7 @@ func (c *Collector) parseApache2Status(body string, elapsed float64) *Apache2Sta
 		stats.DNS, stats.Closing, stats.Logging, stats.Graceful, stats.IdleCleanup, stats.OpenSlots)
 
 	if stats.TotalAccesses == 0 && stats.BusyWorkers == 0 && stats.IdleWorkers == 0 {
+		c.apacheLog.failf("status page has no worker or access counts (is it mod_status ?auto?)")
 		return nil
 	}
 

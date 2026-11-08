@@ -67,9 +67,15 @@ API and WebSocket payloads.
   divided by one (`nginx.go`, `apache2.go`, `postgres.go`, `mysql.go`). A counter missing from a
   poll (Apache2 without `ExtendedStatus`) is no baseline either.
 - **Lazy-allocate clients.** HTTP/DB clients are created on first use.
+- **Application polls run off the collection tick.** `poller.go`'s `poller[T]` runs one poll at
+  a time in its own goroutine, and `Collect` reads `Latest()`, which is `nil` once a result is
+  older than `pollStale` (three intervals, at least 3 s). nginx and Apache2 use it through
+  `startStatusPoller` (request timeout `max(2s, 2×interval)`, no redirects, failures logged on
+  change by `pollLog`); their clients, baselines and logs belong to the poll goroutine, so
+  `debugDone`, which `Collect` writes, is atomic.
 - **Database collectors own exactly one session.** `postgres.go` and `mysql.go` poll through
   `dbsession.go`: a pinned `sql.Conn` from a pool capped at one; polls in their own goroutine,
-  one at a time (`dbPoller`, read by `Collect` through `Latest()`), with a hard timeout of
+  one at a time (`poller`, read by `Collect` through `Latest()`), with a hard timeout of
   `max(10s, 2×interval)`, at most one minute, instead of the collection interval; server-side statement, lock, idle
   and keepalive limits set on every session; a session given up on is ended by the next
   connection (matched by PostgreSQL pid + `backend_start`, MySQL connection id + user + server

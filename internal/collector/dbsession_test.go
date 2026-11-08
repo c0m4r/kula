@@ -323,9 +323,9 @@ func TestDBSessionBoundsSessionsUnderChurn(t *testing.T) {
 
 // TestDBPollerNeverOverlapsPolls: a poll slower than the interval delays the
 // next one instead of running beside it, and its result goes stale.
-func TestDBPollerNeverOverlapsPolls(t *testing.T) {
+func TestPollerNeverOverlapsPolls(t *testing.T) {
 	var running, peak, polls atomic.Int32
-	p := &dbPoller[int]{stale: 50 * time.Millisecond}
+	p := &poller[int]{stale: 50 * time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
 	cleaned := make(chan struct{})
 	p.start(ctx, 5*time.Millisecond, func(context.Context) *int {

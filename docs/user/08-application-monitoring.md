@@ -38,6 +38,12 @@ applications:
 (and cumulative totals). Counter resets on nginx restart are handled gracefully: the poll that
 sees the restart reports no rates, and a failed poll never inflates the next one.
 
+nginx and Apache2 status pages are polled in the background, so a server that stops answering
+cannot delay the rest of the sample. A request may take up to twice the collection interval
+(at least 2 s); a page that has not answered for three intervals (at least 3 s) reads as
+missing. Redirects are not followed. A failure is logged when it starts or changes, and again
+when the page answers.
+
 ---
 
 ## Apache2

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"kula/internal/config"
@@ -34,13 +35,21 @@ type Collector struct {
 	gpus         []GPUInfo
 	storageDir   string
 	prevTime     time.Time
-	debugDone    bool // set after the first Collect(); suppresses repeated debug logs
+	// debugDone is set after the first Collect() and suppresses repeated
+	// debug logs. Atomic: application pollers read it from their goroutines.
+	debugDone atomic.Bool
 
-	// Application monitoring state
+	// Application monitoring state. nginx and Apache2 are polled in their own
+	// goroutines (startStatusPoller); each client, baseline and log belongs
+	// to its poller.
 	nginxClient   *http.Client
 	prevNginx     nginxRaw
+	nginxLog      pollLog
+	nginxPoller   poller[NginxStats]
 	apacheClient  *http.Client
 	prevApache    apache2Raw
+	apacheLog     pollLog
+	apachePoller  poller[Apache2Stats]
 	containerColl *containerCollector
 	pgCollector   *postgresCollector
 	myCollector   *mysqlCollector
@@ -59,6 +68,8 @@ func New(cfg config.GlobalConfig, collCfg config.CollectionConfig, appCfg config
 		prevNet:    make(map[string]netRaw),
 		prevDisk:   make(map[string]diskRaw),
 		prevEnergy: make(map[string]uint64),
+		nginxLog:   pollLog{name: "[nginx]"},
+		apacheLog:  pollLog{name: "[apache2]"},
 		appCtx:     ctx,
 		appCancel:  cancel,
 	}
@@ -120,10 +131,12 @@ func (c *Collector) StartApplications() {
 	}
 
 	if appCfg.Nginx.Enabled {
+		startStatusPoller(ctx, &c.nginxPoller, collCfg.Interval, c.collectNginx)
 		log.Printf("[nginx] monitoring enabled at %s", appCfg.Nginx.StatusURL)
 	}
 
 	if appCfg.Apache2.Enabled {
+		startStatusPoller(ctx, &c.apachePoller, collCfg.Interval, c.collectApache2)
 		log.Printf("[apache2] monitoring enabled at %s", appCfg.Apache2.StatusURL)
 	}
 
@@ -146,16 +159,24 @@ func (c *Collector) StartApplications() {
 // debugf logs a formatted message only when web.logging.level = "debug" is set
 // AND only during the first collection cycle. Subsequent calls are no-ops.
 func (c *Collector) debugf(format string, args ...any) {
-	if c.collCfg.DebugLog && !c.debugDone {
+	if c.collCfg.DebugLog && !c.debugDone.Load() {
 		log.Printf(format, args...)
 	}
 }
 
 // appErrorf logs an application error only once at startup — regardless of debug mode.
 func (c *Collector) appErrorf(format string, args ...any) {
-	if !c.debugDone {
+	if !c.debugDone.Load() {
 		log.Printf(format, args...)
 	}
+}
+
+// requestContext ends status-page requests when the collector stops.
+func (c *Collector) requestContext() context.Context {
+	if c.appCtx != nil {
+		return c.appCtx
+	}
+	return context.Background()
 }
 
 // Collect gathers all metrics and returns a Sample.
@@ -196,7 +217,7 @@ func (c *Collector) Collect() *Sample {
 	// Suppress debug logs after the first collection cycle — devices and
 	// interfaces don't change at runtime, so repeating them every second
 	// would flood the log.
-	c.debugDone = true
+	c.debugDone.Store(true)
 
 	return s
 }
@@ -229,11 +250,11 @@ func (c *Collector) collectApps(elapsed float64) ApplicationsStats {
 	var apps ApplicationsStats
 
 	if c.appCfg.Nginx.Enabled {
-		apps.Nginx = c.collectNginx(elapsed)
+		apps.Nginx = c.nginxPoller.Latest()
 	}
 
 	if c.appCfg.Apache2.Enabled {
-		apps.Apache2 = c.collectApache2(elapsed)
+		apps.Apache2 = c.apachePoller.Latest()
 	}
 
 	if c.containerColl != nil {

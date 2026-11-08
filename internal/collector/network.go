@@ -26,7 +26,7 @@ func (c *Collector) parseNetDev() map[string]netRaw {
 	explicitFilter := len(c.collCfg.Interfaces) > 0
 	// Only build interface-name strings for log lines when debug output is
 	// actually enabled this tick; otherwise the hot path stays allocation-free.
-	dbg := c.collCfg.DebugLog && !c.debugDone
+	dbg := c.collCfg.DebugLog && !c.debugDone.Load()
 	result := make(map[string]netRaw)
 	scanner := bufio.NewScanner(f)
 	lineNum := 0

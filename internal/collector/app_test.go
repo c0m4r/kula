@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -796,6 +797,84 @@ func TestDefaultCustomStaleAfter(t *testing.T) {
 	for _, c := range cases {
 		if got := defaultCustomStaleAfter(c.interval); got != c.want {
 			t.Errorf("interval %s: want %s, got %s", c.interval, c.want, got)
+		}
+	}
+}
+
+// TestStatusPagesPollOffTheCollectionTick: nginx and Apache2 status pages are
+// polled in their own goroutines, so a server that stops answering delays only
+// its own readings. Collect returns at once and reports the page missing until
+// a poll completes, then reports what that poll read.
+func TestStatusPagesPollOffTheCollectionTick(t *testing.T) {
+	release := make(chan struct{})
+	pages := map[string]string{
+		"/nginx":   "Active connections: 3\nserver accepts handled requests\n 10 10 20\nReading: 0 Writing: 1 Waiting: 2\n",
+		"/apache2": "Total Accesses: 100\nTotal kBytes: 50\nBusyWorkers: 2\nIdleWorkers: 8\nScoreboard: __WR\n",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		_, _ = w.Write([]byte(pages[r.URL.Path]))
+	}))
+	defer server.Close()
+	defer close(release)
+
+	c := New(config.GlobalConfig{}, config.CollectionConfig{Interval: time.Second}, config.ApplicationsConfig{
+		Nginx:   config.NginxConfig{Enabled: true, StatusURL: server.URL + "/nginx"},
+		Apache2: config.Apache2Config{Enabled: true, StatusURL: server.URL + "/apache2"},
+	}, t.TempDir())
+	c.StartApplications()
+	defer c.Stop()
+
+	started := time.Now()
+	s := c.Collect()
+	if took := time.Since(started); took > 500*time.Millisecond {
+		t.Fatalf("Collect waited %v on unresponsive status pages", took)
+	}
+	if s.Apps.Nginx != nil || s.Apps.Apache2 != nil {
+		t.Fatalf("Collect reported status pages no poll has read: %+v %+v", s.Apps.Nginx, s.Apps.Apache2)
+	}
+
+	release <- struct{}{}
+	release <- struct{}{}
+	deadline := time.Now().Add(5 * time.Second)
+	for s = c.Collect(); s.Apps.Nginx == nil || s.Apps.Apache2 == nil; s = c.Collect() {
+		if time.Now().After(deadline) {
+			t.Fatal("status page polls never completed")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if s.Apps.Nginx.ActiveConnections != 3 || s.Apps.Apache2.TotalAccesses != 100 {
+		t.Fatalf("Collect reported %+v and %+v", s.Apps.Nginx, s.Apps.Apache2)
+	}
+}
+
+// A status page that keeps failing is logged when its error changes and once
+// when it answers again, not on every poll and not only during the first
+// collection cycle.
+func TestPollLogReportsChanges(t *testing.T) {
+	var logs strings.Builder
+	orig := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(orig)
+
+	l := pollLog{name: "[nginx]"}
+	l.ok()
+	for range 3 {
+		l.failf("unexpected status: %d", 502)
+	}
+	l.failf("fetch error: %s", "connection refused")
+	l.ok()
+	l.ok()
+	l.failf("unexpected status: %d", 502)
+
+	got := logs.String()
+	for msg, want := range map[string]int{
+		"[nginx] unexpected status: 502":          2,
+		"[nginx] fetch error: connection refused": 1,
+		"[nginx] status page answering again":     1,
+	} {
+		if n := strings.Count(got, msg); n != want {
+			t.Errorf("%q logged %d times, want %d:\n%s", msg, n, want, got)
 		}
 	}
 }

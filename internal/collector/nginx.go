@@ -35,30 +35,37 @@ func (c *Collector) collectNginx(elapsed float64) *NginxStats {
 		// baseline here keeps the next poll from dividing two intervals'
 		// growth by one.
 		c.prevNginx = nginxRaw{}
+		return nil
 	}
+	c.nginxLog.ok()
 	return stats
 }
 
 func (c *Collector) fetchNginx(elapsed float64) *NginxStats {
 	if c.nginxClient == nil {
-		c.nginxClient = &http.Client{Timeout: c.collCfg.Interval}
+		c.nginxClient = statusPageClient(c.collCfg.Interval)
 	}
 
-	resp, err := c.nginxClient.Get(c.appCfg.Nginx.StatusURL)
+	req, err := http.NewRequestWithContext(c.requestContext(), http.MethodGet, c.appCfg.Nginx.StatusURL, nil)
 	if err != nil {
-		c.appErrorf("[nginx] fetch error: %v", err)
+		c.nginxLog.failf("bad status URL: %v", err)
+		return nil
+	}
+	resp, err := c.nginxClient.Do(req)
+	if err != nil {
+		c.nginxLog.failf("fetch error: %v", err)
 		return nil
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		c.appErrorf("[nginx] unexpected status: %d", resp.StatusCode)
+		c.nginxLog.failf("unexpected status: %d", resp.StatusCode)
 		return nil
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {
-		c.debugf("[nginx] read error: %v", err)
+		c.nginxLog.failf("read error: %v", err)
 		return nil
 	}
 
@@ -72,27 +79,27 @@ func (c *Collector) parseNginxStatus(body string, elapsed float64) *NginxStats {
 	stats := &NginxStats{}
 	lines := strings.Split(strings.TrimSpace(body), "\n")
 	if len(lines) < 4 {
-		c.appErrorf("[nginx] too few lines in body: %d (expected 4+)", len(lines))
+		c.nginxLog.failf("too few lines in body: %d (expected 4+)", len(lines))
 		return nil
 	}
 
 	// Line 1: "Active connections: N"
 	if _, err := fmt.Sscanf(lines[0], "Active connections: %d", &stats.ActiveConnections); err != nil {
-		c.debugf("[nginx] failed to parse active connections: %v (line: %q)", err, lines[0])
+		c.nginxLog.failf("failed to parse active connections: %v (line: %q)", err, lines[0])
 		return nil
 	}
 
 	// Line 3: " accepts handled requests" (the values line)
 	fields := strings.Fields(strings.TrimSpace(lines[2]))
 	if len(fields) < 3 {
-		c.debugf("[nginx] too few fields in accepts line: %d", len(fields))
+		c.nginxLog.failf("too few fields in accepts line: %d", len(fields))
 		return nil
 	}
 	accepts, err1 := strconv.ParseUint(fields[0], 10, 64)
 	handled, err2 := strconv.ParseUint(fields[1], 10, 64)
 	requests, err3 := strconv.ParseUint(fields[2], 10, 64)
 	if err1 != nil || err2 != nil || err3 != nil {
-		c.debugf("[nginx] failed to parse counters: %v %v %v", err1, err2, err3)
+		c.nginxLog.failf("failed to parse counters: %v %v %v", err1, err2, err3)
 		return nil
 	}
 

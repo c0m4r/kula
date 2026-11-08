@@ -44,7 +44,7 @@ type postgresCollector struct {
 	debug        bool
 	debugDone    bool
 	session      dbSession
-	poller       dbPoller[PostgresStats]
+	poller       poller[PostgresStats]
 	prev         pgRaw
 	prevAt       time.Time
 	serverVerNum int // server_version_num (e.g. 170000 = PG17); 0 until connected

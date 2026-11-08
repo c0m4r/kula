@@ -52,7 +52,7 @@ func (c *Collector) readDiskStats(includePartitions bool) (map[string]diskRaw, e
 
 	// Only construct device-name strings for log lines when debug output is
 	// actually on this tick; the steady-state path stays allocation-light.
-	dbg := c.collCfg.DebugLog && !c.debugDone
+	dbg := c.collCfg.DebugLog && !c.debugDone.Load()
 	result := make(map[string]diskRaw)
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -151,7 +151,7 @@ func (c *Collector) readDiskStats(includePartitions bool) (map[string]diskRaw, e
 
 func (c *Collector) parseDiskStats() map[string]diskRaw {
 	explicitFilter := len(c.collCfg.Devices) > 0
-	dbg := c.collCfg.DebugLog && !c.debugDone
+	dbg := c.collCfg.DebugLog && !c.debugDone.Load()
 	result, err := c.readDiskStats(explicitFilter)
 	if err != nil {
 		return nil
@@ -188,7 +188,7 @@ func (c *Collector) parseDiskStats() map[string]diskRaw {
 		}
 	}
 	// Warn for any explicitly-configured device that was never found in /proc/diskstats
-	if explicitFilter && !c.debugDone {
+	if explicitFilter && !c.debugDone.Load() {
 		for _, want := range c.collCfg.Devices {
 			_, found := result[want]
 			if found {

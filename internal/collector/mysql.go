@@ -37,7 +37,7 @@ type mysqlCollector struct {
 	debugDone bool
 	config    *mysql.Config
 	session   dbSession
-	poller    dbPoller[MysqlStats]
+	poller    poller[MysqlStats]
 	prev      mysqlRaw
 	prevAt    time.Time
 }

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 )
 
@@ -90,7 +89,7 @@ func newDBTimeouts(interval time.Duration) dbTimeouts {
 		statement:  poll / 2,
 		lock:       2 * time.Second,
 		idle:       max(time.Minute, 4*interval),
-		stale:      max(3*time.Second, 3*interval),
+		stale:      pollStale(interval),
 		backoffCap: max(5*time.Minute, interval),
 		abortGrace: 5 * time.Second,
 		interval:   interval,
@@ -321,63 +320,5 @@ func (s *dbSession) logOnce(msg string) {
 	if msg != s.lastErr {
 		s.printf("%s", msg)
 		s.lastErr = msg
-	}
-}
-
-// dbPoller runs a collector's polls in one goroutine and keeps the latest
-// result. A tick that arrives while a poll runs is dropped (time.Ticker
-// drops ticks), so polls never overlap. The goroutine alone uses the session;
-// cleanup ends it once the context is done.
-type dbPoller[T any] struct {
-	mu     sync.Mutex
-	latest *T
-	at     time.Time
-	stale  time.Duration
-	done   chan struct{}
-}
-
-func (p *dbPoller[T]) start(ctx context.Context, interval time.Duration, poll func(context.Context) *T, cleanup func()) {
-	p.done = make(chan struct{})
-	go func() {
-		defer close(p.done)
-		defer cleanup()
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			if ctx.Err() != nil {
-				return
-			}
-			if stats := poll(ctx); stats != nil {
-				p.mu.Lock()
-				p.latest, p.at = stats, time.Now()
-				p.mu.Unlock()
-			}
-			select {
-			case <-ticker.C:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-// Latest returns the newest poll result while it is current, nil otherwise.
-func (p *dbPoller[T]) Latest() *T {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.latest == nil || time.Since(p.at) > p.stale {
-		return nil
-	}
-	return p.latest
-}
-
-// wait blocks until the poll goroutine has exited, up to timeout.
-func (p *dbPoller[T]) wait(timeout time.Duration) {
-	if p.done == nil {
-		return
-	}
-	select {
-	case <-p.done:
-	case <-time.After(timeout):
 	}
 }
