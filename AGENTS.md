@@ -104,7 +104,8 @@ per-application reducer branches.
 - Off-screen charts defer layout and drawing, but must drain Chart.js mutation records during
   controller flushes. `chart-controller.js` calls the vendored private `_updateHiddenIndices()`
   method to preserve hidden-point indices when data is trimmed; do not simply clear
-  `_dataChanges`. Recheck this contract when upgrading Chart.js.
+  `_dataChanges`. The x-axis tick callback in `charts-init.js` reads the private time-scale
+  `_unit`. `TestChartBundle` asserts both exist; recheck them when upgrading Chart.js.
 - Dashboard cards enter the page only through `card-layout.js` `placeCard()`, and only
   `arrangeCards()` moves them. The layout must stay a function of the cards present, the stored
   order (`kula_card_order`) and the mode. Never append a card yourself or give it a persistent

@@ -111,5 +111,10 @@ test('bundle registers only what the dashboard uses', async () => {
     assert.deepEqual(hours, [0, 1, 3, 4, 5, 6, 7]);
     assert.ok(chart.scales.x.ticks.every(tick => tick.value % (15 * 60000) === 0));
     assert.equal(typeof chart.isZoomingOrPanning, 'function');
+    // Private members the dashboard relies on (docs/dev/10-frontend.md):
+    // chart-controller.js calls _updateHiddenIndices(), and the x-axis tick
+    // callback in charts-init.js reads the time scale's _unit.
+    assert.equal(typeof chart._updateHiddenIndices, 'function');
+    assert.equal(chart.scales.x._unit, 'hour');
     chart.destroy();
 });

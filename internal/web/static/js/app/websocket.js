@@ -1,6 +1,7 @@
 /* ============================================================
-   websocket.js — WebSocket connection, reconnect logic,
-   and live queue drain.
+   websocket.js — WebSocket connection and reconnect logic;
+   queues live samples during a history load (charts-data.js
+   drains them).
    ============================================================ */
 'use strict';
 import { state } from './state.js';

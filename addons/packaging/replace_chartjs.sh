@@ -490,6 +490,11 @@ test('the date-fns adapter drives local-time ticks across the DST gap', async ()
     assert.ok(ticks.every(tick => tick.value % (15 * 60000) === 0));
     assert.ok(ticks.every(tick => typeof tick.label === 'string' && tick.label.length > 0));
     assert.equal(typeof chart.isZoomingOrPanning, 'function');
+    // Private members the dashboard relies on (docs/dev/10-frontend.md):
+    // chart-controller.js calls _updateHiddenIndices(), and the x-axis tick
+    // callback in charts-init.js reads the time scale's _unit.
+    assert.equal(typeof chart._updateHiddenIndices, 'function');
+    assert.equal(chart.scales.x._unit, 'hour');
     chart.destroy();
 });
 

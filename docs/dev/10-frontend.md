@@ -72,9 +72,9 @@ holds the main thread, and the static page should be on screen first.
 | `main.js` | Entry point; wires event listeners and static chart-card actions, starts auth + WebSocket (**load last**) |
 | `api.js` | URL helpers that prepend `window.KULA_BASE_PATH` (base-path support) |
 | `auth.js` | Auth status check, config fetch, login/logout |
-| `websocket.js` | WebSocket connect, reconnect, live-queue drain |
+| `websocket.js` | WebSocket connect and reconnect; queues live samples while a history load replaces the view |
 | `charts-init.js` | Chart.js instance creation; full dashboard init; app-chart teardown |
-| `charts-data.js` | Sample ingestion, chart updates, zoom sync, gap insertion, device selectors |
+| `charts-data.js` | Sample ingestion, chart updates, zoom sync, gap insertion, device selectors; drains the live queue once a history load lands (`drainLiveQueue`) |
 | `container-apps.js` | Multi-series container charts (one per metric type) with the shared application filter |
 | `disk-identity.js` | Persistent disk-ID keys, member lookup, and unstable-name labelling for device selectors |
 | `chart-controller.js` | Chart registry, animation-frame batching, viewport culling, plot-width budgets |
@@ -196,8 +196,11 @@ During each flush, dirty off-screen charts still call the vendored Chart.js priv
 `_updateHiddenIndices()` method. It drains the `_dataChanges` mutation records and adjusts
 hidden-point indices after inserts and trims without running layout or drawing. Charts remain
 dirty so their deferred update runs when they enter the viewport. Clearing the records directly
-would lose point-visibility bookkeeping. Revalidate this private-method contract with the browser
-regressions whenever Chart.js is upgraded.
+would lose point-visibility bookkeeping. The x-axis tick callback in `charts-init.js` also reads
+the time scale's private `_unit` (`this._unit`) to pick seconds, minutes or dates for its labels;
+without it every label falls back to hours and minutes. `TestChartBundle` asserts that both
+members exist, in the vendored bundle and in the upstream files `replace_chartjs.sh` installs.
+Revalidate these private contracts with the browser regressions whenever Chart.js is upgraded.
 
 History loads, local zooms, and aggregation changes ingest their samples in a synchronous
 `batchChartUI` call. It commits only the last presentation update for each key, retaining
