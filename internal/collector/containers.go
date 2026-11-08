@@ -39,6 +39,8 @@ type containerCollector struct {
 	prevCPU   map[string]containerCPURaw
 	prevNet   map[string]containerNetRaw
 	prevDisk  map[string]containerDiskRaw
+	pids      map[string]int  // container ID → host PID from inspect (see containerTarget)
+	seen      map[string]bool // container IDs collected this cycle
 	prevTime  time.Time
 	client    *http.Client
 	socket    string // resolved socket path
@@ -273,6 +275,7 @@ func (cc *containerCollector) collect() {
 
 	var stats []ContainerStats
 
+	cc.seen = make(map[string]bool)
 	switch cc.mode {
 	case containerModeSocket:
 		stats = cc.collectViaSocket(elapsed)
@@ -281,6 +284,7 @@ func (cc *containerCollector) collect() {
 	default:
 		return
 	}
+	cc.forgetUnseen()
 
 	cc.mu.Lock()
 	cc.latest = stats
@@ -509,6 +513,57 @@ func cgroupDirFromPid(pid int, id string) string {
 	return ""
 }
 
+// forgetUnseen drops the state of containers this cycle did not collect:
+// removed containers, and every container when listing failed, since rates
+// must span consecutive successful reads (a baseline kept across a failed
+// cycle would divide two intervals' growth by one).
+func (cc *containerCollector) forgetUnseen() {
+	for id := range cc.prevCPU {
+		if !cc.seen[id] {
+			delete(cc.prevCPU, id)
+		}
+	}
+	for id := range cc.prevNet {
+		if !cc.seen[id] {
+			delete(cc.prevNet, id)
+		}
+	}
+	for id := range cc.prevDisk {
+		if !cc.seen[id] {
+			delete(cc.prevDisk, id)
+		}
+	}
+	for id := range cc.pids {
+		if !cc.seen[id] {
+			delete(cc.pids, id)
+		}
+	}
+}
+
+// containerTarget returns a container's host PID and cgroup directory. The
+// PID comes from inspect, an HTTP round trip to the runtime for each
+// container, so it is kept while /proc/<pid>/cgroup still places that process
+// in this container; a restart or a reused PID fails the check and inspects
+// again.
+func (cc *containerCollector) containerTarget(id string) (int, string) {
+	if pid := cc.pids[id]; pid > 0 {
+		if dir := cgroupDirFromPid(pid, id); dir != "" {
+			return pid, dir
+		}
+	}
+	pid := cc.containerPid(id)
+	dir := cgroupDirFromPid(pid, id)
+	if dir != "" {
+		if cc.pids == nil {
+			cc.pids = make(map[string]int)
+		}
+		cc.pids[id] = pid
+	} else {
+		delete(cc.pids, id)
+	}
+	return pid, dir
+}
+
 // collectContainerMetrics gathers metrics for a container discovered via socket.
 // It resolves the cgroup via the container PID, then falls back to conventional
 // cgroup paths so an inspect failure does not disable CPU/memory/disk metrics.
@@ -517,9 +572,9 @@ func (cc *containerCollector) collectContainerMetrics(id, name string, elapsed f
 		ID:   id[:minInt(12, len(id))],
 		Name: name,
 	}
+	cc.markSeen(id)
 
-	pid := cc.containerPid(id)
-	cgroupDir := cgroupDirFromPid(pid, id)
+	pid, cgroupDir := cc.containerTarget(id)
 	if cgroupDir == "" {
 		cgroupDir = cc.findCgroupDir(id)
 	}
@@ -555,6 +610,7 @@ func (cc *containerCollector) collectContainerMetricsCgroup(cgroupDir, id, short
 		ID:   shortID,
 		Name: shortID, // no name available in cgroups-only mode
 	}
+	cc.markSeen(id)
 
 	s.CPUPct = cc.readCPUUsage(cgroupDir, id, elapsed)
 	s.MemUsed, s.MemLimit = readContainerMemory(cgroupDir)
@@ -564,6 +620,13 @@ func (cc *containerCollector) collectContainerMetricsCgroup(cgroupDir, id, short
 	s.DiskRBPS, s.DiskWBPS = cc.readDiskIO(cgroupDir, id, elapsed)
 
 	return s
+}
+
+func (cc *containerCollector) markSeen(id string) {
+	if cc.seen == nil {
+		cc.seen = make(map[string]bool)
+	}
+	cc.seen[id] = true
 }
 
 // findCgroupDir locates the cgroup v2 directory for a container ID.
@@ -599,6 +662,7 @@ func (cc *containerCollector) findCgroupDir(id string) string {
 func (cc *containerCollector) readCPUUsage(cgroupDir, id string, elapsed float64) float64 {
 	data, err := os.ReadFile(filepath.Join(cgroupDir, "cpu.stat"))
 	if err != nil {
+		delete(cc.prevCPU, id) // no baseline across a failed read
 		return 0
 	}
 	var usageUsec uint64
@@ -625,6 +689,7 @@ func (cc *containerCollector) readNetIO(pid int, id string, elapsed float64) (rx
 	netDevPath := filepath.Join(procPath, strconv.Itoa(pid), "net/dev")
 	f, err := os.Open(netDevPath)
 	if err != nil {
+		delete(cc.prevNet, id) // no baseline across a failed read
 		return
 	}
 	defer func() { _ = f.Close() }()
@@ -673,6 +738,7 @@ func (cc *containerCollector) readNetIO(pid int, id string, elapsed float64) (rx
 func (cc *containerCollector) readDiskIO(cgroupDir, id string, elapsed float64) (rBPS, wBPS float64) {
 	data, err := os.ReadFile(filepath.Join(cgroupDir, "io.stat"))
 	if err != nil {
+		delete(cc.prevDisk, id) // no baseline across a failed read
 		return
 	}
 
