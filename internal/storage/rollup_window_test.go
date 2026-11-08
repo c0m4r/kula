@@ -194,4 +194,3 @@ func TestShortViewAfterAStartPrefersRawData(t *testing.T) {
 		t.Fatalf("five minutes after a start: tier %d with %d samples, want the raw tier's ~46", result.Tier, len(result.Samples))
 	}
 }
-
