@@ -224,21 +224,6 @@ func historyFragment(sample *AggregatedSample, end time.Time, fraction float64) 
 	return &fragment
 }
 
-func (s *Store) downsampleHistory(
-	samples []*AggregatedSample,
-	from, to time.Time,
-	targetPoints int,
-	sourceResolution time.Duration,
-	trustedRawSource bool,
-) ([]*AggregatedSample, time.Duration) {
-	step := chooseHistoryStep(from, to, targetPoints, sourceResolution)
-	if step <= sourceResolution && len(samples) <= targetPoints {
-		setSourceBucketMetadata(samples, sourceResolution, trustedRawSource)
-		return samples, sourceResolution
-	}
-	return s.reduceHistoryBuckets(samples, from, to, targetPoints, sourceResolution, trustedRawSource, step), step
-}
-
 // reduceHistoryBuckets always uses the supplied epoch-aligned step, even for
 // a final small batch. This keeps bucket identities stable across batch splits.
 func (s *Store) reduceHistoryBuckets(samples []*AggregatedSample, from, to time.Time, targetPoints int, sourceResolution time.Duration, trustedRawSource bool, step time.Duration) []*AggregatedSample {

@@ -2154,3 +2154,21 @@ func TestQueryRangePreservesPSU(t *testing.T) {
 		}
 	}
 }
+
+// downsampleHistory reduces a whole in-memory sample set in one pass. The
+// streaming history reader reduces the same records batch by batch; tests use
+// this as the reference its result must equal.
+func (s *Store) downsampleHistory(
+	samples []*AggregatedSample,
+	from, to time.Time,
+	targetPoints int,
+	sourceResolution time.Duration,
+	trustedRawSource bool,
+) ([]*AggregatedSample, time.Duration) {
+	step := chooseHistoryStep(from, to, targetPoints, sourceResolution)
+	if step <= sourceResolution && len(samples) <= targetPoints {
+		setSourceBucketMetadata(samples, sourceResolution, trustedRawSource)
+		return samples, sourceResolution
+	}
+	return s.reduceHistoryBuckets(samples, from, to, targetPoints, sourceResolution, trustedRawSource, step), step
+}
