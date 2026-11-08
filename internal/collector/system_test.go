@@ -117,6 +117,18 @@ func TestLoggedInUsersFromUtmpLogindOrUnknown(t *testing.T) {
 		t.Fatalf("logind sessions: %d, want 2", got)
 	}
 
+	// An empty utmp (systemd built without utmp support still creating the
+	// file) records no login: logind decides.
+	if err := os.WriteFile(filepath.Join(runPath, "utmp"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := countLoggedInUsers(); got != 2 {
+		t.Fatalf("empty utmp beside logind: %d, want logind's 2", got)
+	}
+	if err := os.Remove(filepath.Join(runPath, "utmp")); err != nil {
+		t.Fatal(err)
+	}
+
 	// utmp wins when present: USER_PROCESS records with a user name.
 	var utmp []byte
 	utmp = append(utmp, utmpRecord(2, "~", "reboot")...) // BOOT_TIME
@@ -129,5 +141,24 @@ func TestLoggedInUsersFromUtmpLogindOrUnknown(t *testing.T) {
 	}
 	if got := countLoggedInUsers(); got != 2 {
 		t.Fatalf("utmp: %d, want 2", got)
+	}
+
+	// utmp that records logins wins over logind, as for `who`.
+	if err := os.WriteFile(filepath.Join(varRunPath, "utmp"), utmpRecord(7, "tty1", "alice"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := countLoggedInUsers(); got != 1 {
+		t.Fatalf("utmp with one login beside two logind sessions: %d, want 1", got)
+	}
+
+	// No logind and an empty utmp: nobody is logged in, a known zero.
+	if err := os.RemoveAll(sessions); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(varRunPath, "utmp"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := countLoggedInUsers(); got != 0 {
+		t.Fatalf("empty utmp without logind: %d, want 0", got)
 	}
 }

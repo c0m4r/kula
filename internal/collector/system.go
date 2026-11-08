@@ -89,19 +89,26 @@ func clockSyncedFromTimex(tx *unix.Timex) bool {
 
 // countLoggedInUsers counts login sessions the way `who` does, from the
 // USER_PROCESS entries in utmp. Where utmp is missing (distributions that
-// dropped it, most containers) it counts systemd-logind user sessions instead.
-// It returns -1 when neither source exists: the count is unknown, which is
-// not the same as nobody being logged in.
+// dropped it, most containers) or records no login, it counts systemd-logind
+// user sessions instead: systemd built without utmp support can leave an empty
+// /run/utmp behind, which would otherwise always read as nobody logged in. It
+// returns -1 when neither source exists: the count is unknown, which is not
+// the same as nobody being logged in.
 func countLoggedInUsers() int {
+	utmpUsers, haveUtmp := -1, false
 	for _, path := range []string{filepath.Join(runPath, "utmp"), filepath.Join(varRunPath, "utmp")} {
 		if n, ok := countUtmpUsers(path); ok {
-			return n
+			utmpUsers, haveUtmp = n, true
+			break
 		}
+	}
+	if haveUtmp && utmpUsers > 0 {
+		return utmpUsers
 	}
 	if n, ok := countLogindSessions(filepath.Join(runPath, "systemd", "sessions")); ok {
 		return n
 	}
-	return -1
+	return utmpUsers
 }
 
 // countUtmpUsers counts USER_PROCESS records with a user name in a utmp file.
