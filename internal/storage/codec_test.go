@@ -1456,3 +1456,12 @@ func TestSixteenBitCountsSaturate(t *testing.T) {
 		}
 	}
 }
+
+// TestAppendVariableRefusesNilSample: a missing block has no encoding (its
+// flag is simply absent), so asking for one is an error, not a shape no
+// decoder reads.
+func TestAppendVariableRefusesNilSample(t *testing.T) {
+	if _, err := appendVariable(nil, nil); err == nil {
+		t.Fatal("encoded a variable block for a nil sample")
+	}
+}

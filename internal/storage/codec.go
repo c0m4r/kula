@@ -50,6 +50,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -420,15 +421,12 @@ func appendFixed(buf []byte, s *collector.Sample) []byte {
 
 // appendVariable encodes the variable-length sections of a sample:
 // network interfaces, CPU sensors, disk devices, filesystems, system strings, GPU entries.
+//
+// A block exists only for a non-nil sample (its flag says so); there is no
+// valid encoding of a missing one.
 func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	if s == nil {
-		// Write zero counts for all 5 array sections.
-		for i := 0; i < 5; i++ {
-			buf = appendUint16(buf, 0)
-		}
-		// Empty system strings (hostname, clock_source).
-		buf = append(buf, 0, 0)
-		return buf, nil
+		return buf, errors.New("variable block of a nil sample")
 	}
 
 	var err error
