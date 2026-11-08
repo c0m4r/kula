@@ -443,16 +443,24 @@ export function updateChartAccessibility(chart) {
     renderTable(chart);
 }
 
-function updateAggregationNotice(chart, access) {
-    const datasets = visibleDatasets(chart);
+// The notice for the points in view, in one pass: unavailable extrema
+// outrank legacy ones, so the first unavailable point ends the scan.
+export function aggregationNoticeKey(chart) {
     const minimum = chart.scales?.x?.min, maximum = chart.scales?.x?.max;
-    const hasPoint = predicate => datasets.some(({ dataset }) => dataset.data?.some(point =>
-        (!finiteNumber(minimum) || point.x >= minimum) &&
-        (!finiteNumber(maximum) || point.x <= maximum) && predicate(point)));
-    const key = hasPoint(point => point.extremaUnavailable)
-        ? 'history_extrema_unavailable'
-        : hasPoint(point => point.extremaSource === 'legacy' || point.extremaSource === 'mixed')
-            ? 'history_legacy_extrema' : null;
+    const lower = finiteNumber(minimum), upper = finiteNumber(maximum);
+    let legacy = false;
+    for (const { dataset } of visibleDatasets(chart)) {
+        for (const point of dataset.data || []) {
+            if ((lower && !(point.x >= minimum)) || (upper && !(point.x <= maximum))) continue;
+            if (point.extremaUnavailable) return 'history_extrema_unavailable';
+            if (point.extremaSource === 'legacy' || point.extremaSource === 'mixed') legacy = true;
+        }
+    }
+    return legacy ? 'history_legacy_extrema' : null;
+}
+
+function updateAggregationNotice(chart, access) {
+    const key = aggregationNoticeKey(chart);
     let notice = access.card.querySelector('.chart-aggregation-note');
     if (!key) {
         notice?.remove();

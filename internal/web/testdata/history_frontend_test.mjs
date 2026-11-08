@@ -97,6 +97,7 @@ const {
     trimEnvelopeData,
 } = await importSource('../static/js/app/chart-envelope.js');
 const {
+    aggregationNoticeKey,
     chartCSV,
     chartCursorText,
     chartDataSummary,
@@ -148,6 +149,22 @@ test('legacy extrema are selected per field and retain provenance through export
     assert.equal(connections.data[0].extremaSource, 'current');
     assert.deepEqual(connections.$kulaEnvelope, [2, 4]);
     assert.doesNotMatch(chartCSV(chart), /legacy|unavailable/);
+});
+
+test('the aggregation notice reflects only visible points in view, unavailable first', () => {
+    const point = (x, extra = {}) => ({ x, y: 1, ...extra });
+    const chart = (datasets, min, max) => ({ data: { datasets }, scales: { x: { min, max } } });
+    const legacy = { data: [point(1), point(2, { extremaSource: 'legacy' }), point(3)] };
+    const unavailable = { data: [point(5, { extremaUnavailable: true, extremaSource: 'unavailable' })] };
+    assert.equal(aggregationNoticeKey(chart([legacy, unavailable])), 'history_extrema_unavailable');
+    assert.equal(aggregationNoticeKey(chart([unavailable, legacy])), 'history_extrema_unavailable');
+    assert.equal(aggregationNoticeKey(chart([legacy, unavailable], 0, 4)), 'history_legacy_extrema', 'out of view');
+    assert.equal(aggregationNoticeKey(chart([legacy, { ...unavailable, hidden: true }])), 'history_legacy_extrema', 'hidden');
+    assert.equal(aggregationNoticeKey(chart([legacy], 2.5, 10)), null, 'legacy point scrolled away');
+    assert.equal(aggregationNoticeKey(chart([{ data: [point(1, { extremaSource: 'mixed' })] }])), 'history_legacy_extrema');
+    assert.equal(aggregationNoticeKey(chart([{ data: [point(undefined, { extremaUnavailable: true })] }], 0, 9)), null,
+        'a point without a time is never in a bounded view');
+    assert.equal(aggregationNoticeKey(chart([])), null);
 });
 
 test('raw windows do not report unavailable Min/Max that they never offered', () => {
