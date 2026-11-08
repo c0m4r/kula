@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,23 +86,24 @@ func TestValidateCredentialsDisabled(t *testing.T) {
 // version's auth-off login. They must not survive a restart.
 func TestLoadSessionsDropsUnconfiguredUsers(t *testing.T) {
 	tmpDir := t.TempDir()
-	now := time.Now().UTC().Format(time.RFC3339)
-	saved := `[` +
-		`{"token":"primary","username":"admin","created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"},` +
-		`{"token":"extra","username":"alice","created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"},` +
-		`{"token":"removed","username":"bob","created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"},` +
-		`{"token":"nameless","username":"","created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"}` +
-		`]`
-	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), []byte(saved), 0600); err != nil {
-		t.Fatalf("WriteFile error: %v", err)
-	}
-
 	am := NewAuthManager(config.AuthConfig{
 		Enabled:        true,
 		Username:       "admin",
 		Users:          []config.UserConfig{{Username: "alice"}},
 		SessionTimeout: time.Hour,
 	}, tmpDir, false, config.SecurityConfig{OriginValidation: true})
+	removed := NewAuthManager(config.AuthConfig{Enabled: true, Username: "bob"}, "", false, config.SecurityConfig{})
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	saved := `[` +
+		`{"token":"primary","username":"admin",` + credentialJSON(t, am, "admin") + `"created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"extra","username":"alice",` + credentialJSON(t, am, "alice") + `"created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"removed","username":"bob",` + credentialJSON(t, removed, "bob") + `"created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"nameless","username":"","created_at":"` + now + `","expires_at":"2999-01-01T00:00:00Z"}` +
+		`]`
+	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), []byte(saved), 0600); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
 	if err := am.LoadSessions(); err != nil {
 		t.Fatalf("LoadSessions error: %v", err)
 	}
@@ -117,6 +119,75 @@ func TestLoadSessionsDropsUnconfiguredUsers(t *testing.T) {
 		if _, ok := am.sessions[dropped]; ok {
 			t.Errorf("session %q of an unconfigured user was restored", dropped)
 		}
+	}
+}
+
+// credentialJSON returns the credential field of a session am issued for user,
+// with its trailing comma, for hand-written sessions.json fixtures.
+func credentialJSON(t *testing.T, am *AuthManager, user string) string {
+	t.Helper()
+	fingerprint, ok := am.credentialFingerprint(user)
+	if !ok {
+		t.Fatalf("%q is not configured", user)
+	}
+	return `"credential":"` + fingerprint + `",`
+}
+
+// TestLoadSessionsDropsChangedCredentials pins the binding between a session
+// and the credential it was issued for: changing an account's password signs
+// its sessions out at the next start, and so does a session saved without a
+// binding — by an older version, which also issued sessions with auth off.
+func TestLoadSessionsDropsChangedCredentials(t *testing.T) {
+	tmpDir := t.TempDir()
+	params := config.Argon2Config{Time: 1, Memory: 8, Threads: 1}
+	authWith := func(password string) config.AuthConfig {
+		return config.AuthConfig{
+			Enabled:        true,
+			Username:       "admin",
+			PasswordHash:   HashPassword(password, "salt", params),
+			PasswordSalt:   "salt",
+			Argon2:         params,
+			SessionTimeout: time.Hour,
+		}
+	}
+	before := NewAuthManager(authWith("old secret"), tmpDir, false, config.SecurityConfig{OriginValidation: true})
+	if _, err := before.CreateSession("admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := before.SaveSessions(); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(filepath.Join(tmpDir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := func(cfg config.AuthConfig) int {
+		t.Helper()
+		am := NewAuthManager(cfg, tmpDir, false, config.SecurityConfig{OriginValidation: true})
+		if err := am.LoadSessions(); err != nil {
+			t.Fatalf("LoadSessions: %v", err)
+		}
+		return len(am.sessions)
+	}
+
+	if n := restored(authWith("old secret")); n != 1 {
+		t.Fatalf("same credential: restored %d session(s), want 1", n)
+	}
+	if n := restored(authWith("new secret")); n != 0 {
+		t.Errorf("after a password change: restored %d session(s), want 0", n)
+	}
+
+	var sessions []map[string]any
+	if err := json.Unmarshal(saved, &sessions); err != nil || len(sessions) != 1 {
+		t.Fatalf("sessions.json = %s (%v)", saved, err)
+	}
+	delete(sessions[0], "credential")
+	unbound, _ := json.Marshal(sessions)
+	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), unbound, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if n := restored(authWith("old secret")); n != 0 {
+		t.Errorf("session saved without a credential binding: restored %d, want 0", n)
 	}
 }
 
@@ -421,16 +492,16 @@ func TestSessionHashingOnDisk(t *testing.T) {
 
 func TestLoadSessionsLegacyFingerprintFields(t *testing.T) {
 	tmpDir := t.TempDir()
-	legacyJSON := `[{"token":"hashed-token","username":"admin","ip":"127.0.0.1","user_agent":"legacy-agent","created_at":"2026-01-01T00:00:00Z","expires_at":"2999-01-01T00:00:00Z"}]`
-	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), []byte(legacyJSON), 0600); err != nil {
-		t.Fatalf("WriteFile error: %v", err)
-	}
-
 	am := NewAuthManager(config.AuthConfig{
 		Enabled:        true,
 		Username:       "admin",
 		SessionTimeout: time.Hour,
 	}, tmpDir, false, config.SecurityConfig{OriginValidation: true})
+	legacyJSON := `[{"token":"hashed-token","username":"admin",` + credentialJSON(t, am, "admin") +
+		`"ip":"127.0.0.1","user_agent":"legacy-agent","created_at":"2026-01-01T00:00:00Z","expires_at":"2999-01-01T00:00:00Z"}]`
+	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), []byte(legacyJSON), 0600); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
 	if err := am.LoadSessions(); err != nil {
 		t.Fatalf("LoadSessions error: %v", err)
 	}
@@ -554,22 +625,22 @@ func TestCleanupSessionsAbsoluteLifetime(t *testing.T) {
 // what decides whether the session may come back at all.
 func TestLoadSessionsEnforcesAbsoluteLifetime(t *testing.T) {
 	tmpDir := t.TempDir()
-	old := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
-	saved := `[` +
-		`{"token":"aged","username":"admin","created_at":"` + old + `","expires_at":"2999-01-01T00:00:00Z"},` +
-		`{"token":"undated","username":"admin","expires_at":"2999-01-01T00:00:00Z"},` +
-		`{"token":"fresh","username":"admin","created_at":"` + time.Now().UTC().Format(time.RFC3339) + `","expires_at":"2999-01-01T00:00:00Z"}` +
-		`]`
-	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), []byte(saved), 0600); err != nil {
-		t.Fatalf("WriteFile error: %v", err)
-	}
-
 	am := NewAuthManager(config.AuthConfig{
 		Enabled:            true,
 		Username:           "admin",
 		SessionTimeout:     time.Hour,
 		SessionMaxLifetime: 7 * 24 * time.Hour,
 	}, tmpDir, false, config.SecurityConfig{OriginValidation: true})
+	bound := credentialJSON(t, am, "admin")
+	old := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	saved := `[` +
+		`{"token":"aged","username":"admin",` + bound + `"created_at":"` + old + `","expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"undated","username":"admin",` + bound + `"expires_at":"2999-01-01T00:00:00Z"},` +
+		`{"token":"fresh","username":"admin",` + bound + `"created_at":"` + time.Now().UTC().Format(time.RFC3339) + `","expires_at":"2999-01-01T00:00:00Z"}` +
+		`]`
+	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), []byte(saved), 0600); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
 	if err := am.LoadSessions(); err != nil {
 		t.Fatalf("LoadSessions error: %v", err)
 	}

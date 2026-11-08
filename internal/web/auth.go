@@ -137,8 +137,12 @@ func reserveRateLimiterKey(m map[string][]time.Time, key string, purge func()) b
 type session struct {
 	username  string
 	csrfToken string
-	createdAt time.Time
-	expiresAt time.Time
+	// credential fingerprints the account credential the session was issued
+	// for (credentialFingerprint); a restart drops sessions whose account has
+	// since changed its password or salt.
+	credential string
+	createdAt  time.Time
+	expiresAt  time.Time
 }
 
 // sessionDeadline returns the moment sess stops being valid however recently it
@@ -161,13 +165,16 @@ func (a *AuthManager) sessionDeadline(sess *session) (time.Time, bool) {
 
 // sessionData is used for JSON serialization of sessions.
 type sessionData struct {
-	Token     string    `json:"token"`
-	Username  string    `json:"username"`
-	CSRFToken string    `json:"csrf_token,omitempty"`
-	IP        string    `json:"ip,omitempty"`
-	UserAgent string    `json:"user_agent,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Token     string `json:"token"`
+	Username  string `json:"username"`
+	CSRFToken string `json:"csrf_token,omitempty"`
+	// Credential is the session's credentialFingerprint. Sessions saved
+	// before it existed lack it and are not restored.
+	Credential string    `json:"credential,omitempty"`
+	IP         string    `json:"ip,omitempty"`
+	UserAgent  string    `json:"user_agent,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 func NewAuthManager(cfg config.AuthConfig, storageDir string, trustProxy bool, security config.SecurityConfig) *AuthManager {
@@ -369,12 +376,14 @@ func (a *AuthManager) CreateSession(username string) (string, error) {
 		return "", err
 	}
 
+	credential, _ := a.credentialFingerprint(username)
 	hashedToken := hashToken(token)
 	a.sessions[hashedToken] = &session{
-		username:  username,
-		csrfToken: csrfToken,
-		createdAt: time.Now(),
-		expiresAt: time.Now().Add(a.cfg.SessionTimeout),
+		username:   username,
+		csrfToken:  csrfToken,
+		credential: credential,
+		createdAt:  time.Now(),
+		expiresAt:  time.Now().Add(a.cfg.SessionTimeout),
 	}
 
 	return token, nil
@@ -496,31 +505,42 @@ func (a *AuthManager) CleanupSessions() {
 	a.UserLimiter.mu.Unlock()
 }
 
-// isConfiguredUser reports whether username names an account in the current
-// config. It compares server-side state only, so it need not be constant-time.
-func (a *AuthManager) isConfiguredUser(username string) bool {
+// credentialFingerprint identifies the credential username currently has in
+// the config: a SHA-256 over the name and its stored salt and Argon2id hash.
+// It reveals nothing a guess could be checked against more cheaply than the
+// hash itself, and ok is false for a name the config does not have.
+func (a *AuthManager) credentialFingerprint(username string) (fingerprint string, ok bool) {
 	if username == "" {
-		return false
+		return "", false
 	}
+	salt, hash, found := "", "", false
 	if username == a.cfg.Username {
-		return true
-	}
-	for _, u := range a.cfg.Users {
-		if username == u.Username {
-			return true
+		salt, hash, found = a.cfg.PasswordSalt, a.cfg.PasswordHash, true
+	} else {
+		for _, u := range a.cfg.Users {
+			if username == u.Username {
+				salt, hash, found = u.PasswordSalt, u.PasswordHash, true
+				break
+			}
 		}
 	}
-	return false
+	if !found {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte("kula-session-credential-v1\x00" + username + "\x00" + salt + "\x00" + hash))
+	return hex.EncodeToString(sum[:]), true
 }
 
 // LoadSessions loads sessions from disk.
 //
 // With auth disabled nothing is loaded: no session can be needed, and the
 // empty set SaveSessions writes at shutdown then clears any left behind. A
-// session is also dropped when its user is no longer configured. The config is
-// fixed for the life of the process and CreateSession runs only after
-// ValidateCredentials succeeds, so sessions created in this process always
-// belong to a configured user; only those read from disk need the check.
+// session is also dropped unless it was issued for the credential its user
+// has now: a removed account, a changed password, or a session saved by an
+// older version (which issued sessions even with auth disabled) does not come
+// back. The config is fixed for the life of the process and CreateSession runs
+// only after ValidateCredentials succeeds, so sessions created in this process
+// always match; only those read from disk need the check.
 func (a *AuthManager) LoadSessions() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -548,14 +568,16 @@ func (a *AuthManager) LoadSessions() error {
 		if !now.Before(sd.ExpiresAt) {
 			continue
 		}
-		if !a.isConfiguredUser(sd.Username) {
+		credential, ok := a.credentialFingerprint(sd.Username)
+		if !ok || sd.Credential == "" || subtle.ConstantTimeCompare([]byte(sd.Credential), []byte(credential)) != 1 {
 			continue
 		}
 		sess := &session{
-			username:  sd.Username,
-			csrfToken: sd.CSRFToken,
-			createdAt: sd.CreatedAt,
-			expiresAt: sd.ExpiresAt,
+			username:   sd.Username,
+			csrfToken:  sd.CSRFToken,
+			credential: credential,
+			createdAt:  sd.CreatedAt,
+			expiresAt:  sd.ExpiresAt,
 		}
 		// A session with no recorded login time has no enforceable absolute
 		// lifetime, so it is dropped rather than restored as one that can never
@@ -589,11 +611,12 @@ func (a *AuthManager) SaveSessions() error {
 	for hashedToken, sess := range a.sessions {
 		if now.Before(sess.expiresAt) {
 			toSave = append(toSave, sessionData{
-				Token:     hashedToken,
-				Username:  sess.username,
-				CSRFToken: sess.csrfToken,
-				CreatedAt: sess.createdAt,
-				ExpiresAt: sess.expiresAt,
+				Token:      hashedToken,
+				Username:   sess.username,
+				CSRFToken:  sess.csrfToken,
+				Credential: sess.credential,
+				CreatedAt:  sess.createdAt,
+				ExpiresAt:  sess.expiresAt,
 			})
 		}
 	}
