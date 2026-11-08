@@ -25,6 +25,12 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Cards keep one consistent order everywhere
 - Split charts expand and collapse like every other chart
 - Remove systemd service ProtectClock that prevents reading clock
+- Tier 1 and tier 2 roll up whole wall-clock minutes and five-minute blocks instead of
+  windows counted from when Kula started, so a rolling view and a past range show the same
+  values for the same minutes (a short spike could read up to half as high in one of them)
+- Rolling views of 3 hours and longer also refresh only their newest buckets (a 3-hour view:
+  about 12 KB per refresh instead of 460 KB); `/api/history` takes an optional `tier` hint
+- The terminal UI's History view reads only its time range instead of the whole tier file
 
 ### Fixed
 
@@ -64,14 +70,28 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - History no longer goes missing for up to a full ring after a storage tier wraps while
   records are growing (for example when a container or interface appears); the data stayed
   on disk but reads skipped it and the dashboard showed an outage
+- Apache2 request and traffic rates no longer double after a failed status poll, and no rate
+  is computed against a counter the previous page did not carry
+- A rolling view no longer stays marked "partial" for minutes after one late refresh
+- The logged-in user count falls back to systemd-logind sessions when utmp exists but
+  records no login (systemd built without utmp support), instead of reading 0
+- A PostgreSQL poll stuck on a frozen server is cut loose after its time limit; lib/pq kept
+  waiting, and keepalives cannot detect a server whose kernel still answers
+- An `https://` Ollama URL without a port is allowed through the sandbox on 443 (it was
+  allowed on 11434)
+- Seek index temporary files left by a crash are removed at the next start
+- A crash between closing a minute and writing its rollup no longer loses that rollup
 
 ### Security
 
 - Login is refused while auth is disabled instead of issuing sessions that stayed valid
   after enabling auth; stored sessions are cleared on runs with auth off and dropped when
-  their user is no longer configured (delete `sessions.json` once if upgrading straight
-  into auth)
-- Bound concurrent password hashing so a login flood from many addresses cannot exhaust memory
+  their user is no longer configured
+- Bound concurrent password hashing so a login flood from many addresses cannot exhaust memory;
+  the bound also counts memory, so a larger `argon2.memory` allows fewer hashes at once
+- Restored sessions are bound to the account's password: changing a password signs that
+  account out, and sessions saved by older versions (which also issued them with auth off)
+  are dropped once, so everyone signs in again after upgrading
 
 ## [0.21.0] - 2026-10-01
 
