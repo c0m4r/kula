@@ -128,8 +128,8 @@ web:
   minify_assets: true
 
   # Resource limits for WebSocket connections
-  # max_websocket_conns: Global limit (default: 100)
-  # max_websocket_conns_per_ip: Per-IP limit (default: 5)
+  # max_websocket_conns: Global limit (default: 100, at least 1)
+  # max_websocket_conns_per_ip: Per-IP limit (default: 5, at least 1)
   max_websocket_conns: 100
   max_websocket_conns_per_ip: 5
 
@@ -153,7 +153,9 @@ web:
     # allowed_origins are also accepted. Disable only if you protect the
     # API some other way (e.g. CSRF tokens + token-auth headers).
     origin_validation: true
-    # Allow cross-origin browser access from these exact origins.
+    # Allow cross-origin browser access from these exact origins
+    # (scheme://host[:port]; case, a trailing slash and a default port are
+    # normalized, a path or wildcard is refused at startup).
     # When non-empty:
     #   - CORS response headers are sent for matching origins
     #   - listed origins also pass origin_validation

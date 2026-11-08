@@ -215,6 +215,8 @@ Key points:
   prefix — for reverse proxies that forward the prefix intact. See
   [Reverse Proxy & TLS](13-reverse-proxy.md).
 - **`unix_socket`** replaces the TCP listener — ideal behind a local nginx.
+- **`max_websocket_conns`** and **`max_websocket_conns_per_ip`** cap live dashboard
+  connections; each must be at least 1.
 - **`trust_proxy`** believes two headers from a reverse proxy: `X-Forwarded-Proto: https`
   (sets the `Secure` cookie flag and HSTS) and the rightmost `X-Forwarded-For` address, which
   becomes the client IP for the login, WebSocket and AI-chat limits and the access log. Enable it
@@ -238,8 +240,10 @@ Key points:
 Defaults preserve strict behavior. Relax these to embed Kula in an `<iframe>` or to allow
 cross-origin browser access. When `allowed_origins` is non-empty, CORS headers are sent for
 matching origins, those origins pass `origin_validation`, and session cookies switch to
-`SameSite=None; Secure` (requires HTTPS or `trust_proxy` + `X-Forwarded-Proto: https`). See
-[Security Model](../dev/08-security.md).
+`SameSite=None; Secure` (requires HTTPS or `trust_proxy` + `X-Forwarded-Proto: https`). Each
+entry is an origin as a browser sends it, `scheme://host[:port]`: case, a trailing slash and a
+default port are normalized at startup, and an entry with a path, a wildcard or no scheme stops
+it with an error. See [Security Model](../dev/08-security.md).
 
 ### `web` display options
 
@@ -312,7 +316,7 @@ applied whenever the browser reports `prefers-reduced-motion`, regardless of thi
     level: "perf"   # access | perf | debug
 ```
 
-- `access` — request lines (`[API]` / `[WEB]` tags, client IP, method, path as sent (percent-escapes kept), status).
+- `access` — request lines (`[API]` / `[WEB]` tags, client IP, method, escaped path, status).
 - `perf` — adds storage fetch performance for `/api/history`.
 - `debug` — adds collector auto-discovery logging and WebSocket write errors (a dashboard that
   disconnected or stopped reading).
@@ -337,12 +341,12 @@ See [Authentication](07-authentication.md).
     username: admin
     password_hash: ""   # from: ./kula hash-password
     password_salt: ""
-    session_timeout: 24h
+    session_timeout: 24h        # idle timeout; must be positive
     session_max_lifetime: 168h  # absolute cap from login; 0 disables
     argon2:
-      time: 3
+      time: 3           # at least 1
       memory: 32768     # KiB (double the OWASP minimum)
-      threads: 4
+      threads: 4        # at least 1
     # users:            # additional users, same argon2 params
     #   - username: user1
     #     password_hash: ""

@@ -591,6 +591,14 @@ func load(path string, mustExist bool) (*Config, error) {
 		return nil, err
 	}
 
+	if err := cfg.validateWebLimits(); err != nil {
+		return nil, err
+	}
+
+	if err := cfg.normalizeAllowedOrigins(); err != nil {
+		return nil, err
+	}
+
 	if cfg.Ollama.Enabled {
 		if err := validateOllamaURL(cfg.Ollama.URL); err != nil {
 			return nil, err
@@ -842,6 +850,80 @@ func (c *Config) validateTextSize() error {
 			MinTextSize, MaxTextSize, size)
 	}
 	return nil
+}
+
+// validateWebLimits rejects values that load cleanly but break at runtime:
+// Argon2id panics on zero time or threads (at login and in hash-password,
+// whether or not auth is enabled), a non-positive session timeout expires
+// every session as it is created, and a WebSocket limit below one refuses
+// every live connection.
+func (c *Config) validateWebLimits() error {
+	a := c.Web.Auth
+	if a.Argon2.Time < 1 {
+		return fmt.Errorf("web.auth.argon2.time must be at least 1, got %d", a.Argon2.Time)
+	}
+	if a.Argon2.Threads < 1 {
+		return fmt.Errorf("web.auth.argon2.threads must be at least 1, got %d", a.Argon2.Threads)
+	}
+	if a.SessionTimeout <= 0 {
+		return fmt.Errorf("web.auth.session_timeout must be positive, got %v", a.SessionTimeout)
+	}
+	if c.Web.MaxWebsocketConns < 1 {
+		return fmt.Errorf("web.max_websocket_conns must be at least 1, got %d", c.Web.MaxWebsocketConns)
+	}
+	if c.Web.MaxWebsocketConnsPerIP < 1 {
+		return fmt.Errorf("web.max_websocket_conns_per_ip must be at least 1, got %d", c.Web.MaxWebsocketConnsPerIP)
+	}
+	return nil
+}
+
+// normalizeAllowedOrigins rewrites each web.security.allowed_origins entry
+// into the form a browser sends in its Origin header — lowercase scheme and
+// host, no trailing slash, no default port — since entries are compared to
+// that header as strings, and rejects entries no Origin header can match.
+func (c *Config) normalizeAllowedOrigins() error {
+	origins := c.Web.Security.AllowedOrigins
+	for i, raw := range origins {
+		origin, err := normalizeOrigin(raw)
+		if err != nil {
+			return fmt.Errorf("web.security.allowed_origins: %q: %w", raw, err)
+		}
+		origins[i] = origin
+	}
+	return nil
+}
+
+func normalizeOrigin(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", err
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("must be an http:// or https:// origin")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery || (u.Path != "" && u.Path != "/") {
+		return "", fmt.Errorf("must be scheme://host[:port] only, without a path, query or credentials")
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return "", fmt.Errorf("has no host")
+	}
+	if strings.Contains(host, "*") {
+		return "", fmt.Errorf("wildcards are not supported; list each origin")
+	}
+	for _, r := range host {
+		if r > unicode.MaxASCII {
+			return "", fmt.Errorf("browsers send an internationalized host in its punycode (xn--) form; use that")
+		}
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port := u.Port(); port != "" && !(scheme == "http" && port == "80") && !(scheme == "https" && port == "443") {
+		host += ":" + port
+	}
+	return scheme + "://" + host, nil
 }
 
 // parseRetention parses a duration string with the suffixes s, m, h, or d.

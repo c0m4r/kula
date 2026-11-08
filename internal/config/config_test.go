@@ -180,6 +180,87 @@ func TestLoadTextSizeOutOfRange(t *testing.T) {
 	}
 }
 
+// Values that load but break at runtime are refused: Argon2id panics on zero
+// time or threads, a zero session timeout expires every session at once, and a
+// zero WebSocket limit refuses every live connection.
+func TestLoadRejectsBrokenWebLimits(t *testing.T) {
+	for _, tc := range []struct{ name, yaml string }{
+		{"argon2 time", "  auth:\n    argon2:\n      time: 0\n"},
+		{"argon2 threads", "  auth:\n    argon2:\n      threads: 0\n"},
+		{"session timeout", "  auth:\n    session_timeout: 0s\n"},
+		{"negative session timeout", "  auth:\n    session_timeout: -1h\n"},
+		{"websocket conns", "  max_websocket_conns: 0\n"},
+		{"websocket conns per ip", "  max_websocket_conns_per_ip: -1\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			yaml := fmt.Sprintf("storage:\n  directory: %s\nweb:\n%s", dir, tc.yaml)
+			if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Errorf("Load() accepted:\n%s", tc.yaml)
+			}
+		})
+	}
+	if err := DefaultConfig().validateWebLimits(); err != nil {
+		t.Errorf("defaults rejected: %v", err)
+	}
+}
+
+func TestNormalizeOrigin(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://app.example.com":      "https://app.example.com",
+		" HTTPS://App.Example.COM/ ":   "https://app.example.com",
+		"https://app.example.com:443":  "https://app.example.com",
+		"http://app.example.com:80/":   "http://app.example.com",
+		"https://app.example.com:8443": "https://app.example.com:8443",
+		"http://app.example.com:443":   "http://app.example.com:443",
+		"http://[::1]:8080":            "http://[::1]:8080",
+		"http://[::1]:80":              "http://[::1]",
+		"http://192.0.2.1":             "http://192.0.2.1",
+	} {
+		got, err := normalizeOrigin(in)
+		if err != nil || got != want {
+			t.Errorf("normalizeOrigin(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{
+		"", "app.example.com", "*", "null", "https://*.example.com", "ftp://app.example.com",
+		"https://app.example.com/path", "https://app.example.com/?x=1", "https://app.example.com/#x",
+		"https://user@app.example.com", "https:app.example.com", "https://bücher.example",
+	} {
+		if got, err := normalizeOrigin(in); err == nil {
+			t.Errorf("normalizeOrigin(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
+func TestLoadNormalizesAllowedOrigins(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := fmt.Sprintf("storage:\n  directory: %s\nweb:\n  security:\n    allowed_origins:\n      - https://App.Example.com:443/\n", dir)
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Web.Security.AllowedOrigins; len(got) != 1 || got[0] != "https://app.example.com" {
+		t.Errorf("AllowedOrigins = %q, want [https://app.example.com]", got)
+	}
+
+	yaml = fmt.Sprintf("storage:\n  directory: %s\nweb:\n  security:\n    allowed_origins:\n      - app.example.com\n", dir)
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Error("Load() accepted an allowed origin without a scheme")
+	}
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	cfg, err := Load("/nonexistent/path/config.yaml")
 	if err != nil {
