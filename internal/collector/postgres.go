@@ -48,6 +48,9 @@ type postgresCollector struct {
 	prev         pgRaw
 	prevAt       time.Time
 	serverVerNum int // server_version_num (e.g. 170000 = PG17); 0 until connected
+	// maxConns is max_connections, read once per session: changing it takes a
+	// server restart, which ends the session. 0 until read.
+	maxConns int
 }
 
 // pgValue quotes a libpq connection-string value, so no configured value can
@@ -214,6 +217,7 @@ func (pc *postgresCollector) setupSession(ctx context.Context, conn *sql.Conn) (
 		return ref, err
 	}
 	pc.serverVerNum = version
+	pc.maxConns = 0
 	var settings []string
 	if version >= 120000 {
 		settings = append(settings, "SET tcp_user_timeout = 30000")
@@ -345,13 +349,16 @@ func (pc *postgresCollector) query(ctx context.Context, conn *sql.Conn) (*Postgr
 		return nil, fmt.Errorf("pg_stat_activity: %w", err)
 	}
 
-	// Max connections setting
-	var maxConnsStr string
-	if err := conn.QueryRowContext(ctx, "SHOW max_connections").Scan(&maxConnsStr); err == nil {
-		if v, err := strconv.Atoi(maxConnsStr); err == nil {
-			stats.MaxConns = v
+	// Max connections setting (see maxConns)
+	if pc.maxConns == 0 {
+		var maxConnsStr string
+		if err := conn.QueryRowContext(ctx, "SHOW max_connections").Scan(&maxConnsStr); err == nil {
+			if v, err := strconv.Atoi(maxConnsStr); err == nil {
+				pc.maxConns = v
+			}
 		}
 	}
+	stats.MaxConns = pc.maxConns
 
 	// Database-level cumulative counters from pg_stat_database
 	var cur pgRaw
