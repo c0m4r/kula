@@ -251,36 +251,42 @@ type tcpRaw struct {
 
 // collectTCPStats reads /proc/net/snmp and returns per-second rates for
 // InErrs, OutRsts, RetransSegs, and the current gauge value for CurrEstab.
+//
+// A rate needs a baseline from the previous tick's successful read. A counter
+// that is legitimately 0 is a baseline like any other, so the first errors
+// after a quiet boot are counted; a failed read drops the baseline, so the
+// next good read is not taken for a lifetime's worth in one second. A counter
+// that went backwards (reset) gives no rate for that tick.
 func (c *Collector) collectTCPStats(elapsed float64) TCPStats {
-	cur := readTCPRaw()
+	cur, ok := readTCPRaw()
 	ts := TCPStats{
 		CurrEstab: cur.currEstab,
 	}
-	if elapsed > 0 {
-		// Guard against uint64 underflow on counter reset
-		if c.prevTCP.inErrs > 0 && cur.inErrs >= c.prevTCP.inErrs {
-			ts.InErrs = round2(float64(cur.inErrs-c.prevTCP.inErrs) / elapsed)
+	if ok && c.prevTCPOK && elapsed > 0 {
+		prev := c.prevTCP
+		if cur.inErrs >= prev.inErrs {
+			ts.InErrs = round2(float64(cur.inErrs-prev.inErrs) / elapsed)
 		}
-		if c.prevTCP.outRsts > 0 && cur.outRsts >= c.prevTCP.outRsts {
-			ts.OutRsts = round2(float64(cur.outRsts-c.prevTCP.outRsts) / elapsed)
+		if cur.outRsts >= prev.outRsts {
+			ts.OutRsts = round2(float64(cur.outRsts-prev.outRsts) / elapsed)
 		}
-		if c.prevTCP.retrans > 0 && cur.retrans >= c.prevTCP.retrans {
-			ts.Retrans = round2(float64(cur.retrans-c.prevTCP.retrans) / elapsed)
+		if cur.retrans >= prev.retrans {
+			ts.Retrans = round2(float64(cur.retrans-prev.retrans) / elapsed)
 		}
 	}
-	c.prevTCP = cur
+	c.prevTCP, c.prevTCPOK = cur, ok
 	return ts
 }
 
-// readTCPRaw reads the raw cumulative TCP counters from /proc/net/snmp.
-func readTCPRaw() tcpRaw {
+// readTCPRaw reads the raw cumulative TCP counters from /proc/net/snmp. ok is
+// false when the file or its Tcp values line could not be read.
+func readTCPRaw() (raw tcpRaw, ok bool) {
 	f, err := os.Open(filepath.Join(procPath, "net/snmp"))
 	if err != nil {
-		return tcpRaw{}
+		return tcpRaw{}, false
 	}
 	defer func() { _ = f.Close() }()
 
-	var raw tcpRaw
 	scanner := bufio.NewScanner(f)
 	var headerFields []string
 	for scanner.Scan() {
@@ -296,13 +302,15 @@ func readTCPRaw() tcpRaw {
 			headerFields = fields[1:]
 			continue
 		}
-		// Values line
+		// Values line. Every counter a rate is taken from must parse, or a
+		// value read as 0 would become the next tick's baseline.
 		values := fields[1:]
+		counters := 0
 		for i, hdr := range headerFields {
 			if i >= len(values) {
 				break
 			}
-			val, _ := strconv.ParseUint(values[i], 10, 64)
+			val, err := strconv.ParseUint(values[i], 10, 64)
 			switch hdr {
 			case "CurrEstab":
 				raw.currEstab = val
@@ -312,11 +320,16 @@ func readTCPRaw() tcpRaw {
 				raw.outRsts = val
 			case "RetransSegs":
 				raw.retrans = val
+			default:
+				continue
+			}
+			if err == nil && hdr != "CurrEstab" {
+				counters++
 			}
 		}
-		break
+		return raw, counters == 3
 	}
-	return raw
+	return raw, false
 }
 
 // DetectLinkSpeed returns the combined theoretical maximum throughput of all UP interfaces in Mbps, or 0 if undetected.

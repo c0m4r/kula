@@ -1,7 +1,9 @@
 package collector
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"kula/internal/config"
@@ -39,9 +41,9 @@ func TestReadTCPRaw(t *testing.T) {
 
 	// RetransSegs is in the Tcp line too; /proc/net/netstat has no such
 	// counter, which left the retransmit rate 0 on every real host.
-	raw := readTCPRaw()
-	if raw.currEstab != 100 || raw.inErrs != 2 || raw.outRsts != 10 || raw.retrans != 50 {
-		t.Errorf("unexpected tcp raw stats: %+v", raw)
+	raw, ok := readTCPRaw()
+	if !ok || raw.currEstab != 100 || raw.inErrs != 2 || raw.outRsts != 10 || raw.retrans != 50 {
+		t.Errorf("unexpected tcp raw stats: %+v (ok %v)", raw, ok)
 	}
 }
 
@@ -116,4 +118,47 @@ func mapKeys[V any](m map[string]V) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// TestTCPRatesFromABaseline walks the TCP counters through a quiet boot (all
+// zero), a first burst, a failed read and a reset. Only a tick whose previous
+// read succeeded gives rates: the first burst counts although the counters
+// were zero before it, and the read after a failure does not report the
+// whole counter as one second's worth.
+func TestTCPRatesFromABaseline(t *testing.T) {
+	orig := procPath
+	t.Cleanup(func() { procPath = orig })
+	procPath = t.TempDir()
+	snmp := filepath.Join(procPath, "net", "snmp")
+	if err := os.MkdirAll(filepath.Dir(snmp), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(retrans, inErrs, outRsts uint64) {
+		t.Helper()
+		body := fmt.Sprintf("Tcp: RtoAlgorithm CurrEstab RetransSegs InErrs OutRsts\nTcp: 1 3 %d %d %d\n", retrans, inErrs, outRsts)
+		if err := os.WriteFile(snmp, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := New(config.GlobalConfig{}, config.CollectionConfig{}, config.ApplicationsConfig{}, "")
+	steps := []struct {
+		name  string
+		setup func()
+		want  TCPStats
+	}{
+		{"first read: no baseline yet", func() { write(0, 0, 0) }, TCPStats{CurrEstab: 3}},
+		{"quiet tick", func() { write(0, 0, 0) }, TCPStats{CurrEstab: 3}},
+		{"first burst after a quiet boot", func() { write(40, 6, 20) }, TCPStats{CurrEstab: 3, Retrans: 20, InErrs: 3, OutRsts: 10}},
+		{"failed read", func() { _ = os.Remove(snmp) }, TCPStats{}},
+		{"read after a failure: baseline only", func() { write(100, 10, 50) }, TCPStats{CurrEstab: 3}},
+		{"steady", func() { write(110, 12, 54) }, TCPStats{CurrEstab: 3, Retrans: 5, InErrs: 1, OutRsts: 2}},
+		{"reset", func() { write(1, 0, 0) }, TCPStats{CurrEstab: 3}},
+		{"after the reset", func() { write(3, 2, 4) }, TCPStats{CurrEstab: 3, Retrans: 1, InErrs: 1, OutRsts: 2}},
+	}
+	for _, step := range steps {
+		step.setup()
+		if got := c.collectTCPStats(2); got != step.want {
+			t.Errorf("%s: got %+v, want %+v", step.name, got, step.want)
+		}
+	}
 }

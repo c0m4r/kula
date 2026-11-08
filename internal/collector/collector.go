@@ -31,6 +31,7 @@ type Collector struct {
 	diskWarnings map[string]bool
 	prevSelf     selfRaw
 	prevTCP      tcpRaw
+	prevTCPOK    bool                        // prevTCP is a baseline from a successful read
 	prevEnergy   map[string]uint64           // for Intel energy derivation
 	mounts       mountStats                  // statfs off the collection path
 	diskTemps    cadence[diskTemp]           // disk temperatures at their own interval
