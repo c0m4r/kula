@@ -24,11 +24,11 @@ package storage
 //
 //  3. To add an entirely new section, append it AFTER all existing variable
 //     sections (currently the TCP extension, after disk IDs) and use a new
-//     preamble flag (bit 14 next).
-//     Keep the record-level MeanStats trailer after all Data/Min/Max blocks. flagHasApps
-//     gates the whole apps section). Old records without the flag will not
+//     preamble flag (bit 14 next). Old records without the flag will not
 //     attempt to read the new section. See the power-supply section
-//     (flagHasPSU) for a worked example.
+//     (flagHasPSU) for a worked example. Keep the record-level MeanStats
+//     trailer after all Data/Min/Max blocks; it must end the record
+//     (decodeMeanStats rejects trailing bytes).
 //
 //  4. NEVER remove or reorder fields inside an existing version block.
 //     Deprecate by keeping the field, writing zero, and ignoring it on read.
@@ -1133,7 +1133,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 
 	// GPU entries
 	if len(data)-off < 2 {
-		// GPU section absent in older v2 records (graceful forward compat)
+		// Records from before the GPU section end here (length-gated, not flagged).
 		return off, nil
 	}
 	numGPU := int(binary.LittleEndian.Uint16(data[off:]))

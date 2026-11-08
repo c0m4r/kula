@@ -54,9 +54,10 @@ so it resumes serving recent data and continuing tier rollups. Backups leave out
 seek indexes; a restored tier no longer matches its old index, so Kula rebuilds it at the first
 start (one read of each tier file).
 
-> Keep `storage.directory` and the tier resolutions consistent between backup and restore. The
-> binary format is forward-compatible (old records are skipped cleanly when new metric fields
-> are added), but mismatched tier resolutions are not supported.
+> Keep `storage.directory` and the tier resolutions consistent between backup and restore. A
+> newer Kula reads a backup made by an older one (records from before a metric existed decode
+> without it), but not the other way round: a version older than the backup may misread its
+> records or refuse them. Mismatched tier resolutions are not supported.
 
 ## Notes
 

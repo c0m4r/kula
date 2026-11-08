@@ -336,9 +336,10 @@ requires the copy to equal the file.
 ## Migration
 
 The tier format is versioned. `tier.go` supports migrating **v1 (JSON records)** to **v2
-(binary records)**, and the binary codec is forward-compatible: records written before a new
+(binary records)**, and the binary codec reads every older record: records written before a new
 metric type existed are decoded correctly because absent sections are gated by preamble flags
-and skipped. See [Codec](06-storage-codec.md) and `migration_test.go`.
+and skipped. The reverse does not hold; an older binary may misread a newer record. See
+[Codec](06-storage-codec.md#reading-older-records--the-core-invariant) and `migration_test.go`.
 
 ## Inspection
 

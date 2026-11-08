@@ -7,12 +7,21 @@ no keys, no TLV, no length-prefixed fields. Metrics are identified solely by the
 within a fixed, deterministic sequence. This makes records dense and fast to encode/decode, at
 the cost of requiring strict discipline when adding new fields (see [Adding a Metric Type](14-adding-metrics.md)).
 
-On disk each record's payload starts with a kind byte, which also tells binary records from
-legacy v1 JSON ones. Records written since 0.22.0 are kind `0x03`: the record below followed by a
-CRC-32 trailer ([`record_checksum.go`](../../internal/storage/record_checksum.go)). Kind `0x02`
-records, written before, carry no checksum and are still read. The timestamp sits right after
-the kind byte in both. Older binaries cannot read `0x03` records, so keep a backup if you may
-downgrade. See [Storage Engine](05-storage-engine.md#record-frame-and-unclean-shutdowns).
+On disk the first byte of each record's payload (after its 4-byte length prefix) tells four
+kinds of record apart (`Tier.readRecord`, `extractTimestamp`, `Tier.readTimestampAt`):
+
+| First byte | Record | Decoded as |
+|---|---|---|
+| `0x03` | binary, written since 0.22.0 | the record below, then a CRC-32 trailer ([`record_checksum.go`](../../internal/storage/record_checksum.go)) that must match |
+| `0x02` | binary, written before 0.22.0 | the record below, unverified |
+| `{` (`0x7B`) | legacy v1 JSON | `decodeSampleJSON` |
+| anything else | legacy binary, written before 0.11.0 added the kind byte | the record below from the first byte, unverified |
+
+The timestamp sits right after the kind byte in `0x02` and `0x03` records. A legacy binary record
+has no kind byte and starts with the low byte of its nanosecond timestamp, so about 3 in 256 of
+them begin with one of the three tags and are misread or skipped; the ring replaces them as it
+wraps. Older binaries cannot read `0x03` records, so keep a backup if you may downgrade. See
+[Storage Engine](05-storage-engine.md#record-frame-and-unclean-shutdowns).
 
 ## Record structure
 
@@ -48,6 +57,12 @@ downgrade. See [Storage Engine](05-storage-engine.md#record-frame-and-unclean-sh
 │       ← NEW sections go HERE, after every existing one.   │
 └──────────────────────────────────────────────────────────┘
 ```
+
+Sections 1–5 have no gate: every binary record carries them. The GPU section (6) is the one
+section gated by length instead of a flag: it predates the flags, so a record with fewer than 2
+bytes left after the system strings has no GPU entries and ends there, whatever its flags say.
+That works only at the very end of a record (in a rollup the next block's bytes follow), so
+every later section has a flag or sits inside one.
 
 The fixed block's `user_count` byte holds `0–254`; `255` means unknown (the collector's `-1`,
 for hosts with neither utmp nor systemd-logind sessions) and decodes as `-1`. The byte was an
@@ -116,11 +131,14 @@ Paths include quoted dynamic identities; they are not positional member indices.
 The sparse map preserves weights for partially present metrics and sums for rounded integer
 means. `complete=0` means legacy inputs lacked their original contributing weights; those means
 remain approximate. `flagReducerV2` still describes extrema independently. Readers reject
-truncated entries, unknown versions, duplicate paths, and invalid numeric statistics. The Python
+truncated entries, unknown versions, duplicate paths, invalid numeric statistics, and any byte
+after the extension: it must end the record. A later record-level extension therefore cannot
+simply follow it. It needs a new version of this extension, or a decoder that finds where this
+one ends, and binaries from before that change cannot read such records. The Python
 inspector decodes the same extension. New metric sections still append inside each variable
 block; this record-level extension follows the final block.
 
-## Forward compatibility — the core invariant
+## Reading older records — the core invariant
 
 A new application metric type is gated by a **dedicated preamble flag bit**. The decoder checks
 each flag in sequence; if a flag is absent (an old record written before that type existed),
@@ -141,6 +159,20 @@ decodeVariable(hasApps=true, hasApache2=false, ...):
 
 The order is deterministic, so the decoder always knows which bytes belong to which section. A
 missing flag means "pretend this section doesn't exist and move on."
+
+Compatibility runs one way: a binary reads every record written before it, but an older binary
+is not guaranteed to read a newer record. It ignores a flag bit it does not know, but it cannot
+skip that section's bytes. In a raw record (one Data block, no statistics extension) the new
+section sits at the end and is left unread; in a rollup the Min and Max blocks that follow are
+read from the wrong offsets. A section version newer than the reader knows fares no better:
+
+| Section | Unknown version |
+|---|---|
+| PostgreSQL, MySQL | read as the newest layout the reader knows; what follows is misaligned |
+| Apache2 | nothing read after the version byte; what follows is misaligned |
+| Power supplies, disk IDs, TCP extension, contributing statistics | decode error |
+
+So a downgrade needs the backup taken before the upgrade.
 
 ## Two ways a metric type evolves
 
