@@ -23,6 +23,11 @@ Semgrep ([`semgrep.yml`](../../.github/workflows/semgrep.yml)); CI itself has no
 ([`frontend.yml`](../../.github/workflows/frontend.yml)) runs the
 [real-browser fixtures](#real-browser-fixtures) with Node.js 22 and the runner's Google Chrome.
 
+`-v` prints everything a test logs, even when it passes. `dbsession_test.go` drives a database
+session through thousands of failures, so its tests hold the session's log lines back: a
+passing test reports how many it held, a failing one prints the last 50. Set `KULA_TEST_LOG=1`
+to see every line, e.g. `KULA_TEST_LOG=1 go test -v -run TestDB ./internal/collector`.
+
 ## Unit tests
 
 Notable suites:

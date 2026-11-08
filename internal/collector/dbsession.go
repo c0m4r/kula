@@ -111,6 +111,7 @@ type dbSession struct {
 	dialect   dbDialect
 	timeouts  dbTimeouts
 	now       func() time.Time
+	logf      func(format string, args ...any) // nil: the standard logger
 
 	db        *sql.DB
 	conn      *sql.Conn
@@ -154,6 +155,14 @@ func (s *dbSession) clock() time.Time {
 		return s.now()
 	}
 	return time.Now()
+}
+
+func (s *dbSession) printf(format string, args ...any) {
+	if s.logf != nil {
+		s.logf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
 }
 
 // acquire returns the session's connection, connecting when needed and
@@ -202,7 +211,7 @@ func (s *dbSession) open(ctx context.Context) error {
 	}
 	s.db, s.conn, s.self, s.hasSelf = db, conn, ref, true
 	if !s.connected {
-		log.Printf("%s connected to %q (%s)", s.name, s.label, s.dialect.describe(ref))
+		s.printf("%s connected to %q (%s)", s.name, s.label, s.dialect.describe(ref))
 		s.connected = true
 	}
 	s.lastErr = ""
@@ -228,7 +237,7 @@ func (s *dbSession) reapAbandoned(ctx context.Context) error {
 				firstErr = fmt.Errorf("terminating %s: %w", s.dialect.describe(ref), err)
 			}
 		case gone:
-			log.Printf("%s ended abandoned session %s", s.name, s.dialect.describe(ref))
+			s.printf("%s ended abandoned session %s", s.name, s.dialect.describe(ref))
 		default:
 			remaining = append(remaining, ref)
 			if firstErr == nil {
@@ -246,7 +255,7 @@ func (s *dbSession) reapAbandoned(ctx context.Context) error {
 // succeed records a completed poll.
 func (s *dbSession) succeed() {
 	if s.failures > 0 {
-		log.Printf("%s polling %q again", s.name, s.label)
+		s.printf("%s polling %q again", s.name, s.label)
 	}
 	s.failures = 0
 	s.retryAt = time.Time{}
@@ -269,14 +278,14 @@ func (s *dbSession) fail(ctx context.Context, err error) {
 		}
 	}
 	if s.hasSelf {
-		log.Printf("%s giving up on session %s after: %v; it is ended before polling again", s.name, s.dialect.describe(s.self), err)
+		s.printf("%s giving up on session %s after: %v; it is ended before polling again", s.name, s.dialect.describe(s.self), err)
 		s.abandoned = append(s.abandoned, s.self)
 		if len(s.abandoned) > maxAbandonedSessions {
 			s.abandoned = s.abandoned[len(s.abandoned)-maxAbandonedSessions:]
 		}
 	}
 	if s.connected {
-		log.Printf("%s connection to %q lost, will retry", s.name, s.label)
+		s.printf("%s connection to %q lost, will retry", s.name, s.label)
 		s.connected = false
 	}
 	s.release()
@@ -310,7 +319,7 @@ func (s *dbSession) release() {
 
 func (s *dbSession) logOnce(msg string) {
 	if msg != s.lastErr {
-		log.Print(msg)
+		s.printf("%s", msg)
 		s.lastErr = msg
 	}
 }

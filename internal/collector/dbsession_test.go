@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -96,14 +99,52 @@ func (c *fakeDBConn) ResetSession(context.Context) error {
 	return nil
 }
 
-// fakeSession builds a dbSession on srv with a controllable clock.
-func fakeSession(srv *fakeDBServer, clock *time.Time) *dbSession {
+// sessionLogTail is how many of a failed test's session log lines it prints.
+const sessionLogTail = 50
+
+// sessionLog keeps a session's log lines out of passing tests: the churn test
+// alone writes thousands. A passing test reports how many it held back, a
+// failing one prints the last sessionLogTail, and KULA_TEST_LOG=1 sends every
+// line to the test log as it is written.
+func sessionLog(t *testing.T) func(format string, args ...any) {
+	if os.Getenv("KULA_TEST_LOG") != "" {
+		return func(format string, args ...any) {
+			t.Helper()
+			t.Logf(format, args...)
+		}
+	}
+	var mu sync.Mutex
+	var lines []string
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case len(lines) == 0:
+		case t.Failed():
+			tail := lines[max(0, len(lines)-sessionLogTail):]
+			t.Logf("session log, last %d of %d lines (KULA_TEST_LOG=1 shows all):\n%s",
+				len(tail), len(lines), strings.Join(tail, "\n"))
+		default:
+			t.Logf("%d session log lines held back (KULA_TEST_LOG=1 shows them)", len(lines))
+		}
+	})
+	return func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+}
+
+// fakeSession builds a dbSession on srv with a controllable clock, logging
+// through sessionLog.
+func fakeSession(t *testing.T, srv *fakeDBServer, clock *time.Time) *dbSession {
 	return &dbSession{
 		name:      "[fake]",
 		label:     "db",
 		connector: srv,
 		timeouts:  newDBTimeouts(time.Second),
 		now:       func() time.Time { return *clock },
+		logf:      sessionLog(t),
 		dialect: dbDialect{
 			setup: func(_ context.Context, conn *sql.Conn) (dbSessionRef, error) {
 				var ref dbSessionRef
@@ -138,7 +179,7 @@ func breakConn(t *testing.T, conn *sql.Conn) {
 func TestDBSessionNeverPollsBesideAnAbandonedSession(t *testing.T) {
 	srv := newFakeDBServer()
 	clock := time.Unix(1_800_000_000, 0)
-	s := fakeSession(srv, &clock)
+	s := fakeSession(t, srv, &clock)
 	ctx := context.Background()
 
 	// Steady state: one connection, reused poll after poll.
@@ -208,7 +249,7 @@ func TestDBSessionBacksOffExponentially(t *testing.T) {
 	srv := newFakeDBServer()
 	srv.refuse = true
 	clock := time.Unix(1_800_000_000, 0)
-	s := fakeSession(srv, &clock)
+	s := fakeSession(t, srv, &clock)
 
 	var waits []time.Duration
 	for range 12 {
@@ -245,7 +286,7 @@ func TestDBSessionBacksOffExponentially(t *testing.T) {
 func TestDBSessionBoundsSessionsUnderChurn(t *testing.T) {
 	srv := newFakeDBServer()
 	clock := time.Unix(1_800_000_000, 0)
-	s := fakeSession(srv, &clock)
+	s := fakeSession(t, srv, &clock)
 	ctx := context.Background()
 	seed := uint64(42)
 	random := func(n uint64) uint64 {
