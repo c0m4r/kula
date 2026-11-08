@@ -279,6 +279,35 @@ func TestSeekIndexSidecarLifecycle(t *testing.T) {
 	_ = tier.Close()
 }
 
+// TestOpenTierRemovesStaleSidecarTemps covers a crash between writing a
+// sidecar's temporary file and renaming it: the next open removes the
+// leftover and keeps everything else.
+func TestOpenTierRemovesStaleSidecarTemps(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "odd [dir]")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "tier_0.dat")
+	stale := seekSidecarPath(path) + ".tmp-123456"
+	keep := filepath.Join(dir, "tier_1.idx.tmp-123456")
+	for _, p := range []string{stale, keep} {
+		if err := os.WriteFile(p, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tier, err := OpenTier(path, 256<<10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tier.Close() }()
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale temporary sidecar survived the open: %v", err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("another tier's file was removed: %v", err)
+	}
+}
+
 // TestStoreRestartRestoresTailsFromSidecars checks a clean restart reads only
 // tails: every tier adopts its saved index, and the latest sample and pending
 // rollups come back as they were.

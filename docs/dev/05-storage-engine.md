@@ -158,7 +158,7 @@ records drop points, every new record may add one. Anything else that writes rec
 open tier (test helpers simulating older writers) must call `seekAppend` the same way.
 
 A clean `Close` saves the index next to the tier as `tier_N.idx` (written to a temporary file
-and renamed; CRC-32 protected). `OpenTier` adopts it only when its fingerprint — ring size,
+and renamed; CRC-32 protected; `OpenTier` deletes a temporary file a crash left behind). `OpenTier` adopts it only when its fingerprint — ring size,
 write and oldest offsets, record count, codec version, newest timestamp, file size and wrap
 state — equals the tier just opened, so a crash, a restore from backup, a resize or another
 binary writing the file all fall back to rebuilding it with one walk. The tier file format is

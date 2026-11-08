@@ -461,6 +461,28 @@ func (t *Tier) parseSeekSidecar(data []byte) ([]seekPoint, int64, error) {
 	return points, passMax, nil
 }
 
+// removeStaleSeekTemps deletes temporary sidecars a crash left between
+// saveSeekIndex's create and rename. Only the tier's owner calls it.
+func (t *Tier) removeStaleSeekTemps() {
+	matches, _ := filepath.Glob(globEscape(seekSidecarPath(t.path)) + ".tmp-*")
+	for _, path := range matches {
+		_ = os.Remove(path)
+	}
+}
+
+// globEscape quotes the metacharacters of a literal path for filepath.Glob.
+func globEscape(path string) string {
+	var b strings.Builder
+	for _, r := range path {
+		switch r {
+		case '*', '?', '[', ']', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // openSeekIndex adopts the sidecar or rebuilds the index. Caller holds t.mu
 // exclusively, or the tier is not shared yet.
 func (t *Tier) openSeekIndex() {

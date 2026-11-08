@@ -139,6 +139,7 @@ func OpenTier(path string, maxSize int64) (*Tier, error) {
 		fmt.Printf("Storage migration: %s converted to binary v2 successfully.\n", path)
 	}
 
+	t.removeStaleSeekTemps()
 	t.openSeekIndex()
 	return t, nil
 }
