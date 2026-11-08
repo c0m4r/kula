@@ -655,6 +655,31 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 	return candidates, nil, generation
 }
 
+// cacheHistoryResult caches a copy of result for one tier-0 resolution, unless
+// a write since the query was planned (generation) has already invalidated
+// what it was read from. The cap is a safety bound: when it is reached,
+// expired entries are swept first and, failing that, nothing is cached rather
+// than letting the map grow without limit.
+func (s *Store) cacheHistoryResult(key queryCacheKey, generation uint64, result *HistoryResult) {
+	cached := cloneHistoryResult(result)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.writeGeneration != generation {
+		return
+	}
+	s.queryCacheMu.Lock()
+	defer s.queryCacheMu.Unlock()
+	if len(s.queryCache) >= maxQueryCacheEntries {
+		s.sweepQueryCacheLocked(time.Now(), 0)
+	}
+	if len(s.queryCache) < maxQueryCacheEntries {
+		s.queryCache[key] = queryCacheEntry{
+			result:    cached,
+			expiresAt: time.Now().Add(s.queryCacheTTL),
+		}
+	}
+}
+
 // QueryRangeWithMeta returns samples with tier and coverage metadata.
 // It prefers a fully covering tier whose source density is reasonable. A tier
 // is complete when both requested edges are within its collection-lag
@@ -753,30 +778,7 @@ func (s *Store) QueryRangeFromTier(from, to time.Time, targetPoints, tier int) (
 		result.ExactComplete = result.ActualFrom != nil && result.ActualTo != nil &&
 			!result.ActualFrom.After(from) && !result.ActualTo.Before(to)
 		annotateHistoryAggregations(result)
-
-		// Cache with a TTL of one tier-0 resolution. The cap is a safety bound:
-		// if it's reached we sweep expired entries first and, failing that, skip
-		// caching rather than let the map grow without limit.
-		cached := cloneHistoryResult(result)
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		// A write during reduction already invalidated the old snapshot. Do
-		// not reinsert it after that invalidation.
-		if s.writeGeneration != generation {
-			return result, nil
-		}
-		s.queryCacheMu.Lock()
-		if len(s.queryCache) >= maxQueryCacheEntries {
-			s.sweepQueryCacheLocked(time.Now(), 0)
-		}
-		if len(s.queryCache) < maxQueryCacheEntries {
-			s.queryCache[cacheKey] = queryCacheEntry{
-				result:    cached,
-				expiresAt: time.Now().Add(s.queryCacheTTL),
-			}
-		}
-		s.queryCacheMu.Unlock()
-
+		s.cacheHistoryResult(cacheKey, generation, result)
 		return result, nil
 	}
 
