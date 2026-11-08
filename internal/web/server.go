@@ -873,6 +873,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 				"value": s.cfg.Graphs.DiskTemp.MaxValue,
 				"auto":  s.collector.DetectDiskTjMax(),
 			},
+			// GPUs have no detected limit: "auto" uses max_value.
+			"gpu_temp": map[string]interface{}{
+				"mode":  s.cfg.Graphs.GPUTemp.MaxMode,
+				"value": s.cfg.Graphs.GPUTemp.MaxValue,
+			},
 			"network": map[string]interface{}{
 				"mode":  s.cfg.Graphs.Network.MaxMode,
 				"value": s.cfg.Graphs.Network.MaxValue,

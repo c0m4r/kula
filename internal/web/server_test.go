@@ -417,6 +417,36 @@ func TestWebContentAccessLogDisabled(t *testing.T) {
 // The customization menu reads its server-side defaults from /api/config, so
 // the appearance and accessibility sections must survive the round trip --
 // including the `false` values, which are the ones that turn a feature off.
+// TestHandleConfigSendsEveryGraphBound: each configured Y-axis bound reaches
+// the dashboard, which asks for it by the same key (getChartMaxBound).
+func TestHandleConfigSendsEveryGraphBound(t *testing.T) {
+	cfg := config.WebConfig{Graphs: config.GraphConfig{
+		CPUTemp:  config.GraphMaxConfig{MaxMode: "on", MaxValue: 90},
+		DiskTemp: config.GraphMaxConfig{MaxMode: "on", MaxValue: 70},
+		GPUTemp:  config.GraphMaxConfig{MaxMode: "on", MaxValue: 85},
+		Network:  config.GraphMaxConfig{MaxMode: "on", MaxValue: 2500},
+	}}
+	c := collector.New(config.GlobalConfig{}, config.CollectionConfig{}, config.ApplicationsConfig{}, t.TempDir())
+	s := NewServer(cfg, config.GlobalConfig{}, c, nil, t.TempDir(), config.OllamaConfig{})
+	rec := httptest.NewRecorder()
+	http.HandlerFunc(s.handleConfig).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+
+	var got struct {
+		Graphs map[string]struct {
+			Mode  string  `json:"mode"`
+			Value float64 `json:"value"`
+		} `json:"graphs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding /api/config: %v", err)
+	}
+	for key, want := range map[string]float64{"cpu_temp": 90, "disk_temp": 70, "gpu_temp": 85, "network": 2500} {
+		if b, ok := got.Graphs[key]; !ok || b.Mode != "on" || b.Value != want {
+			t.Errorf("graphs.%s = %+v (present %v), want on/%v", key, b, ok, want)
+		}
+	}
+}
+
 func TestHandleConfigExposesUISettings(t *testing.T) {
 	cfg := config.WebConfig{
 		Appearance: config.AppearanceConfig{StickyTopbar: false, Gauges: true},

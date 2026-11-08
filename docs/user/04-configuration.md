@@ -274,6 +274,7 @@ can read the live stream (Kula warns about this at startup). See
   graphs:
     cpu_temp:  { max_mode: "off", max_value: 100 }   # Celsius
     disk_temp: { max_mode: "off", max_value: 100 }
+    gpu_temp:  { max_mode: "off", max_value: 100 }   # "auto" uses max_value
     network:   { max_mode: "off", max_value: 1000 }  # Mbps
     split:
       network: false      # one chart per interface

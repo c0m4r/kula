@@ -237,6 +237,9 @@ web:
     disk_temp:
       max_mode: "off"
       max_value: 100 # Celsius
+    gpu_temp:
+      max_mode: "off"
+      max_value: 100 # Celsius ("auto" has no GPU limit to detect and uses max_value)
     network:
       max_mode: "off"
       max_value: 1000 # Mbps (1 Gb/s)
