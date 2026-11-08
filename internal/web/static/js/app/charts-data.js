@@ -609,15 +609,16 @@ export function addSampleToCharts(item, ts, {
 
         if (!state.charts.apache2Tput) {
             createAppChartCard('card-apache2-throughput', 'chart-apache2-throughput', 'apache2-tput-subtitle', 'Apache2 \u2014 Throughput', 'apache2', 1);
+            // Current rates only: mod_status's own ReqPerSec and BytesPerSec
+            // are averages over Apache's whole uptime.
             state.charts.apache2Tput = createTimeSeriesChart('chart-apache2-throughput', [
-                { label: 'Accesses/s', borderColor: colors.green, data: [], fill: false },
                 { label: 'Req/s', borderColor: colors.blue, backgroundColor: colors.blueAlpha, fill: true, data: [] },
                 { label: 'kB/s', borderColor: colors.purple, data: [], fill: false },
             ]);
         }
         if (state.charts.apache2Tput) {
-            pushFields(state.charts.apache2Tput, a, minA, maxA, ['accesses_ps', 'req_per_sec', 'kbytes_ps']);
-            setChartSubtitle('apache2-tput-subtitle', () => `Req/s: ${a.req_per_sec?.toFixed(1) || '0'}  kB/s: ${a.kbytes_ps?.toFixed(1) || '0'}`);
+            pushFields(state.charts.apache2Tput, a, minA, maxA, ['accesses_ps', 'kbytes_ps']);
+            setChartSubtitle('apache2-tput-subtitle', () => `Req/s: ${a.accesses_ps?.toFixed(1) || '0'}  kB/s: ${a.kbytes_ps?.toFixed(1) || '0'}`);
         }
 
         if (!state.charts.apache2States) {

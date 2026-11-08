@@ -69,10 +69,14 @@ applications:
     status_url: "http://localhost/server-status?auto"
 ```
 
-**Metrics:** busy/idle workers, open slots, scoreboard states, requests/s, bytes/s,
-bytes/request, CPU load, total accesses and kbytes, uptime. Accesses/s and kB/s need
-`ExtendedStatus On`; a restart or a failed poll reports no rate for that poll rather than an
-inflated one.
+**Metrics:** busy/idle workers, open slots, scoreboard states, requests/s and kB/s,
+bytes/request, CPU load, total accesses and kbytes, uptime. Requests/s and kB/s are current
+rates, from the change in Apache's totals since the previous poll; they need
+`ExtendedStatus On`, and a restart or a failed poll reports no rate for that poll rather than
+an inflated one. Bytes/request and CPU load are Apache's own averages since it started.
+mod_status also reports requests/s and bytes/s averaged since start; the dashboard and the AI
+assistant no longer show those, and their Prometheus series are deprecated (see
+[Prometheus](11-prometheus.md)).
 
 ---
 

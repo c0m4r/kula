@@ -90,7 +90,7 @@ func (s *Sample) FormatForAI() string {
 		fmt.Fprintf(&sb, "    Workers: %d busy, %d idle\n",
 			s.Apps.Apache2.BusyWorkers, s.Apps.Apache2.IdleWorkers)
 		fmt.Fprintf(&sb, "    Traffic: %.1f req/s, %.1f kB/s\n",
-			s.Apps.Apache2.ReqPerSec, s.Apps.Apache2.BytesPerSec/1024)
+			s.Apps.Apache2.AccessesPS, s.Apps.Apache2.KBytesPS)
 	}
 
 	if s.Apps.Mysql != nil {
