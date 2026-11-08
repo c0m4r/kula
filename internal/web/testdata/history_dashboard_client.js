@@ -1363,6 +1363,24 @@ focusMode.toggleFocusMode();
 await settleHistory();
 check(tempSplit.parentElement?.id === 'thermals-grid', 'A split card did not return to its section');
 await (await import('./audit-system-info.js')).testSystemInfo();
+
+// The dashboard fetches /api/config again after every sign-in. Wiring the AI
+// panel on each load stacked its anonymous listeners, so one click on New
+// session added a session per load (and Delete asked once per load).
+const aiConfig = { ollama_enabled: true, ollama_model: 'fixture-model' };
+for (let load = 0; load < 2; load++) {
+    document.dispatchEvent(new CustomEvent('kula-config-ready', { detail: aiConfig }));
+}
+document.getElementById('btn-ai').click();
+check(!document.getElementById('ai-panel').classList.contains('hidden'),
+    'AI panel controls were wired once per config load');
+const aiSessions = () => document.getElementById('ai-session-select').options.length;
+const sessionsBefore = aiSessions();
+document.getElementById('btn-ai-session-new').click();
+check(aiSessions() === sessionsBefore + 1, `New session added ${aiSessions() - sessionsBefore} sessions`);
+check(document.getElementById('ai-model-select').value === 'fixture-model', 'AI model selector lost its default');
+document.getElementById('btn-ai-close').click();
+check(document.getElementById('ai-panel').classList.contains('hidden'), 'AI panel did not close');
 window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math.round(layoutMs), system_info: true,
     session_expiry_relogin: true,
     history_replay: replayPerformance, scoped_device_replay: true, numeric_chart_points: true,
@@ -1374,6 +1392,6 @@ window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math
     gesture_request_isolation: true, minimum_zoom_points: 12, legacy_metric_compatibility: true,
     unavailable_replication_lag: true, filesystem_aggregation_tooltips: true,
     bucketed_live_preset: true, suspended_aggregation: true, chart_image_export: true,
-    card_order: true, card_rearrange: true, errors };
+    card_order: true, card_rearrange: true, ai_panel_wired_once: true, errors };
 check(errors.length === 0, errors.join('; '));
 window.ready = true;

@@ -13,7 +13,8 @@ const MAX_HISTORY = 20;
 let isStreaming = false;
 let aiPanelOpen = false;
 let ollamaModel = '';
-let chartObserver = null; // [M2] stored so we can disconnect on re-init
+let chartObserver = null;
+let controlsWired = false;
 
 // ---- Sessions ----
 // Each session is an independent analysis thread with its own pinned context
@@ -33,20 +34,26 @@ let pendingChartAnalysis = null; // { chartTitle, csvData } queued while service
 // ---- Init ----
 
 /**
- * initOllama — called after /api/config is fetched.
- * Shows the AI button when ollama is enabled.
+ * initOllama — called each time /api/config is fetched (at startup and after
+ * every sign-in). Shows the AI button when ollama is enabled and wires the
+ * panel once: wiring it again would run every action twice.
  */
 export function initOllama(cfg) {
     if (!cfg.ollama_enabled) return;
     ollamaModel = cfg.ollama_model || 'llama3';
-    selectedModel = ollamaModel;
     const btn = document.getElementById('btn-ai');
-    if (btn) btn.classList.remove('hidden');
+    if (!btn) return;
+    btn.classList.remove('hidden');
+    if (controlsWired) return;
+    controlsWired = true;
+    selectedModel = ollamaModel;
 
     // Seed the model selector with the config default immediately.
     const select = document.getElementById('ai-model-select');
     if (select) {
-        select.innerHTML = `<option value="${ollamaModel}">${ollamaModel}</option>`;
+        const option = document.createElement('option');
+        option.value = option.textContent = ollamaModel;
+        select.replaceChildren(option);
         select.addEventListener('change', () => { selectedModel = select.value; });
     }
 
@@ -94,8 +101,6 @@ export function initOllama(cfg) {
     // Watch for chart elements to add the Analyze button
     document.querySelectorAll('.chart-card, .gauge-card').forEach(card => attachAIButtonToCard(card));
 
-    // [M2] Disconnect any previous observer before creating a new one
-    if (chartObserver) chartObserver.disconnect();
     chartObserver = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
             mutation.addedNodes.forEach((node) => {
