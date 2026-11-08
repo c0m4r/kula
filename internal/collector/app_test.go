@@ -222,7 +222,7 @@ Scoreboard: _SRWKDCLGI._SRWKDCLGI.
 	// Test counter reset (service restart): previous counters are high,
 	// current counters reset to 0 — should NOT produce insane rates.
 	c.appCfg.Apache2.StatusURL = server.URL
-	c.prevApache = apache2Raw{totalAccesses: 50000000, totalKBytes: 100000000}
+	c.prevApache = apache2Raw{totalAccesses: 50000000, totalKBytes: 100000000, hasAccesses: true, hasKBytes: true}
 	resetOutput := `Total Accesses: 100
 Total kBytes: 200
 `
@@ -327,6 +327,57 @@ func TestNginxRatesAcrossPartialResetsAndFailures(t *testing.T) {
 	}
 	if s := poll(body(1530, 1530, 150)); s == nil || s.RequestsPS != 10 {
 		t.Fatalf("baseline restored: %+v, want 10 requests/s", s)
+	}
+}
+
+// TestApache2RatesAcrossFailuresAndMissingCounters mirrors the nginx case for
+// mod_status: a failed poll drops the baseline, and a page without a counter
+// (ExtendedStatus off) is no baseline for that counter's rate.
+func TestApache2RatesAcrossFailuresAndMissingCounters(t *testing.T) {
+	body := func(accesses, kbytes int) string {
+		return "Total Accesses: " + strconv.Itoa(accesses) + "\nTotal kBytes: " + strconv.Itoa(kbytes) +
+			"\nBusyWorkers: 1\nIdleWorkers: 4\n"
+	}
+	var current string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if current == "" {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = w.Write([]byte(current))
+	}))
+	defer server.Close()
+	c := &Collector{
+		apacheClient: &http.Client{},
+		appCfg:       config.ApplicationsConfig{Apache2: config.Apache2Config{Enabled: true, StatusURL: server.URL}},
+	}
+	poll := func(b string) *Apache2Stats {
+		t.Helper()
+		current = b
+		return c.collectApache2(1)
+	}
+
+	if s := poll(body(1000, 5000)); s == nil || s.AccessesPS != 0 || s.KBytesPS != 0 {
+		t.Fatalf("first poll: %+v, want no rates without a baseline", s)
+	}
+	if s := poll(body(1010, 5040)); s == nil || s.AccessesPS != 10 || s.KBytesPS != 40 {
+		t.Fatalf("steady poll: %+v, want 10 accesses/s and 40 kB/s", s)
+	}
+	if s := poll(""); s != nil {
+		t.Fatalf("failed poll returned %+v", s)
+	}
+	if s := poll(body(1030, 5120)); s == nil || s.AccessesPS != 0 || s.KBytesPS != 0 {
+		t.Fatalf("after a failed poll: %+v, want no rates until a new baseline", s)
+	}
+	if s := poll(body(1035, 5130)); s == nil || s.AccessesPS != 5 || s.KBytesPS != 10 {
+		t.Fatalf("baseline restored: %+v, want 5 accesses/s and 10 kB/s", s)
+	}
+	// ExtendedStatus switched off: the counters vanish from the page.
+	if s := poll("BusyWorkers: 1\nIdleWorkers: 4\n"); s == nil || s.AccessesPS != 0 || s.KBytesPS != 0 {
+		t.Fatalf("page without counters: %+v, want no rates", s)
+	}
+	if s := poll(body(1040, 5140)); s == nil || s.AccessesPS != 0 || s.KBytesPS != 0 {
+		t.Fatalf("counters back: %+v, want no rates against the missing baseline", s)
 	}
 }
 

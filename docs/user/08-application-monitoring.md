@@ -64,7 +64,9 @@ applications:
 ```
 
 **Metrics:** busy/idle workers, open slots, scoreboard states, requests/s, bytes/s,
-bytes/request, CPU load, total accesses and kbytes, uptime.
+bytes/request, CPU load, total accesses and kbytes, uptime. Accesses/s and kB/s need
+`ExtendedStatus On`; a restart or a failed poll reports no rate for that poll rather than an
+inflated one.
 
 ---
 

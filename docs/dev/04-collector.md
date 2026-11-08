@@ -64,7 +64,8 @@ API and WebSocket payloads.
   rates for a poll in which any of its counters went backwards, since they reset together.
 - **Rates span consecutive successful polls only.** A failed poll drops the baseline (and a
   failed sub-query drops that counter's), so the next delta is never two intervals of growth
-  divided by one (`nginx.go`, `postgres.go`).
+  divided by one (`nginx.go`, `apache2.go`, `postgres.go`, `mysql.go`). A counter missing from a
+  poll (Apache2 without `ExtendedStatus`) is no baseline either.
 - **Lazy-allocate clients.** HTTP/DB clients are created on first use.
 - **Database collectors own exactly one session.** `postgres.go` and `mysql.go` poll through
   `dbsession.go`: a pinned `sql.Conn` from a pool capped at one; polls in their own goroutine,

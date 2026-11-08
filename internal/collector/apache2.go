@@ -7,10 +7,14 @@ import (
 	"strings"
 )
 
-// apache2Raw holds the raw cumulative counters from mod_status ?auto.
+// apache2Raw holds the raw cumulative counters from mod_status ?auto, and
+// whether each was on the page: without ExtendedStatus the page lacks both, and
+// a counter that was never read is no baseline for a rate.
 type apache2Raw struct {
 	totalAccesses uint64
 	totalKBytes   uint64
+	hasAccesses   bool
+	hasKBytes     bool
 }
 
 // collectApache2 fetches the Apache2 mod_status ?auto page and parses it.
@@ -29,6 +33,17 @@ type apache2Raw struct {
 //	IdleWorkers: 7
 //	Scoreboard: _W___R___................................................
 func (c *Collector) collectApache2(elapsed float64) *Apache2Stats {
+	stats := c.fetchApache2(elapsed)
+	if stats == nil {
+		// Rates are deltas between consecutive successful polls. Dropping the
+		// baseline here keeps the next poll from dividing two intervals'
+		// growth by one.
+		c.prevApache = apache2Raw{}
+	}
+	return stats
+}
+
+func (c *Collector) fetchApache2(elapsed float64) *Apache2Stats {
 	if c.apacheClient == nil {
 		c.apacheClient = &http.Client{
 			Timeout: c.collCfg.Interval,
@@ -64,6 +79,7 @@ func (c *Collector) collectApache2(elapsed float64) *Apache2Stats {
 // and computes per-second rates using the previous raw counters.
 func (c *Collector) parseApache2Status(body string, elapsed float64) *Apache2Stats {
 	stats := &Apache2Stats{}
+	var cur apache2Raw
 	lines := strings.Split(body, "\n")
 
 	var scoreboard string
@@ -106,10 +122,12 @@ func (c *Collector) parseApache2Status(body string, elapsed float64) *Apache2Sta
 		case "Total Accesses":
 			if v, err := strconv.ParseUint(val, 10, 64); err == nil {
 				stats.TotalAccesses = v
+				cur.hasAccesses = true
 			}
 		case "Total kBytes":
 			if v, err := strconv.ParseUint(val, 10, 64); err == nil {
 				stats.TotalKBytes = v
+				cur.hasKBytes = true
 			}
 		case "ReqPerSec":
 			stats.ReqPerSec = parseFloatQuiet(val)
@@ -127,16 +145,17 @@ func (c *Collector) parseApache2Status(body string, elapsed float64) *Apache2Sta
 	}
 
 	// Compute per-second rates from cumulative deltas
-	cur := apache2Raw{
-		totalAccesses: stats.TotalAccesses,
-		totalKBytes:   stats.TotalKBytes,
-	}
-	if c.prevApache.totalAccesses > 0 && elapsed > 0 {
-		if cur.totalAccesses >= c.prevApache.totalAccesses {
-			stats.AccessesPS = round2(float64(cur.totalAccesses-c.prevApache.totalAccesses) / elapsed)
+	// Each counter needs a reading at both ends, and a counter that went
+	// backwards (a restart) yields no rate rather than an underflowed one.
+	cur.totalAccesses = stats.TotalAccesses
+	cur.totalKBytes = stats.TotalKBytes
+	prev := c.prevApache
+	if elapsed > 0 {
+		if prev.hasAccesses && cur.hasAccesses && cur.totalAccesses >= prev.totalAccesses {
+			stats.AccessesPS = round2(float64(cur.totalAccesses-prev.totalAccesses) / elapsed)
 		}
-		if cur.totalKBytes >= c.prevApache.totalKBytes {
-			stats.KBytesPS = round2(float64(cur.totalKBytes-c.prevApache.totalKBytes) / elapsed)
+		if prev.hasKBytes && cur.hasKBytes && cur.totalKBytes >= prev.totalKBytes {
+			stats.KBytesPS = round2(float64(cur.totalKBytes-prev.totalKBytes) / elapsed)
 		}
 	}
 	c.prevApache = cur
