@@ -6,16 +6,22 @@
 'use strict';
 import { state } from './state.js';
 import { pushLiveSample, fetchHistory, fetchCustomHistory } from './charts-data.js';
-import { wsUrl } from './api.js';
+import { apiUrl, wsUrl } from './api.js';
 import { normalizeHistoryItem } from './history-data.js';
 import { requireLogin } from './auth.js';
 import { i18n } from './i18n.js';
+
+// Bumped by every new connection and by disconnectWS, so a session check
+// still in flight for an older socket cannot act after a login or logout.
+let connectGeneration = 0;
 
 export function connectWS() {
     if (state.ws && (state.ws.readyState === WebSocket.CONNECTING || state.ws.readyState === WebSocket.OPEN)) {
         return;
     }
 
+    const generation = ++connectGeneration;
+    let opened = false;
     let ws;
     try {
         ws = new WebSocket(wsUrl('/ws'));
@@ -30,6 +36,7 @@ export function connectWS() {
             ws.close(1000, 'superseded');
             return;
         }
+        opened = true;
         state.connected = true;
         state.reconnectDelay = 1000;
         state.liveSampleIntervalMs = null;
@@ -94,6 +101,10 @@ export function connectWS() {
             requireLogin();
             return;
         }
+        if (!opened) {
+            recheckSessionThenReconnect(generation);
+            return;
+        }
         scheduleReconnect();
     };
 
@@ -102,7 +113,24 @@ export function connectWS() {
     };
 }
 
+// A refused handshake -- a 401 once the session expired while the page slept,
+// a 429 at the connection limit -- reaches the page only as a close before
+// open (code 1006), without its status. Ask the server whether the session
+// still holds: retrying cannot renew one that has expired.
+function recheckSessionThenReconnect(generation) {
+    fetch(apiUrl('/api/auth/status'))
+        .then(r => r.json())
+        .then(data => Boolean(data?.auth_required && !data.authenticated))
+        .catch(() => false)
+        .then(expired => {
+            if (generation !== connectGeneration || state.ws) return;
+            if (expired) requireLogin();
+            else scheduleReconnect();
+        });
+}
+
 export function disconnectWS() {
+    connectGeneration++;
     if (state.reconnectTimer) {
         clearTimeout(state.reconnectTimer);
         state.reconnectTimer = null;

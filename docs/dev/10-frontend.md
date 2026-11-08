@@ -121,7 +121,10 @@ one abortable `HistoryRequestController`. Only its current generation can replac
 Failures retain the successful view and expose a failed status. Reconnection refreshes the
 whole selected preset. Custom/zoomed intervals stay frozen while live gauges and status update.
 WebSocket close code 1008 signals session expiry or revocation: the dashboard cancels pending
-history, stops reconnecting, clears authenticated readings and returns to login. Successful
+history, stops reconnecting, clears authenticated readings and returns to login. A refused
+handshake (a 401 once the session expired while the page slept) reaches the page only as a
+close before open, so after one the dashboard asks `/api/auth/status` and does the same when
+the session is gone; otherwise (server down, connection limit) it keeps backing off. Successful
 login opens a fresh connection and reloads the selected preset or custom interval.
 
 Every buffer observation uses the canonical `ts`, `data`, optional `min`/`max`, `dur`, and

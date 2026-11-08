@@ -261,7 +261,14 @@ stream, its layout and theme toggles and a keyboard rearrangement must work, and
 when the build still serves it, must start and toggle mute. The test builds kula with the Go
 toolchain unless `KULA_BINARY` names a binary, and takes about a minute.
 
-Run all three fixtures with
+[`session_expiry_test.mjs`](../../internal/web/testdata/session_expiry_test.mjs) runs the real
+`kula serve` with authentication and signs in through the login form. It then restarts the
+server without its `sessions.json`, so the open page's session is gone and every reconnect is
+refused with 401, which a page sees only as a socket closing before it opens. The dashboard
+must show the login screen, stop reconnecting behind it, and stream again after signing in. It
+takes about ten seconds.
+
+Run all four fixtures with
 [`addons/test-frontend-regressions.sh`](../../addons/test-frontend-regressions.sh), which needs
 Node.js 22+, a Chromium/Chrome executable and Go. It reports the skipped optional local
 dependency when Node.js or the browser is missing. `./addons/check.sh` does not run the
