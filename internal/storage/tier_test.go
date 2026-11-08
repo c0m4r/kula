@@ -567,6 +567,45 @@ func TestReadRecoversAfterUncleanShutdownHole(t *testing.T) {
 	_ = tier.Close()
 }
 
+// TestResyncStopsAtARecordPastTheSegmentEnd covers a header whose active
+// segment ends inside a record (a stale or corrupt writeOff). Resync used to
+// accept that record because its header is sane; the scan, which needs the
+// record inside the segment, rejected it and resynced at the same byte again,
+// forever, holding the tier lock. The seek-index walk resyncs the same way.
+func TestResyncStopsAtARecordPastTheSegmentEnd(t *testing.T) {
+	tier, err := OpenTier(t.TempDir()+"/tier_0.dat", 1<<20)
+	if err != nil {
+		t.Fatalf("OpenTier: %v", err)
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		if err := tier.Write(varSample(base.Add(time.Duration(i)*time.Second), 2)); err != nil {
+			t.Fatalf("Write(%d): %v", i, err)
+		}
+	}
+	tier.writeOff -= 10
+
+	// Closed only once the scan returns: a spinning scan keeps the lock Close
+	// needs, and the test must fail rather than hang.
+	done := make(chan []*AggregatedSample, 1)
+	go func() {
+		tier.mu.Lock()
+		tier.buildSeekIndex()
+		tier.mu.Unlock()
+		got, _ := tier.ReadRange(base, base.Add(time.Minute))
+		done <- got
+	}()
+	select {
+	case got := <-done:
+		_ = tier.Close()
+		if len(got) != 2 {
+			t.Fatalf("ReadRange returned %d records, want the 2 inside the segment", len(got))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("scan still running after 10 s: resync keeps accepting a record past the segment end")
+	}
+}
+
 // TestRecordHeaderSaneRejectsMisalignedRead guards the off-by-one that an early
 // version of the resync logic hit on the real incident file: a byte-scan can
 // stop one byte before the true record boundary, where a stray length prefix

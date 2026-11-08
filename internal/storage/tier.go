@@ -817,7 +817,11 @@ func (t *Tier) resyncToNextRecord(br *bufio.Reader, bytesRead *int64, segSize in
 		if dataLen, ok := t.recordHeaderSane(hdr); ok {
 			next := 4 + dataLen
 			switch {
-			case *bytesRead+next >= segSize:
+			case *bytesRead+next > segSize:
+				// Runs past the end of the segment, so it is no record of it.
+				// Accepting it would hand the caller a record it rejects at
+				// once, and the caller would resync here again, forever.
+			case *bytesRead+next == segSize:
 				// This record runs to the end of the segment: nothing follows to
 				// cross-check, and the header itself is sane — accept.
 				return true
