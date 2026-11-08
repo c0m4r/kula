@@ -155,10 +155,13 @@ export function disconnectWS() {
 
 export function scheduleReconnect() {
     if (state.reconnectTimer) return;
+    // Wait between half and all of the backoff, so dashboards a restart
+    // disconnected together do not all reconnect in the same instant.
+    const delay = state.reconnectDelay * (0.5 + Math.random() * 0.5);
     state.reconnectTimer = setTimeout(() => {
         state.reconnectTimer = null;
         connectWS();
-    }, state.reconnectDelay);
+    }, delay);
     state.reconnectDelay = Math.min(state.reconnectDelay * 1.5, 30000);
 }
 

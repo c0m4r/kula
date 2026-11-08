@@ -171,11 +171,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 	}()
 
-	// Send initial current data
+	// Send initial current data, under the same write deadline as every
+	// later write: a client that never reads must not hold the handler.
 	if sample := s.collector.Latest(); sample != nil {
 		data, err := json.Marshal(sample)
 		if err == nil {
-			_ = conn.WriteMessage(websocket.TextMessage, data)
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+				return
+			}
 		}
 	}
 
