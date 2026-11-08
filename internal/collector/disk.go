@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 )
 
 // Block-device name prefixes for virtual/logical/optical devices that are
@@ -337,7 +336,7 @@ func (c *Collector) collectFileSystems() []FileSystemInfo {
 	// If they differ (container), both are scanned and merged.
 
 	explicitFilter := len(c.collCfg.MountPoints) > 0
-	var result []FileSystemInfo
+	var candidates []FileSystemInfo
 	seen := make(map[string]bool)
 
 	var sources []string
@@ -362,14 +361,39 @@ func (c *Collector) collectFileSystems() []FileSystemInfo {
 			// only if in "auto" mode or if it was the primary choice.
 			if src == filepath.Join(procPath, "1", "mounts") {
 				if f2, err2 := os.Open(filepath.Join(procPath, "mounts")); err2 == nil {
-					c.scanMounts(f2, &result, seen, explicitFilter)
+					c.scanMounts(f2, &candidates, seen, explicitFilter)
 					_ = f2.Close()
 				}
 			}
 			continue
 		}
-		c.scanMounts(f, &result, seen, explicitFilter)
+		c.scanMounts(f, &candidates, seen, explicitFilter)
 		_ = f.Close()
+	}
+
+	mounts := make([]string, len(candidates))
+	for i, fs := range candidates {
+		mounts[i] = fs.MountPoint
+	}
+	stats := c.mounts.stat(mounts, statfsWait(c.collCfg.Interval), pollStale(c.collCfg.Interval))
+	var result []FileSystemInfo
+	for i, fs := range candidates {
+		st := stats[i]
+		if !st.ok {
+			continue // its statfs is still running (logged by mountStats)
+		}
+		if st.err != nil {
+			c.debugf(" fs: skipping %q at %q — statfs error: %v", fs.Device, fs.MountPoint, st.err)
+			continue
+		}
+		fs.Total = st.stat.Blocks * uint64(st.stat.Bsize)
+		fs.Available = st.stat.Bavail * uint64(st.stat.Bsize)
+		fs.Used = fs.Total - (st.stat.Bfree * uint64(st.stat.Bsize))
+		if fs.Total > 0 {
+			fs.UsedPct = round2(float64(fs.Used) / float64(fs.Total) * 100.0)
+		}
+		c.debugf(" fs: monitoring %q at %q (type=%s)", fs.Device, fs.MountPoint, fs.FSType)
+		result = append(result, fs)
 	}
 
 	if len(result) == 0 {
@@ -394,7 +418,8 @@ func sameMountNamespace() bool {
 	return ns1 == nsSelf
 }
 
-// scanMounts reads one mounts-format file and appends matching filesystems to
+// scanMounts reads one mounts-format file and appends the filesystems to
+// monitor (without their usage, which statfs supplies) to
 // result, using seen to deduplicate by mount point across multiple sources.
 func (c *Collector) scanMounts(f *os.File, result *[]FileSystemInfo, seen map[string]bool, explicitFilter bool) {
 	scanner := bufio.NewScanner(f)
@@ -448,32 +473,7 @@ func (c *Collector) scanMounts(f *os.File, result *[]FileSystemInfo, seen map[st
 		}
 
 		seen[mount] = true
-
-		var stat syscall.Statfs_t
-		if err := syscall.Statfs(mount, &stat); err != nil {
-			c.debugf(" fs: skipping %q at %q — statfs error: %v", device, mount, err)
-			continue
-		}
-
-		total := stat.Blocks * uint64(stat.Bsize)
-		free := stat.Bavail * uint64(stat.Bsize)
-		used := total - (stat.Bfree * uint64(stat.Bsize))
-
-		var usedPct float64
-		if total > 0 {
-			usedPct = round2(float64(used) / float64(total) * 100.0)
-		}
-
-		c.debugf(" fs: monitoring %q at %q (type=%s)", device, mount, fstype)
-		*result = append(*result, FileSystemInfo{
-			Device:     device,
-			MountPoint: mount,
-			FSType:     fstype,
-			Total:      total,
-			Used:       used,
-			Available:  free,
-			UsedPct:    usedPct,
-		})
+		*result = append(*result, FileSystemInfo{Device: device, MountPoint: mount, FSType: fstype})
 	}
 }
 

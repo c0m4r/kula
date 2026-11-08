@@ -27,7 +27,7 @@ Lifecycle:
 | [`cpu.go`](../../internal/collector/cpu.go) | `/proc/stat`, `/proc/loadavg`, hwmon/thermal sysfs | CPU usage breakdown, load averages, CPU temps |
 | [`memory*`](../../internal/collector/) (in `cpu.go`/types) | `/proc/meminfo` | memory + swap |
 | [`network.go`](../../internal/collector/network.go) | `/proc/net/dev`, `/proc/net/snmp`, `/proc/net/netstat`, `/proc/net/sockstat` | per-iface throughput, TCP errors/resets/retrans/established, sockets |
-| [`disk.go`](../../internal/collector/disk.go) | `/proc/diskstats`, `statfs`, hwmon | per-device I/O and busy % (`io_ticks`), filesystem usage, disk temps (skips virtual/LVM/loop) |
+| [`disk.go`](../../internal/collector/disk.go) | `/proc/diskstats`, `statfs` ([`mount_stats.go`](../../internal/collector/mount_stats.go)), hwmon | per-device I/O and busy % (`io_ticks`), filesystem usage, disk temps (skips virtual/LVM/loop) |
 | [`disk_identity.go`](../../internal/collector/disk_identity.go) | sysfs (`wwid`, `serial`, `uuid`), `kula disks` | persistent disk IDs and stable per-disk series keys |
 | [`system.go`](../../internal/collector/system.go) | hostname, `/proc/uptime`, entropy, `adjtimex`, utmp or systemd-logind sessions | uptime, entropy, clock sync, user count (`-1` when neither source exists) |
 | [`process.go`](../../internal/collector/process.go) | `/proc/<pid>/stat` | running/sleeping/blocked/zombie counts, threads |
@@ -67,6 +67,11 @@ API and WebSocket payloads.
   divided by one (`nginx.go`, `apache2.go`, `postgres.go`, `mysql.go`). A counter missing from a
   poll (Apache2 without `ExtendedStatus`) is no baseline either.
 - **Lazy-allocate clients.** HTTP/DB clients are created on first use.
+- **`statfs` runs off the collection tick.** On a hard NFS mount whose server is gone (or a
+  stalled FUSE daemon) it blocks in the kernel, beyond any timeout. `mount_stats.go` keeps at
+  most one call in flight per mount point, waits `statfsWait` (at most 200 ms) for a tick's
+  calls, and reports a mount whose call is still running with its last result while that is
+  under `pollStale`, then not at all, logging when it stops and starts answering.
 - **Application polls run off the collection tick.** `poller.go`'s `poller[T]` runs one poll at
   a time in its own goroutine, and `Collect` reads `Latest()`, which is `nil` once a result is
   older than `pollStale` (three intervals, at least 3 s). nginx and Apache2 use it through

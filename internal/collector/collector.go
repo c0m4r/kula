@@ -32,6 +32,7 @@ type Collector struct {
 	prevSelf     selfRaw
 	prevTCP      tcpRaw
 	prevEnergy   map[string]uint64 // for Intel energy derivation
+	mounts       mountStats        // statfs off the collection path
 	gpus         []GPUInfo
 	storageDir   string
 	prevTime     time.Time
