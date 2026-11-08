@@ -201,7 +201,9 @@ func TestRollupFailureInvalidatesLiveCache(t *testing.T) {
 	store := newMultiTierStore(t)
 	defer func() { _ = store.Close() }()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	for i := 0; i < store.ratio1-1; i++ {
+	// All but the last sample of the first wall-clock minute; the last one
+	// completes the window and triggers the failing rollup.
+	for i := 1; i < store.ratio1; i++ {
 		if err := store.WriteSample(makeSample(base.Add(time.Duration(i) * time.Second))); err != nil {
 			t.Fatal(err)
 		}
@@ -215,7 +217,7 @@ func TestRollupFailureInvalidatesLiveCache(t *testing.T) {
 	if err := store.tiers[1].file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.WriteSample(makeSample(base.Add(time.Duration(store.ratio1-1) * time.Second))); err == nil {
+	if err := store.WriteSample(makeSample(base.Add(time.Duration(store.ratio1) * time.Second))); err == nil {
 		t.Fatal("expected rollup failure")
 	}
 	if len(store.queryCache) != 0 {

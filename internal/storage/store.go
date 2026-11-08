@@ -150,11 +150,21 @@ func NewStore(cfg config.StorageConfig) (*Store, error) {
 // restoreTailState reads the newest records of the lower tiers once: tier 0's
 // tail supplies both the latest-sample cache and the samples not yet rolled
 // into tier 1, and tier 1's tail the rollups not yet rolled into tier 2.
+//
+// Pending records are replayed through the same windowing as WriteSample,
+// clipped where a record already rolled up straddles the newest rollup's end.
+// Tier 2 is restored first, so a tier-1 window the replay finds complete (a
+// crash between the raw write that closed it and its rollup) cascades into
+// it as it would have.
 func (s *Store) restoreTailState() {
 	if len(s.tiers) == 0 {
 		return
 	}
-	t0Samples, err := s.tiers[0].ReadLatest(max(1, s.ratio1))
+	tail := 1
+	if len(s.tiers) > 1 && s.ratio1 > 0 {
+		tail = s.ratio1 * maxAggBufferFactor
+	}
+	t0Samples, err := s.tiers[0].ReadLatest(tail)
 	if err != nil {
 		return
 	}
@@ -165,32 +175,37 @@ func (s *Store) restoreTailState() {
 		return
 	}
 
-	// Tier-1 state: the raw samples newer than tier 1's newest rollup.
-	t1Newest := s.tiers[1].NewestTimestamp()
-	var pending []*AggregatedSample
-	for _, as := range t0Samples[max(0, len(t0Samples)-s.ratio1):] {
-		if as.Timestamp.After(t1Newest) && as.Data != nil {
-			as.ExtremaProfile = "raw"
-			pending = append(pending, as)
-		}
-	}
-	s.tier1Buf = pending
-	s.tier1Count = len(pending)
-
-	// Tier-2 state.
 	if len(s.tiers) > 2 && s.ratio2 > 0 {
 		t2Newest := s.tiers[2].NewestTimestamp()
-		t1Samples, err := s.tiers[1].ReadLatest(s.ratio2)
-		if err == nil {
-			var pending []*AggregatedSample
+		if t1Samples, err := s.tiers[1].ReadLatest(s.ratio2 * maxAggBufferFactor); err == nil {
 			for _, as := range t1Samples {
-				if as.Timestamp.After(t2Newest) {
-					pending = append(pending, as)
+				if as.Data != nil && as.Timestamp.After(t2Newest) {
+					s.restorePending(2, as, t2Newest)
 				}
 			}
-			s.tier2Buf = pending
-			s.tier2Count = len(pending)
 		}
+	}
+
+	t1Newest := s.tiers[1].NewestTimestamp()
+	for _, as := range t0Samples {
+		if as.Data != nil && as.Timestamp.After(t1Newest) {
+			as.ExtremaProfile = "raw"
+			s.restorePending(1, as, t1Newest)
+		}
+	}
+}
+
+// restorePending feeds one record read back from disk into tier's rollup
+// buffer, keeping only its part after rolledUp, the end of the newest record
+// already rolled into tier. A failed rollup write is reported and retried
+// with the next window, as in WriteSample.
+func (s *Store) restorePending(tier int, as *AggregatedSample, rolledUp time.Time) {
+	width := historySourceWidth(as, s.configs[tier-1].Resolution, tier == 1)
+	if start := as.Timestamp.Add(-width); !rolledUp.IsZero() && start.Before(rolledUp) {
+		as = rollupFragment(as, rolledUp, as.Timestamp, width)
+	}
+	if err := s.addToRollup(tier, as); err != nil {
+		fmt.Printf("Storage: restoring pending tier-%d rollups: %v\n", tier, err)
 	}
 }
 
@@ -241,35 +256,147 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 		s.queryCacheMu.Unlock()
 	}
 
-	// Aggregate for tier 1 (every ratio1 samples)
+	// Aggregate for tier 1, one rollup per wall-clock window.
 	if s.ratio1 > 0 && len(s.tiers) > 1 {
-		s.tier1Buf = append(s.tier1Buf, as)
-		s.tier1Count++
-		// Bound the buffer in case tier-1 writes keep failing (a stuck/full
-		// disk): without this the buffer would grow every tick forever. Drops
-		// the oldest excess; those intervals stay available as raw tier-0 data.
-		if cap1 := s.ratio1 * maxAggBufferFactor; len(s.tier1Buf) > cap1 {
-			s.tier1Buf = append([]*AggregatedSample(nil), s.tier1Buf[len(s.tier1Buf)-cap1:]...)
-			s.tier1Count = len(s.tier1Buf)
-		}
-
-		if s.tier1Count >= s.ratio1 {
-			return s.flushRollup(1)
-		}
+		return s.addToRollup(1, as)
 	}
 
 	return nil
 }
 
-// flushRollup preserves each contiguous run as its own record. A count-based
-// window can straddle suspend/restart or a missed collection interval; averaging
-// the entire buffer would relocate pre-outage measurements to its final minute.
-// Partial records retain their observed Duration in the existing codec.
-func (s *Store) flushRollup(tier int) error {
-	buffer, count := &s.tier1Buf, &s.tier1Count
+// ---- Rollup windows ----------------------------------------------------------
+//
+// Tier 1 and tier 2 roll up Unix-epoch-aligned windows of their resolution
+// (whole minutes, whole five minutes), not every ratio-th record since the
+// process started. History buckets are epoch-aligned too, so a native rollup
+// is exactly one output bucket: a rolling view, which returns native records,
+// and a past window, which re-buckets them, show the same values. With
+// process-aligned windows the two split every interval differently, and a
+// spike could read up to half as high in one as in the other.
+//
+// Source intervals are end-timestamped, and a raw sample usually straddles a
+// window boundary by a fraction of a second, so each source record is split at
+// the boundaries inside it, its duration and sparse mean weights apportioned
+// like a history bucket fragment. A rollup then ends exactly on its window's
+// end. A window is flushed as soon as a record ends on that end, or else
+// (after an outage) when a record of a later window arrives.
+// ------------------------------------------------------------------------------
+
+// rollupWindow returns the index of tier's window holding an interval that
+// ends at end: windows are end-inclusive, like history buckets.
+func (s *Store) rollupWindow(tier int, end time.Time) int64 {
+	return epochBucketIndex(end.Add(-time.Nanosecond), s.configs[tier].Resolution)
+}
+
+func (s *Store) rollupBuffer(tier int) (*[]*AggregatedSample, *int) {
 	if tier == 2 {
-		buffer, count = &s.tier2Buf, &s.tier2Count
+		return &s.tier2Buf, &s.tier2Count
 	}
+	return &s.tier1Buf, &s.tier1Count
+}
+
+func (s *Store) rollupRatio(tier int) int {
+	if tier == 2 {
+		return s.ratio2
+	}
+	return s.ratio1
+}
+
+// addToRollup buffers a source record for tier (raw samples for tier 1,
+// tier-1 rollups for tier 2), split at tier's window boundaries, and flushes
+// every window it closes. Caller holds s.mu.
+func (s *Store) addToRollup(tier int, as *AggregatedSample) error {
+	if as == nil || as.Data == nil {
+		return nil
+	}
+	buffer, count := s.rollupBuffer(tier)
+	var firstErr error
+	for _, part := range s.rollupParts(tier, as) {
+		window := s.rollupWindow(tier, part.Timestamp)
+		if n := len(*buffer); n > 0 && s.rollupWindow(tier, (*buffer)[n-1].Timestamp) != window {
+			if err := s.flushRollup(tier); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		*buffer = append(*buffer, part)
+		// Bound the buffer in case this tier's writes keep failing (a
+		// stuck/full disk): without this it would grow every tick forever.
+		// Drops the oldest excess; those intervals stay available in the
+		// tier below.
+		if limit := max(1, s.rollupRatio(tier)) * maxAggBufferFactor; len(*buffer) > limit {
+			*buffer = append([]*AggregatedSample(nil), (*buffer)[len(*buffer)-limit:]...)
+		}
+		*count = len(*buffer)
+		// A part ending exactly on its window's end completes the window:
+		// every later record ends after it.
+		if part.Timestamp.Equal(s.rollupWindowEnd(tier, window)) {
+			if err := s.flushRollup(tier); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
+// rollupWindowEnd returns the end of tier's window with the given index.
+func (s *Store) rollupWindowEnd(tier int, window int64) time.Time {
+	return time.Unix(0, (window+1)*int64(s.configs[tier].Resolution))
+}
+
+// rollupParts splits a source record at the window boundaries of tier inside
+// its interval. Most records lie within one window and are returned as is.
+func (s *Store) rollupParts(tier int, as *AggregatedSample) []*AggregatedSample {
+	step := s.configs[tier].Resolution
+	width := historySourceWidth(as, s.configs[tier-1].Resolution, tier == 1)
+	if step <= 0 || width <= 0 {
+		return []*AggregatedSample{as}
+	}
+	start, end := as.Timestamp.Add(-width), as.Timestamp
+	boundary := epochBucketStart(start, step).Add(step)
+	if !boundary.Before(end) {
+		return []*AggregatedSample{as}
+	}
+	var parts []*AggregatedSample
+	cursor := start
+	for ; boundary.Before(end); boundary = boundary.Add(step) {
+		parts = append(parts, rollupFragment(as, cursor, boundary, width))
+		cursor = boundary
+	}
+	return append(parts, rollupFragment(as, cursor, end, width))
+}
+
+// rollupFragment returns the part of as covering (from, to], where width is
+// the length of as's whole interval. The duration and sparse mean weights
+// shrink with it; values and extrema envelopes are the record's own.
+func rollupFragment(as *AggregatedSample, from, to time.Time, width time.Duration) *AggregatedSample {
+	fraction := float64(to.Sub(from)) / float64(width)
+	part := *as
+	part.Timestamp = to
+	if as.Duration == width {
+		part.Duration = to.Sub(from)
+	} else {
+		part.Duration = time.Duration(float64(as.Duration) * fraction)
+	}
+	if part.Duration <= 0 {
+		part.Duration = time.Nanosecond
+	}
+	if len(as.MeanStats) > 0 {
+		part.MeanStats = make(map[string]meanAccumulator, len(as.MeanStats))
+		for path, stat := range as.MeanStats {
+			part.MeanStats[path] = meanAccumulator{Sum: stat.Sum * fraction, Weight: stat.Weight * fraction}
+		}
+	}
+	return &part
+}
+
+// flushRollup writes the buffered windows of tier, one record per window and
+// contiguous run: a window can straddle suspend/restart or a missed collection
+// interval, and averaging across the gap would relocate pre-outage
+// measurements to its end. Partial records retain their observed Duration in
+// the existing codec. Each tier-1 record written feeds tier 2. On a write
+// error the unwritten records stay buffered for the next attempt.
+func (s *Store) flushRollup(tier int) error {
+	buffer, count := s.rollupBuffer(tier)
 	for len(*buffer) > 0 {
 		end := 1
 		for end < len(*buffer) {
@@ -278,7 +405,8 @@ func (s *Store) flushRollup(tier int) error {
 			if width <= 0 {
 				width = s.configs[tier-1].Resolution
 			}
-			if !next.Timestamp.After(previous.Timestamp) || next.Timestamp.Add(-width).After(previous.Timestamp) {
+			if !next.Timestamp.After(previous.Timestamp) || next.Timestamp.Add(-width).After(previous.Timestamp) ||
+				s.rollupWindow(tier, next.Timestamp) != s.rollupWindow(tier, previous.Timestamp) {
 				break
 			}
 			end++
@@ -293,16 +421,8 @@ func (s *Store) flushRollup(tier int) error {
 			*buffer = nil
 		}
 		if tier == 1 && s.ratio2 > 0 && len(s.tiers) > 2 {
-			s.tier2Buf = append(s.tier2Buf, agg)
-			s.tier2Count++
-			if cap2 := s.ratio2 * maxAggBufferFactor; len(s.tier2Buf) > cap2 {
-				s.tier2Buf = append([]*AggregatedSample(nil), s.tier2Buf[len(s.tier2Buf)-cap2:]...)
-				s.tier2Count = len(s.tier2Buf)
-			}
-			if s.tier2Count >= s.ratio2 {
-				if err := s.flushRollup(2); err != nil {
-					return err
-				}
+			if err := s.addToRollup(2, agg); err != nil {
+				return err
 			}
 		}
 	}

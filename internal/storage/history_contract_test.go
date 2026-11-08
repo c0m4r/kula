@@ -247,6 +247,29 @@ func TestHistoryResponsesMatchDashboardContract(t *testing.T) {
 			}
 		})
 
+	// Tier-1 rollups written live cover wall-clock minutes, so a rolling view
+	// (native records) and a past window ending mid-minute (re-bucketed for its
+	// clipped right edge) describe the same minutes with the same values.
+	aligned := newMultiTierStore(t)
+	t.Cleanup(func() { _ = aligned.Close() })
+	writeOffsetSamples(t, aligned, base, 1, 3*3600+40, 370*time.Millisecond, func(i int) float64 { return float64(10 + i%29) })
+	alignedEdge := base.Add(3*3600*time.Second + 40*time.Second + 370*time.Millisecond)
+	add("tier-1 rolling view of wall-clock rollups", aligned, alignedEdge.Add(-3*time.Hour), alignedEdge, 534,
+		historyContractExpect{Live: false, Aggregations: extrema},
+		func(r *HistoryResult) {
+			metadata("aligned rolling", r, 1, "1m", false, extrema)
+			for _, sample := range r.Samples[1:] {
+				if sample.BucketStart.UnixNano()%int64(time.Minute) != 0 || sample.BucketEnd.Sub(sample.BucketStart) != time.Minute {
+					t.Fatalf("aligned rolling: bucket %s–%s is not a wall-clock minute",
+						sample.BucketStart.Format(time.RFC3339Nano), sample.BucketEnd.Format(time.RFC3339Nano))
+				}
+			}
+		})
+	add("tier-1 past window ending mid-minute", aligned, base.Add(30*time.Second+500*time.Millisecond),
+		base.Add(2*time.Hour+30*time.Minute+30*time.Second+500*time.Millisecond), 534,
+		historyContractExpect{Live: false, Aggregations: extrema},
+		func(r *HistoryResult) { metadata("aligned past", r, 1, "1m", true, extrema) })
+
 	// A rolling view refreshed by its tail. Records end 0.37s into each second
 	// so source intervals straddle every bucket boundary, as they do live.
 	rolling := newTestStore(t)

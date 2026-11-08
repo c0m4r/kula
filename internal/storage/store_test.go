@@ -1193,10 +1193,11 @@ func TestMultiTierAggregation(t *testing.T) {
 	store := newMultiTierStore(t)
 	defer func() { _ = store.Close() }()
 
-	// Write 60 consecutive 1-second samples — enough to trigger one tier-1 aggregation.
+	// Write 60 consecutive 1-second samples ending on the minute: exactly one
+	// wall-clock window, so exactly one tier-1 rollup.
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 60; i++ {
-		ts := base.Add(time.Duration(i) * time.Second)
+		ts := base.Add(time.Duration(i+1) * time.Second)
 		if err := store.WriteSample(makeSampleWithCPU(ts, float64(i))); err != nil {
 			t.Fatalf("WriteSample(%d): %v", i, err)
 		}
@@ -1230,7 +1231,7 @@ func TestMultiTierPeakPreservation(t *testing.T) {
 	base := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	peakUsage := 99.0
 	for i := 0; i < 60; i++ {
-		ts := base.Add(time.Duration(i) * time.Second)
+		ts := base.Add(time.Duration(i+1) * time.Second) // one wall-clock minute
 		usage := 10.0
 		if i == 30 {
 			usage = peakUsage // spike in the middle

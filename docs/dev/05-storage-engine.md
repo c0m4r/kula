@@ -64,6 +64,17 @@ window. When the window closes, the rollup record is flushed to that tier's file
 into the next coarser tier. This cascading rollup is why very coarse resolutions raise memory
 use — more samples buffer before each flush.
 
+Windows are **aligned to the Unix epoch** — whole minutes for tier 1, whole five minutes for
+tier 2 — not counted from process start, so every native rollup is exactly one of the
+epoch-aligned output buckets history queries use. A rolling view (native records) and a past
+window (which re-buckets records to clip its edge) then show the same minutes with the same
+values; with process-aligned windows the two split every interval differently, and a short
+spike could read up to half as high in one as in the other. A raw sample whose interval
+straddles a window boundary (they usually do, by a fraction of a second) is split there like a
+history bucket fragment: its duration and sparse mean weights are apportioned, its values and
+extrema go to both parts. A window is flushed as soon as a part ends exactly on its end, or,
+after an outage, when a record of a later window arrives.
+
 Flushes partition the buffered observations into contiguous runs. Collection outages produce
 separate partial rollups at every tier, preserving each run's contributing duration instead
 of moving pre-outage values into a post-outage bucket. Recovery applies the same partitioning
@@ -136,11 +147,14 @@ On startup the store:
 1. Opens each tier file and reads its header (version, write offset, wrapped flag), then
    adopts its **seek index** from `tier_N.idx` or rebuilds it with one walk of the ring (see
    below).
-2. Reads tier 0's newest `max(1, ratio1)` records once: the last one restores the
+2. Reads tier 0's newest `4 × ratio1` records once: the last one restores the
    **latest-sample cache** so `/api/current` works immediately, and those newer than tier 1's
-   newest rollup become the pending tier-1 buffer. Tier 1's newest `ratio2` records restore the
-   tier-2 buffer. With the seek index each of these reads only the end of its tier, so rollups
-   resume after a restart without double-counting or gaps.
+   newest rollup are replayed into the tier-1 windows, the one straddling that rollup's end
+   clipped to its unrolled part. Tier 1's newest `4 × ratio2` records restore tier 2 the same
+   way, first, so a window the replay finds complete — a crash between the raw write that
+   closed it and its rollup — is rolled up then and cascades as it would have. With the seek
+   index each of these reads only the end of its tier, so rollups resume after a restart
+   without double-counting or gaps.
 
 ## Seek index
 
