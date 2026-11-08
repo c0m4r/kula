@@ -407,3 +407,169 @@ func FuzzSeekSidecar(f *testing.F) {
 		}
 	})
 }
+
+// TestReadOnlySeekIndexMatchesFullScans covers the terminal UI's index: a
+// read-only view of a tier another writer keeps appending to builds its index
+// on first use and extends it after each refresh, through wraps and through
+// laps of the whole ring between two refreshes, and its seeking scans always
+// return what a full scan of the owner's file does.
+func TestReadOnlySeekIndexMatchesFullScans(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tier_0.dat")
+	owner, err := OpenTier(path, 2<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = owner.Close() }()
+	reader := &Tier{path: path, readOnly: true}
+	defer func() { _ = reader.Close() }()
+
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	written := []time.Time{}
+	write := func(n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			clock = clock.Add(time.Second)
+			if err := owner.Write(varSample(clock, 1+(len(written)*7)%23)); err != nil {
+				t.Fatal(err)
+			}
+			written = append(written, clock)
+		}
+	}
+	// Batches below, around and above one ring pass (about 4,500 records).
+	for round, batch := range []int{300, 40, 2500, 4700, 9600, 1, 4400, 6100, 700} {
+		write(batch)
+		if err := reader.reloadReadOnly(); err != nil {
+			t.Fatalf("round %d reload: %v", round, err)
+		}
+		newest := written[len(written)-1]
+		oldest := owner.OldestTimestamp()
+		froms := []time.Time{oldest.Add(-time.Hour), oldest, newest.Add(-10 * time.Second), newest}
+		for i := 0; i < len(written); i += len(written)/16 + 1 {
+			if !written[i].Before(oldest) {
+				froms = append(froms, written[i], written[i].Add(300*time.Millisecond))
+			}
+		}
+		for _, from := range froms {
+			to := newest
+			got, err := reader.ReadRange(from, to)
+			if err != nil {
+				t.Fatalf("round %d reader ReadRange(%s): %v", round, from, err)
+			}
+			want := unindexed(owner, func() []*AggregatedSample {
+				samples, err := owner.ReadRange(from, to)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return samples
+			})
+			if !reflect.DeepEqual(timestamps(got), timestamps(want)) {
+				t.Fatalf("round %d: read-only seeking scan from %s returned %d records, full scan %d",
+					round, from.Format(time.RFC3339), len(got), len(want))
+			}
+		}
+		reader.mu.RLock()
+		ready, points := reader.seekReady, len(reader.seek)
+		segments := reader.ringSegments()
+		start := reader.seekStart(segments[len(segments)-1], newest.Add(-10*time.Second))
+		current := segments[len(segments)-1]
+		reader.mu.RUnlock()
+		if !ready || points == 0 {
+			t.Fatalf("round %d: read-only tier has no seek index (ready %v, %d points)", round, ready, points)
+		}
+		if current.size > 2*seekIndexSpacing && start == current.start {
+			t.Fatalf("round %d: a recent read-only scan starts at the segment start", round)
+		}
+	}
+	if owner.writeCycle < 4 {
+		t.Fatalf("precondition: the owner wrapped only %d times", owner.writeCycle)
+	}
+}
+
+// TestReadOnlySeekIndexSurvivesAnUnseenLap covers the case a refresh cannot
+// see: between two refreshes the owner laps the ring and stops past where it
+// was, so the header shows no wrap. Extending the old index from where it
+// ended would miss the new pass's first records, and with the clock stepped
+// back among them, under-estimate what precedes later points and skip
+// records. The index must notice and rebuild.
+func TestReadOnlySeekIndexSurvivesAnUnseenLap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tier_0.dat")
+	owner, err := OpenTier(path, 2<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = owner.Close() }()
+	reader := &Tier{path: path, readOnly: true}
+	defer func() { _ = reader.Close() }()
+
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	n := 0
+	write := func() {
+		t.Helper()
+		clock = clock.Add(time.Second)
+		if err := owner.Write(varSample(clock, 1+(n*7)%23)); err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	for i := 0; i < 600; i++ {
+		write()
+	}
+	if err := reader.reloadReadOnly(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.ReadRange(clock.Add(-time.Minute), clock); err != nil {
+		t.Fatal(err)
+	}
+	reader.mu.RLock()
+	walked, readerCycle := reader.seekWalked, reader.writeCycle
+	reader.mu.RUnlock()
+	if walked == 0 || walked+8*seekIndexSpacing >= owner.maxData {
+		t.Fatalf("precondition: index ends at %d of %d", walked, owner.maxData)
+	}
+
+	// Finish the pass, wrap, and step the clock back 15 minutes halfway to
+	// where the reader's index ended; then write on past it. (The ring holds
+	// about 25 minutes, and the step must leave its newest record newer than
+	// its oldest, or the header's tail is rightly distrusted.)
+	for cycle := owner.writeCycle; owner.writeCycle == cycle; {
+		write()
+	}
+	for owner.writeOff < walked/2 {
+		write()
+	}
+	peak := clock
+	clock = clock.Add(-15 * time.Minute)
+	for owner.writeOff <= walked+4*seekIndexSpacing {
+		write()
+	}
+	if err := reader.reloadReadOnly(); err != nil {
+		t.Fatal(err)
+	}
+	if reader.writeCycle != readerCycle {
+		t.Fatal("precondition: the refresh saw the wrap; the lap is not unseen")
+	}
+
+	// The window must reach past the pre-step peak: a scan stops at the
+	// first record newer than its end.
+	to := peak.Add(time.Hour)
+	for _, from := range []time.Time{peak.Add(-time.Minute), peak.Add(-5 * time.Minute), clock.Add(-time.Minute)} {
+		got, err := reader.ReadRange(from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := unindexed(owner, func() []*AggregatedSample {
+			samples, err := owner.ReadRange(from, to)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return samples
+		})
+		if len(want) == 0 {
+			t.Fatalf("precondition: a full scan from %s found nothing", from.Format(time.RFC3339))
+		}
+		if !reflect.DeepEqual(timestamps(got), timestamps(want)) {
+			t.Fatalf("after an unseen lap: scan from %s returned %d records, full scan %d",
+				from.Format(time.RFC3339), len(got), len(want))
+		}
+	}
+}

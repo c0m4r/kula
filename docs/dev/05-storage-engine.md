@@ -176,8 +176,16 @@ and renamed; CRC-32 protected; `OpenTier` deletes a temporary file a crash left 
 write and oldest offsets, record count, codec version, newest timestamp, file size and wrap
 state — equals the tier just opened, so a crash, a restore from backup, a resize or another
 binary writing the file all fall back to rebuilding it with one walk. The tier file format is
-unchanged and older versions ignore the sidecar. Read-only stores (the terminal UI) keep no
-index and scan from the segment start.
+unchanged and older versions ignore the sidecar.
+
+Read-only stores (the terminal UI, reading what `kula serve` writes) cannot use the sidecar —
+the owner's header moves on with every record — so each read-only tier builds its index with
+one walk on its first scan and, before each later scan, extends it over the records the owner
+appended since (`prepareReadOnlySeek`). A refresh that shows the owner wrapped trims it like
+`Tier.Write` does, and a replaced, resized or rewritten file drops it. The owner writes in ring
+order and so overwrites the newest point before anything indexed after it; when that point no
+longer holds its record, the owner lapped the ring unseen between two refreshes and the index
+is rebuilt. Scans the owner overtakes are still caught by `readOnlyScan`.
 
 On 36 hours of mock history at the default tier sizes (223 MB tier 0), a clean restart reads
 0.4 MB instead of 460 MB, a restart without sidecars 240 MB, and a history query reads

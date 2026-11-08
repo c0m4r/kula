@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -140,9 +141,12 @@ func (t *Tier) reloadReadOnly() error {
 
 	// Mirror Write's pass bookkeeping so a scan that releases the lock between
 	// batches notices when a refresh reveals the writer lapped its snapshot.
-	if t.count > 0 && (next.writeOff < t.writeOff || next.count < t.count) {
+	wrapped := t.count > 0 && (next.writeOff < t.writeOff || next.count < t.count)
+	if wrapped {
 		t.writeCycle++
 	}
+	// Another ring under the same name: the seek index describes nothing.
+	rewritten := t.count > 0 && (next.maxData != t.maxData || next.count < t.count || next.codecVer != t.codecVer)
 	t.maxData = next.maxData
 	t.writeOff = next.writeOff
 	t.writeEnd = next.writeOff
@@ -152,6 +156,16 @@ func (t *Tier) reloadReadOnly() error {
 	t.wrapped = next.wrapped
 	t.oldestOff = next.oldestOff
 	t.codecVer = next.codecVer
+	switch {
+	case rewritten:
+		t.dropSeekIndex()
+	case wrapped && t.seekReady:
+		// As in Write: the pass just finished becomes the old segment, and
+		// the new pass is indexed from its start.
+		t.seekTrim()
+		t.passMax = math.MinInt64
+		t.seekWalked = 0
+	}
 	return nil
 }
 
@@ -166,6 +180,7 @@ func (t *Tier) resetReadOnlyLocked() {
 }
 
 func (t *Tier) clearReadOnlyStateLocked() {
+	t.dropSeekIndex()
 	t.writeOff = 0
 	t.writeEnd = 0
 	t.count = 0

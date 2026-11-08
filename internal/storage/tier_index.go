@@ -35,7 +35,17 @@ import (
 // Close saved next to the tier (tier_N.idx) when it describes exactly the tier
 // on disk; otherwise it rebuilds the index with one walk of the ring. The tier
 // file format is unchanged: the sidecar is only a cache, and old versions
-// ignore it. Read-only tiers keep no index and scan from the segment start.
+// ignore it.
+//
+// A read-only tier (the terminal UI reading what `kula serve` writes) builds
+// its index with one walk on its first scan and, before each later scan,
+// extends it over what the owner appended since. A refresh that shows the
+// owner wrapped trims it as Write does; a replaced, resized or rewritten file
+// drops it. The owner writes in ring order, so it overwrites the newest point
+// before anything indexed after it: while that point still holds its record,
+// the index is current, and when it does not the index is rebuilt. Points are
+// confirmed against the file as always, and a scan the owner overtakes is
+// caught by readOnlyScan.
 // ----------------------------------------------------------------------------
 
 // seekIndexSpacing is the byte distance between seek points in a pass, and so
@@ -129,10 +139,14 @@ func (t *Tier) walkSegment(seg ringSegment, start int64, visit func(offset int64
 func (t *Tier) buildSeekIndex() {
 	t.seek = nil
 	t.passMax = math.MinInt64
+	t.seekWalked = 0
 	for _, seg := range t.ringSegments() {
 		passMax := int64(math.MinInt64)
 		last := int64(-1)
-		t.walkSegment(seg, seg.start, func(offset int64, _ uint32, ts int64, ok bool) bool {
+		t.walkSegment(seg, seg.start, func(offset int64, dataLen uint32, ts int64, ok bool) bool {
+			if seg.cycle == t.writeCycle {
+				t.seekWalked = offset + 4 + int64(dataLen)
+			}
 			if !ok {
 				passMax = math.MaxInt64
 				return true
@@ -149,6 +163,67 @@ func (t *Tier) buildSeekIndex() {
 		}
 	}
 	t.seekReady = true
+}
+
+// dropSeekIndex forgets the index; the next read-only scan rebuilds it.
+// Caller holds t.mu exclusively.
+func (t *Tier) dropSeekIndex() {
+	t.seek = nil
+	t.seekReady = false
+	t.passMax = math.MinInt64
+	t.seekWalked = 0
+}
+
+// prepareReadOnlySeek brings a read-only tier's index up to the snapshot the
+// last refresh adopted: built with one walk on first use, then extended over
+// the records the owner appended to the current pass since. Caller holds no
+// lock on t.
+func (t *Tier) prepareReadOnlySeek() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.file == nil || t.count == 0 || t.codecVer < codecVersion2 {
+		return
+	}
+	if t.seekReady {
+		newest := -1
+		for i := len(t.seek) - 1; i >= 0 && newest < 0; i-- {
+			if t.seek[i].cycle == t.writeCycle {
+				newest = i
+			}
+		}
+		switch {
+		case t.seekWalked > t.writeOff:
+			t.seekReady = false
+		case newest >= 0 && !t.seekPointConfirmed(t.seek[newest]):
+			// The owner lapped the ring past it unseen between refreshes.
+			t.seekReady = false
+		case newest < 0 && t.seekWalked > 0:
+			t.seekReady = false
+		}
+	}
+	if !t.seekReady {
+		t.buildSeekIndex()
+		return
+	}
+	segments := t.ringSegments()
+	current := segments[len(segments)-1]
+	last := int64(-1)
+	if n := len(t.seek); n > 0 && t.seek[n-1].cycle == t.writeCycle {
+		last = t.seek[n-1].offset
+	}
+	t.walkSegment(current, t.seekWalked, func(offset int64, dataLen uint32, ts int64, ok bool) bool {
+		t.seekWalked = offset + 4 + int64(dataLen)
+		if !ok {
+			t.passMax = math.MaxInt64
+			return true
+		}
+		if last < 0 || offset-last >= seekIndexSpacing {
+			t.seek = append(t.seek, seekPoint{offset: offset, ts: ts, maxBefore: t.passMax, cycle: t.writeCycle})
+			last = offset
+		}
+		t.passMax = max(t.passMax, ts)
+		return true
+	})
 }
 
 // seekTrim drops the points whose records a wrap or the write about to happen

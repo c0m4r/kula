@@ -54,7 +54,9 @@ Full walkthrough: [Adding a Metric Type](docs/dev/14-adding-metrics.md),
 shutdown as `tier_N.idx`, adopted only when it matches the tier header exactly. `Tier.Write`
 maintains it; any other code that writes records into an open tier (test helpers simulating
 older writers) must call `seekAppend` like `Write` does, or seeking scans skip those records.
-`TestSeekIndexScansMatchFullScans` requires seeking scans to equal full scans.
+`TestSeekIndexScansMatchFullScans` requires seeking scans to equal full scans; read-only
+tiers (the TUI) build and extend their own index, checked by
+`TestReadOnlySeekIndexMatchesFullScans` and `TestReadOnlySeekIndexSurvivesAnUnseenLap`.
 
 ### Aggregation — schema-driven
 

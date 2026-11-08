@@ -77,6 +77,9 @@ type Tier struct {
 	// seekFromSidecar records that OpenTier adopted the saved index instead
 	// of walking the ring.
 	seekFromSidecar bool
+	// seekWalked is where the index of the current pass ends: the end of the
+	// last record indexed. A read-only tier extends its index from there.
+	seekWalked int64
 }
 
 func OpenTier(path string, maxSize int64) (*Tier, error) {
@@ -485,6 +488,9 @@ func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
 }
 
 func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*AggregatedSample) error) ([]*AggregatedSample, error) {
+	if t.readOnly {
+		t.prepareReadOnlySeek()
+	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
@@ -678,6 +684,9 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 // ReadLatest returns the n most recent samples, oldest first. With a seek
 // index it walks only the end of the ring.
 func (t *Tier) ReadLatest(n int) ([]*AggregatedSample, error) {
+	if t.readOnly {
+		t.prepareReadOnlySeek()
+	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
