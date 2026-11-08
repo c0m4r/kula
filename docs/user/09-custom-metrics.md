@@ -77,6 +77,9 @@ done
   `kula tui` never opens it, so the running service keeps its clients.
 - Group and metric names should be stable — they key the charts. Values may be integers or
   floats. Sending the same name twice in one message keeps only the last value.
+- History stores each value as a 32-bit float: about seven significant digits, and integers
+  exact only up to 16,777,216 (2²⁴). The live view shows the value as sent. A counter or ID
+  past that range comes back rounded; send a rate, or scale it down, instead.
 - Messages are newline-delimited JSON — one object per line, at most 64 KB per line. Only
   metrics declared for a group in the config are stored; unknown names are ignored. The socket
   is created with `0660` permissions (owner + group), and connections that stay idle for five
