@@ -422,7 +422,12 @@ func collectMemSwap() (MemoryStats, SwapStats) {
 		Cached:    mi.cached,
 		Shmem:     mi.shmem,
 	}
-	mem.Used = mem.Total - mem.Free - mem.Buffers - mem.Cached
+	// /proc/meminfo is not one atomic snapshot (and container views of it
+	// are synthesized), so the parts can briefly exceed the total. Read that
+	// as nothing used rather than letting the subtraction wrap to ~1.8e19.
+	if notUsed := mem.Free + mem.Buffers + mem.Cached; notUsed < mem.Total {
+		mem.Used = mem.Total - notUsed
+	}
 	if mem.Total > 0 {
 		mem.UsedPercent = round2(float64(mem.Used) / float64(mem.Total) * 100.0)
 	}
@@ -431,7 +436,9 @@ func collectMemSwap() (MemoryStats, SwapStats) {
 		Total: mi.swapTotal,
 		Free:  mi.swapFree,
 	}
-	swap.Used = swap.Total - swap.Free
+	if swap.Free < swap.Total {
+		swap.Used = swap.Total - swap.Free
+	}
 	if swap.Total > 0 {
 		swap.UsedPercent = round2(float64(swap.Used) / float64(swap.Total) * 100.0)
 	}
