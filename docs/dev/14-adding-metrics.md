@@ -130,6 +130,9 @@ variable block:
 
 ```go
 if hasFoo {
+    if err := need(1, "foo presence"); err != nil {
+        return off, err
+    }
     fooPresent := data[off]; off++
     if fooPresent != 0 {
         if err := need(48, "foo fields"); err != nil {
@@ -142,6 +145,9 @@ if hasFoo {
     }
 }
 ```
+
+Guard every read with `need` first, the presence byte included: without it a truncated record
+indexes past the end of the slice and panics, which `FuzzDecodeSample` exists to catch.
 
 Extract the flag in `decodeSample()` and thread it through `decodeVariable()`:
 
