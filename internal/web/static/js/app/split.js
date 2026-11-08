@@ -248,7 +248,7 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
             const hasAny = g.load_pct > 0 || g.power_w > 0 || g.vram_total > 0 || g.temp > 0;
             if (!hasAny) continue;
 
-            const safe = _sanitize(g.name);
+            const safe = _splitId('gpu', g.name);
 
             const loadChart = state.splitCharts.gpu[`gpuload_${g.name}`];
             if (loadChart?.data?.datasets && (g.load_pct > 0 || g.power_w > 0)) {
@@ -306,6 +306,30 @@ function setSplitState(type, enabled) {
 
 function _sanitize(str) {
     return String(str).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+// A split card's id is its device's name with every character outside
+// [A-Za-z0-9_-] replaced by "_", so two names can share one (eth0.1 and
+// eth0_1, /mnt/a_b and /mnt/a/b). In sorted order a later one gets "-2",
+// "-3", …, so each card keeps an id of its own, and a name that collides with
+// nothing keeps the id stored card orders (kula_card_order) already hold.
+const splitIds = { network: new Map(), diskspace: new Map(), gpu: new Map() };
+
+function _assignSplitIds(names) {
+    const ids = new Map();
+    const used = new Set();
+    for (const name of [...names].sort()) {
+        const base = _sanitize(name);
+        let id = base;
+        for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
+        used.add(id);
+        ids.set(name, id);
+    }
+    return ids;
+}
+
+function _splitId(type, name) {
+    return splitIds[type]?.get(name) ?? _sanitize(name);
 }
 
 function _memberBy(items, field, value) {
@@ -667,11 +691,12 @@ function _buildSplitChartsForType(type, options) {
     _destroySplitChartsForType(type);
     if (!state.splitCharts[type]) state.splitCharts[type] = {};
     const charts = state.splitCharts[type];
+    if (type in splitIds) splitIds[type] = _assignSplitIds(options);
 
     if (type === 'network') {
         let rank = 0;
         for (const iface of options) {
-            const safe = _sanitize(iface);
+            const safe = _splitId('network', iface);
 
             // Throughput card
             const netCardId = `card-split-net-${safe}`;
@@ -732,7 +757,7 @@ function _buildSplitChartsForType(type, options) {
     if (type === 'diskspace') {
         let rank = 0;
         for (const mount of options) {
-            const safe = _sanitize(mount);
+            const safe = _splitId('diskspace', mount);
             const cardId = `card-split-diskspace-${safe}`;
             const card = _makeSplitCard(cardId, `${i18n.t('disk_space')}: ${mount}`, type);
             _placeSplitCard(card, 'system', 'card-disk-space', rank++);
@@ -773,7 +798,7 @@ function _buildSplitChartsForType(type, options) {
         let gpuTempYConf = { max: gpuTempMax, ticks: { callback: v => v.toFixed(1) + '°C' } };
 
         for (const gpu of options) {
-            const safe = _sanitize(gpu);
+            const safe = _splitId('gpu', gpu);
 
             // GPU Load card (in main grid)
             const loadCardId = `card-split-gpuload-${safe}`;

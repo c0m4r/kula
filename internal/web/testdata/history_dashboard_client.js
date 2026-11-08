@@ -1032,6 +1032,18 @@ check(document.getElementById(`card-split-diskio-${diskDOMKey('wwid:A')}`).query
     'Split disk title did not follow current kernel name');
 check(state.splitCharts.disktemp['disktemp_wwid:A'].data.datasets[0].data.at(-1).y === 40,
     'Split temperature did not follow physical disk');
+// Mount points whose names sanitize to one id still get a card each; a name
+// that collides with nothing keeps the id stored card orders hold.
+const mountSample = structuredClone(state.lastSample);
+mountSample.disk.filesystems = ['/', '/mnt/a/b', '/mnt/a_b'].map(mount =>
+    ({ device: '/dev/x', mount, fstype: 'ext4', total: 100, used: 10, available: 90, used_pct: 10 }));
+splitModule.applySplitFromConfig({ disk_space: true });
+data.updateSelectors(mountSample);
+const mountTitles = ['_', '_mnt_a_b', '_mnt_a_b-2'].map(id =>
+    document.getElementById(`card-split-diskspace-${id}`)?.querySelector('h3')?.textContent);
+check(mountTitles[0]?.endsWith(': /') && mountTitles[1]?.endsWith(': /mnt/a/b') &&
+    mountTitles[2]?.endsWith(': /mnt/a_b'), `Mount points that sanitize alike shared a split card: ${mountTitles}`);
+document.getElementById('btn-split-diskspace')?.click();
 const diskReplacement = diskSample(2, [{ id: 'wwid:C', name: 'sdb', read_bps: 9999 }]);
 data.updateSelectors(diskReplacement);
 check(state.selectedDiskIo === 'wwid:A', 'Replacement drive inherited an unavailable disk selection');
