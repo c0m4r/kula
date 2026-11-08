@@ -3,11 +3,11 @@
 //
 // On each cron tick the scheduler writes a timestamped sub-directory (named
 // "20060102-150405", local time) containing a byte-for-byte copy of the raw
-// tier file and, optionally, the aggregated tiers up to backup.maxtier. Copies
-// are taken under the per-tier read lock so they never race the collection
-// loop. With compression enabled each tier is stored as tier_N.dat.gz; gzip is
-// performed outside the storage lock to keep the collection stall to the
-// (page-cache-fast) raw copy only.
+// tier file and, optionally, the aggregated tiers up to backup.maxtier. Each
+// copy is consistent yet holds the tier lock only for moments (see
+// storage.Tier.SnapshotTo), so collection carries on during a backup. With
+// compression enabled each tier is stored as tier_N.dat.gz, compressed from
+// the raw copy, which is then deleted.
 //
 // Backups older than backup.retention are pruned on startup and after each run.
 package backup
@@ -39,7 +39,7 @@ const tmpSuffix = ".tmp"
 // interface so the scheduler can be tested without a real store.
 type Snapshotter interface {
 	TierCount() int
-	SnapshotTier(i int, w io.Writer) (int64, error)
+	SnapshotTier(i int, dst io.WriterAt) (int64, error)
 }
 
 // Scheduler runs periodic tier backups according to a cron schedule.
@@ -169,9 +169,8 @@ func (s *Scheduler) RunBackup(now time.Time) error {
 	return nil
 }
 
-// backupTier copies tier i into dir. The consistent raw copy is taken under the
-// storage lock; gzip compression (when enabled) runs afterwards from the
-// already-written raw file so the lock is not held during the slow compress.
+// backupTier copies tier i into dir; gzip compression (when enabled) runs
+// afterwards from the raw copy.
 func (s *Scheduler) backupTier(i int, dir string) error {
 	rawPath := filepath.Join(dir, fmt.Sprintf("tier_%d.dat", i))
 	raw, err := os.OpenFile(rawPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)

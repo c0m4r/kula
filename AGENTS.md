@@ -63,6 +63,10 @@ seeking scans skip those records.
 tiers (the TUI) build and extend their own index, checked by
 `TestReadOnlySeekIndexMatchesFullScans` and `TestReadOnlySeekIndexSurvivesAnUnseenLap`.
 
+`Tier.SnapshotTo` (backups) copies a tier without its lock, then re-copies only the header and
+the ring range written since. Code that changes any other byte of an open tier file at runtime
+must extend that patch, or backups silently diverge (`TestSnapshotCopiesWritesMadeDuringTheCopy`).
+
 ### Aggregation — schema-driven
 
 Declare a policy for **every numeric field** of a collector type with an `agg` struct tag:

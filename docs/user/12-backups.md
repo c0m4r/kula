@@ -60,6 +60,9 @@ start (one read of each tier file).
 
 ## Notes
 
+- A backup does not pause collection or the dashboard. Each tier is copied while Kula keeps
+  writing, and the records written meanwhile are then copied too, so a backup matches its tier
+  as it was when that tier's copy finished.
 - Backups live *inside* `storage.directory/backup` by default. For off-host durability, sync
   that directory elsewhere (rsync, object storage) with your own tooling.
 - The sandbox grants read-write access to the storage directory, so backups work under

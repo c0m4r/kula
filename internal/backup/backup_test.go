@@ -21,12 +21,12 @@ type fakeStore struct {
 
 func (f *fakeStore) TierCount() int { return f.tiers }
 
-func (f *fakeStore) SnapshotTier(i int, w io.Writer) (int64, error) {
+func (f *fakeStore) SnapshotTier(i int, dst io.WriterAt) (int64, error) {
 	if i == f.fail {
 		return 0, fmt.Errorf("induced failure on tier %d", i)
 	}
 	data := bytes.Repeat([]byte{byte('0' + i)}, 1024)
-	n, err := w.Write(data)
+	n, err := dst.WriteAt(data, 0)
 	return int64(n), err
 }
 

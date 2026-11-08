@@ -851,12 +851,10 @@ func (s *Store) TierCount() int {
 	return len(s.tiers)
 }
 
-// SnapshotTier writes a consistent copy of tier i to w. The store's tier slice
-// is immutable after construction, so only the per-tier read lock (taken inside
-// SnapshotTo) is needed to guard against an in-flight Write; the brief store
-// lock here just bounds-checks the index without blocking the collection loop
-// for the duration of the copy.
-func (s *Store) SnapshotTier(i int, w io.Writer) (int64, error) {
+// SnapshotTier writes a consistent copy of tier i to dst (see Tier.SnapshotTo,
+// which holds the tier lock only briefly). The store's tier slice is immutable
+// after construction; the brief store lock here just bounds-checks the index.
+func (s *Store) SnapshotTier(i int, dst io.WriterAt) (int64, error) {
 	s.mu.RLock()
 	if i < 0 || i >= len(s.tiers) {
 		s.mu.RUnlock()
@@ -864,7 +862,7 @@ func (s *Store) SnapshotTier(i int, w io.Writer) (int64, error) {
 	}
 	t := s.tiers[i]
 	s.mu.RUnlock()
-	return t.SnapshotTo(w)
+	return t.SnapshotTo(dst)
 }
 
 func (s *Store) Close() error {

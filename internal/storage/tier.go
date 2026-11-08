@@ -83,6 +83,10 @@ type Tier struct {
 	// seekWalked is where the index of the current pass ends: the end of the
 	// last record indexed. A read-only tier extends its index from there.
 	seekWalked int64
+
+	// snapshotCopied, set only by tests, runs after SnapshotTo's unlocked
+	// copy and before it copies what changed meanwhile.
+	snapshotCopied func()
 }
 
 func OpenTier(path string, maxSize int64) (*Tier, error) {
@@ -759,23 +763,6 @@ func (t *Tier) Flush() error {
 		return ErrReadOnly
 	}
 	return t.writeHeader()
-}
-
-// SnapshotTo writes a byte-for-byte copy of the tier file to w. The copy is
-// taken under the tier read lock, so it never races a Write (which updates the
-// data region and header atomically under the write lock). The result is a
-// self-contained, consistent tier file that can be reopened with OpenTier.
-func (t *Tier) SnapshotTo(w io.Writer) (int64, error) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if t.file == nil {
-		return 0, fmt.Errorf("tier %s: no file to snapshot", t.path)
-	}
-	info, err := t.file.Stat()
-	if err != nil {
-		return 0, fmt.Errorf("stat tier %s: %w", t.path, err)
-	}
-	return io.Copy(w, io.NewSectionReader(t.file, 0, info.Size()))
 }
 
 // readRecord decodes a payload using per-record format detection.
