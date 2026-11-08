@@ -157,6 +157,12 @@ tier file, and lets a restart read only the end of each tier. It is only a cache
 only when it matches the tier file exactly, and otherwise rebuilds it from the tier with one
 read of the file (after a crash, a restore or a `max_size` change). Deleting it is always safe.
 
+Every record carries a checksum. A power loss or kernel crash can leave the last records
+before it only partly written; such a record fails its checksum and is skipped instead of
+showing, or being rolled up, with wrong values. Records written before 0.22.0 have no checksum
+and are read as before. Versions before 0.22.0 cannot read checksummed records, so keep a
+pre-upgrade backup if you may downgrade.
+
 Changing the default resolutions can cause unexpected behavior, and very coarse Tier 1/2
 resolutions raise memory use and risk losing buffered samples on shutdown. See
 [Storage Engine](../dev/05-storage-engine.md) for internals.

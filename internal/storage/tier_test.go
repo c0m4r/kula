@@ -180,7 +180,9 @@ func TestWrapTailTrackingVariableSize(t *testing.T) {
 // misses the whole pass just finished — up to a ring of history.
 func TestWrapWhileStillWrappedKeepsFinishedPass(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	for _, stride := range []int{4, 7, 11} {
+	// The strides depend on record sizes: each must leave the writer wrapping
+	// while still wrapped at least once, which the check at the end enforces.
+	for _, stride := range []int{4, 7, 10} {
 		tier, err := OpenTier(t.TempDir()+"/tier_0.dat", 16*1024)
 		if err != nil {
 			t.Fatalf("OpenTier: %v", err)
@@ -572,6 +574,9 @@ func TestReadRecoversAfterUncleanShutdownHole(t *testing.T) {
 // accept that record because its header is sane; the scan, which needs the
 // record inside the segment, rejected it and resynced at the same byte again,
 // forever, holding the tier lock. The seek-index walk resyncs the same way.
+// The records are the unchecksummed kind every pre-0.22.0 file holds; a
+// checksummed record past the end fails its checksum peek, unless it is too
+// large to peek whole.
 func TestResyncStopsAtARecordPastTheSegmentEnd(t *testing.T) {
 	tier, err := OpenTier(t.TempDir()+"/tier_0.dat", 1<<20)
 	if err != nil {
@@ -579,9 +584,7 @@ func TestResyncStopsAtARecordPastTheSegmentEnd(t *testing.T) {
 	}
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
-		if err := tier.Write(varSample(base.Add(time.Duration(i)*time.Second), 2)); err != nil {
-			t.Fatalf("Write(%d): %v", i, err)
-		}
+		writeUncheckedRecord(t, tier, varSample(base.Add(time.Duration(i)*time.Second), 2))
 	}
 	tier.writeOff -= 10
 

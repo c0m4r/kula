@@ -619,9 +619,9 @@ func TestExtractTimestamp_TooShort(t *testing.T) {
 	}
 }
 
-// TestExtractTimestamp_KindByte exercises the recordKindBinary fast path:
-// the on-disk format written by encodeSampleV has the kind byte at [0] and
-// the timestamp at [1:9]. This is the path taken on every real disk read.
+// TestExtractTimestamp_KindByte exercises the kind-byte fast path: the
+// on-disk format written by encodeSampleV has the kind byte at [0] and the
+// timestamp at [1:9]. This is the path taken on every real disk read.
 func TestExtractTimestamp_KindByte(t *testing.T) {
 	ts := time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC)
 	s := &AggregatedSample{
@@ -634,8 +634,8 @@ func TestExtractTimestamp_KindByte(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encodeSampleV: %v", err)
 	}
-	if disk[0] != recordKindBinary {
-		t.Fatalf("disk[0] = %02x, want recordKindBinary", disk[0])
+	if disk[0] != recordKindChecksummed {
+		t.Fatalf("disk[0] = %02x, want recordKindChecksummed", disk[0])
 	}
 
 	got, err := extractTimestamp(disk)
@@ -646,13 +646,23 @@ func TestExtractTimestamp_KindByte(t *testing.T) {
 		t.Errorf("extractTimestamp = %v, want %v", got, ts)
 	}
 
-	// Ensure it agrees with a full decode after stripping the kind byte.
-	full, err := decodeSample(disk[1:])
+	// Ensure it agrees with a full decode of the checked body.
+	body, err := checkedRecordBody(disk)
 	if err != nil {
-		t.Fatalf("decodeSample(disk[1:]): %v", err)
+		t.Fatalf("checkedRecordBody: %v", err)
+	}
+	full, err := decodeSample(body)
+	if err != nil {
+		t.Fatalf("decodeSample(body): %v", err)
 	}
 	if !got.Equal(full.Timestamp) {
 		t.Errorf("extractTimestamp %v != decodeSample %v", got, full.Timestamp)
+	}
+
+	// Records written before checksums carry the timestamp at the same place.
+	unchecked := append([]byte{recordKindBinary}, body...)
+	if old, err := extractTimestamp(unchecked); err != nil || !old.Equal(ts) {
+		t.Errorf("extractTimestamp(0x02 payload) = %v, %v; want %v", old, err, ts)
 	}
 }
 
@@ -723,8 +733,11 @@ func TestTimestampOffset(t *testing.T) {
 	if len(disk) < 9 {
 		t.Fatalf("disk payload too short: %d", len(disk))
 	}
-	if disk[0] != recordKindBinary {
-		t.Errorf("disk[0] = %02x, want recordKindBinary (%02x)", disk[0], recordKindBinary)
+	if disk[0] != recordKindChecksummed {
+		t.Errorf("disk[0] = %02x, want recordKindChecksummed (%02x)", disk[0], recordKindChecksummed)
+	}
+	if len(disk) != 1+len(raw)+recordChecksumSize {
+		t.Errorf("disk payload = %d bytes, want kind + %d + checksum", len(disk), len(raw))
 	}
 	nsOnDisk := int64(binary.LittleEndian.Uint64(disk[1:9]))
 	if nsOnDisk != ts.UnixNano() {

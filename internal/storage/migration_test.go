@@ -63,15 +63,15 @@ func TestTierMigration_JSONToBinary(t *testing.T) {
 	}
 
 	// 4. Verify file content on disk is NOT JSON
-	// Binary v2 records start with recordKindBinary (0x02)
+	// Migrated records are written like new ones: recordKindChecksummed (0x03)
 	f2, _ := os.Open(path)
 	defer func() { _ = f2.Close() }()
 	peak := make([]byte, 5)
 	if _, err := f2.ReadAt(peak, headerSize+4); err != nil {
 		t.Fatalf("Failed to read back migrated data: %v", err)
 	}
-	if peak[0] != 0x02 {
-		t.Errorf("Expected record kind %02x, got %02x (likely still JSON)", 0x02, peak[0])
+	if peak[0] != recordKindChecksummed {
+		t.Errorf("Expected record kind %02x, got %02x (likely still JSON)", recordKindChecksummed, peak[0])
 	}
 }
 

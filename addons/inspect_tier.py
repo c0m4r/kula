@@ -11,6 +11,7 @@ import os
 import datetime
 import json
 import math
+import zlib
 from typing import Optional, Tuple, BinaryIO, Dict, Any, List
 
 MAGIC = b"KULA"
@@ -37,6 +38,11 @@ TCP_EXT_VERSION = 1
 TCP_EXT_V1_SIZE = 4  # retrans_ps float32
 
 FIXED_BLOCK_SIZE = 218  # must match fixedBlockSize in codec.go
+
+# Record kind bytes (first payload byte; see codec.go and record_checksum.go).
+RECORD_KIND_BINARY = 0x02  # written before 0.22.0, no checksum
+RECORD_KIND_CHECKSUMMED = 0x03  # [0x03][encoded sample][crc32 u32 LE]
+RECORD_CHECKSUM_SIZE = 4
 
 
 # ---------------------------------------------------------------------------
@@ -845,11 +851,32 @@ def _decode_variable(
 # ---------------------------------------------------------------------------
 
 
+def checked_record_body(payload: bytes) -> bytes:
+    """Verify a checksummed payload and return the encoded sample inside it.
+
+    The CRC-32 (IEEE, as zlib computes it) covers the 4-byte length prefix,
+    then every payload byte before the trailer.
+    """
+    if len(payload) < 1 + RECORD_CHECKSUM_SIZE:
+        raise ValueError(f"checksummed record too short: {len(payload)} bytes")
+    end = len(payload) - RECORD_CHECKSUM_SIZE
+    crc = zlib.crc32(struct.pack("<I", len(payload)))
+    crc = zlib.crc32(payload[:end], crc)
+    if crc != struct.unpack_from("<I", payload, end)[0]:
+        raise ValueError("record checksum mismatch (torn by an unclean shutdown?)")
+    return payload[1:end]
+
+
 def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
-    """Decode a v2 binary AggregatedSample payload (no 4-byte length prefix)."""
+    """Decode a v2 binary AggregatedSample payload (no 4-byte length prefix).
+
+    Raises ValueError for a checksummed record that fails its checksum.
+    """
     if not payload:
         return None
-    if payload[0] == 0x02:
+    if payload[0] == RECORD_KIND_CHECKSUMMED:
+        payload = checked_record_body(payload)
+    elif payload[0] == RECORD_KIND_BINARY:
         payload = payload[1:]
     if len(payload) < 18:
         return None

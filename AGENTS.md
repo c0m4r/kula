@@ -41,7 +41,11 @@ identified by its byte offset in a fixed sequence, so **section order is the con
 - The record-level contributing-statistics trailer (bit 11) follows **all** Data/Min/Max blocks.
 - Mirror every codec change in the Python decoder `addons/inspect_tier.py` (same flag constants,
   same order) or it mis-decodes records.
-- `FuzzDecodeSample` must never panic on malformed input.
+- Records are written as kind `0x03`: the encoded sample framed by `encodeSampleV` with a
+  CRC-32 trailer over the length prefix and payload (`record_checksum.go`). Kind `0x02`
+  (pre-0.22.0, no checksum) stays readable. Decode tier records only through
+  `Tier.readRecord`, which verifies the checksum; calling `decodeSample` on a payload skips it.
+- `FuzzDecodeSample` and `FuzzReadRecord` must never panic on malformed input.
 - `TestCodecPersistsEveryAggregatedNumericField` fails when a numeric field with an `agg`
   policy does not survive encode → decode; a new field needs a codec home, not just a tag.
 
@@ -53,7 +57,8 @@ Full walkthrough: [Adding a Metric Type](docs/dev/14-adding-metrics.md),
 `internal/storage/tier_index.go` keeps a sparse record index per tier and saves it at clean
 shutdown as `tier_N.idx`, adopted only when it matches the tier header exactly. `Tier.Write`
 maintains it; any other code that writes records into an open tier (test helpers simulating
-older writers) must call `seekAppend` like `Write` does, or seeking scans skip those records.
+older writers) must go through `writePayload`, which calls `seekAppend` like `Write` does, or
+seeking scans skip those records.
 `TestSeekIndexScansMatchFullScans` requires seeking scans to equal full scans; read-only
 tiers (the TUI) build and extend their own index, checked by
 `TestReadOnlySeekIndexMatchesFullScans` and `TestReadOnlySeekIndexSurvivesAnUnseenLap`.

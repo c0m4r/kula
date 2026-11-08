@@ -28,6 +28,9 @@ import (
 //     [56:64] reserved
 //   Data region:
 //     Sequence of: [length uint32][data []byte]
+//     data is [0x03][encoded sample][crc32] for records written since 0.22.0
+//     (record_checksum.go); older files also hold 0x02-tagged, legacy JSON
+//     and legacy binary records, which carry no checksum.
 //     When write wraps around, it overwrites from the beginning.
 
 const (
@@ -347,13 +350,19 @@ func (t *Tier) Write(s *AggregatedSample) error {
 	if t.readOnly {
 		return ErrReadOnly
 	}
-	// encodeSampleV returns [kind][preamble][fixed][variable...] — the full
-	// on-disk payload including the recordKindBinary byte at [0].
+	// encodeSampleV returns [kind][preamble][fixed][variable...][crc32] — the
+	// full on-disk payload, recordKindChecksummed at [0] and its checksum last.
 	data, err := encodeSampleV(s)
 	if err != nil {
 		return err
 	}
+	return t.writePayload(data, s.Timestamp)
+}
 
+// writePayload appends one encoded on-disk payload whose record time is ts.
+// Write is its only production caller; tests use it to lay down records in
+// the formats older versions wrote, through the same bookkeeping.
+func (t *Tier) writePayload(data []byte, ts time.Time) error {
 	recordLen := 4 + len(data) // length prefix + data
 	if int64(recordLen) > t.maxData || len(data) > maxRecordBytes {
 		return fmt.Errorf("sample too large: %d bytes (tier holds %d, a record at most %d)", recordLen, t.maxData, maxRecordBytes)
@@ -435,23 +444,23 @@ func (t *Tier) Write(s *AggregatedSample) error {
 	if _, err := t.file.WriteAt(data, fileOff+4); err != nil {
 		return err
 	}
-	t.seekAppend(t.writeOff, s.Timestamp.UnixNano())
+	t.seekAppend(t.writeOff, ts.UnixNano())
 
 	t.writeOff += int64(recordLen)
 	t.count++
-	t.newestTS = s.Timestamp
+	t.newestTS = ts
 
 	// Keep oldestTS pinned to the actual oldest surviving record.
 	if t.wrapped {
 		// oldestOff points at a valid record boundary (maintained above).
-		if ts, err := t.readTimestampAt(t.oldestOff); err == nil {
-			t.oldestTS = ts
+		if oldest, err := t.readTimestampAt(t.oldestOff); err == nil {
+			t.oldestTS = oldest
 		}
-	} else if ts, err := t.readTimestampAt(0); err == nil {
+	} else if oldest, err := t.readTimestampAt(0); err == nil {
 		// Not wrapped: records were only appended, so the oldest is at offset 0.
-		t.oldestTS = ts
+		t.oldestTS = oldest
 	} else if t.oldestTS.IsZero() {
-		t.oldestTS = s.Timestamp
+		t.oldestTS = ts
 	}
 
 	// Bump codec version to binary on first write to a legacy JSON file.
@@ -771,14 +780,24 @@ func (t *Tier) SnapshotTo(w io.Writer) (int64, error) {
 
 // readRecord decodes a payload using per-record format detection.
 //
-//   - recordKindBinary (0x02): kind-tagged binary written by current code
+//   - recordKindChecksummed (0x03): binary written by current code; a record
+//     that fails its checksum returns errRecordChecksum
+//   - recordKindBinary (0x02): kind-tagged binary written before checksums
 //   - '{' (0x7B):              legacy JSON record
 //   - anything else:           legacy binary record (no kind byte)
+//
+// Every reader skips a record readRecord rejects.
 func (t *Tier) readRecord(data []byte) (*AggregatedSample, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty record")
 	}
 	switch data[0] {
+	case recordKindChecksummed:
+		body, err := checkedRecordBody(data)
+		if err != nil {
+			return nil, err
+		}
+		return decodeSample(body)
 	case recordKindBinary:
 		return decodeSample(data[1:])
 	case '{':
@@ -802,7 +821,8 @@ func (t *Tier) readRecord(data []byte) (*AggregatedSample, error) {
 // segment, where any zero/garbage is corruption rather than the legitimate
 // end-of-segment sentinel written on wrap.
 func (t *Tier) resyncToNextRecord(br *bufio.Reader, bytesRead *int64, segSize int64) bool {
-	// Peek a window large enough to hold a typical record plus the following
+	// Checksummed records are verified whole. For records without a checksum,
+	// peek a window large enough to hold a typical record plus the following
 	// record's header, so resync can require TWO valid records in a row before
 	// accepting a position. A single byte misalignment can momentarily mimic one
 	// plausible record (a stray length + timestamp); it almost never mimics two.
@@ -821,6 +841,14 @@ func (t *Tier) resyncToNextRecord(br *bufio.Reader, bytesRead *int64, segSize in
 				// Runs past the end of the segment, so it is no record of it.
 				// Accepting it would hand the caller a record it rejects at
 				// once, and the caller would resync here again, forever.
+			case hdr[4] == recordKindChecksummed:
+				// A checksummed record proves itself; a misaligned read cannot
+				// match a trailer (barring a 1-in-2^32 coincidence), even where
+				// the record is too large for the cross-check below. A torn one
+				// is passed over too: the caller would skip it anyway.
+				if peekedRecordIntact(br, next) {
+					return true
+				}
 			case *bytesRead+next == segSize:
 				// This record runs to the end of the segment: nothing follows to
 				// cross-check, and the header itself is sane — accept.
@@ -865,7 +893,7 @@ func (t *Tier) recordHeaderSane(hdr []byte) (int64, bool) {
 	}
 	dataLen := int64(binary.LittleEndian.Uint32(hdr[0:4]))
 	var ts time.Time
-	if hdr[4] == recordKindBinary {
+	if hdr[4] == recordKindBinary || hdr[4] == recordKindChecksummed {
 		ts = time.Unix(0, int64(binary.LittleEndian.Uint64(hdr[5:13])))
 	} else {
 		if t.codecVer >= codecVersion2 {
@@ -920,7 +948,7 @@ func (t *Tier) readTimestampAt(dataOffset int64) (time.Time, error) {
 	}
 
 	switch buf[4] {
-	case recordKindBinary:
+	case recordKindBinary, recordKindChecksummed:
 		// Kind-tagged binary record: timestamp follows the kind byte.
 		if dataLen < 9 {
 			return time.Time{}, fmt.Errorf("binary record too short for timestamp: %d bytes", dataLen)

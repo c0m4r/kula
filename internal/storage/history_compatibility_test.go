@@ -51,21 +51,7 @@ func legacyHistorySample(t *testing.T, ts time.Time) *AggregatedSample {
 func writeLegacyTierRecord(t *testing.T, tier *Tier, sample *AggregatedSample) {
 	t.Helper()
 	payload := append([]byte{recordKindBinary}, legacyHistoryPayload(t, sample)...)
-	record := binary.LittleEndian.AppendUint32(nil, uint32(len(payload)))
-	record = append(record, payload...)
-	if _, err := tier.file.WriteAt(record, headerSize+tier.writeOff); err != nil {
-		t.Fatal(err)
-	}
-	// Bookkeep as Tier.Write does, seek index included: a file an older
-	// binary wrote is reopened (and its index rebuilt), never shared live.
-	tier.seekAppend(tier.writeOff, sample.Timestamp.UnixNano())
-	tier.writeOff += int64(len(record))
-	tier.count++
-	if tier.count == 1 {
-		tier.oldestTS = sample.Timestamp
-	}
-	tier.newestTS = sample.Timestamp
-	if err := tier.writeHeader(); err != nil {
+	if err := tier.writePayload(payload, sample.Timestamp); err != nil {
 		t.Fatal(err)
 	}
 }

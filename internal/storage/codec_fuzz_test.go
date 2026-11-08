@@ -108,6 +108,35 @@ func FuzzDecodeSample(f *testing.F) {
 	})
 }
 
+// FuzzReadRecord throws arbitrary on-disk payloads at the record dispatch
+// every tier reader uses: kind byte, checksum trailer, then the codec.
+func FuzzReadRecord(f *testing.F) {
+	for _, s := range seedRecords(f) {
+		checked := make([]byte, 1+len(s)+recordChecksumSize)
+		checked[0] = recordKindChecksummed
+		copy(checked[1:], s)
+		sealRecord(checked)
+		f.Add(checked)
+		f.Add(append([]byte{recordKindBinary}, s...))
+	}
+
+	tier := &Tier{}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		a, err := tier.readRecord(data)
+		if err != nil {
+			return
+		}
+		if a == nil {
+			t.Fatal("readRecord returned nil sample with nil error")
+		}
+		if data[0] == recordKindChecksummed {
+			if _, err := checkedRecordBody(data); err != nil {
+				t.Fatalf("readRecord accepted a record that fails its checksum: %v", err)
+			}
+		}
+	})
+}
+
 // FuzzExtractTimestamp targets the lightweight header reader used to index
 // records without decoding the whole payload.
 func FuzzExtractTimestamp(f *testing.F) {

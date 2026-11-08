@@ -7,8 +7,12 @@ no keys, no TLV, no length-prefixed fields. Metrics are identified solely by the
 within a fixed, deterministic sequence. This makes records dense and fast to encode/decode, at
 the cost of requiring strict discipline when adding new fields (see [Adding a Metric Type](14-adding-metrics.md)).
 
-Records are kind-tagged `0x02` for format detection (the migration path distinguishes them from
-legacy v1 JSON records).
+On disk each record's payload starts with a kind byte, which also tells binary records from
+legacy v1 JSON ones. Records written since 0.22.0 are kind `0x03`: the record below followed by a
+CRC-32 trailer ([`record_checksum.go`](../../internal/storage/record_checksum.go)). Kind `0x02`
+records, written before, carry no checksum and are still read. The timestamp sits right after
+the kind byte in both. Older binaries cannot read `0x03` records, so keep a backup if you may
+downgrade. See [Storage Engine](05-storage-engine.md#record-frame-and-unclean-shutdowns).
 
 ## Record structure
 

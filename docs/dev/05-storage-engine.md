@@ -19,6 +19,7 @@ jobs, and no GC pressure from unbounded growth.
 | [`history_stream.go`](../../internal/storage/history_stream.go) | Bounded batch reads, buckets merged across batch boundaries |
 | [`tier.go`](../../internal/storage/tier.go) | One ring-buffer file: header + records, wrap handling, chronological reads |
 | [`tier_index.go`](../../internal/storage/tier_index.go) | Sparse seek index per tier, its `tier_N.idx` sidecar, and tail reads |
+| [`record_checksum.go`](../../internal/storage/record_checksum.go) | CRC-32 trailer of each record: sealing, verification, resync checks |
 | [`codec.go`](../../internal/storage/codec.go) | The binary record format (see [Codec](06-storage-codec.md)) |
 | [`disk_identity_codec.go`](../../internal/storage/disk_identity_codec.go) | Persistent disk IDs appended after the power-supply section |
 | [`tcp_ext_codec.go`](../../internal/storage/tcp_ext_codec.go) | TCP extension (retransmit rate) appended after the disk IDs |
@@ -140,6 +141,39 @@ fragments and batch merges propagate the intersection of input capabilities, inc
 extrema. Mixed means remain approximate. The query-only profile is never serialized into
 tier records or used to set the reducer flag. See [Binary Codec](06-storage-codec.md).
 
+## Record frame and unclean shutdowns
+
+A tier file is a 64-byte header followed by records, each `[length u32][payload]`. The
+payload's first byte selects its format:
+
+| Kind | Payload | Written by |
+|------|---------|------------|
+| `0x03` | encoded sample, then a CRC-32 trailer | 0.22.0 and later |
+| `0x02` | encoded sample | before 0.22.0 |
+| `{` | JSON | codec v1, migrated to binary on open |
+| anything else | encoded sample, no kind byte | early binary builds |
+
+Kula does not fsync every write. After a power loss or a kernel crash the header can reach the
+disk while records it counts do not, or reach it only in part: a page of a record then reads
+back as zeros, or as what an older ring pass left there. A process crash cannot do this, because
+the header that makes a record visible is written after it. Readers handle the damage two ways:
+
+- **Holes.** In the active segment, a length prefix that cannot start a record makes the scan
+  resync byte by byte to the next plausible record instead of stopping there. A `0x03`
+  candidate must match its checksum; an older one must be followed by a second plausible
+  header or end the segment exactly. A candidate running past the segment end is never
+  accepted.
+- **Torn records.** The CRC-32 (IEEE, as Python's `zlib.crc32` computes it) covers the length
+  prefix and every payload byte before the trailer. A record that fails it is skipped by every
+  reader, like any record that does not decode: history scans, `ReadLatest`, restart recovery
+  and the read-only store. A torn record therefore never reaches the latest-sample cache or the
+  rollups that recovery replays. Records written before 0.22.0 cannot be verified; the ring
+  replaces them within one pass.
+
+The check runs only on records a query decodes. It costs about 5 % of a record's decode time
+where Go's `hash/crc32` uses CPU instructions (amd64, arm64) and about 25 % with its portable
+code (riscv64). Each record grows by four bytes.
+
 ## Restart recovery
 
 On startup the store:
@@ -259,8 +293,9 @@ History view uses it to chart what a separately running `kula serve` writes.
 - Refresh mirrors `Write`'s pass bookkeeping (`writeCycle`, `writeEnd`), so the batched scanner's
   snapshot check still notices if a refresh between batches shows the writer overtaking unread
   bytes.
-- Tier locks do not cross processes, and records carry no checksum, so a record the owner
-  overwrites while it is read could decode into wrong values. Each scan therefore checks itself
+- Tier locks do not cross processes. A checksummed record the owner overwrites while it is read
+  fails its checksum, but a record written before 0.22.0 could decode into wrong values, and a
+  torn length prefix misplaces every record after it. Each scan therefore checks itself
   (`readOnlyScan`). The owner writes from the snapshot's `writeOff` in ring order over the oldest
   records, and its header `count` only grows, so re-reading the header shows exactly which bytes
   it has changed since the snapshot. Every 256 records, before a batch is reduced and at the end,

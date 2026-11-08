@@ -92,7 +92,15 @@ const psuEntrySize = 21
 // with '{' (0x7B) and legacy binary records written before this tag was
 // introduced have no kind byte. This makes new binary records fully
 // deterministic to identify without peeking at timestamp bytes.
+//
+// Records of this kind carry no checksum; current code writes
+// recordKindChecksummed instead and still reads both.
 const recordKindBinary = byte(0x02)
+
+// recordKindChecksummed tags the records written since 0.22.0: the same
+// encoded sample as recordKindBinary (so the timestamp stays at [1:9]),
+// followed by a CRC-32 trailer (see record_checksum.go).
+const recordKindChecksummed = byte(0x03)
 
 // AggregatedSample holds a time-aggregated metric sample.
 // For tier 0 (raw), this is just a wrapper around the raw sample.
@@ -1681,7 +1689,8 @@ func decodePSUSection(data []byte, s *collector.Sample) (int, error) {
 // extractTimestamp reads the timestamp from a binary payload (no length prefix).
 // Three record formats are handled:
 //
-//   - recordKindBinary (0x02): kind-tagged binary — timestamp at data[1:9]
+//   - recordKindChecksummed (0x03), recordKindBinary (0x02): kind-tagged
+//     binary — timestamp at data[1:9]; the checksum is not verified here
 //   - '{' (0x7B):              legacy JSON — returns error to trigger full decode
 //   - anything else:           legacy binary (no kind byte) — timestamp at data[0:8]
 func extractTimestamp(data []byte) (time.Time, error) {
@@ -1689,7 +1698,7 @@ func extractTimestamp(data []byte) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("empty record")
 	}
 	switch data[0] {
-	case recordKindBinary:
+	case recordKindBinary, recordKindChecksummed:
 		if len(data) < 9 {
 			return time.Time{}, fmt.Errorf("binary record too short for timestamp: %d bytes", len(data))
 		}
@@ -1718,19 +1727,20 @@ func extractTimestamp(data []byte) (time.Time, error) {
 
 // ---- Version dispatch -------------------------------------------------------
 
-// encodeSampleV encodes a using the binary v2 codec and prepends the
-// recordKindBinary byte so the returned slice matches the on-disk payload
-// format exactly: [kind][preamble][fixed][variable...].
+// encodeSampleV encodes a using the binary v2 codec, framed so the returned
+// slice matches the on-disk payload exactly:
+// [recordKindChecksummed][preamble][fixed][variable...][crc32].
 // This keeps the allocation count in Write at one (encodeSample's output copy)
-// rather than two (output copy + kind-byte prefix copy).
+// rather than two (output copy + framing copy).
 func encodeSampleV(a *AggregatedSample) ([]byte, error) {
 	payload, err := encodeSample(a)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]byte, 1+len(payload))
-	out[0] = recordKindBinary
+	out := make([]byte, 1+len(payload)+recordChecksumSize)
+	out[0] = recordKindChecksummed
 	copy(out[1:], payload)
+	sealRecord(out)
 	return out, nil
 }
 
