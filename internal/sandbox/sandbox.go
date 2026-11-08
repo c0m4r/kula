@@ -127,32 +127,16 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 
 	// Nginx: allow outbound TCP connection to the status URL port
 	if appCfg.Nginx.Enabled && appCfg.Nginx.StatusURL != "" {
-		if u, err := url.Parse(appCfg.Nginx.StatusURL); err == nil {
-			port := 80
-			if u.Port() != "" {
-				if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 && p <= 65535 {
-					port = p
-				}
-			} else if u.Scheme == "https" {
-				port = 443
-			}
-			netRules = append(netRules, landlock.ConnectTCP(uint16(port)))
+		if port, ok := urlConnectPort(appCfg.Nginx.StatusURL); ok {
+			netRules = append(netRules, landlock.ConnectTCP(port))
 			appInfo = append(appInfo, fmt.Sprintf("nginx:connect-tcp/%d", port))
 		}
 	}
 
 	// Apache2: allow outbound TCP connection to the status URL port
 	if appCfg.Apache2.Enabled && appCfg.Apache2.StatusURL != "" {
-		if u, err := url.Parse(appCfg.Apache2.StatusURL); err == nil {
-			port := 80
-			if u.Port() != "" {
-				if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 && p <= 65535 {
-					port = p
-				}
-			} else if u.Scheme == "https" {
-				port = 443
-			}
-			netRules = append(netRules, landlock.ConnectTCP(uint16(port)))
+		if port, ok := urlConnectPort(appCfg.Apache2.StatusURL); ok {
+			netRules = append(netRules, landlock.ConnectTCP(port))
 			appInfo = append(appInfo, fmt.Sprintf("apache2:connect-tcp/%d", port))
 		}
 	}
@@ -192,12 +176,13 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 
 	// PostgreSQL over TLS: lib/pq reads its CA, client certificate and key
 	// from ~/.postgresql (root.crt, postgresql.crt, postgresql.key) or from
-	// the PGSSL* environment paths, at connect time.
+	// the PGSSL* environment paths, at connect time. (It refuses PGSSLCRL, so
+	// that path needs no rule.)
 	if appCfg.Postgres.Enabled && postgresUsesTLS(appCfg.Postgres.SSLMode) {
 		if home, err := os.UserHomeDir(); err == nil && home != "" {
 			fsRules = append(fsRules, landlock.RODirs(filepath.Join(home, ".postgresql")).IgnoreIfMissing())
 		}
-		for _, env := range []string{"PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY", "PGSSLCRL"} {
+		for _, env := range []string{"PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"} {
 			if path := os.Getenv(env); path != "" && path != "system" {
 				fsRules = append(fsRules, landlock.ROFiles(path).IgnoreIfMissing())
 			}
@@ -206,15 +191,9 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 
 	// Ollama: allow outbound TCP connection to the Ollama API port
 	if ollamaCfg.Enabled && ollamaCfg.URL != "" {
-		if u, err := url.Parse(ollamaCfg.URL); err == nil {
-			ollamaPort := 11434
-			if u.Port() != "" {
-				if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 && p <= 65535 {
-					ollamaPort = p
-				}
-			}
-			netRules = append(netRules, landlock.ConnectTCP(uint16(ollamaPort)))
-			appInfo = append(appInfo, fmt.Sprintf("ollama:connect-tcp/%d", ollamaPort))
+		if port, ok := urlConnectPort(ollamaCfg.URL); ok {
+			netRules = append(netRules, landlock.ConnectTCP(port))
+			appInfo = append(appInfo, fmt.Sprintf("ollama:connect-tcp/%d", port))
 		}
 	}
 
@@ -295,6 +274,26 @@ func pickContainerSocket(candidates []string) string {
 		}
 	}
 	return first
+}
+
+// urlConnectPort returns the TCP port an HTTP client dials for raw: the
+// explicit port, or the scheme's default (443 for https, 80 otherwise).
+func urlConnectPort(raw string) (uint16, bool) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return 0, false
+	}
+	if u.Port() == "" {
+		if strings.EqualFold(u.Scheme, "https") {
+			return 443, true
+		}
+		return 80, true
+	}
+	p, err := strconv.Atoi(u.Port())
+	if err != nil || p <= 0 || p > 65535 {
+		return 0, false
+	}
+	return uint16(p), true
 }
 
 // postgresUsesTLS reports whether a PostgreSQL sslmode can negotiate TLS.

@@ -160,9 +160,47 @@ func TestNeedsSystemRoots(t *testing.T) {
 		{"ollama over https", config.ApplicationsConfig{}, config.OllamaConfig{Enabled: true, URL: "https://llm:11434"}, true},
 		{"postgres require", config.ApplicationsConfig{Postgres: config.PostgresConfig{Enabled: true, SSLMode: "require"}}, config.OllamaConfig{}, false},
 		{"postgres verify-full", config.ApplicationsConfig{Postgres: config.PostgresConfig{Enabled: true, SSLMode: "verify-full"}}, config.OllamaConfig{}, true},
+		{"postgres verify-ca", config.ApplicationsConfig{Postgres: config.PostgresConfig{Enabled: true, SSLMode: "verify-ca"}}, config.OllamaConfig{}, true},
 	} {
 		if got := needsSystemRoots(tc.apps, tc.ollama); got != tc.want {
 			t.Errorf("%s: needsSystemRoots = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	// sslrootcert=system through the environment verifies against the system
+	// roots whatever the configured mode.
+	t.Setenv("PGSSLROOTCERT", "system")
+	if !needsSystemRoots(config.ApplicationsConfig{Postgres: config.PostgresConfig{Enabled: true, SSLMode: "require"}}, config.OllamaConfig{}) {
+		t.Error("PGSSLROOTCERT=system: needsSystemRoots = false, want true")
+	}
+}
+
+// TestURLConnectPort pins the port each HTTP target is allowed to connect to:
+// the one the client dials, so a URL without a port gets its scheme's default
+// (an Ollama URL behind an HTTPS proxy on 443 used to be allowed 11434).
+func TestURLConnectPort(t *testing.T) {
+	for raw, want := range map[string]uint16{
+		"http://localhost/status":    80,
+		"https://localhost/status":   443,
+		"HTTPS://localhost/status":   443,
+		"http://127.0.0.1:8080/":     8080,
+		"https://[::1]:8443/x":       8443,
+		"http://localhost:11434":     11434,
+		"https://localhost":          443,
+		"http://localhost:0/":        0,
+		"http://localhost:70000/":    0,
+		"http://localhost:port/":     0,
+		"http://local host:8080/bad": 0,
+	} {
+		got, ok := urlConnectPort(raw)
+		if want == 0 {
+			if ok {
+				t.Errorf("urlConnectPort(%q) = %d, want rejected", raw, got)
+			}
+			continue
+		}
+		if !ok || got != want {
+			t.Errorf("urlConnectPort(%q) = %d, %v, want %d", raw, got, ok, want)
 		}
 	}
 }

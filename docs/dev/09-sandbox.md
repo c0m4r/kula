@@ -47,7 +47,7 @@ It is **non-fatal**: on unsupported kernels the warning is logged and Kula runs 
 | container runtime socket the collector will use (`applications.containers.socket_path`, else the first reachable of `collector.ContainerSocketPaths`) | read-write (when containers are enabled) |
 | `applications.postgres.host` | read-write (Unix socket mode) |
 | `applications.mysql.host` | read-write (Unix socket file mode) |
-| `~/.postgresql`, `PGSSLROOTCERT`/`PGSSLCERT`/`PGSSLKEY`/`PGSSLCRL` paths | read-only (PostgreSQL with `sslmode` other than `disable`) |
+| `~/.postgresql`, `PGSSLROOTCERT`/`PGSSLCERT`/`PGSSLKEY` paths | read-only (PostgreSQL with `sslmode` other than `disable`) |
 
 The read-write grant on the storage directory is what lets the storage engine, the custom-metrics
 socket, and the backup writer function under confinement.
@@ -78,10 +78,10 @@ still apply, but no bind or connect rule does.
 - **TCP bind** is allowed only on the configured web port (so the server can listen). With
   `web.unix_socket` set, no bind rule is added.
 - **TCP connect** is allowed only to the ports of the **enabled** application collectors —
-  conditionally added for nginx, Apache2, MySQL, PostgreSQL, and Ollama. Nginx and Apache2 parse
-  the port from their status URL (defaulting to 80, or 443 for `https`); PostgreSQL and MySQL
-  use their configured `port`; Ollama parses its URL and defaults to 11434. Containers need no
-  TCP rule because they are reached through the runtime socket instead.
+  conditionally added for nginx, Apache2, MySQL, PostgreSQL, and Ollama. Nginx, Apache2 and
+  Ollama take the port from their URL, or the port the client dials without one (80, or 443 for
+  `https`); PostgreSQL and MySQL use their configured `port`. Containers need no TCP rule
+  because they are reached through the runtime socket instead.
 
 Because the connect rules are derived from your config at startup, enabling an application or
 changing its port automatically updates the allowed set — no manual sandbox tweaking. Each
