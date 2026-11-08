@@ -424,6 +424,13 @@ func sameMountNamespace() bool {
 	return ns1 == nsSelf
 }
 
+// mountUnescape decodes a field of a mounts-format file. The kernel writes a
+// space, tab, newline or backslash in a path as an octal escape, so
+// "/mnt/my disk" reads "/mnt/my\040disk", and statfs needs the real path. The
+// system-information inventory (internal/sysinfo) decodes mountinfo the same
+// way and joins its mounts to these by path.
+var mountUnescape = strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+
 // scanMounts reads one mounts-format file and appends the filesystems to
 // monitor (without their usage, which statfs supplies) to
 // result, using seen to deduplicate by mount point across multiple sources.
@@ -434,8 +441,8 @@ func (c *Collector) scanMounts(f *os.File, result *[]FileSystemInfo, seen map[st
 		if len(fields) < 3 {
 			continue
 		}
-		device := fields[0]
-		mount := fields[1]
+		device := mountUnescape.Replace(fields[0])
+		mount := mountUnescape.Replace(fields[1])
 		fstype := fields[2]
 
 		// Skip floppy disks

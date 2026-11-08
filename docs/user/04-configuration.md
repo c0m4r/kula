@@ -92,7 +92,8 @@ collection:
   keeps its last reading for three of its intervals, then drops out of the sample until it
   answers again, with a log line each way.
 - The `devices`/`mountpoints`/`interfaces` lists let you pin exactly what is monitored,
-  bypassing auto-discovery.
+  bypassing auto-discovery. Write a mount point as its real path (`"/mnt/my disk"`), not in
+  the escaped form `/proc/mounts` shows (`/mnt/my\040disk`).
 - Network filesystems (NFS, CIFS) are monitored too. If one stops answering (its server is
   gone), it cannot delay the other metrics: it keeps its last reading for three intervals (at
   least 3 s), then drops out of the sample until it answers again, with a log line each way.

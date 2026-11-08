@@ -1,6 +1,9 @@
 package collector
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,5 +184,28 @@ func TestDiskTemperaturesAtTheirOwnInterval(t *testing.T) {
 	}
 	if _, read := c.diskTemps.entries["sdb"]; read {
 		t.Fatal("the temperature of a drive not selected for monitoring was read")
+	}
+}
+
+// TestCollectFileSystemsUnescapesMountPaths: /proc/mounts writes a space in a
+// path as \040. The escaped form is no path statfs can open, so such a mount
+// was dropped; decoded, it is measured and listed under its real name.
+func TestCollectFileSystemsUnescapesMountPaths(t *testing.T) {
+	orig := procPath
+	t.Cleanup(func() { procPath = orig })
+	procPath = t.TempDir()
+	mount := filepath.Join(t.TempDir(), "my disk\\here")
+	if err := os.Mkdir(mount, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	escaped := strings.NewReplacer(" ", `\040`, `\`, `\134`).Replace(mount)
+	line := "/dev/sdz1 " + escaped + " ext4 rw,relatime 0 0\n"
+	if err := os.WriteFile(filepath.Join(procPath, "mounts"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := New(config.GlobalConfig{}, config.CollectionConfig{MountsDetection: "self"}, config.ApplicationsConfig{}, "")
+	fs := c.collectFileSystems()
+	if len(fs) != 1 || fs[0].MountPoint != mount || fs[0].Device != "/dev/sdz1" || fs[0].Total == 0 {
+		t.Fatalf("filesystems = %+v, want %q measured", fs, mount)
 	}
 }
