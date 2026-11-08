@@ -4,7 +4,14 @@
    ============================================================ */
 'use strict';
 
-const VALID_AGG = ['avg', 'min', 'max'];
+// The historical operations a view can select. Anything else (a stale or
+// hand-edited preference, a bad URL, a mistyped web.default_aggregation) is
+// ignored rather than reaching the selectors built from it.
+export const AGGREGATIONS = ['avg', 'min', 'max'];
+
+export function isAggregation(value) {
+    return AGGREGATIONS.includes(value);
+}
 export const MIN_ZOOM_POINTS = 12;
 
 export function minimumZoomSpan(sourceResolution, collectionIntervalMs = 1000) {
@@ -48,7 +55,7 @@ export function applyUrlState(state) {
     const params = new URLSearchParams(window.location.search);
 
     const agg = params.get('agg');
-    if (agg && VALID_AGG.includes(agg)) {
+    if (isAggregation(agg)) {
         state.currentAggregation = agg;
         state.aggFromUrl = true;
     }

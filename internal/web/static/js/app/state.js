@@ -5,6 +5,13 @@
    ============================================================ */
 'use strict';
 import { readJsonPref, readPref } from './prefs.js';
+import { isAggregation } from './history-navigation.js';
+
+/** The stored aggregation choice, or null when none is stored or it is not one. */
+export function storedAggregation() {
+    const stored = readPref('kula_aggregation');
+    return isAggregation(stored) ? stored : null;
+}
 
 // ---- State ----
 export const state = {
@@ -69,7 +76,7 @@ export const state = {
     diskSpaceMountNames: [], // Not used as datasets anymore, but kept for compatibility
     cpuTempSensorNames: [],
     diskTempSensorNames: [],
-    currentAggregation: readPref('kula_aggregation') || 'avg',
+    currentAggregation: storedAggregation() || 'avg',
     // A choice the loaded view cannot serve; restored when a later response can.
     suspendedAggregation: null,
     validAggregations: ['data'], // available choices; bucket profiles restrict individual fields

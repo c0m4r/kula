@@ -375,6 +375,15 @@ try {
     cards = await cardLayout();
     check(cards.system.join() === templateSystem.join() && cards.gauges.join() === templateGauges.join() &&
         cards.stored === null, 'Reset order did not restore the template order', cards);
+
+    // A stale or hand-edited aggregation preference goes into a CSS selector;
+    // the dashboard ignores it rather than failing to start.
+    await evaluate(`localStorage.setItem('kula_aggregation', 'avg"]')`);
+    await call('Page.navigate', { url: `${base}/?range=300` });
+    await settle(s => s.lastAge <= 2.5, 'the dashboard did not start with a malformed aggregation preference');
+    const activeAgg = await evaluate(`document.querySelector('#agg-presets-list .time-btn.active')?.dataset.agg ?? null`);
+    check(activeAgg === 'avg', 'a malformed aggregation preference was not replaced by avg', { activeAgg });
+    await evaluate(`localStorage.removeItem('kula_aggregation')`);
     await resize(1920, 1080);
 
     // Blocked site data makes every localStorage access throw, as it does from

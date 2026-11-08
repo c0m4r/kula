@@ -2,7 +2,8 @@
    auth.js — Authentication check, config fetch, login/logout.
    ============================================================ */
 'use strict';
-import { state } from './state.js';
+import { state, storedAggregation } from './state.js';
+import { isAggregation } from './history-navigation.js';
 import { readPref } from './prefs.js';
 import { initCharts } from './charts-init.js';
 import { updateAllCharts, clearAllChartData, cancelHistoryRequest } from './charts-data.js';
@@ -94,8 +95,8 @@ export function fetchConfig() {
                 state.theme = cfg.theme;
                 applyTheme();
             }
-            if (cfg.aggregation) state.defaultAggregation = cfg.aggregation;
-            if (cfg.aggregation && !readPref('kula_aggregation') && !state.aggFromUrl) {
+            if (isAggregation(cfg.aggregation)) state.defaultAggregation = cfg.aggregation;
+            if (isAggregation(cfg.aggregation) && !storedAggregation() && !state.aggFromUrl) {
                 state.currentAggregation = cfg.aggregation;
                 state.suspendedAggregation = null;
                 // Update active button state in the UI

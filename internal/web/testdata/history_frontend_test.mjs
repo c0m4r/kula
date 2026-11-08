@@ -78,6 +78,7 @@ const { attachCrosshairEvents, CrosshairState, panTimeRange, zoomTimeRange } =
 const {
     ViewportHistory,
     clampHistoryInterval,
+    isAggregation,
     MIN_ZOOM_POINTS,
     minimumZoomSpan,
     fitZoomToObservations,
@@ -208,6 +209,15 @@ function deferred() {
     const promise = new Promise(res => { resolve = res; });
     return { promise, resolve };
 }
+
+test('only the three historical operations count as an aggregation choice', () => {
+    // A stored preference or web.default_aggregation goes into a CSS selector;
+    // anything else must fall back instead of making querySelector throw.
+    for (const value of ['avg', 'min', 'max']) assert.equal(isAggregation(value), true);
+    for (const value of [null, undefined, '', 'data', 'AVG', 'avg"]', 'x"] , *']) {
+        assert.equal(isAggregation(value), false, String(value));
+    }
+});
 
 test('zoom stops at twelve source intervals independently of output density', () => {
     assert.equal(MIN_ZOOM_POINTS, 12);
