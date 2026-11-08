@@ -197,6 +197,19 @@ func appendF32(b []byte, v float64) []byte {
 	return append(b, x[:]...)
 }
 
+// clampUint16 saturates a count to a 16-bit fixed field, so an out-of-range
+// value reads back as the nearest bound instead of wrapping.
+func clampUint16(n int) uint16 {
+	switch {
+	case n < 0:
+		return 0
+	case n > math.MaxUint16:
+		return math.MaxUint16
+	default:
+		return uint16(n)
+	}
+}
+
 // userCountUnknown is the fixed-block byte for an unknown logged-in user count
 // (collector value -1). Counts are clamped below it; the field was an
 // unclamped uint8 before, so 255 only ever meant a count that had wrapped.
@@ -349,26 +362,14 @@ func appendFixed(buf []byte, s *collector.Sample) []byte {
 	putF32(b[20:], s.CPU.Total.SoftIRQ)
 	putF32(b[24:], s.CPU.Total.Steal)
 	// CPU meta (6 bytes)
-	binary.LittleEndian.PutUint16(b[28:], uint16(s.CPU.NumCores))
+	binary.LittleEndian.PutUint16(b[28:], clampUint16(s.CPU.NumCores))
 	putF32(b[30:], s.CPU.Temperature)
 	// Load average (16 bytes)
 	putF32(b[34:], s.LoadAvg.Load1)
 	putF32(b[38:], s.LoadAvg.Load5)
 	putF32(b[42:], s.LoadAvg.Load15)
-	run := s.LoadAvg.Running
-	if run < 0 {
-		run = 0
-	} else if run > 65535 {
-		run = 65535
-	}
-	binary.LittleEndian.PutUint16(b[46:], uint16(run))
-	tot := s.LoadAvg.Total
-	if tot < 0 {
-		tot = 0
-	} else if tot > 65535 {
-		tot = 65535
-	}
-	binary.LittleEndian.PutUint16(b[48:], uint16(tot))
+	binary.LittleEndian.PutUint16(b[46:], clampUint16(s.LoadAvg.Running))
+	binary.LittleEndian.PutUint16(b[48:], clampUint16(s.LoadAvg.Total))
 	// Memory (60 bytes)
 	binary.LittleEndian.PutUint64(b[50:], s.Memory.Total)
 	binary.LittleEndian.PutUint64(b[58:], s.Memory.Free)
@@ -413,7 +414,7 @@ func appendFixed(buf []byte, s *collector.Sample) []byte {
 	// Self (14 bytes)
 	binary.LittleEndian.PutUint64(b[204:], s.Self.MemRSS)
 	putF32(b[212:], s.Self.CPUPercent)
-	binary.LittleEndian.PutUint16(b[216:], uint16(s.Self.FDs))
+	binary.LittleEndian.PutUint16(b[216:], clampUint16(s.Self.FDs))
 	return append(buf, b[:]...)
 }
 

@@ -1427,3 +1427,32 @@ func TestUserCountUnknownAndClamped(t *testing.T) {
 		}
 	}
 }
+
+// TestSixteenBitCountsSaturate pins the 16-bit fixed counts: a value past the
+// field reads back as its bound, never as the wrapped remainder.
+func TestSixteenBitCountsSaturate(t *testing.T) {
+	for _, tc := range []struct{ in, want int }{{-1, 0}, {0, 0}, {65535, 65535}, {65536, 65535}, {70000, 65535}} {
+		sample := makeSampleFull(time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC))
+		sample.Data.CPU.NumCores = tc.in
+		sample.Data.Self.FDs = tc.in
+		sample.Data.LoadAvg.Running = tc.in
+		sample.Data.LoadAvg.Total = tc.in
+		encoded, err := encodeSample(sample)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := decodeSample(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := decoded.Data
+		for name, got := range map[string]int{
+			"cpu.num_cores": d.CPU.NumCores, "self.fds": d.Self.FDs,
+			"loadavg.running": d.LoadAvg.Running, "loadavg.total": d.LoadAvg.Total,
+		} {
+			if got != tc.want {
+				t.Errorf("%s %d round-tripped as %d, want %d", name, tc.in, got, tc.want)
+			}
+		}
+	}
+}
