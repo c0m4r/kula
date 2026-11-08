@@ -685,8 +685,9 @@ func (s *Store) cacheHistoryResult(key queryCacheKey, generation uint64, result 
 // is complete when both requested edges are within its collection-lag
 // tolerance. If no tier is complete, the tier with the greatest overlap is
 // returned with Complete=false rather than silently presenting it as complete.
-// Results are cached for the duration of one tier-0 resolve cycle to serve
-// concurrent or repeated API calls without extra disk I/O.
+// Results are cached for one tier-0 resolution under their exact bounds, so a
+// concurrent or repeated identical call (a past window, not a refresh ending
+// now) is served without extra disk I/O.
 func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*HistoryResult, error) {
 	return s.QueryRangeFromTier(from, to, targetPoints, -1)
 }

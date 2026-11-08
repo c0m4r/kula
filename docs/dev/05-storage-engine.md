@@ -245,8 +245,12 @@ On 36 hours of mock history at the default tier sizes (223 MB tier 0), a clean r
 4. Choose a stable output step from 1/2/5-style intervals (including 10, 15, and 30 units),
    align groups to Unix-epoch boundaries, and reduce to at most `points` results. The API caps
    `points` at 5000 and all ranges at 31 days.
-5. Serve identical recent queries from a short-lived in-memory **query cache** when possible.
-   Cache keys preserve the exact nanosecond bounds, not rounded seconds or bucket boundaries.
+5. Serve a repeat of an identical query from a short-lived in-memory **query cache**. Keys are
+   the exact nanosecond bounds, point budget and tier hint, not rounded seconds or bucket
+   boundaries; an entry lives one tier-0 resolution, and every raw write drops entries whose
+   range reaches the live edge. In practice it serves concurrent identical requests and repeats
+   of a past window. Dashboard refreshes end at the current time, so each has its own key and
+   almost never hits.
    Results own their complete sample graphs, including nested maps, slices, and application
    pointers. Copy plans are compiled once from the schema. Input samples and `QueryLatest`
    results use the same ownership isolation.
