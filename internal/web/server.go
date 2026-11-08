@@ -169,9 +169,16 @@ func loggingMiddleware(cfg config.WebConfig, tag string, next http.Handler) http
 	})
 }
 
+// gzipWriters recycles compressors: each holds several hundred KiB of
+// deflate state, too much to allocate per request.
+var gzipWriters = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}
+
+// gzipResponseWriter compresses the body. Its compressor is taken from the
+// pool on the first body byte (or flush), so a response without a body
+// (304, 204, an empty 200) never needs one.
 type gzipResponseWriter struct {
-	io.Writer
 	http.ResponseWriter
+	gz          *gzip.Writer
 	wroteHeader bool
 	noBody      bool
 }
@@ -190,11 +197,22 @@ func (w *gzipResponseWriter) WriteHeader(status int) {
 	}
 }
 
+func (w *gzipResponseWriter) compressor() *gzip.Writer {
+	if w.gz == nil {
+		w.gz = gzipWriters.Get().(*gzip.Writer)
+		w.gz.Reset(w.ResponseWriter)
+	}
+	return w.gz
+}
+
 func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
-	return w.Writer.Write(b)
+	if w.noBody {
+		return w.ResponseWriter.Write(b) // net/http refuses it: ErrBodyNotAllowed
+	}
+	return w.compressor().Write(b)
 }
 
 // Unwrap lets http.NewResponseController traverse the middleware chain (e.g. to set write deadlines).
@@ -202,19 +220,44 @@ func (w *gzipResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWri
 
 // Flush implements the http.Flusher interface to support streaming inside compressed responses.
 func (w *gzipResponseWriter) Flush() {
-	if gz, ok := w.Writer.(*gzip.Writer); ok {
-		_ = gz.Flush()
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	if !w.noBody {
+		_ = w.compressor().Flush()
 	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
-func gzipMiddleware(next http.Handler) http.Handler {
+// finish ends the gzip stream once the handler returns. A response whose
+// header promised gzip but that wrote nothing still needs a valid (empty)
+// stream; one that sent no header at all simply goes out unencoded.
+func (w *gzipResponseWriter) finish() {
+	if w.noBody {
+		return
+	}
+	if w.gz == nil {
+		if !w.wroteHeader {
+			w.ResponseWriter.Header().Del("Content-Encoding")
+			return
+		}
+		w.compressor()
+	}
+	_ = w.gz.Close()
+	w.gz.Reset(io.Discard) // drop the reference to this response
+	gzipWriters.Put(w.gz)
+	w.gz = nil
+}
+
+// gzipMiddleware wraps the whole chain, outside the base-path mount, so it
+// matches routes on the path below basePath.
+func gzipMiddleware(next http.Handler, basePath string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") ||
 			r.Header.Get("Accept") == "text/event-stream" ||
-			strings.HasPrefix(r.URL.Path, "/api/ollama/") ||
+			strings.HasPrefix(strings.TrimPrefix(r.URL.Path, basePath), "/api/ollama/") ||
 			// WOFF2 is Brotli-compressed already; gzip would only add bytes.
 			strings.HasSuffix(r.URL.Path, ".woff2") {
 			next.ServeHTTP(w, r)
@@ -228,13 +271,8 @@ func gzipMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		gzw := &gzipResponseWriter{Writer: gz, ResponseWriter: w}
-		defer func() {
-			if !gzw.noBody {
-				_ = gz.Close()
-			}
-		}()
+		gzw := &gzipResponseWriter{ResponseWriter: w}
+		defer gzw.finish()
 		next.ServeHTTP(gzw, r)
 	})
 }
@@ -475,7 +513,7 @@ func (s *Server) buildHandler() http.Handler {
 
 	var handler = s.securityMiddleware(routed)
 	if s.cfg.EnableCompression {
-		handler = gzipMiddleware(handler)
+		handler = gzipMiddleware(handler, s.cfg.BasePath)
 	}
 	return handler
 }

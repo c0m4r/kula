@@ -265,7 +265,9 @@ startup after minification) and `Cache-Control: no-cache`: the browser keeps its
 revalidates on every use, so an unchanged binary answers `304 Not Modified` without a body, and
 an upgrade is picked up at once even though asset URLs carry no version. The templated pages
 (`index.html`, `game.html`) carry a per-request nonce and get neither header. With
-`enable_compression`, responses that may be gzipped add `Vary: Accept-Encoding`; a 304 or 204 goes
-out unencoded, and `.woff2` fonts are never gzipped because they are compressed already.
+`enable_compression`, responses that may be gzipped add `Vary: Accept-Encoding`; a 304 or 204 (or
+a handler that writes nothing) goes out unencoded, and `.woff2` fonts and the `/api/ollama/` stream
+(below any `base_path`) are never gzipped. Compressors come from a `sync.Pool` and are taken only
+for a body, since each holds about 1 MB of deflate state.
 
 Next: [Security Model](08-security.md).

@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"html"
 	"io"
 	"io/fs"
@@ -290,6 +291,84 @@ func TestEtagMatches(t *testing.T) {
 	} {
 		if got := etagMatches(header, tag); got != want {
 			t.Errorf("etagMatches(%q) = %v, want %v", header, got, want)
+		}
+	}
+}
+
+// The gzip middleware takes a compressor only for a body: an empty response
+// that never sent a header goes out unencoded, one whose header promised gzip
+// gets a valid empty stream, and flushes before and between writes keep the
+// stream decodable. Pooled writers must not leak one response into the next.
+func TestGzipMiddlewareResponses(t *testing.T) {
+	get := func(h http.HandlerFunc) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rec := httptest.NewRecorder()
+		gzipMiddleware(h, "").ServeHTTP(rec, req)
+		return rec
+	}
+	decode := func(t *testing.T, rec *httptest.ResponseRecorder) string {
+		t.Helper()
+		if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
+			t.Fatalf("Content-Encoding = %q, want gzip", got)
+		}
+		zr, err := gzip.NewReader(bytes.NewReader(rec.Body.Bytes()))
+		if err != nil {
+			t.Fatalf("invalid gzip stream %q: %v", rec.Body.Bytes(), err)
+		}
+		body, err := io.ReadAll(zr)
+		if err != nil {
+			t.Fatalf("invalid gzip stream: %v", err)
+		}
+		return string(body)
+	}
+
+	rec := get(func(http.ResponseWriter, *http.Request) {})
+	if got := rec.Header().Get("Content-Encoding"); got != "" || rec.Body.Len() != 0 {
+		t.Errorf("silent handler: Content-Encoding %q, body %q; want neither", got, rec.Body.Bytes())
+	}
+
+	rec = get(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
+	if rec.Code != http.StatusInternalServerError || decode(t, rec) != "" {
+		t.Errorf("header-only response: status %d", rec.Code)
+	}
+
+	for _, status := range []int{http.StatusNotModified, http.StatusNoContent} {
+		rec = get(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) })
+		if got := rec.Header().Get("Content-Encoding"); rec.Code != status || got != "" || rec.Body.Len() != 0 {
+			t.Errorf("%d: Content-Encoding %q, body %q; want neither", status, got, rec.Body.Bytes())
+		}
+	}
+
+	for i := range 3 {
+		want := strings.Repeat(fmt.Sprintf("response %d ", i), 100)
+		rec = get(func(w http.ResponseWriter, _ *http.Request) {
+			w.(http.Flusher).Flush()
+			_, _ = io.WriteString(w, want[:50])
+			w.(http.Flusher).Flush()
+			_, _ = io.WriteString(w, want[50:])
+		})
+		if got := decode(t, rec); got != want {
+			t.Errorf("flushed response %d decoded to %q", i, got)
+		}
+	}
+}
+
+// The AI proxy streams uncompressed; that exclusion must hold under a base
+// path, where the middleware sees the prefixed path.
+func TestGzipSkipsOllamaUnderBasePath(t *testing.T) {
+	for _, base := range []string{"", "/kula"} {
+		s := NewServer(config.WebConfig{UI: true, EnableCompression: true, BasePath: base},
+			config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
+		handler := s.buildHandler()
+		for path, gzipped := range map[string]bool{"/api/ollama/models": false, "/style.css": true} {
+			req := httptest.NewRequest(http.MethodGet, base+path, nil)
+			req.Header.Set("Accept-Encoding", "gzip")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if got := rec.Header().Get("Content-Encoding") == "gzip"; got != gzipped {
+				t.Errorf("base %q %s: gzipped = %v, want %v", base, path, got, gzipped)
+			}
 		}
 	}
 }
