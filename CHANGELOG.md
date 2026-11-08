@@ -11,26 +11,19 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Added
 
-- Rearrange gauges and chart cards in the Customization menu
+- Rearrange gauges and chart cards in the Customization menu (#51)
 
 ### Changed
 
-- Rolling views shown in buckets (such as 30 minutes and 1 hour) refresh only their newest
-  buckets instead of downloading the whole range every few seconds (a few kilobytes per
-  refresh instead of megabytes)
-- History queries jump to their time range instead of reading the whole tier file (a few MB
-  at most instead of the full 250 MB tier 0)
-- Restarts read only the end of each tier instead of scanning tier 0 twice; each tier keeps
-  a small `tier_N.idx` seek index, rebuilt automatically when missing or out of date
+- Rolling views refresh only their newest buckets instead of the whole range
+- History queries read only their time range instead of the whole tier file
+- Faster restarts: each tier keeps a small `tier_N.idx` seek index
+- Tier 1 and 2 rollups align to wall-clock minutes, so rolling and past views agree
+- `/api/history` accepts an optional `tier` hint
+- tui: history reads only its time range
 - Cards keep one consistent order everywhere
 - Split charts expand and collapse like every other chart
 - Remove systemd service ProtectClock that prevents reading clock
-- Tier 1 and tier 2 roll up whole wall-clock minutes and five-minute blocks instead of
-  windows counted from when Kula started, so a rolling view and a past range show the same
-  values for the same minutes (a short spike could read up to half as high in one of them)
-- Rolling views of 3 hours and longer also refresh only their newest buckets (a 3-hour view:
-  about 12 KB per refresh instead of 460 KB); `/api/history` takes an optional `tier` hint
-- The terminal UI's History view reads only its time range instead of the whole tier file
 
 ### Fixed
 
@@ -40,58 +33,26 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Disk and GPU temperature split charts no longer go missing in Focus mode
 - A Focus mode selection of only application charts no longer starts out hidden
 - Collapsing a split chart no longer reorders the application charts
-- Disk utilization is measured again; since 0.7.0 it read 0% in the TUI, Prometheus
-  (`kula_disk_utilization_percent`), the AI context and stored history
-- TCP retransmissions are stored in history; they used to chart as 0 after a reload or for
-  any past range (older binaries cannot read the extended records, so back up before a
-  downgrade)
-- PostgreSQL and MySQL monitoring can no longer pile up server connections: a poll slower than
-  the collection interval used to be abandoned while the server kept running it, and the next
-  second opened another session beside it. Kula now keeps one labelled session per server,
-  lets slow polls finish in the background, sets server-side statement, lock and idle limits,
-  ends any session it gave up on before polling again, and backs off when the server is down
-- MySQL rates no longer double after a failed poll
-- MySQL passwords containing `@`, `/` or `:` and IPv6 hosts work; PostgreSQL connection values
-  are quoted so a configured value cannot add connection parameters
-- Container monitoring finds the rootless Podman socket of the user Kula runs as (it only tried
-  uid 1000), and says so when a socket belongs to another user's rootless Podman instead of
-  suggesting the docker group
-- `https://` status and Ollama URLs and PostgreSQL `verify-ca`/`verify-full` verify certificates
-  under the sandbox (the CA bundle was unreadable, so every TLS verification failed); a private
-  PostgreSQL CA or client certificate in `~/.postgresql` is readable too
-- The logged-in user count works under the sandbox again (utmp was blocked, so it counted
-  every non-root account with a process); hosts without utmp count systemd-logind sessions,
-  and the count is shown as unknown rather than guessed when neither exists
-- nginx request and handled rates no longer spike to ~1.8e19/s after an nginx restart, and a
-  failed status poll no longer doubles the next rate
-- PostgreSQL checkpoint and backend write rates no longer report lifetime totals as one
-  second's writes after the background-writer query fails once, and a failed poll no longer
-  doubles the next rates
-- History no longer goes missing for up to a full ring after a storage tier wraps while
-  records are growing (for example when a container or interface appears); the data stayed
-  on disk but reads skipped it and the dashboard showed an outage
-- Apache2 request and traffic rates no longer double after a failed status poll, and no rate
-  is computed against a counter the previous page did not carry
-- A rolling view no longer stays marked "partial" for minutes after one late refresh
-- The logged-in user count falls back to systemd-logind sessions when utmp exists but
-  records no login (systemd built without utmp support), instead of reading 0
-- A PostgreSQL poll stuck on a frozen server is cut loose after its time limit; lib/pq kept
-  waiting, and keepalives cannot detect a server whose kernel still answers
-- An `https://` Ollama URL without a port is allowed through the sandbox on 443 (it was
-  allowed on 11434)
-- Seek index temporary files left by a crash are removed at the next start
-- A crash between closing a minute and writing its rollup no longer loses that rollup
+- Disk utilization is measured again (read 0% since 0.7.0)
+- TCP retransmissions are stored in history (older versions can't read the new records)
+- PostgreSQL and MySQL monitoring no longer piles up server connections
+- PostgreSQL polls stuck on a frozen server are cut off at their time limit
+- MySQL passwords with `@`, `/` or `:` and IPv6 hosts work; PostgreSQL settings are quoted
+- nginx, Apache2, PostgreSQL and MySQL rates no longer spike after a restart or failed poll
+- Rootless Podman is found for the user Kula runs as
+- `https://` targets and PostgreSQL `verify-ca`/`verify-full` work under the sandbox
+- An `https://` Ollama URL without a port works under the sandbox
+- Logged-in user count works under the sandbox, with a systemd-logind fallback
+- History no longer goes missing after a tier wraps with growing records
+- A crash no longer loses the rollup of the minute it interrupted
+- Seek index temp files left by a crash are cleaned up
+- A rolling view no longer stays marked "partial" after one late refresh
 
 ### Security
 
-- Login is refused while auth is disabled instead of issuing sessions that stayed valid
-  after enabling auth; stored sessions are cleared on runs with auth off and dropped when
-  their user is no longer configured
-- Bound concurrent password hashing so a login flood from many addresses cannot exhaust memory;
-  the bound also counts memory, so a larger `argon2.memory` allows fewer hashes at once
-- Restored sessions are bound to the account's password: changing a password signs that
-  account out, and sessions saved by older versions (which also issued them with auth off)
-  are dropped once, so everyone signs in again after upgrading
+- Login is refused while auth is disabled
+- Concurrent password hashing is bounded by CPU and memory
+- Sessions are tied to the account password; everyone signs in again after upgrading
 
 ## [0.21.0] - 2026-10-01
 
