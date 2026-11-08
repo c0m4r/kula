@@ -134,23 +134,23 @@ func credentialJSON(t *testing.T, am *AuthManager, user string) string {
 }
 
 // TestLoadSessionsDropsChangedCredentials pins the binding between a session
-// and the credential it was issued for: changing an account's password signs
-// its sessions out at the next start, and so does a session saved without a
-// binding — by an older version, which also issued sessions with auth off.
+// and the credential it was issued for: changing an account's password or salt
+// signs its sessions out at the next start, and so does a session saved without
+// a binding — by an older version, which also issued sessions with auth off.
 func TestLoadSessionsDropsChangedCredentials(t *testing.T) {
 	tmpDir := t.TempDir()
 	params := config.Argon2Config{Time: 1, Memory: 8, Threads: 1}
-	authWith := func(password string) config.AuthConfig {
+	authWith := func(password, salt string) config.AuthConfig {
 		return config.AuthConfig{
 			Enabled:        true,
 			Username:       "admin",
-			PasswordHash:   HashPassword(password, "salt", params),
-			PasswordSalt:   "salt",
+			PasswordHash:   HashPassword(password, salt, params),
+			PasswordSalt:   salt,
 			Argon2:         params,
 			SessionTimeout: time.Hour,
 		}
 	}
-	before := NewAuthManager(authWith("old secret"), tmpDir, false, config.SecurityConfig{OriginValidation: true})
+	before := NewAuthManager(authWith("old secret", "salt"), tmpDir, false, config.SecurityConfig{OriginValidation: true})
 	if _, err := before.CreateSession("admin"); err != nil {
 		t.Fatal(err)
 	}
@@ -170,11 +170,14 @@ func TestLoadSessionsDropsChangedCredentials(t *testing.T) {
 		return len(am.sessions)
 	}
 
-	if n := restored(authWith("old secret")); n != 1 {
+	if n := restored(authWith("old secret", "salt")); n != 1 {
 		t.Fatalf("same credential: restored %d session(s), want 1", n)
 	}
-	if n := restored(authWith("new secret")); n != 0 {
+	if n := restored(authWith("new secret", "salt")); n != 0 {
 		t.Errorf("after a password change: restored %d session(s), want 0", n)
+	}
+	if n := restored(authWith("old secret", "new salt")); n != 0 {
+		t.Errorf("after a salt change: restored %d session(s), want 0", n)
 	}
 
 	var sessions []map[string]any
@@ -186,7 +189,7 @@ func TestLoadSessionsDropsChangedCredentials(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpDir, "sessions.json"), unbound, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if n := restored(authWith("old secret")); n != 0 {
+	if n := restored(authWith("old secret", "salt")); n != 0 {
 		t.Errorf("session saved without a credential binding: restored %d, want 0", n)
 	}
 }

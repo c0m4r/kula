@@ -27,8 +27,9 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
   and `ValidateCredentials` accepts nothing, so no session can be minted. Sessions are not
   loaded either, and the empty set saved at shutdown clears `sessions.json`.
 - **Bound to the credential** — each session records a fingerprint of the account it was
-  issued for (SHA-256 over username, salt and Argon2id hash). A session read from
-  `sessions.json` is dropped on load unless that fingerprint matches the config: a removed
+  issued for (SHA-256 over username and Argon2id hash; the hash is keyed by the salt, so
+  the salt itself stays out). A session read from `sessions.json` is dropped on load unless
+  that fingerprint matches the config: a removed
   account, a changed password or salt, or a session saved by a version before 0.22.0 (which
   also minted sessions with auth disabled) does not come back.
 - **SHA-256 token hashing at rest** — plaintext token only on the wire; only its hash is stored

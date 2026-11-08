@@ -506,20 +506,23 @@ func (a *AuthManager) CleanupSessions() {
 }
 
 // credentialFingerprint identifies the credential username currently has in
-// the config: a SHA-256 over the name and its stored salt and Argon2id hash.
+// the config: a SHA-256 over the name and its stored Argon2id hash. The salt
+// is left out because the hash is already keyed by it, so a new password or
+// salt yields a new hash (and keeping the salt out of SHA-256 spares CodeQL's
+// go/weak-sensitive-data-hashing, which treats password_salt as a password).
 // It reveals nothing a guess could be checked against more cheaply than the
 // hash itself, and ok is false for a name the config does not have.
 func (a *AuthManager) credentialFingerprint(username string) (fingerprint string, ok bool) {
 	if username == "" {
 		return "", false
 	}
-	salt, hash, found := "", "", false
+	hash, found := "", false
 	if username == a.cfg.Username {
-		salt, hash, found = a.cfg.PasswordSalt, a.cfg.PasswordHash, true
+		hash, found = a.cfg.PasswordHash, true
 	} else {
 		for _, u := range a.cfg.Users {
 			if username == u.Username {
-				salt, hash, found = u.PasswordSalt, u.PasswordHash, true
+				hash, found = u.PasswordHash, true
 				break
 			}
 		}
@@ -527,7 +530,7 @@ func (a *AuthManager) credentialFingerprint(username string) (fingerprint string
 	if !found {
 		return "", false
 	}
-	sum := sha256.Sum256([]byte("kula-session-credential-v1\x00" + username + "\x00" + salt + "\x00" + hash))
+	sum := sha256.Sum256([]byte("kula-session-credential-v1\x00" + username + "\x00" + hash))
 	return hex.EncodeToString(sum[:]), true
 }
 
