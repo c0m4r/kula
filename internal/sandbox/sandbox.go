@@ -289,8 +289,8 @@ func urlConnectPort(raw string) (uint16, bool) {
 		}
 		return 80, true
 	}
-	p, err := strconv.Atoi(u.Port())
-	if err != nil || p <= 0 || p > 65535 {
+	p, err := strconv.ParseUint(u.Port(), 10, 16)
+	if err != nil || p == 0 {
 		return 0, false
 	}
 	return uint16(p), true
