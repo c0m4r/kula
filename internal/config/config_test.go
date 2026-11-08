@@ -209,6 +209,54 @@ func TestLoadRejectsBrokenWebLimits(t *testing.T) {
 	}
 }
 
+// Disk temperatures and power supplies are read every 10 s when the config
+// does not say, or every sample when the collection interval is longer; any
+// other value must be a multiple of the collection interval.
+func TestLoadReadingIntervals(t *testing.T) {
+	load := func(t *testing.T, interval, settings string) (*Config, error) {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		yaml := fmt.Sprintf("storage:\n  directory: %s\n  tiers:\n    - resolution: %s\n      max_size: 10MB\n"+
+			"collection:\n  interval: %s\n%s", dir, interval, interval, settings)
+		if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return Load(path)
+	}
+	for _, tc := range []struct {
+		name, interval, settings string
+		disk, psu                time.Duration
+	}{
+		{"defaults", "1s", "", 10 * time.Second, 10 * time.Second},
+		{"defaults at 15s", "15s", "", 15 * time.Second, 15 * time.Second},
+		{"every sample", "1s", "  disk_temp_interval: 1s\n  power_supply_interval: 1s\n", time.Second, time.Second},
+		{"longer", "5s", "  disk_temp_interval: 1m\n", time.Minute, 10 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := load(t, tc.interval, tc.settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Collection.DiskTempInterval != tc.disk || cfg.Collection.PowerSupplyInterval != tc.psu {
+				t.Fatalf("disk_temp_interval %v, power_supply_interval %v; want %v and %v",
+					cfg.Collection.DiskTempInterval, cfg.Collection.PowerSupplyInterval, tc.disk, tc.psu)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, interval, settings string }{
+		{"below the interval", "1s", "  disk_temp_interval: 500ms\n"},
+		{"not a multiple", "2s", "  power_supply_interval: 5s\n"},
+		{"negative", "1s", "  disk_temp_interval: -10s\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := load(t, tc.interval, tc.settings); err == nil || !strings.Contains(err.Error(), "must be a multiple of collection.interval") {
+				t.Fatalf("Load() = %v, want a refusal for:\n%s", err, tc.settings)
+			}
+		})
+	}
+}
+
 func TestNormalizeOrigin(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"https://app.example.com", "https://app.example.com"},

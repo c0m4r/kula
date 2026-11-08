@@ -42,6 +42,14 @@ collection:
   # - host: reads only /proc/1/mounts (host-level visibility)
   # - self: reads only /proc/self/mounts (container-level visibility)
   mounts_detection: auto
+  # How often disk temperatures and power supplies (batteries, UPS) are read,
+  # as a multiple of interval; the samples in between repeat the last reading.
+  # Each NVMe temperature read sends the drive a SMART command, which can keep
+  # it out of its deeper idle states, and a laptop battery read takes tens of
+  # milliseconds in the embedded controller. Set either to the interval to
+  # read on every sample. (default: 10s, or interval when that is longer)
+  # disk_temp_interval: 10s
+  # power_supply_interval: 10s
   # You can override the auto-detected list of disks and network interfaces by uncommenting and populating these lists:
   # Disks are tracked by persistent hardware ID automatically. Run `kula disks`
   # (or see disk.devices[].id in /api/current) and copy IDs here to select drives

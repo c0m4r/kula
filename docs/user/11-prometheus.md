@@ -123,6 +123,10 @@ neither).
 Per-device metrics (network interfaces, disks, filesystems, GPUs, containers, sensors) carry
 appropriate labels.
 
+Disk temperatures and power-supply metrics change every `collection.disk_temp_interval` and
+`collection.power_supply_interval` (10 s by default); a scrape in between returns the last
+reading.
+
 Disk I/O and temperature metrics use the **persistent disk ID** as their `device` label value,
 so a drive's history follows it across reboots and kernel renames. `kula_disk_info` maps that
 ID to the drive's current kernel name:

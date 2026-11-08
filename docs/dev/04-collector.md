@@ -27,7 +27,7 @@ Lifecycle:
 | [`cpu.go`](../../internal/collector/cpu.go) | `/proc/stat`, `/proc/loadavg`, hwmon/thermal sysfs | CPU usage breakdown, load averages, CPU temps |
 | [`memory*`](../../internal/collector/) (in `cpu.go`/types) | `/proc/meminfo` | memory + swap |
 | [`network.go`](../../internal/collector/network.go) | `/proc/net/dev`, `/proc/net/snmp`, `/proc/net/netstat`, `/proc/net/sockstat` | per-iface throughput, TCP errors/resets/retrans/established, sockets |
-| [`disk.go`](../../internal/collector/disk.go) | `/proc/diskstats`, `statfs` ([`mount_stats.go`](../../internal/collector/mount_stats.go)), hwmon | per-device I/O and busy % (`io_ticks`), filesystem usage, disk temps (skips virtual/LVM/loop) |
+| [`disk.go`](../../internal/collector/disk.go) | `/proc/diskstats`, `statfs` ([`mount_stats.go`](../../internal/collector/mount_stats.go)), hwmon ([`cadence.go`](../../internal/collector/cadence.go)) | per-device I/O and busy % (`io_ticks`), filesystem usage, disk temps every `disk_temp_interval` (skips virtual/LVM/loop) |
 | [`disk_identity.go`](../../internal/collector/disk_identity.go) | sysfs (`wwid`, `serial`, `uuid`), `kula disks` | persistent disk IDs and stable per-disk series keys |
 | [`system.go`](../../internal/collector/system.go) | hostname, `/proc/uptime`, entropy, `adjtimex`, utmp or systemd-logind sessions | uptime, entropy, clock sync, user count (`-1` when neither source exists) |
 | [`process.go`](../../internal/collector/process.go) | `/proc/<pid>/stat` | running/sleeping/blocked/zombie counts, threads |
@@ -35,7 +35,7 @@ Lifecycle:
 | [`gpu.go`](../../internal/collector/gpu.go) | `/sys/class/drm` discovery | GPU enumeration (NVIDIA/AMD/Intel); GPUs found are kept, a host without one looks again once a minute |
 | [`gpu_nvidia.go`](../../internal/collector/gpu_nvidia.go) | `nvidia.log` (CSV, atomic read) | NVIDIA temp/load/power/VRAM |
 | [`gpu_sysfs.go`](../../internal/collector/gpu_sysfs.go) | sysfs | AMD/Intel temp/power/VRAM/load |
-| [`psu.go`](../../internal/collector/psu.go) | `/sys/class/power_supply` | battery/PSU status |
+| [`psu.go`](../../internal/collector/psu.go) | `/sys/class/power_supply` ([`cadence.go`](../../internal/collector/cadence.go)) | battery/PSU status every `power_supply_interval` |
 | [`containers.go`](../../internal/collector/containers.go) | Docker/Podman socket + cgroups v2 | per-container CPU/mem/net/disk; a container is inspected for its PID once, kept while `/proc/<pid>/cgroup` still names it, and its state dropped when it leaves the list |
 | [`nginx.go`](../../internal/collector/nginx.go) | stub_status | connections, accepts/handled/requests rates |
 | [`apache2.go`](../../internal/collector/apache2.go) | mod_status | workers, scoreboard, rates |
@@ -72,6 +72,22 @@ API and WebSocket payloads.
   most one call in flight per mount point, waits `statfsWait` (at most 200 ms) for a tick's
   calls, and reports a mount whose call is still running with its last result while that is
   under `pollStale`, then not at all, logging when it stops and starts answering.
+- **Readings that cost the device run at their own interval.** Disk temperatures and power
+  supplies go through [`cadence.go`](../../internal/collector/cadence.go): each NVMe
+  temperature read sends the drive a SMART command (2–5 ms per sensor, and it can keep the
+  drive out of its deeper idle states), and a laptop battery read is an ACPI round trip to the
+  embedded controller (about 80 ms on the host where this was measured, paid whenever the
+  kernel's one-second battery cache has expired). `collection.disk_temp_interval` and `collection.power_supply_interval`
+  (default 10 s, a multiple of the collection interval, resolved by
+  `config.ReadingInterval`) set how often; the samples in between repeat the last reading,
+  each with its own copy, so the record format and aggregation are unchanged. Each key (a
+  disk's kernel name, checked against its identity and `diskseq`; the power supply class) has
+  at most one read in flight, in its own goroutine. The tick that starts a read waits
+  `statfsWait` for it; a read is due up to half a tick early, so jitter cannot push it a tick
+  late; a reading stays current for `pollStale` of its interval; and a read outstanding for a
+  whole interval with nothing current to show is logged, once each way. A disk swapped in
+  under a known name is read at once, and only disks selected for monitoring are read.
+  `mountStats` is the same arrangement for `statfs`, which runs every tick.
 - **Application polls run off the collection tick.** `poller.go`'s `poller[T]` runs one poll at
   a time in its own goroutine, and `Collect` reads `Latest()`, which is `nil` once a result is
   older than `pollStale` (three intervals, at least 3 s). nginx and Apache2 use it through

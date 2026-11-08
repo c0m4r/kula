@@ -3,14 +3,33 @@ package collector
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// collectPSU reads /sys/class/power_supply/* and returns stats for each supply.
-// Returns nil if no power supplies are found (e.g., desktops without batteries).
-func (c *Collector) collectPSU() []PowerSupplyStats {
-	baseDir := filepath.Join(sysPath, "class", "power_supply")
+// powerSupplies returns the power supply readings, taken every
+// collection.power_supply_interval and repeated in the samples between (see
+// cadence): reading a laptop battery is a round trip to the embedded
+// controller, tens of milliseconds.
+func (c *Collector) powerSupplies() []PowerSupplyStats {
+	dir := filepath.Join(sysPath, "class", "power_supply")
+	schedule := newCadenceSchedule(c.collCfg.PowerSupplyInterval, c.collCfg.Interval)
+	r := c.psuReads.get(time.Now(), schedule, []cadenceRead[[]PowerSupplyStats]{{
+		key:  dir,
+		read: func() []PowerSupplyStats { return c.collectPSU(dir) },
+	}})[0]
+	if !r.ok {
+		return nil
+	}
+	return slices.Clone(r.value) // a copy: the reading repeats in later samples
+}
+
+// collectPSU reads the power supplies under baseDir (/sys/class/power_supply)
+// and returns stats for each. Returns nil if no power supplies are found
+// (e.g., desktops without batteries).
+func (c *Collector) collectPSU(baseDir string) []PowerSupplyStats {
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
 		return nil

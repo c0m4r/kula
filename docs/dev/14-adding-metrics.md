@@ -42,7 +42,9 @@ Add `Foo *FooStats` to `ApplicationsStats`.
 Implement `collectFoo(elapsed float64) *FooStats`, following the nginx pattern: lazy-allocated
 HTTP client, **return `nil` on error**, parse the upstream format. If the source has cumulative
 counters that reset on restart, **guard the delta against rollback** (see `nginx.go` /
-`apache2.go`).
+`apache2.go`). If reading the source costs the device rather than Kula (a drive command, a
+round trip to an embedded controller), read it at its own interval through `cadence.go`, as
+disk temperatures and power supplies do.
 
 ## 4. Orchestrator — `internal/collector/collector.go`
 

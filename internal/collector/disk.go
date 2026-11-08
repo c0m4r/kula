@@ -7,8 +7,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Block-device name prefixes for virtual/logical/optical devices that are
@@ -245,6 +247,7 @@ func isPartition(name string) bool {
 
 func (c *Collector) collectDisks(elapsed float64) DiskStats {
 	current := c.parseDiskStats()
+	temps := c.diskTemperatures(current)
 	stats := DiskStats{}
 	next := make(map[string]diskRaw, len(current))
 
@@ -274,7 +277,10 @@ func (c *Collector) collectDisks(elapsed float64) DiskStats {
 			}
 		}
 
-		dev.Temperature, dev.Sensors = c.getDiskTemperature(name)
+		if t, ok := temps[name]; ok {
+			// A copy: the reading repeats in later samples.
+			dev.Temperature, dev.Sensors = t.primary, slices.Clone(t.sensors)
+		}
 
 		stats.Devices = append(stats.Devices, dev)
 		next[key] = cur
@@ -477,12 +483,44 @@ func (c *Collector) scanMounts(f *os.File, result *[]FileSystemInfo, seen map[st
 	}
 }
 
-// getDiskTemperature attempts to read temperature for a disk device.
-func (c *Collector) getDiskTemperature(devName string) (float64, []DiskTempSensor) {
+// diskTemp is one disk's temperature reading.
+type diskTemp struct {
+	primary float64
+	sensors []DiskTempSensor
+}
+
+// diskTemperatures returns the temperature of each disk in disks that has
+// sensors. They are read every collection.disk_temp_interval and repeated in
+// the samples between (see cadence), and only for the disks selected for
+// monitoring: a temperature read can keep a drive from idling.
+func (c *Collector) diskTemperatures(disks map[string]diskRaw) map[string]diskTemp {
+	reads := make([]cadenceRead[diskTemp], 0, len(disks))
+	for name, raw := range disks {
+		dir := filepath.Join(sysPath, "class", "block", name)
+		reads = append(reads, cadenceRead[diskTemp]{
+			key:   name,
+			ident: raw.id + "|" + raw.diskseq,
+			read:  func() diskTemp { return c.readDiskTemperature(dir) },
+		})
+	}
+	schedule := newCadenceSchedule(c.collCfg.DiskTempInterval, c.collCfg.Interval)
+	temps := make(map[string]diskTemp, len(reads))
+	for i, r := range c.diskTemps.get(time.Now(), schedule, reads) {
+		if r.ok && len(r.value.sensors) > 0 {
+			temps[reads[i].key] = r.value
+		}
+	}
+	return temps
+}
+
+// readDiskTemperature reads the temperature sensors of the disk whose sysfs
+// directory is dir (/sys/class/block/<name>). On NVMe each sensor read sends
+// the drive a SMART command.
+func (c *Collector) readDiskTemperature(dir string) diskTemp {
 	pathsToCheck := []string{
-		filepath.Join(sysPath, "class", "block", devName, "device", "hwmon"),
-		filepath.Join(sysPath, "class", "block", devName, "device", "device", "hwmon"),
-		filepath.Join(sysPath, "class", "block", devName, "device"), // fallback for nvme direct hwmon0
+		filepath.Join(dir, "device", "hwmon"),
+		filepath.Join(dir, "device", "device", "hwmon"),
+		filepath.Join(dir, "device"), // fallback for nvme direct hwmon0
 	}
 
 	var primaryTemp float64
@@ -561,11 +599,11 @@ func (c *Collector) getDiskTemperature(devName string) (float64, []DiskTempSenso
 				if primaryTemp == 0 {
 					primaryTemp = sensors[0].Value
 				}
-				return primaryTemp, sensors
+				return diskTemp{primary: primaryTemp, sensors: sensors}
 			}
 		}
 	}
-	return 0, nil
+	return diskTemp{}
 }
 
 // DetectDiskTjMax returns the maximum critical temperature of any disk in Celsius, or 0 if undetected.

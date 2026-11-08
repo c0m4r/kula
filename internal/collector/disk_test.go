@@ -2,6 +2,7 @@ package collector
 
 import (
 	"testing"
+	"time"
 
 	"kula/internal/config"
 )
@@ -130,5 +131,55 @@ func TestCollectFileSystemsWithExplicitMountPoints(t *testing.T) {
 	}
 	if fs[0].FSType != "/dev/shm" && fs[0].FSType != "tmpfs" {
 		t.Errorf("expected fstype tmpfs, got %s", fs[0].FSType)
+	}
+}
+
+// Disk temperatures are read at collection.disk_temp_interval, so the samples
+// between repeat the last reading (each a copy of its own), a drive swapped
+// in under the same name is read at once, and a drive left out of
+// collection.devices is never read.
+func TestDiskTemperaturesAtTheirOwnInterval(t *testing.T) {
+	c := diskTestEnvironment(t)
+	c.collCfg.Interval = time.Second // the default 10 s temperature interval applies
+	hwmon := "class/block/sda/device/hwmon/hwmon0/"
+	diskTestFile(t, sysPath, "class/block/sda/device/serial", "A")
+	diskTestFile(t, sysPath, hwmon+"temp1_label", "Composite\n")
+	diskTestFile(t, sysPath, hwmon+"temp2_label", "Sensor 1\n")
+	diskTestFile(t, sysPath, hwmon+"temp2_input", "38850\n")
+	diskTestFile(t, sysPath, "class/block/sdb/device/serial", "B")
+	diskTestFile(t, sysPath, "class/block/sdb/device/hwmon/hwmon1/temp1_input", "30000\n")
+	diskTestFile(t, procPath, "diskstats", diskStatsLine("sda", 1)+diskStatsLine("sdb", 1))
+	c.collCfg.Devices = []string{"serial:||A"}
+	sda := func() DiskDevice {
+		t.Helper()
+		devs := c.collectDisks(1).Devices
+		if len(devs) != 1 || devs[0].Name != "sda" {
+			t.Fatalf("devices = %+v, want sda alone", devs)
+		}
+		return devs[0]
+	}
+
+	diskTestFile(t, sysPath, hwmon+"temp1_input", "41850\n")
+	first := sda()
+	if first.Temperature != 41.85 || len(first.Sensors) != 2 || first.Sensors[1] != (DiskTempSensor{Name: "Sensor 1", Value: 38.85}) {
+		t.Fatalf("first reading: %v °C, sensors %+v", first.Temperature, first.Sensors)
+	}
+	diskTestFile(t, sysPath, hwmon+"temp1_input", "50000\n")
+	second := sda()
+	if second.Temperature != 41.85 {
+		t.Fatalf("temperature read again within its interval: %v °C", second.Temperature)
+	}
+	second.Sensors[0].Value = -1
+	if got := sda().Sensors[0].Value; got != 41.85 {
+		t.Fatalf("a change to one sample's sensors reached the next: %v", got)
+	}
+
+	diskTestFile(t, sysPath, "class/block/sda/device/serial", "C")
+	c.collCfg.Devices = []string{"serial:||C"}
+	if got := sda().Temperature; got != 50 {
+		t.Fatalf("a drive swapped in under the same name was served %v °C, its predecessor's reading", got)
+	}
+	if _, read := c.diskTemps.entries["sdb"]; read {
+		t.Fatal("the temperature of a drive not selected for monitoring was read")
 	}
 }

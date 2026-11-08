@@ -67,6 +67,8 @@ URL must use http or https and must not carry credentials or a fragment.
 collection:
   interval: 1s            # 1s, 2s, 5s, 10s, 15s, or 30s
   mounts_detection: auto  # auto | host | self
+  # disk_temp_interval: 10s     # how often disk temperatures are read
+  # power_supply_interval: 10s  # how often batteries and other power supplies are read
   # devices: ["wwid:eui.0011223344556677"]  # override auto-detected disks; prefer the
   #                                   # persistent IDs printed by `kula disks`
   #                                   # (legacy kernel names still work; a partition is
@@ -80,6 +82,15 @@ collection:
   - `auto` — merges host and container mounts (detects namespaces).
   - `host` — reads only `/proc/1/mounts` (host-level visibility).
   - `self` — reads only `/proc/self/mounts` (container-level visibility).
+- **`disk_temp_interval`** and **`power_supply_interval`** set how often disk temperatures
+  and power supplies (batteries, UPS) are read. Both default to `10s`, or to `interval` when
+  that is longer, and must be a multiple of `interval`. The samples in between repeat the last
+  reading, so these charts move in steps. Reading an NVMe drive's temperature sends it a SMART
+  command, which can keep the drive out of its deeper idle states, and reading a laptop battery
+  takes tens of milliseconds in its embedded controller. Set either to `interval` to read on
+  every sample. A drive or battery that stops answering cannot delay the other metrics: it
+  keeps its last reading for three of its intervals, then drops out of the sample until it
+  answers again, with a log line each way.
 - The `devices`/`mountpoints`/`interfaces` lists let you pin exactly what is monitored,
   bypassing auto-discovery.
 - Network filesystems (NFS, CIFS) are monitored too. If one stops answering (its server is

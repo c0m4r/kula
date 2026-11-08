@@ -41,16 +41,38 @@ type GlobalConfig struct {
 }
 
 type CollectionConfig struct {
-	Interval    time.Duration `yaml:"interval"`
-	Devices     []string      `yaml:"devices"`
-	MountPoints []string      `yaml:"mountpoints"`
-	Interfaces  []string      `yaml:"interfaces"`
+	Interval time.Duration `yaml:"interval"`
+	// DiskTempInterval and PowerSupplyInterval are how often disk
+	// temperatures and power supplies are read: each NVMe temperature read
+	// sends the drive a SMART command, each battery read is a round trip to
+	// the embedded controller. A multiple of Interval; the samples in between
+	// repeat the last reading. Zero (omitted) means DefaultReadingInterval,
+	// or Interval when that is longer; Load fills it in.
+	DiskTempInterval    time.Duration `yaml:"disk_temp_interval"`
+	PowerSupplyInterval time.Duration `yaml:"power_supply_interval"`
+	Devices             []string      `yaml:"devices"`
+	MountPoints         []string      `yaml:"mountpoints"`
+	Interfaces          []string      `yaml:"interfaces"`
 	// MountsDetection controls how mount points are detected.
 	// Options: "auto" (default), "host", "self"
 	MountsDetection string `yaml:"mounts_detection"`
 	// DebugLog enables verbose debug logging for device/interface/filesystem
 	// discovery. Activated when web.logging.level = "debug". Not exposed in YAML.
 	DebugLog bool `yaml:"-"`
+}
+
+// DefaultReadingInterval is how often disk temperatures and power supplies
+// are read when the config does not say.
+const DefaultReadingInterval = 10 * time.Second
+
+// ReadingInterval resolves a configured reading interval: zero means
+// DefaultReadingInterval, and no reading is taken more often than every
+// collection interval.
+func ReadingInterval(configured, interval time.Duration) time.Duration {
+	if configured <= 0 {
+		configured = DefaultReadingInterval
+	}
+	return max(configured, interval)
 }
 
 type StorageConfig struct {
@@ -583,6 +605,10 @@ func load(path string, mustExist bool) (*Config, error) {
 		return nil, err
 	}
 
+	if err := cfg.validateReadingIntervals(); err != nil {
+		return nil, err
+	}
+
 	if err := cfg.validateBackup(); err != nil {
 		return nil, err
 	}
@@ -816,6 +842,31 @@ func (c *Config) validateTiers() error {
 		}
 	}
 
+	return nil
+}
+
+// validateReadingIntervals fills in the disk temperature and power supply
+// intervals left out and refuses one that is not a multiple of
+// collection.interval, which validateTiers has already checked: a reading
+// lands on a sample, so any other value would space readings unevenly.
+func (c *Config) validateReadingIntervals() error {
+	interval := c.Collection.Interval
+	for _, r := range []struct {
+		key   string
+		value *time.Duration
+	}{
+		{"collection.disk_temp_interval", &c.Collection.DiskTempInterval},
+		{"collection.power_supply_interval", &c.Collection.PowerSupplyInterval},
+	} {
+		if *r.value == 0 {
+			*r.value = ReadingInterval(0, interval)
+			continue
+		}
+		if *r.value < interval || *r.value%interval != 0 {
+			return fmt.Errorf("%s (%s) must be a multiple of collection.interval (%s)",
+				r.key, *r.value, interval)
+		}
+	}
 	return nil
 }
 

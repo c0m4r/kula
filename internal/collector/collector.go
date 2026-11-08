@@ -31,8 +31,10 @@ type Collector struct {
 	diskWarnings map[string]bool
 	prevSelf     selfRaw
 	prevTCP      tcpRaw
-	prevEnergy   map[string]uint64 // for Intel energy derivation
-	mounts       mountStats        // statfs off the collection path
+	prevEnergy   map[string]uint64           // for Intel energy derivation
+	mounts       mountStats                  // statfs off the collection path
+	diskTemps    cadence[diskTemp]           // disk temperatures at their own interval
+	psuReads     cadence[[]PowerSupplyStats] // power supplies at their own interval
 	gpus         []GPUInfo
 	gpuScanAt    time.Time // last discovery that found no GPU; see gpuRescan
 	storageDir   string
@@ -70,6 +72,8 @@ func New(cfg config.GlobalConfig, collCfg config.CollectionConfig, appCfg config
 		prevNet:    make(map[string]netRaw),
 		prevDisk:   make(map[string]diskRaw),
 		prevEnergy: make(map[string]uint64),
+		diskTemps:  cadence[diskTemp]{name: "[disk] temperature read on"},
+		psuReads:   cadence[[]PowerSupplyStats]{name: "[psu] read of"},
 		nginxLog:   pollLog{name: "[nginx]"},
 		apacheLog:  pollLog{name: "[apache2]"},
 		appCtx:     ctx,
@@ -202,7 +206,7 @@ func (c *Collector) Collect() *Sample {
 	s.Process = collectProcesses()
 	s.Self = c.collectSelf(elapsed)
 	s.GPU = c.collectGPUs(elapsed)
-	s.PSU = c.collectPSU()
+	s.PSU = c.powerSupplies()
 	s.Apps = c.collectApps(elapsed)
 
 	c.mu.Lock()
