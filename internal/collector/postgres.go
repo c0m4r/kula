@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lib/pq"
@@ -89,31 +90,82 @@ func postgresDSN(host string, port int, user, password, dbname, sslmode string, 
 	return strings.Join(parts, " ")
 }
 
-// pgKeepaliveDialer probes an idle TCP connection after 15 s and gives up
-// after three unanswered probes 5 s apart. lib/pq does not close a socket when
-// a query's context ends (it sends a cancel request and keeps reading), so on
-// a half-open connection only TCP itself can end the wait; the default
-// keepalive takes minutes.
-type pgKeepaliveDialer struct{ d net.Dialer }
-
-func newPgKeepaliveDialer() pgKeepaliveDialer {
-	return pgKeepaliveDialer{d: net.Dialer{KeepAliveConfig: net.KeepAliveConfig{
-		Enable: true, Idle: 15 * time.Second, Interval: 5 * time.Second, Count: 3,
-	}}}
+// pgDialer dials PostgreSQL connections and keeps track of the ones still
+// open. Its keepalives probe an idle connection after 15 s and give up after
+// three unanswered probes 5 s apart, so a server that vanished while the
+// session sat idle is noticed in seconds instead of the default's minutes.
+// lib/pq does not close a socket when a query's context ends (it sends a
+// cancel request and keeps reading), and keepalives cannot help a socket with
+// a read in flight to a frozen server, so abort closes every open connection:
+// dbSession.bound calls it for work stuck past its deadline.
+type pgDialer struct {
+	d     net.Dialer
+	mu    sync.Mutex
+	conns map[*pgConn]struct{}
 }
 
-func (d pgKeepaliveDialer) Dial(network, address string) (net.Conn, error) {
-	return d.d.Dial(network, address)
+// pgConn removes itself from its dialer's open set when closed.
+type pgConn struct {
+	net.Conn
+	owner *pgDialer
+	once  sync.Once
 }
 
-func (d pgKeepaliveDialer) DialTimeout(network, address string, timeout time.Duration) (net.Conn, error) {
+func (c *pgConn) Close() error {
+	c.once.Do(func() {
+		c.owner.mu.Lock()
+		delete(c.owner.conns, c)
+		c.owner.mu.Unlock()
+	})
+	return c.Conn.Close()
+}
+
+func newPgDialer() *pgDialer {
+	return &pgDialer{
+		d: net.Dialer{KeepAliveConfig: net.KeepAliveConfig{
+			Enable: true, Idle: 15 * time.Second, Interval: 5 * time.Second, Count: 3,
+		}},
+		conns: make(map[*pgConn]struct{}),
+	}
+}
+
+func (d *pgDialer) track(conn net.Conn, err error) (net.Conn, error) {
+	if err != nil {
+		return nil, err
+	}
+	c := &pgConn{Conn: conn, owner: d}
+	d.mu.Lock()
+	d.conns[c] = struct{}{}
+	d.mu.Unlock()
+	return c, nil
+}
+
+func (d *pgDialer) Dial(network, address string) (net.Conn, error) {
+	return d.track(d.d.Dial(network, address))
+}
+
+func (d *pgDialer) DialTimeout(network, address string, timeout time.Duration) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return d.d.DialContext(ctx, network, address)
+	return d.track(d.d.DialContext(ctx, network, address))
 }
 
-func (d pgKeepaliveDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return d.d.DialContext(ctx, network, address)
+func (d *pgDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return d.track(d.d.DialContext(ctx, network, address))
+}
+
+// abort closes every connection the dialer opened that is still open,
+// failing any read or write blocked on one.
+func (d *pgDialer) abort() {
+	d.mu.Lock()
+	open := make([]*pgConn, 0, len(d.conns))
+	for c := range d.conns {
+		open = append(open, c)
+	}
+	d.mu.Unlock()
+	for _, c := range open {
+		_ = c.Close()
+	}
 }
 
 // newPostgresCollector prepares the collector without connecting; the first
@@ -126,6 +178,7 @@ func newPostgresCollector(host string, port int, user, password, dbname, sslmode
 		debug:  debug,
 	}
 	pc.poller.stale = t.stale
+	dialer := newPgDialer()
 	pc.session = dbSession{
 		name:     "[postgres]",
 		label:    dbname,
@@ -134,10 +187,11 @@ func newPostgresCollector(host string, port int, user, password, dbname, sslmode
 			setup:    pc.setupSession,
 			reap:     reapPostgresSession,
 			describe: func(ref dbSessionRef) string { return fmt.Sprintf("pid %d", ref.id) },
+			abort:    dialer.abort,
 		},
 	}
 	if connector, err := pq.NewConnector(pc.dsn); err == nil {
-		connector.Dialer(newPgKeepaliveDialer())
+		connector.Dialer(dialer)
 		pc.session.connector = connector
 	} else {
 		log.Printf("[postgres] invalid connection settings for %q: %v", dbname, err)
@@ -245,7 +299,7 @@ func (pc *postgresCollector) poll(ctx context.Context) *PostgresStats {
 		pc.prev = pgRaw{}
 		return nil
 	}
-	pollCtx, cancel := context.WithTimeout(ctx, pc.session.timeouts.poll)
+	pollCtx, cancel := pc.session.bound(ctx, pc.session.timeouts.poll)
 	defer cancel()
 	stats, err := pc.query(pollCtx, conn)
 	if err == nil {

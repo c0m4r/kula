@@ -216,7 +216,7 @@ func (mc *mysqlCollector) poll(ctx context.Context) *MysqlStats {
 		mc.prev = mysqlRaw{}
 		return nil
 	}
-	pollCtx, cancel := context.WithTimeout(ctx, mc.session.timeouts.poll)
+	pollCtx, cancel := mc.session.bound(ctx, mc.session.timeouts.poll)
 	defer cancel()
 	stats, err := mc.query(pollCtx, conn)
 	if err == nil {

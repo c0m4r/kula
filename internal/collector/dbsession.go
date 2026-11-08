@@ -54,6 +54,10 @@ type dbDialect struct {
 	reap func(ctx context.Context, conn *sql.Conn, ref dbSessionRef) (bool, error)
 	// describe names a session in log lines.
 	describe func(ref dbSessionRef) string
+	// abort, when set, closes every network connection the collector holds.
+	// It is the last resort for a driver that keeps reading after its context
+	// ends (lib/pq): see dbSession.bound.
+	abort func()
 }
 
 // dbTimeouts derives every session bound from the collection interval.
@@ -70,6 +74,9 @@ type dbTimeouts struct {
 	stale time.Duration
 	// backoffCap bounds the wait between failed attempts.
 	backoffCap time.Duration
+	// abortGrace is how long work may outlive its deadline before the
+	// dialect's abort cuts its connections.
+	abortGrace time.Duration
 	interval   time.Duration
 }
 
@@ -85,6 +92,7 @@ func newDBTimeouts(interval time.Duration) dbTimeouts {
 		idle:       max(time.Minute, 4*interval),
 		stale:      max(3*time.Second, 3*interval),
 		backoffCap: max(5*time.Minute, interval),
+		abortGrace: 5 * time.Second,
 		interval:   interval,
 	}
 }
@@ -120,6 +128,26 @@ type dbSession struct {
 // several sessions that refused to die; keeping the newest is enough, because
 // no new poll runs until every remembered one is gone.
 const maxAbandonedSessions = 4
+
+// bound limits ctx to d. A driver that honours its context returns by then.
+// One that does not — lib/pq marks the connection bad, sends a cancel request
+// and keeps reading until the server answers — can stay blocked far longer: a
+// frozen server whose kernel still acknowledges TCP (a paused container), or
+// unacknowledged data waiting on the retransmission timer (about 15 minutes),
+// is something keepalives cannot detect. So when the dialect can abort, a
+// timer cuts its connections once the work has outlived d by abortGrace,
+// which ends the blocked read at once. The returned cancel disarms it.
+func (s *dbSession) bound(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(ctx, d)
+	if s.dialect.abort == nil {
+		return ctx, cancel
+	}
+	timer := time.AfterFunc(d+s.timeouts.abortGrace, s.dialect.abort)
+	return ctx, func() {
+		timer.Stop()
+		cancel()
+	}
+}
 
 func (s *dbSession) clock() time.Time {
 	if s.now != nil {
@@ -159,7 +187,7 @@ func (s *dbSession) open(ctx context.Context) error {
 	// would not apply to it; the session's own server-side timeouts do.
 	db.SetConnMaxLifetime(0)
 
-	connectCtx, cancel := context.WithTimeout(ctx, s.timeouts.poll)
+	connectCtx, cancel := s.bound(ctx, s.timeouts.poll)
 	defer cancel()
 	conn, err := db.Conn(connectCtx)
 	if err != nil {
@@ -187,7 +215,7 @@ func (s *dbSession) reapAbandoned(ctx context.Context) error {
 	if len(s.abandoned) == 0 {
 		return nil
 	}
-	reapCtx, cancel := context.WithTimeout(ctx, s.timeouts.poll)
+	reapCtx, cancel := s.bound(ctx, s.timeouts.poll)
 	defer cancel()
 	remaining := s.abandoned[:0]
 	var firstErr error
@@ -232,7 +260,7 @@ func (s *dbSession) succeed() {
 // connection is closed, and the collector backs off.
 func (s *dbSession) fail(ctx context.Context, err error) {
 	if s.conn != nil {
-		pingCtx, cancel := context.WithTimeout(ctx, min(s.timeouts.poll, 5*time.Second))
+		pingCtx, cancel := s.bound(ctx, min(s.timeouts.poll, 5*time.Second))
 		pingErr := s.conn.PingContext(pingCtx)
 		cancel()
 		if pingErr == nil && ctx.Err() == nil {

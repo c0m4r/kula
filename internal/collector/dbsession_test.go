@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -317,5 +318,106 @@ func TestDBPollerNeverOverlapsPolls(t *testing.T) {
 	time.Sleep(60 * time.Millisecond)
 	if p.Latest() != nil {
 		t.Fatal("a stale result is still served")
+	}
+}
+
+// TestDBSessionBoundAbortsWorkPastItsDeadline pins the last resort for a
+// driver that ignores its context: work still running abortGrace after its
+// deadline has its connections cut, and work that finished in time never does.
+func TestDBSessionBoundAbortsWorkPastItsDeadline(t *testing.T) {
+	aborted := make(chan struct{}, 4)
+	s := &dbSession{
+		timeouts: dbTimeouts{abortGrace: 20 * time.Millisecond},
+		dialect:  dbDialect{abort: func() { aborted <- struct{}{} }},
+	}
+
+	ctx, cancel := s.bound(context.Background(), 10*time.Millisecond)
+	<-ctx.Done()
+	select {
+	case <-aborted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("work stuck past its deadline was never aborted")
+	}
+	cancel()
+
+	_, cancel = s.bound(context.Background(), 10*time.Millisecond)
+	cancel()
+	select {
+	case <-aborted:
+		t.Fatal("work that finished in time was aborted")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Without an abort hook bound is a plain timeout.
+	plain := &dbSession{timeouts: dbTimeouts{abortGrace: time.Millisecond}}
+	ctx, cancel = plain.bound(context.Background(), time.Millisecond)
+	defer cancel()
+	<-ctx.Done()
+}
+
+// TestPgDialerAbortEndsBlockedReads covers what bound relies on for
+// PostgreSQL: abort fails a read blocked on a server that never answers, and
+// closed connections leave the dialer's open set.
+func TestPgDialerAbortEndsBlockedReads(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held []net.Conn // accepted, never answered: a frozen server
+	accepting := make(chan struct{})
+	go func() {
+		defer close(accepting)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			held = append(held, conn)
+		}
+	}()
+	defer func() {
+		_ = ln.Close()
+		<-accepting
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	}()
+
+	d := newPgDialer()
+	closed, err := d.DialContext(context.Background(), "tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := d.DialTimeout("tcp", ln.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := make(chan error, 1)
+	go func() {
+		_, err := conn.Read(make([]byte, 1))
+		read <- err
+	}()
+	select {
+	case err := <-read:
+		t.Fatalf("read returned before abort: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	d.abort()
+	select {
+	case err := <-read:
+		if err == nil {
+			t.Fatal("blocked read succeeded after abort")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("abort did not end the blocked read")
+	}
+	d.mu.Lock()
+	open := len(d.conns)
+	d.mu.Unlock()
+	if open != 0 {
+		t.Fatalf("%d connections still tracked after close and abort", open)
 	}
 }

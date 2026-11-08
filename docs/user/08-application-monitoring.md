@@ -228,14 +228,17 @@ Kula is built never to be the reason a PostgreSQL or MySQL server runs out of co
   (PostgreSQL 14+ `idle_session_timeout` plus TCP keepalives; MySQL `wait_timeout`). If the
   Kula host vanishes (network loss, crash), its session is gone within about a minute rather
   than the hours the server defaults allow. The limits scale up with longer collection
-  intervals.
-- **No session is left behind.** If a poll cannot finish within 10 s, Kula closes that
-  connection and, from its next connection, ends the old session (`pg_terminate_backend` /
+  intervals, up to a one-minute poll limit.
+- **No session is left behind.** If a poll cannot finish within 10 s (twice the collection
+  interval when that is longer, at most one minute), Kula closes that connection, even when
+  the server has frozen and stopped answering, and, from its next connection, ends the old
+  session (`pg_terminate_backend` /
   `KILL CONNECTION` — its own session only, identified so that no other client's can match).
   While that old session is still alive, Kula does not poll beside it. So even during an
   incident there are at most two Kula sessions per server, one of them on its way out.
-- **Failures back off.** A server that is down or refusing connections is retried after 1 s,
-  then 2 s, 4 s … up to 5 minutes, not every second.
+- **Failures back off.** A server that is down or refusing connections is retried after one
+  collection interval (1 s by default), then after twice as long each time, up to 5 minutes,
+  not every interval.
 - **Clean shutdown.** Stopping Kula closes its sessions.
 
 No extra privilege is needed: a database user may always end its own sessions.
