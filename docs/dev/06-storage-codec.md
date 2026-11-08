@@ -164,9 +164,11 @@ Compatibility runs one way: a binary reads every record written before it, but a
 is not guaranteed to read a newer record. It ignores a flag bit it does not know, but it cannot
 skip that section's bytes. In a raw record (one Data block, no statistics extension) the new
 section sits at the end and is left unread; in a rollup the Min and Max blocks that follow are
-read from the wrong offsets. A section version newer than the reader knows fares no better:
+read from the wrong offsets. A section version newer than the reader knows is a decode error
+in every section since 0.22.0, so the record is skipped rather than misread. Binaries before
+0.22.0 fare worse with one:
 
-| Section | Unknown version |
+| Section | Unknown version, before 0.22.0 |
 |---|---|
 | PostgreSQL, MySQL | read as the newest layout the reader knows; what follows is misaligned |
 | Apache2 | nothing read after the version byte; what follows is misaligned |

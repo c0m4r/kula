@@ -1270,11 +1270,16 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	//   0 = not present
 	//   1 = v1 format (56-byte block: 3×int32 + 7×float32 + 2×int64)
 	//   2 = v2 format (104-byte block: 5×int32 + 13×float32 + 4×int64)
+	//   3 = v3 format (121-byte block: v2 + ReplicaCount, IsInRecovery and
+	//       the two replication-lag fields)
 	if err := need(1, "postgres presence"); err != nil {
 		return off, err
 	}
 	pgVersion := data[off]
 	off++
+	if pgVersion > 3 {
+		return off, fmt.Errorf("unsupported postgres section version %d", pgVersion)
+	}
 	if pgVersion == 1 {
 		// v1: old 56-byte block (ActiveConns, IdleConns, MaxConns,
 		//   TxCommitPS, TxRollbackPS, TupFetchedPS, TupInsertedPS,
@@ -1388,6 +1393,9 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 		}
 		myVersion := data[off]
 		off++
+		if myVersion > 3 {
+			return off, fmt.Errorf("unsupported mysql section version %d", myVersion)
+		}
 		if myVersion >= 1 {
 			blockSize := 56
 			switch {
@@ -1554,6 +1562,9 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 			ap.OpenSlots = int(int32(binary.LittleEndian.Uint32(data[off:])))
 			off += 4
 			s.Apps.Apache2 = ap
+		case 0:
+		default:
+			return off, fmt.Errorf("unsupported apache2 section version %d", apache2Version)
 		}
 	}
 

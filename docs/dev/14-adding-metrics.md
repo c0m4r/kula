@@ -135,8 +135,10 @@ if hasFoo {
     if err := need(1, "foo presence"); err != nil {
         return off, err
     }
-    fooPresent := data[off]; off++
-    if fooPresent != 0 {
+    fooVersion := data[off]; off++
+    switch fooVersion {
+    case 0:
+    case 1:
         if err := need(48, "foo fields"); err != nil {
             return off, err
         }
@@ -144,12 +146,15 @@ if hasFoo {
         f.MetricA = int(int32(binary.LittleEndian.Uint32(data[off:]))); off += 4
         // ...
         s.Apps.Foo = f
+    default:
+        return off, fmt.Errorf("unsupported foo section version %d", fooVersion)
     }
 }
 ```
 
 Guard every read with `need` first, the presence byte included: without it a truncated record
-indexes past the end of the slice and panics, which `FuzzDecodeSample` exists to catch.
+indexes past the end of the slice and panics, which `FuzzDecodeSample` exists to catch. Refuse a
+version you do not know: reading it as another layout would misalign every section after it.
 
 Extract the flag in `decodeSample()` and thread it through `decodeVariable()`:
 

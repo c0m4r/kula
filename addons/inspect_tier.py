@@ -525,6 +525,8 @@ def _decode_variable(
     #   2 = v2 (104-byte block: 5×i32 + 13×f32 + 4×i64)
     #   3 = v3 (121-byte block: v2 + replication state)
     pg_version, off = _get_u8(data, off)
+    if pg_version > 3:
+        raise ValueError(f"unsupported postgres section version {pg_version}")
     if pg_version == 1:
         active_conns, off = _get_i32(data, off)
         idle_conns, off = _get_i32(data, off)
@@ -624,6 +626,8 @@ def _decode_variable(
     #   3 = v3 format (v2 + 8B errno + length-prefixed IOState string)
     if has_mysql:
         my_version, off = _get_u8(data, off)
+        if my_version > 3:
+            raise ValueError(f"unsupported mysql section version {my_version}")
         if my_version >= 1:
             threads_connected, off = _get_i32(data, off)
             threads_running, off = _get_i32(data, off)
@@ -771,6 +775,8 @@ def _decode_variable(
                 "open_slots": open_slots,
                 "_format": "v2",
             }
+        elif apache2_ver != 0:
+            raise ValueError(f"unsupported apache2 section version {apache2_ver}")
 
     # 7f. Custom metrics (uint16 group count, per group: str + uint16 metric count)
     num_groups, off = _get_u16(data, off)
