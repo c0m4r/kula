@@ -82,6 +82,9 @@ collection:
   - `self` — reads only `/proc/self/mounts` (container-level visibility).
 - The `devices`/`mountpoints`/`interfaces` lists let you pin exactly what is monitored,
   bypassing auto-discovery.
+- Network filesystems (NFS, CIFS) are monitored too. If one stops answering (its server is
+  gone), it cannot delay the other metrics: it keeps its last reading for three intervals (at
+  least 3 s), then drops out of the sample until it answers again, with a log line each way.
 - **`devices`** entries may be persistent disk IDs (as printed by `kula disks` or exposed as
   `disk.devices[].id` in `/api/current`) or legacy kernel names. Kula tracks disks by hardware
   identity, so a persistent ID follows the drive across reboots and renames, while a kernel name
