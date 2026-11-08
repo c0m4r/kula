@@ -364,6 +364,33 @@ func TestWebContentAccessLog(t *testing.T) {
 	}
 }
 
+// TestAccessLogEscapesThePath: a decoded path may hold a newline (%0a), which
+// would let a request forge whole access-log lines, so the escaped path is
+// logged instead.
+func TestAccessLogEscapesThePath(t *testing.T) {
+	cfg := config.WebConfig{
+		UI:      true,
+		Logging: config.LogConfig{Enabled: true, Level: "access"},
+	}
+	h := NewServer(cfg, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{}).buildHandler()
+
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	const forged = "/x%0a2026/01/01%2000:00:00%20[API]%2010.0.0.1%20POST%20/api/login%20200%201ms%0d"
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, forged, nil))
+
+	got := buf.String()
+	if n := strings.Count(got, "\n"); n != 1 {
+		t.Fatalf("one request wrote %d log lines: %q", n, got)
+	}
+	if strings.ContainsAny(got[:len(got)-1], "\r\n") || !strings.Contains(got, "/x%0a2026") {
+		t.Fatalf("access log = %q, want the path escaped on one line", got)
+	}
+}
+
 // TestWebContentAccessLogDisabled verifies no access-log line is emitted for
 // served UI content when logging is disabled.
 func TestWebContentAccessLogDisabled(t *testing.T) {

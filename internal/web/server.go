@@ -162,7 +162,10 @@ func loggingMiddleware(cfg config.WebConfig, tag string, next http.Handler) http
 		duration := time.Since(start)
 		clientIP := getClientIP(r, cfg.TrustProxy)
 
-		log.Printf("[%s] %s %s %s %d %v", tag, clientIP, r.Method, r.URL.Path, sw.status, duration)
+		// The escaped path, not r.URL.Path: decoding turns %0a into a newline,
+		// which would let a request forge log lines. Header values (and so
+		// X-Forwarded-For) cannot carry control characters past net/http.
+		log.Printf("[%s] %s %s %s %d %v", tag, clientIP, r.Method, r.URL.EscapedPath(), sw.status, duration)
 	})
 }
 

@@ -312,7 +312,7 @@ applied whenever the browser reports `prefers-reduced-motion`, regardless of thi
     level: "perf"   # access | perf | debug
 ```
 
-- `access` — request lines (`[API]` / `[WEB]` tags, client IP, method, path, status).
+- `access` — request lines (`[API]` / `[WEB]` tags, client IP, method, path as sent (percent-escapes kept), status).
 - `perf` — adds storage fetch performance for `/api/history`.
 - `debug` — adds collector auto-discovery logging and WebSocket write errors (a dashboard that
   disconnected or stopped reading).
