@@ -37,8 +37,10 @@ func TestParseSocketStats(t *testing.T) {
 func TestReadTCPRaw(t *testing.T) {
 	procPath = "testdata/proc"
 
+	// RetransSegs is in the Tcp line too; /proc/net/netstat has no such
+	// counter, which left the retransmit rate 0 on every real host.
 	raw := readTCPRaw()
-	if raw.currEstab != 100 || raw.inErrs != 2 || raw.outRsts != 10 {
+	if raw.currEstab != 100 || raw.inErrs != 2 || raw.outRsts != 10 || raw.retrans != 50 {
 		t.Errorf("unexpected tcp raw stats: %+v", raw)
 	}
 }

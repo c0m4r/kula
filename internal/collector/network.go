@@ -241,19 +241,18 @@ func parseSocketStats() SocketStats {
 	return ss
 }
 
-// tcpRaw holds the raw cumulative TCP counters from /proc/net/snmp and /proc/net/netstat.
+// tcpRaw holds the raw cumulative TCP counters from the Tcp lines of /proc/net/snmp.
 type tcpRaw struct {
 	currEstab uint64
 	inErrs    uint64
 	outRsts   uint64
-	retrans   uint64 // TCPRetransSegs from /proc/net/netstat (TcpExt)
+	retrans   uint64 // RetransSegs
 }
 
-// collectTCPStats reads /proc/net/snmp and /proc/net/netstat and returns
-// per-second rates for InErrs, OutRsts, Retrans, and the current gauge value for CurrEstab.
+// collectTCPStats reads /proc/net/snmp and returns per-second rates for
+// InErrs, OutRsts, RetransSegs, and the current gauge value for CurrEstab.
 func (c *Collector) collectTCPStats(elapsed float64) TCPStats {
 	cur := readTCPRaw()
-	cur.retrans = readTCPRetrans()
 	ts := TCPStats{
 		CurrEstab: cur.currEstab,
 	}
@@ -311,53 +310,13 @@ func readTCPRaw() tcpRaw {
 				raw.inErrs = val
 			case "OutRsts":
 				raw.outRsts = val
+			case "RetransSegs":
+				raw.retrans = val
 			}
 		}
 		break
 	}
 	return raw
-}
-
-// readTCPRetrans reads TCPRetransSegs from /proc/net/netstat (TcpExt section).
-func readTCPRetrans() uint64 {
-	f, err := os.Open(filepath.Join(procPath, "net/netstat"))
-	if err != nil {
-		return 0
-	}
-	defer func() { _ = f.Close() }()
-
-	scanner := bufio.NewScanner(f)
-	// Buffer large enough for the long TcpExt lines
-	scanner.Buffer(make([]byte, 0, 8192), 65536)
-	var headerFields []string
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) < 2 {
-			continue
-		}
-		prefix := strings.TrimSuffix(fields[0], ":")
-		if prefix != "TcpExt" {
-			headerFields = nil
-			continue
-		}
-		if headerFields == nil {
-			headerFields = fields[1:]
-			continue
-		}
-		// Values line
-		values := fields[1:]
-		for i, hdr := range headerFields {
-			if i >= len(values) {
-				break
-			}
-			if hdr == "TCPRetransSegs" {
-				val, _ := strconv.ParseUint(values[i], 10, 64)
-				return val
-			}
-		}
-		break
-	}
-	return 0
 }
 
 // DetectLinkSpeed returns the combined theoretical maximum throughput of all UP interfaces in Mbps, or 0 if undetected.
