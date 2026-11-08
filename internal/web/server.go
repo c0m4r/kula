@@ -537,6 +537,9 @@ func (s *Server) Start() error {
 		if !s.cfg.Security.OriginValidation && !s.cfg.Auth.Enabled {
 			log.Printf("Security Warning: allowed_origins is set, origin_validation is disabled, and auth is disabled. The API has no CSRF protection and will accept state-changing requests from any cross-origin page the browser loads.")
 		}
+		if !s.cfg.Security.OriginValidation && s.cfg.Auth.Enabled {
+			log.Printf("Security Warning: allowed_origins is set and origin_validation is disabled. Session cookies are SameSite=None and the WebSocket accepts any Origin, so any site a signed-in user visits can open /ws with their session and read live metrics.")
+		}
 	}
 
 	go s.hub.run()

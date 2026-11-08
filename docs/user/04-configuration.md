@@ -257,7 +257,10 @@ matching origins, those origins pass `origin_validation`, and session cookies sw
 `SameSite=None; Secure` (requires HTTPS or `trust_proxy` + `X-Forwarded-Proto: https`). Each
 entry is an origin as a browser sends it, `scheme://host[:port]`: case, a trailing slash and a
 default port are normalized at startup, and an entry with a path, a wildcard or no scheme stops
-it with an error. See [Security Model](../dev/08-security.md).
+it with an error. Keep `origin_validation` on alongside `allowed_origins`: with it off, those
+cross-site cookies reach a WebSocket that accepts any origin, so any page a signed-in user visits
+can read the live stream (Kula warns about this at startup). See
+[Security Model](../dev/08-security.md).
 
 ### `web` display options
 
