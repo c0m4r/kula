@@ -346,9 +346,15 @@ check(document.getElementById('sys-info').textContent.includes(i18n.t('source'))
 check([...document.querySelectorAll('.btn-chart-image')].every(button =>
     button.title === 'Zapisz jako obraz' && button.getAttribute('aria-label') === button.title),
     'Save-as-image buttons were not retitled by a language change');
+// Alerts re-render every second; the empty state must stay translated.
+const { evaluateAlerts } = await import('./js/app/alerts.js');
+const alertEmpty = () => document.querySelector('#alert-list .alert-empty')?.textContent;
+evaluateAlerts({ cpu: { num_cores: 2 } });
+check(alertEmpty() === 'Brak aktywnych alertów', `Alert empty state is not translated: ${alertEmpty()}`);
 await i18n.loadTranslations('en');
 i18n.applyTranslations();
 document.dispatchEvent(new Event('kula-i18n-changed'));
+check(alertEmpty() === 'No active alerts', 'A language change did not retranslate the alert empty state');
 state.timeRange = null;
 state.customFrom = new Date('2026-09-04T10:00:00Z');
 state.customTo = new Date('2026-09-05T10:00:00Z');

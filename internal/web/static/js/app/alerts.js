@@ -3,6 +3,7 @@
    ============================================================ */
 'use strict';
 import { state, escapeHTML } from './state.js';
+import { i18n } from './i18n.js';
 
 export function evaluateAlerts(sample) {
     const alerts = [];
@@ -84,7 +85,12 @@ function updateAlertUI() {
 
     // Render alert items
     if (state.alerts.length === 0) {
-        list.innerHTML = '<div class="alert-empty">No active alerts</div>';
+        // Keep the key, so a later language change retranslates it too.
+        const empty = document.createElement('div');
+        empty.className = 'alert-empty';
+        empty.dataset.i18n = 'no_active_alerts';
+        empty.textContent = i18n.t('no_active_alerts');
+        list.replaceChildren(empty);
     } else {
         list.innerHTML = state.alerts.map(a => `
             <div class="alert-item">
