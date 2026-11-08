@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type GPUInfo struct {
@@ -17,10 +18,15 @@ type GPUInfo struct {
 	UseLogFile bool // true = closed NVIDIA driver, read from nvidia.log
 }
 
+// gpuRescan is how often a host without a known GPU looks again, so a driver
+// loaded after startup is found. GPUs once found are kept.
+const gpuRescan = time.Minute
+
 func (c *Collector) discoverGPUs() {
-	if c.gpus != nil {
+	if c.gpus != nil || (!c.gpuScanAt.IsZero() && time.Since(c.gpuScanAt) < gpuRescan) {
 		return
 	}
+	c.gpuScanAt = time.Now()
 
 	// Check if nvidia-smi exists (local check for logging/discovery)
 	hasNvidiaSmi := false

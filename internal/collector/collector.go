@@ -34,6 +34,7 @@ type Collector struct {
 	prevEnergy   map[string]uint64 // for Intel energy derivation
 	mounts       mountStats        // statfs off the collection path
 	gpus         []GPUInfo
+	gpuScanAt    time.Time // last discovery that found no GPU; see gpuRescan
 	storageDir   string
 	prevTime     time.Time
 	// debugDone is set after the first Collect() and suppresses repeated
