@@ -133,7 +133,9 @@ web:
   max_websocket_conns: 100
   max_websocket_conns_per_ip: 5
 
-  # Trust X-Forwarded-Proto headers from reverse proxies for the Secure cookie flag
+  # Trust a reverse proxy's X-Forwarded-Proto (Secure cookie flag, HSTS) and
+  # X-Forwarded-For (rightmost address: the client IP for rate limits and logs).
+  # Enable only when every request reaches Kula through that proxy.
   trust_proxy: false
 
   # HTTP security features. Defaults preserve the original strict behavior.

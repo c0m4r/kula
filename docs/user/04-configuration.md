@@ -203,7 +203,7 @@ web:
   minify_assets: true     # serve the dashboard's CSS/JS minified
   max_websocket_conns: 100
   max_websocket_conns_per_ip: 5
-  trust_proxy: false      # trust X-Forwarded-Proto from a reverse proxy
+  trust_proxy: false      # trust X-Forwarded-Proto and X-Forwarded-For from a reverse proxy
 ```
 
 Key points:
@@ -215,6 +215,10 @@ Key points:
   prefix — for reverse proxies that forward the prefix intact. See
   [Reverse Proxy & TLS](13-reverse-proxy.md).
 - **`unix_socket`** replaces the TCP listener — ideal behind a local nginx.
+- **`trust_proxy`** believes two headers from a reverse proxy: `X-Forwarded-Proto: https`
+  (sets the `Secure` cookie flag and HSTS) and the rightmost `X-Forwarded-For` address, which
+  becomes the client IP for the login, WebSocket and AI-chat limits and the access log. Enable it
+  only when every request reaches Kula through that proxy, or a client could choose its own IP.
 - **`minify_assets`** strips comments and whitespace from the dashboard's stylesheets and
   scripts once at startup, cutting their transfer size by about a third (a quarter on top of
   `enable_compression`). Set it to `false` to serve the readable sources, e.g. to debug the

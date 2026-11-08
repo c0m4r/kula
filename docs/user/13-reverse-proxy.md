@@ -12,7 +12,7 @@ Kula's session cookies set the `Secure` flag and emit HSTS, tell it the upstream
 
 ```yaml
 web:
-  trust_proxy: true   # honor X-Forwarded-Proto from the proxy
+  trust_proxy: true   # honor X-Forwarded-Proto and X-Forwarded-For from the proxy
 ```
 
 Then have the proxy send `X-Forwarded-Proto: https`. Without `trust_proxy`, Kula ignores that
