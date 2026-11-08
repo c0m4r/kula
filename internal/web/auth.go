@@ -455,15 +455,19 @@ func (a *AuthManager) authenticatedSessionToken(r *http.Request) string {
 	if cookie, err := r.Cookie("kula_session"); err == nil && a.ValidateSession(cookie.Value) {
 		return cookie.Value
 	}
-
-	const bearer = "Bearer "
-	authHeader := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, bearer) {
-		if token := authHeader[len(bearer):]; token != "" && a.ValidateSession(token) {
-			return token
-		}
+	if token := bearerToken(r); token != "" && a.ValidateSession(token) {
+		return token
 	}
+	return ""
+}
 
+// bearerToken returns the token of an "Authorization: Bearer" header, or "".
+// It does not validate the token.
+func bearerToken(r *http.Request) string {
+	const bearer = "Bearer "
+	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, bearer) {
+		return authHeader[len(bearer):]
+	}
 	return ""
 }
 

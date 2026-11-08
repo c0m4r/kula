@@ -41,7 +41,9 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
 - **Live WebSocket re-validation** — auth is enforced at the `/ws` upgrade *and* every 30 s
   for the life of the connection (`wsSessionRecheckInterval`), so an established socket
   cannot outlive its session.
-- **Bearer token** accepted in the `Authorization` header.
+- **Bearer token** accepted in the `Authorization` header wherever the cookie is
+  (`authenticatedSessionToken`, cookie first): protected routes, `/ws`, `/api/auth/status`;
+  `/api/logout` revokes both. CSRF tokens are checked only for cookie sessions.
 - A **cleanup goroutine** purges expired sessions every 5 minutes.
 - **Cookie flags:** `HttpOnly`, `SameSite=Strict`, and `Secure` (conditional on TLS or trusted
   `X-Forwarded-Proto: https`). With `allowed_origins`, cookies switch to `SameSite=None; Secure`.

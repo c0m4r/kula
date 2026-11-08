@@ -106,11 +106,17 @@ cookies switch to `SameSite=None; Secure`.)
 ## Bearer token API access
 
 Authenticated API clients can send the session token in the `Authorization` header instead of
-a cookie:
+a cookie. The token is the value of the `kula_session` cookie that `POST /api/login` sets:
 
 ```
 Authorization: Bearer <session-token>
 ```
+
+Every protected route and `/ws` accept it, `GET /api/auth/status` reports it as signed in, and
+`POST /api/logout` revokes it. A request that carries only the header needs no CSRF token, since
+browsers never attach it on their own. While `origin_validation` is on (the default), `POST`
+requests, login included, still need an `Origin` or `Referer` header naming the Kula host, the
+same check every browser request passes.
 
 ## Brute-force protection
 

@@ -505,6 +505,59 @@ func TestRuntimeWebSocketGates(t *testing.T) {
 	}
 }
 
+// TestRuntimeBearerSessionStatusAndLogout covers an API client that sends its
+// session token only as a bearer header: auth status must see it, and logout
+// must revoke it.
+func TestRuntimeBearerSessionStatusAndLogout(t *testing.T) {
+	_, ts := newSecuredTestServer(t, nil)
+	res := login(t, ts, secUser, secPass)
+	if res.session == "" {
+		t.Fatal("setup login failed")
+	}
+
+	do := func(method, path string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest(method, ts.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+res.session)
+		req.Header.Set("Origin", ts.URL)
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(raw)
+	}
+	status := func() (authenticated bool, csrf string) {
+		t.Helper()
+		code, body := do(http.MethodGet, "/api/auth/status")
+		if code != http.StatusOK {
+			t.Fatalf("GET /api/auth/status = %d, want 200", code)
+		}
+		var parsed struct {
+			Authenticated bool   `json:"authenticated"`
+			CSRFToken     string `json:"csrf_token"`
+		}
+		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+			t.Fatalf("auth status body %q: %v", body, err)
+		}
+		return parsed.Authenticated, parsed.CSRFToken
+	}
+
+	if ok, csrf := status(); !ok || csrf != res.csrf {
+		t.Errorf("bearer auth status = authenticated %v, csrf %q; want true, %q", ok, csrf, res.csrf)
+	}
+	if code, body := do(http.MethodPost, "/api/logout"); code != http.StatusOK {
+		t.Fatalf("bearer logout = %d (%s), want 200", code, body)
+	}
+	if code, _ := do(http.MethodGet, "/api/config"); code != http.StatusUnauthorized {
+		t.Errorf("bearer request after logout = %d, want 401", code)
+	}
+	if ok, _ := status(); ok {
+		t.Error("auth status still authenticated after bearer logout")
+	}
+}
+
 // TestRuntimeErrorsAreJSON drives every refusal the middleware and the WebSocket
 // handshake can give through the production chain: each answers with a JSON
 // {"error": ...} body labelled application/json, as the handlers' own errors do.

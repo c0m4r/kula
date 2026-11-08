@@ -971,9 +971,14 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Revoke every session the request presents: the cookie a browser sends
+	// and the bearer token an API client sends.
 	cookie, err := r.Cookie("kula_session")
 	if err == nil && cookie.Value != "" {
 		s.auth.RevokeSession(cookie.Value)
+	}
+	if token := bearerToken(r); token != "" {
+		s.auth.RevokeSession(token)
 	}
 
 	// Delete the cookie on the client side
@@ -1002,12 +1007,9 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 
 	if !s.cfg.Auth.Enabled {
 		status["authenticated"] = true
-	} else {
-		cookie, err := r.Cookie("kula_session")
-		if err == nil && s.auth.ValidateSession(cookie.Value) {
-			status["authenticated"] = true
-			status["csrf_token"] = s.auth.GetCSRFToken(cookie.Value)
-		}
+	} else if token := s.auth.authenticatedSessionToken(r); token != "" {
+		status["authenticated"] = true
+		status["csrf_token"] = s.auth.GetCSRFToken(token)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
