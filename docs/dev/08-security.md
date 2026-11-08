@@ -47,7 +47,8 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
 - **Login:** 15 attempts per 5 minutes per IP, and 5 per IP+username pair (the per-account
   counter is keyed on the pair, so one attacker cannot lock out an account for everyone).
 - **Password hashing:** a process-wide semaphore (`hashSlots`) bounds concurrent Argon2id
-  computations to a quarter of `GOMAXPROCS`, between 1 and 4. Every attempt hashes, unknown
+  computations to a quarter of `GOMAXPROCS`, between 1 and 4, and to as many as fit in 128 MiB
+  of `argon2.memory` (at least one). Every attempt hashes, unknown
   usernames included, so the per-IP limits alone would let many addresses keep hundreds of
   `argon2.memory`-sized hashes in flight. A login that finds no free slot within 2 s gets
   `503` with `Retry-After: 1`.

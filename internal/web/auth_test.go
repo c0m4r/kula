@@ -867,9 +867,19 @@ func TestUserLimiterKeyBoundsUsername(t *testing.T) {
 // per-address limiters alone let many sources keep hundreds of 32 MiB hashes
 // in flight at once.
 func TestPasswordHashConcurrencyBounded(t *testing.T) {
-	n := passwordHashConcurrency()
+	n := passwordHashConcurrency(0)
 	if n < 1 || n > maxConcurrentPasswordHashes {
-		t.Fatalf("passwordHashConcurrency() = %d, want 1..%d", n, maxConcurrentPasswordHashes)
+		t.Fatalf("passwordHashConcurrency(0) = %d, want 1..%d", n, maxConcurrentPasswordHashes)
+	}
+	// The bound is memory as well as hashes: raising argon2.memory lowers it,
+	// down to one hash however large one is.
+	for memoryKiB, limit := range map[uint32]int{32 << 10: 4, 64 << 10: 2, 256 << 10: 1, 4 << 20: 1} {
+		if got := passwordHashConcurrency(memoryKiB); got < 1 || got > min(n, limit) {
+			t.Errorf("passwordHashConcurrency(%d KiB) = %d, want 1..%d", memoryKiB, got, min(n, limit))
+		}
+		if got := passwordHashConcurrency(memoryKiB); got*int(memoryKiB)<<10 > passwordHashMemoryBudget && got > 1 {
+			t.Errorf("passwordHashConcurrency(%d KiB) = %d exceeds the memory budget", memoryKiB, got)
+		}
 	}
 
 	am := NewAuthManager(config.AuthConfig{Enabled: true}, "", false, config.SecurityConfig{OriginValidation: true})

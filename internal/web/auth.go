@@ -48,6 +48,11 @@ type AuthManager struct {
 const (
 	maxConcurrentPasswordHashes = 4
 
+	// passwordHashMemoryBudget caps the memory all concurrent hashes may
+	// request together: four hashes at the default 32 MiB, fewer when
+	// web.auth.argon2.memory is raised, never less than one.
+	passwordHashMemoryBudget = 128 << 20
+
 	// passwordHashWait is how long a login waits for a free hashing slot
 	// before it is refused as busy. A legitimate login during a flood gets a
 	// fair chance; a flood cannot queue unboundedly behind the semaphore.
@@ -56,9 +61,14 @@ const (
 
 // passwordHashConcurrency returns the number of Argon2id computations allowed
 // at once: a quarter of the usable CPUs, between 1 and
-// maxConcurrentPasswordHashes.
-func passwordHashConcurrency() int {
-	return min(max(1, runtime.GOMAXPROCS(0)/4), maxConcurrentPasswordHashes)
+// maxConcurrentPasswordHashes, and no more than fit passwordHashMemoryBudget
+// at memoryKiB (argon2.memory, in KiB) each.
+func passwordHashConcurrency(memoryKiB uint32) int {
+	slots := min(max(1, runtime.GOMAXPROCS(0)/4), maxConcurrentPasswordHashes)
+	if perHash := int64(memoryKiB) << 10; perHash > 0 {
+		slots = min(slots, int(max(1, passwordHashMemoryBudget/perHash)))
+	}
+	return slots
 }
 
 // RateLimiter tracks recent rapid login attempts by IP.
@@ -176,7 +186,7 @@ func NewAuthManager(cfg config.AuthConfig, storageDir string, trustProxy bool, s
 		},
 		trustProxy: trustProxy,
 		security:   security,
-		hashSlots:  make(chan struct{}, passwordHashConcurrency()),
+		hashSlots:  make(chan struct{}, passwordHashConcurrency(cfg.Argon2.Memory)),
 	}
 }
 
