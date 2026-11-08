@@ -110,9 +110,9 @@ immutable per process, so sessions created in-process need no re-check. Upgrade 
 `docs/user/07-authentication.md`; `sessions.json` format unchanged.
 **Follow-up `f280b64`:** a session minted by an older build for a name that *is* configured
 still survived an upgrade-and-enable. Each session now records a fingerprint of its account's
-salt and Argon2id hash (`credential` in `sessions.json`, ignored by older versions); a restored
+Argon2id hash (`credential` in `sessions.json`, ignored by older versions); a restored
 session must match, so old sessions are dropped once and a password change signs the account
-out.
+out. (`f3b9585` dropped the salt from the fingerprint: the hash is already keyed by it.)
 
 **H2 [web] Argon2id hashing has no global concurrency bound → unauthenticated memory
 exhaustion.**
@@ -253,11 +253,42 @@ the collection loop (`cmd/kula/main.go:244`) drops ticks → a gap of (250 MB ÷
 in every tier at each backup (sub-second on NVMe, many seconds on SD/HDD). Gzip is correctly
 outside the lock; acknowledged in `internal/backup/backup.go:7-10`.
 *Fix:* chunked copy with the existing snapshot-expiry check, or `copy_file_range` to a temp file.
+**✅ Fixed in `ebae4e4`** (copy, then patch; neither suggested fix). The stall was wider than
+stated: `WriteSample` holds the store lock while it waits on tier 0, so queries, `/api/current`
+and the live stream waited too. `Tier.SnapshotTo` (`internal/storage/tier_snapshot.go`) now
+notes the writer's offset and ring pass under the read lock, copies the file unlocked, then
+under the lock copies the header and the ring range written meanwhile (through the ring's end if
+it wrapped); `Write` touches nothing else, so the copy equals the file at that moment. A lap
+during the copy (tiny rings only) falls back to a locked full copy. Measured on a 249 MB tier 0
+(NVMe): the longest `WriteSample` during a backup went from 97–235 ms to 0–2 ms, `QueryLatest`
+from 80–216 ms to 0–2 ms. `snapshot_test.go` requires byte equality after appends, wraps (fresh
+and wrapped rings) and a lap made between copy and patch, and a `Write` to get through
+mid-copy. Not tested: bytes a failed write leaves past `writeOff` (patched up to `writeEnd`).
+**Follow-up `f0b93a3`:** with `compress`, the raw intermediate is no longer fsynced before it
+is gzipped and deleted; only the `.gz` is synced.
 
 **S5 [storage/design] No per-record checksum.**
 With no per-write fsync (`tier.go:800`), a partially flushed record whose length prefix and kind
 byte survived decodes "successfully" with zeroed tails. Bounded to the last seconds before a
 crash, but undetectable. A CRC32 per record would also harden the read-only TUI path. Low–Medium.
+**✅ Fixed in `85b5483`.** Records are now kind `0x03`: the encoded sample, then a CRC-32 (IEEE)
+over the length prefix and payload (`internal/storage/record_checksum.go`); `0x02` records stay
+readable, unverified, until the ring replaces them. Every reader skips a record failing its
+checksum — scans, `ReadLatest`, restart replay (so a torn tail reaches neither the latest-sample
+cache nor the 1 m/5 m rollups), the TUI — and resync verifies checksummed candidates whole
+(rollups outgrew its 4 KiB cross-check). Mirrored in `inspect_tier.py` (`zlib.crc32`);
+`FuzzReadRecord` added. Cost: +4 B per record; about 5 % of a record's decode time with hardware
+CRC (amd64/arm64), about 25 % with Go's portable code (riscv64), decoded records only. Older
+binaries cannot read `0x03` records (0.22.0 already breaks downgrade for rollups).
+*Correction:* since `ffea358` a zeroed tail mostly fails decoding anyway (the TCP extension's
+version byte reads 0); the silent cases were a lost middle page and stale bytes from an older
+ring pass.
+
+**S5b [storage] (found while fixing S5) Resync could spin forever.** A record with a sane header
+running past the active segment's end was accepted by resync, rejected by the scan and resynced
+at the same byte again, forever, holding the tier lock (writes and the startup index walk
+block). Needs a stale or corrupt header `writeOff`. **✅ Fixed in `838e22c`**
+(`TestResyncStopsAtARecordPastTheSegmentEnd`).
 
 ### Medium — other subsystems
 
@@ -335,27 +366,81 @@ them once work outlives its deadline by 5 s.
   stalls all collection (plausible, not reproduced). **nginx/apache/pg/mysql are polled
   synchronously in `Collect()`** with timeout = interval (`collector.go:226-254`), so one tick
   can take 4–5× the interval. *Fix:* the async `Latest()` pattern already used for containers.
-  **PostgreSQL/MySQL part ✅ fixed in `0721fc4`** (background pollers); nginx/Apache2 and
-  `statfs` unchanged.
+  **PostgreSQL/MySQL part ✅ fixed in `0721fc4`** (background pollers).
+  **nginx/Apache2 ✅ fixed in `79b7ab6`:** the database collectors' poller moved to `poller.go` and
+  runs the status pages too (request timeout `max(2s, 2×interval)`, result current for
+  `max(3s, 3×interval)`, no redirects); a hung page leaves `Collect` untouched
+  (`TestStatusPagesPollOffTheCollectionTick`: 2.1 s → immediate). `debugDone` became atomic, since
+  pollers read it. **`statfs` ✅ fixed in `dc1868b`:** at most one call in flight per mount, a
+  tick waits at most 200 ms, a stuck mount keeps its last reading for three intervals and then
+  drops out, logged both ways (`mount_stats.go`).
 - **[collector/perf] Per-tick rediscovery:** disk identity + hwmon walks per disk per second
   (`disk_identity.go:61-106`, `disk.go:462-550`); GPU discovery reruns every tick on GPU-less
   hosts (`gpu.go:20-22`); one Docker `inspect` per container per second
   (`containers.go:387-411`); `pg_database_size` + `pg_stat_user_tables` + `SHOW max_connections`
   + Ping every second (`postgres.go:172, 240-266`; the per-poll Ping is gone since `0721fc4`); container `prev*` maps never pruned
   (`containers.go:573, 622, 656`).
+  **✅ GPU `a376d7e`** (a host without one looks again once a minute). **✅ Containers `a9cbd35`:**
+  the PID from inspect is kept while `/proc/<pid>/cgroup` still names the container (a restart
+  or reused PID inspects again), and a container that leaves the list, or every container when
+  listing fails, loses its baselines; a failed per-container read drops that baseline too.
+  **✅ `SHOW max_connections` `477d7ae`:** once per session (changing it needs a restart, which
+  ends the session); verified on PostgreSQL 17: 2 reads in ~10 polls across a restart.
+  **Measured, not changed:** identity resolution costs 0.15 ms per tick for 3 devices here; it is
+  what notices a hot-swapped disk. The hwmon cost is not the walk (µs) but the read itself:
+  each NVMe `temp*_input` read issues a SMART admin command, 2.3–4.5 ms per sensor (up to
+  10 ms once the drive has idled). Measured at the real 1 s cadence, the larger cost was the
+  battery: ACPI `_BST` through the embedded controller, 81 ms whenever the kernel's 1 s cache
+  has expired (back-to-back reads had hit the cache), so a tick took 91 ms of wall time and
+  6 ms of CPU. **✅ Disk temperatures and power supplies `a458c93`:** read every
+  `collection.disk_temp_interval` / `collection.power_supply_interval` (default 10 s, a
+  multiple of the interval; set to it to read every sample) and repeated in between, through
+  `cadence.go`: one read in flight per key in its own goroutine, the starting tick waits
+  `statfsWait`, a hung read is never doubled and drops its key after three intervals, logged
+  once each way; a disk swapped in under a known name is read at once, unselected disks never.
+  On this host 9 ticks in 10 now take 4.5–6 ms. **✅ PostgreSQL `21ded1c`:** the
+  `pg_stat_user_tables` sums and `pg_database_size` once a minute (30 and 64 ms of server time
+  per poll at 10 000 tables, flat below 0.2 ms for the other queries); verified on
+  PostgreSQL 17 with `log_statement=all`: 3 reads in 126 polls, the size in every result.
 - **[web/perf] `gzip.NewWriter` per request, allocated before the handler**
   (`server.go:228-235`) — ~600 KB each, even for 304/204. *Fix:* `sync.Pool` + lazy creation.
+  **✅ Fixed in `cfd99c1`.** Compressors come from a `sync.Pool` and are taken on the first body
+  byte or flush; a handler that writes nothing goes out unencoded. *Correction:* `gzip.Writer`
+  allocates its deflate state on first write, so 304/204 never paid it; every compressed body
+  did, about 1 MB. Measured: a small JSON response 1.09 MB / 142 µs → 18 KB / 8 µs allocated per
+  request, `style.css` 1.26 MB → 219 KB. Same commit fixes the Low "gzip exclusion for
+  `/api/ollama/` is dead under `base_path`".
 - **[web] Access-log injection** via `%0a` in `r.URL.Path` (`server.go:165`); reproduced a fully
   forged `[API]` line. *Fix:* log with `%q`.
+  **✅ Fixed in `7887406`** by logging `r.URL.EscapedPath()` instead (keeps the line format; the
+  newline stays `%0a`). Header values, so `X-Forwarded-For`, cannot carry control characters
+  past `net/http`. `TestAccessLogEscapesThePath` fails on the old code.
 - **[frontend] WebSocket reconnect ignores a 401 upgrade rejection** (`websocket.js:83-97`): an
   expired session after sleep → infinite retries, no login overlay.
+  **✅ Fixed in `c10dcad`.** A socket that closes before it opened asks `/api/auth/status`;
+  an expired session returns to login, anything else (server down, 429) keeps backing off. A
+  generation counter stops a check still in flight from acting after a login or logout. New
+  browser fixture `session_expiry_test.mjs` (Frontend workflow, `test-frontend-regressions.sh`):
+  real `kula serve` with auth, restarted without `sessions.json` under an open page; times out
+  on the old client.
 - **[frontend] `initOllama()` re-runs on every `kula-config-ready`** (`ollama.js:39-114`),
   stacking anonymous listeners (duplicate sessions per click, double delete confirm).
+  **✅ Fixed in `b69d638`.** The panel is wired once; later loads only show the button. The
+  model `<option>` is built with `textContent` instead of unescaped `innerHTML`. The dashboard
+  fixture loads the config twice and requires one session per click.
 - **[frontend] Alert list overwrites the translated empty state with English every second**
   (`alerts.js:87`).
+  **✅ Fixed in `ae8ce32`** (translated, and keeps its `data-i18n` key for later language changes).
+  The alert titles themselves are still English (the Low i18n item).
 - **[tooling] `inspect_tier.py` has no hole resync** (`:940-956`): after an unclean shutdown it
   reports a stale "latest" record while `kula inspect` is right (reproduced: 30-minute
   discrepancy). Also lacks the 64 MiB cap and file-size clip.
+  **✅ Fixed in `39dc78b`.** A `Ring` class mirrors `walkSegment` / `resyncToNextRecord`
+  (two-in-a-row check, whole-record checksum, timestamp bounds) over an mmap, with the cap and
+  the clip. Found on the way: the inspector also trusted a persisted tail Go rejects, and for
+  files from before tail tracking started the old pass at the header's `oldest_off` instead of
+  `write_off`; both mirrored. `TestInspectorWalksTheRingLikeTheReader` compares the records
+  both visit over seven damaged tiers; each mirrored rule, removed, fails its scenario.
 
 ### Low
 
@@ -379,7 +464,8 @@ them once work outlives its deadline by 5 s.
 **codec**
 - Apache2 version byte ≥ 3 consumes nothing and decodes garbage as custom metrics
   (`codec.go:1423-1516`), whereas PSU/disk-ID sections error.
-- GPU is the only length-gated (fail-open) section (`codec.go:1094-1098`).
+- GPU is the only length-gated (fail-open) section (`codec.go:1094-1098`). Documented in
+  `df5c50e`; behavior unchanged.
 - The decode template in `docs/dev/14-adding-metrics.md:131-134` lacks the `need(1, …)` guard
   and would panic if copied. **✅ `5072b86`.**
 - Custom-metric `value` is the only user-fed quantity stored as float32 (exact only to 2^24);
@@ -390,11 +476,13 @@ them once work outlives its deadline by 5 s.
 - `origin_validation: false` + `allowed_origins` + auth → WebSocket readable cross-site with no
   warning.
 - Config accepts `argon2.time/threads: 0` (panics on login), `session_timeout: 0`,
-  `max_websocket_conns: 0`, unnormalized `allowed_origins`.
+  `max_websocket_conns: 0`, unnormalized `allowed_origins`. **✅ `d9c54a3`:** refused at load
+  (`kula hash-password` panicked too); origins normalized (case, trailing slash, default port),
+  and an entry with a path, wildcard or no scheme stops startup.
 - The `get_metrics` AI tool bypasses the 31-day / inversion guards (`ollama.go:933-958`).
 - Dead option `web.graphs.gpu_temp` (already reported for 0.20.0).
 - DNS-rebinding exposure with auth off (no Host allowlist).
-- gzip exclusion for `/api/ollama/` is dead under `base_path` (`server.go:214`).
+- gzip exclusion for `/api/ollama/` is dead under `base_path` (`server.go:214`). **✅ `cfd99c1`.**
 
 **collector**
 - Unguarded `Total-Free-Buffers-Cached` (`cpu.go:425, 434`) can wrap on inconsistent meminfo
@@ -409,18 +497,21 @@ them once work outlives its deadline by 5 s.
 - 1 MiB cap on `/containers/json` truncates at ~400 containers.
 - Unsynchronized `sysTempSensors` global touched from the HTTP goroutine (`cpu.go:27, 205`).
 - Initial Postgres connect failures are never logged (**✅ `0721fc4`**, logged on change);
-  nginx follows redirects; nginx/apache failures logged only on the first cycle.
+  nginx follows redirects; nginx/apache failures logged only on the first cycle (**✅ both
+  `79b7ab6`**: no redirects, failures logged on change and on recovery).
 
 **frontend**
 - Stored `kula_aggregation` pref interpolated unvalidated into a CSS selector (`main.js:480`) —
   a stale value blanks the dashboard.
 - Second undocumented Chart.js private dependency `TimeScale._unit` (`charts-init.js:170`).
+  **✅ `8969984`** (documented; `TestChartBundle` asserts it).
 - Full chart build runs twice at startup (`main.js:393` + `auth.js:109`).
 - O(total points) scan per update in the accessibility plugin (`chart-accessibility.js:446-455`).
 - `_sanitize()` in `split.js:306-308` can collide `eth0.1` / `eth0_1` into one card ID and abort
   the rebuild.
 - Split cards reimplement expand / hover-pause / bounds menus instead of sharing
-  `chart-card-actions.js`.
+  `chart-card-actions.js`. **✅** Already shared at the time of §4's check
+  (`attachDynamicChartCardActions`).
 - Hardcoded English strings bypass i18n (`alerts.js`, `header.js`, `ollama.js`, `auth.js`,
   `disk-identity.js`).
 - CSP `style-src 'unsafe-inline'` appears unnecessary (`server.go:269`) — verify `game.js` first.
@@ -428,12 +519,13 @@ them once work outlives its deadline by 5 s.
 ### Nits
 
 - Stale header-layout comment in `tier.go:18-30` (`[4:8]` and `[56:64]` are not reserved).
-- Stray `)` in `codec.go:26-29`; Postgres decode comment omits v3.
+- Stray `)` in `codec.go:26-29` (**✅ `df5c50e`**); Postgres decode comment omits v3.
 - `utUserOffset = 8` actually addresses `ut_line` (`system.go:100`); count still right.
+  **✅ `897d9b4`** (offset 44).
 - `appendVariable(nil)` writes an undecodable shape (unreachable).
 - Interface order in `/api/current` changes every tick (map iteration).
-- `http.Error` vs `jsonError` inconsistencies; no `Cache-Control` on
-  `/api/current|history|config`.
+- `http.Error` vs `jsonError` inconsistencies (**✅ `5fd41c6`** for `/api` and `/ws`); no
+  `Cache-Control` on `/api/current|history|config`.
 - WebSocket backoff without jitter; initial WS write has no deadline.
 - Unix sockets created at umask then chmod'ed (brief window).
 
@@ -445,18 +537,46 @@ them once work outlives its deadline by 5 s.
   `06-tui.md:60`, `11-prometheus.md:73`); utmp-based user count (`docs/dev/04-collector.md:32`);
   "counter resets on nginx restart handled" (only `accepts`); `https://` status URLs supported
   (`docs/dev/09-sandbox.md`).
+  **✅ All four true now**, by the code fixes: `d8dbf29` (disk utilization), `897d9b4` (the
+  collector doc names utmp and logind), `8b8980c` (nginx), `72d4640` (`https://`).
 - `docs/dev/07-web-server-api.md`: "errors via `jsonError`" — auth 401, CSRF 403, WS 429 and
   `/api/` 404s are plain text. `docs/user/07-authentication.md`: Bearer API access —
   `/api/auth/status` and `/api/logout` are cookie-only.
+  **✅ Both fixed in code, not in the docs.** `5fd41c6`: the auth 401, the CSRF 403s, a JSON 404
+  for unknown `/api/` paths, and every refused `/ws` handshake — the connection-limit 429s and,
+  through `Upgrader.Error`, gorilla's own 400/403 (still with `Sec-Websocket-Version: 13`) —
+  answer `{"error":…}` as `application/json`. The doc lists what stays plain text (`/metrics`,
+  static assets); `TestRuntimeErrorsAreJSON` drives each refusal and fails on the old code at
+  all seven. `df7f018`: `/api/auth/status` and `/api/logout` honor the bearer header (logout
+  revokes it; `TestRuntimeBearerSessionStatusAndLogout`). The doc now says the token is the
+  `kula_session` cookie value, that header-only requests need no CSRF token, and that `POST`
+  still needs `Origin`/`Referer` under `origin_validation`.
 - `docs/dev/10-frontend.md`: `chart-card-actions.js` "shared by split cards" (only
   `addSaveImageButton` is); live-queue drain location; only `_updateHiddenIndices` listed as the
   private Chart.js contract (`_unit` also).
+  **✅** The split-card claim had already become true (`split.js` uses
+  `attachDynamicChartCardActions`). `8969984`: `websocket.js` queues live samples and
+  `charts-data.js` `drainLiveQueue` drains them (module table and file header); `_unit` is
+  documented next to `_updateHiddenIndices`, in AGENTS.md too. `TestChartBundle` now asserts
+  that both exist, in the vendored bundle and in the upstream trio `replace_chartjs.sh`
+  installs (run against Chart.js 4.5.1). Before, nothing failed when they were missing:
+  `_updateHiddenIndices` is called as `?.()`, and a missing `_unit` makes every tick show HH:MM.
 - `docs/dev/06-storage-codec.md` is numerically exact but omits: the three-way record dispatch
   (kind byte / JSON / legacy binary), bit 11 being terminal for future record-level extensions,
   GPU's length gating, and that version growth is backward-only.
+  **✅ `df5c50e`:** a table of the four record kinds, GPU's length gating, the statistics trailer
+  having to end the record, and "Forward compatibility" renamed "Reading older records", with
+  what an older binary does with an unknown flag (raw: ignored; rollup: misaligned) or version
+  (per section). `05-storage-engine.md` and `12-backups.md` also called the codec
+  forward-compatible; corrected. *Found on the way:* a pre-0.11.0 binary record has no kind
+  byte and starts with its timestamp's low byte, so ≈3/256 of them match a tag and are
+  misread or skipped. Documented, not fixed: only records old enough to have left most rings.
 - `sandbox.go:42-44` comment says RO for the container socket; code and `docs/dev/09` say RW.
+  **✅** Says RW since `a77f87e`.
 - `docs/user/04-configuration.md`: `trust_proxy` described as X-Forwarded-Proto only; it also
   governs X-Forwarded-For.
+  **✅ `8bdbb8d`:** `04-configuration.md`, `config.example.yaml` and `13-reverse-proxy.md`
+  name both headers, what each sets, and when enabling it lets a client choose its own IP.
 - Otherwise consistent: defaults agree across `config.go`, `config.example.yaml` and
   `docs/user/04`; the middleware chain is identical on every route; collectors are uniformly
   nil-on-failure.
@@ -481,7 +601,8 @@ them once work outlives its deadline by 5 s.
   monotonic `elapsed` with `<= 0 → 1`, reset guards on nearly every delta, no data races between
   the loop and app collectors, every `os.Open` closed, parameterized SQL, credentials never
   logged, bounded HTTP bodies.
-- **Backups:** per-file consistent (copied under the tier read lock), temp-dir + rename, fsync,
+- **Backups:** per-file consistent (copied under the tier read lock; since `ebae4e4` copied
+  unlocked, then patched under it), temp-dir + rename, fsync,
   0750/0600 (not cross-tier atomic — acceptable, undocumented).
 - **gen-mock-data** writes through the production `Store`, so its tiers are genuine codec and
   aggregation output.
@@ -495,10 +616,19 @@ them once work outlives its deadline by 5 s.
 > wrap bug found on the way (S1b, `1e16482`). From "Medium — other subsystems": utmp `897d9b4`,
 > CA roots `72d4640`, rootless Podman `a77f87e`, nginx `8b8980c`, Postgres `45c94bd`, MySQL
 > `62592c3`, database sessions `0721fc4`. §7 records the verification of those fixes and the
-> follow-ups it led to. Still open: S4 (backup lock), S5 (record checksum), synchronous
+> follow-ups it led to. S5 (record checksum) `85b5483`, with a resync hang found on the way
+> (S5b, `838e22c`); S4 (backup lock) `ebae4e4`, `f0b93a3`. Still open: synchronous
 > nginx/Apache2 polls and `statfs`, per-tick rediscovery, the web/frontend/tooling Mediums
 > (gzip writer pool, access-log injection, WebSocket 401 reconnect, `initOllama`, alert i18n,
-> `inspect_tier.py` hole resync), and the Low list.
+> `inspect_tier.py` hole resync), and the Low list. §4 (documentation mismatches) is closed:
+> `5fd41c6`, `df7f018`, `8969984`, `8bdbb8d`, `df5c50e`.
+> **Since then:** access-log injection `7887406`, config limits `d9c54a3`, WebSocket 401
+> `c10dcad`, `initOllama` `b69d638`, alert i18n `ae8ce32`, gzip pool `cfd99c1`,
+> `inspect_tier.py` ring walk `39dc78b`, nginx/Apache2 background polls `79b7ab6`, `statfs`
+> `dc1868b`, GPU rediscovery `a376d7e`, container inspect and pruning `a9cbd35`, PostgreSQL
+> `max_connections` `477d7ae`, disk temperature and power supply intervals `a458c93`,
+> PostgreSQL relation statistics once a minute `21ded1c`. No Medium is open. Gate passes at
+> `21ded1c`; the four browser fixtures last ran at `a8af522` (no frontend change since).
 
 1. ~~**H1 + H2** (auth) — small changes, high impact.~~ ✅
 2. ~~**H4** (`retrans_ps`: bit 13 + Python mirror) and **H3** (disk utilization: restore or remove)
@@ -508,7 +638,7 @@ them once work outlives its deadline by 5 s.
    refresh, sparse offset index, single startup scan).~~ ✅
 5. ~~**S3** — align rollup windows to the epoch.~~ ✅ (the clip-right path stays for a `to`
    that is not on a minute, but now re-buckets aligned records one to one)
-6. Frontend Mediums (401 reconnect, `initOllama` idempotence, alert i18n), then the Low list
+6. ~~Frontend Mediums (401 reconnect, `initOllama` idempotence, alert i18n)~~ ✅, then the Low list
    opportunistically.
 
 ---

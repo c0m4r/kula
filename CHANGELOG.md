@@ -24,9 +24,14 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - `/api/history` accepts an optional `tier` hint
 - API and WebSocket errors are always JSON
 - Failed WebSocket writes are logged only at debug level
+- Compressed responses use far less memory
 - tui: history reads only its time range
 - Cards keep one consistent order everywhere
 - Split charts expand and collapse like every other chart
+- Disk temperatures and power supplies are read every 10 s, set with `collection.disk_temp_interval` and `collection.power_supply_interval`
+- PostgreSQL reads table health and database size once a minute, `max_connections` once per session
+- Containers are inspected once instead of every second, and removed ones are forgotten
+- Hosts without a GPU look for one once a minute
 - Remove systemd service ProtectClock that prevents reading clock
 
 ### Fixed
@@ -53,12 +58,20 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - A rolling view no longer stays marked "partial" after one late refresh
 - Reading a damaged tier file no longer hangs
 - Bearer tokens work with auth status and logout
+- A hung network mount or a slow nginx or Apache2 status page no longer stalls collection
+- nginx and Apache2 failures are logged when they change, and redirects are not followed
+- An expired session returns to the login screen instead of reconnecting forever
+- AI panel actions no longer run twice after signing in again
+- The alert list's empty state stays translated
+- `inspect_tier.py` walks damaged tiers the way Kula does
+- Settings that would break login or WebSockets are refused at startup, and `allowed_origins` is normalized
 
 ### Security
 
 - Login is refused while auth is disabled
 - Concurrent password hashing is bounded by CPU and memory
 - Sessions are tied to the account password; everyone signs in again after upgrading
+- Request paths can no longer forge access log lines
 
 ## [0.21.0] - 2026-10-01
 
