@@ -21,11 +21,13 @@ type sysSensor struct {
 	Path string
 }
 
-var (
-	// Cached sensors for CPU temperature so we don't scan on every tick.
-	// Nil means not yet initialized. Empty means initialized but not found.
-	sysTempSensors []sysSensor
-)
+// cpuTempSensors returns the CPU temperature sensors, discovered on first use
+// and kept, so the tick does not rescan sysfs. The collection loop and the
+// /api/config handler (DetectTjMax) both ask, from different goroutines.
+func (c *Collector) cpuTempSensors() []sysSensor {
+	c.cpuTempOnce.Do(func() { c.cpuTemps = discoverCPUTempPath() })
+	return c.cpuTemps
+}
 
 func (c *Collector) parseProcStat() []cpuRaw {
 	f, err := os.Open(filepath.Join(procPath, "stat"))
@@ -202,18 +204,15 @@ func (c *Collector) collectLoadAvg() LoadAvg {
 
 // collectCPUTemperature reads the CPU temperature from sysfs.
 func (c *Collector) collectCPUTemperature() (float64, []CPUTempSensor) {
-	if sysTempSensors == nil {
-		sysTempSensors = discoverCPUTempPath()
-	}
-
-	if len(sysTempSensors) == 0 {
+	found := c.cpuTempSensors()
+	if len(found) == 0 {
 		return 0, nil // No temperature sensors found
 	}
 
 	var primaryTemp float64
 	var sensors []CPUTempSensor
 
-	for _, sensor := range sysTempSensors {
+	for _, sensor := range found {
 		data, err := os.ReadFile(sensor.Path)
 		if err != nil {
 			continue
@@ -377,12 +376,8 @@ func discoverCPUTempPath() []sysSensor {
 
 // DetectTjMax returns the maximum critical temperature in Celsius, or 0 if undetected.
 func (c *Collector) DetectTjMax() float64 {
-	if sysTempSensors == nil {
-		sysTempSensors = discoverCPUTempPath()
-	}
-
 	var maxCrit float64
-	for _, sensor := range sysTempSensors {
+	for _, sensor := range c.cpuTempSensors() {
 		critPath := strings.TrimSuffix(sensor.Path, "_input") + "_crit"
 		data, err := os.ReadFile(critPath)
 		if err == nil {

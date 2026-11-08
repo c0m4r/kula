@@ -30,6 +30,8 @@ type Collector struct {
 	prevDisk     map[string]diskRaw
 	diskWarnings map[string]bool
 	prevSelf     selfRaw
+	cpuTempOnce  sync.Once
+	cpuTemps     []sysSensor // CPU temperature sensors, see cpuTempSensors
 	prevTCP      tcpRaw
 	prevTCPOK    bool                        // prevTCP is a baseline from a successful read
 	prevEnergy   map[string]uint64           // for Intel energy derivation

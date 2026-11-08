@@ -3,6 +3,7 @@ package collector
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"kula/internal/config"
@@ -89,9 +90,7 @@ func TestCollectCPUTemp(t *testing.T) {
 	// 1. Test hwmon discovery
 	sysPath = "testdata/sys" // mocks our newly created sys/class/hwmon files
 
-	// Reset the package-level cache so discovery runs
-	sysTempSensors = nil
-
+	// A new collector discovers its sensors on first use.
 	c := New(config.GlobalConfig{}, config.CollectionConfig{}, config.ApplicationsConfig{}, "")
 	temp, _ := c.collectCPUTemperature()
 	// testdata/sys/class/hwmon/hwmon0/temp1_input contains "45123", so expect 45.12
@@ -100,13 +99,33 @@ func TestCollectCPUTemp(t *testing.T) {
 	}
 
 	// 2. Test thermal_zone fallback
-	sysTempSensors = nil
 	// Temporarily break hwmon so it falls back to thermal_zone0
 	sysPath = "testdata/sys_thermal_only"
 
+	c = New(config.GlobalConfig{}, config.CollectionConfig{}, config.ApplicationsConfig{}, "")
 	temp2, _ := c.collectCPUTemperature()
 	// If the fallback fails gracefully due to missing dir, it will return 0.
 	// To actually test fallback properly we would need to mock `sys_thermal_only`.
 	// For simplicity, let's just make sure it doesn't panic.
 	_ = temp2
+}
+
+// TestCPUTempSensorsDiscoveredOnceAcrossGoroutines: the collection loop and
+// the /api/config handler (DetectTjMax) reach the sensor cache concurrently;
+// under -race this fails if the cache is not synchronized.
+func TestCPUTempSensorsDiscoveredOnceAcrossGoroutines(t *testing.T) {
+	orig := sysPath
+	t.Cleanup(func() { sysPath = orig })
+	sysPath = "testdata/sys"
+	c := New(config.GlobalConfig{}, config.CollectionConfig{}, config.ApplicationsConfig{}, "")
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = c.collectCPUTemperature() }()
+		go func() { defer wg.Done(); _ = c.DetectTjMax() }()
+	}
+	wg.Wait()
+	if temp, _ := c.collectCPUTemperature(); temp != 45.12 {
+		t.Errorf("temperature = %v, want 45.12", temp)
+	}
 }
