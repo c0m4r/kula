@@ -162,3 +162,32 @@ func TestTCPRatesFromABaseline(t *testing.T) {
 		}
 	}
 }
+
+// TestCollectNetworkListsInterfacesInNameOrder: interfaces come from a map;
+// every sample must still list them in one stable order.
+func TestCollectNetworkListsInterfacesInNameOrder(t *testing.T) {
+	orig := procPath
+	t.Cleanup(func() { procPath = orig })
+	procPath = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(procPath, "net"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dev := "Inter-|   Receive\n face |bytes\n"
+	for _, name := range []string{"wlan0", "eth1", "enp3s0", "eth0", "bond0"} {
+		dev += fmt.Sprintf("%7s: 100 1 0 0 0 0 0 0 100 1 0 0 0 0 0 0\n", name)
+	}
+	if err := os.WriteFile(filepath.Join(procPath, "net", "dev"), []byte(dev), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := New(config.GlobalConfig{}, config.CollectionConfig{}, config.ApplicationsConfig{}, "")
+	want := []string{"bond0", "enp3s0", "eth0", "eth1", "wlan0"}
+	for i := 0; i < 20; i++ {
+		var got []string
+		for _, iface := range c.collectNetwork(1).Interfaces {
+			got = append(got, iface.Name)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("sample %d lists %v, want %v", i, got, want)
+		}
+	}
+}

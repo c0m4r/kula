@@ -3,8 +3,10 @@ package collector
 import (
 	"bufio"
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -161,7 +163,9 @@ func (c *Collector) collectNetwork(elapsed float64) NetworkStats {
 	current := c.parseNetDev()
 	stats := NetworkStats{}
 
-	for name, cur := range current {
+	// Sorted, so every sample lists the interfaces in the same order.
+	for _, name := range slices.Sorted(maps.Keys(current)) {
+		cur := current[name]
 		iface := NetInterface{
 			Name:    name,
 			RxBytes: cur.rxBytes,
