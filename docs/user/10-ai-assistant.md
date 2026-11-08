@@ -35,8 +35,8 @@ When enabled, a 🤖 button appears in the dashboard header.
   with that chart's recent data as CSV, so you can ask "what's causing this spike?"
 - **Agentic tool calling** — the model can call a `get_metrics` tool to pull historical time
   series for `cpu`, `memory`, `swap`, `load`, `network`, `disk_io`, `disk_space` or `gpu` on
-  demand (downsampled to about 100 points, default range the last hour; up to 5 tool-call
-  rounds per turn).
+  demand (downsampled to about 100 points, default range the last hour, at most 31 days, as
+  in the history API; up to 5 tool-call rounds per turn).
 - **Model selector** — switch between any locally-available Ollama model mid-session.
 - **Draggable & resizable panel** — drag by the header, resize from the bottom-right grip.
 - **Streaming responses** with markdown rendering.

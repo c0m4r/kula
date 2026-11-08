@@ -729,6 +729,20 @@ func (s *Server) handleCurrent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// maxHistoryRange bounds every history query, from the API or the AI tool.
+const maxHistoryRange = 31 * 24 * time.Hour
+
+// validateHistoryRange refuses an inverted or over-long history range.
+func validateHistoryRange(from, to time.Time) error {
+	if to.Before(from) {
+		return errors.New("time range inverted")
+	}
+	if to.Sub(from) > maxHistoryRange {
+		return errors.New("time range too large; maximum is 31 days")
+	}
+	return nil
+}
+
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
@@ -760,12 +774,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if to.Before(from) {
-		jsonError(w, "time range inverted", http.StatusBadRequest)
-		return
-	}
-	if to.Sub(from) > 31*24*time.Hour {
-		jsonError(w, "time range too large; maximum is 31 days", http.StatusBadRequest)
+	if err := validateHistoryRange(from, to); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

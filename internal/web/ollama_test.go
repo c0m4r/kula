@@ -442,6 +442,27 @@ func TestExecuteGetMetrics_InvalidArgs(t *testing.T) {
 	}
 }
 
+// TestExecuteGetMetricsRangeLimits: the AI tool is held to the history API's
+// limits, and an unreadable bound is reported instead of being replaced by
+// the default hour.
+func TestExecuteGetMetricsRangeLimits(t *testing.T) {
+	srv := &Server{}
+	for args, want := range map[string]string{
+		`{"resource":"cpu","from":"-1h","to":"-2h"}`:                                   "time range inverted",
+		`{"resource":"cpu","from":"-800h"}`:                                            "maximum is 31 days",
+		`{"resource":"cpu","from":"2026-01-01T00:00:00Z","to":"2026-03-01T00:00:00Z"}`: "maximum is 31 days",
+		`{"resource":"cpu","from":"yesterday"}`:                                        "invalid 'from' time",
+		`{"resource":"cpu","to":"soon"}`:                                               "invalid 'to' time",
+		// Within the limits the query reaches the store (absent here).
+		`{"resource":"cpu","to":"2026-03-01T00:00:00Z"}`: "no storage available",
+		`{"resource":"cpu","from":"-744h"}`:              "no storage available",
+	} {
+		if out := srv.executeGetMetrics(json.RawMessage(args)); !strings.Contains(out, want) {
+			t.Errorf("%s: got %q, want %q", args, out, want)
+		}
+	}
+}
+
 func TestChatRateLimiterCapsDistinctKeys(t *testing.T) {
 	rl := &chatRateLimiter{limit: ollamaChatRateLimit, requests: make(map[string][]time.Time)}
 

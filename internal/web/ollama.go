@@ -899,7 +899,7 @@ func metricsToolDef() ollamaToolDef {
 					},
 					"from": {
 						Type:        "string",
-						Description: `Start of the time range. Use a relative duration like "-1h" or "-30m", or an RFC3339 timestamp. Defaults to "-1h" when omitted.`,
+						Description: `Start of the time range. Use a relative duration like "-1h" or "-30m", or an RFC3339 timestamp. Defaults to one hour before "to" when omitted. The range may span at most 31 days.`,
 					},
 					"to": {
 						Type:        "string",
@@ -926,13 +926,9 @@ func (s *Server) executeGetMetrics(argsJSON json.RawMessage) string {
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
 		return fmt.Sprintf("error: invalid arguments: %v", err)
 	}
-	if s.store == nil {
-		return "error: no storage available"
-	}
 
 	now := time.Now()
 	to := now
-	from := now.Add(-time.Hour)
 
 	parseTime := func(raw string) (time.Time, bool) {
 		if d, err := time.ParseDuration(raw); err == nil {
@@ -944,15 +940,28 @@ func (s *Server) executeGetMetrics(argsJSON json.RawMessage) string {
 		return time.Time{}, false
 	}
 
-	if args.From != "" {
-		if t, ok := parseTime(args.From); ok {
-			from = t
-		}
-	}
+	// An unreadable bound is an error the model can correct, not a silent
+	// fallback to the default hour presented as the range it asked for.
 	if args.To != "" {
-		if t, ok := parseTime(args.To); ok {
-			to = t
+		t, ok := parseTime(args.To)
+		if !ok {
+			return fmt.Sprintf("error: invalid 'to' time %q", args.To)
 		}
+		to = t
+	}
+	from := to.Add(-time.Hour)
+	if args.From != "" {
+		t, ok := parseTime(args.From)
+		if !ok {
+			return fmt.Sprintf("error: invalid 'from' time %q", args.From)
+		}
+		from = t
+	}
+	if err := validateHistoryRange(from, to); err != nil {
+		return "error: " + err.Error()
+	}
+	if s.store == nil {
+		return "error: no storage available"
 	}
 
 	result, err := s.store.QueryRangeWithMeta(from, to, 100)
