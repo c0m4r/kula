@@ -156,6 +156,10 @@ buffer cache hit %, blocks read/hit, checkpoint/backend buffers, deadlocks, dead
 autovacuum count, database size, replication lag (bytes & seconds), replicas connected, and
 recovery state.
 
+Dead/live tuples, autovacuum count and database size are read once a minute and repeated in
+between: both walk every table of the database, which costs the server tens of milliseconds
+per poll once it holds thousands of tables. Everything else is read every collection interval.
+
 > Prefer the `KULA_POSTGRES_PASSWORD` environment variable over putting the password in the
 > file. Kula escapes it safely for the libpq connection string.
 

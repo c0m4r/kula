@@ -124,7 +124,8 @@ Per-device metrics (network interfaces, disks, filesystems, GPUs, containers, se
 appropriate labels.
 
 Disk temperatures and power-supply metrics change every `collection.disk_temp_interval` and
-`collection.power_supply_interval` (10 s by default); a scrape in between returns the last
+`collection.power_supply_interval` (10 s by default), PostgreSQL's dead/live tuples,
+autovacuum count and database size once a minute; a scrape in between returns the last
 reading.
 
 Disk I/O and temperature metrics use the **persistent disk ID** as their `device` label value,

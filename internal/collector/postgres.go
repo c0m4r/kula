@@ -36,6 +36,19 @@ type pgRaw struct {
 	bgValid bool
 }
 
+// pgRelationStatsInterval is how often table health (the pg_stat_user_tables
+// sums) and the database size are read; the polls in between repeat them.
+// Both walk every relation of the database, pg_database_size with a stat()
+// of each of its files: about 30 and 60 ms of server time at 10000 tables,
+// for numbers that change over minutes.
+const pgRelationStatsInterval = time.Minute
+
+// pgRelationStats is what one read of the relation statistics found; a query
+// that failed leaves its fields zero.
+type pgRelationStats struct {
+	deadTuples, liveTuples, autovacuumCount, dbSizeBytes int64
+}
+
 // postgresCollector polls one PostgreSQL database through a single session
 // (see dbsession.go for the connection rules).
 type postgresCollector struct {
@@ -51,6 +64,10 @@ type postgresCollector struct {
 	// maxConns is max_connections, read once per session: changing it takes a
 	// server restart, which ends the session. 0 until read.
 	maxConns int
+	// rel is the last read of the relation statistics, relAt when the poll
+	// that read them did (see pgRelationStatsInterval).
+	rel   pgRelationStats
+	relAt time.Time
 }
 
 // pgValue quotes a libpq connection-string value, so no configured value can
@@ -387,7 +404,7 @@ func (pc *postgresCollector) query(ctx context.Context, conn *sql.Conn) (*Postgr
 		return nil, fmt.Errorf("pg_stat_database: %w", err)
 	}
 	cur.valid = true
-	readAt := time.Now()
+	readAt := pc.session.clock()
 
 	pc.debugf("[postgres] raw: commit=%d, rollback=%d, hit=%d, read=%d, deadlocks=%d",
 		cur.xactCommit, cur.xactRollback, cur.blksHit, cur.blksRead, cur.deadlocks)
@@ -432,34 +449,17 @@ func (pc *postgresCollector) query(ctx context.Context, conn *sql.Conn) (*Postgr
 	pc.calculateStats(stats, cur, elapsed)
 	pc.prevAt = readAt
 
-	// Table health across all user tables: dead/live tuples and autovacuum activity
-	row = conn.QueryRowContext(ctx, `
-		SELECT
-			COALESCE(SUM(n_dead_tup),       0),
-			COALESCE(SUM(n_live_tup),       0),
-			COALESCE(SUM(autovacuum_count), 0)
-		FROM pg_stat_user_tables
-	`)
-	var deadTup, liveTup, vacCount sql.NullInt64
-	if err := row.Scan(&deadTup, &liveTup, &vacCount); err == nil {
-		if deadTup.Valid {
-			stats.DeadTuples = deadTup.Int64
-		}
-		if liveTup.Valid {
-			stats.LiveTuples = liveTup.Int64
-		}
-		if vacCount.Valid {
-			stats.AutovacuumCount = vacCount.Int64
-		}
+	// Table health and database size, at their own interval. A read that
+	// fails counts too, so statistics too slow for the statement timeout are
+	// not retried every poll.
+	if pc.relationStatsDue(readAt) {
+		pc.rel = pc.queryRelationStats(ctx, conn)
+		pc.relAt = readAt
 	}
-
-	// Database size
-	var dbSize sql.NullInt64
-	if err := conn.QueryRowContext(ctx,
-		"SELECT pg_database_size($1)", pc.dbName,
-	).Scan(&dbSize); err == nil && dbSize.Valid {
-		stats.DBSizeBytes = dbSize.Int64
-	}
+	stats.DeadTuples = pc.rel.deadTuples
+	stats.LiveTuples = pc.rel.liveTuples
+	stats.AutovacuumCount = pc.rel.autovacuumCount
+	stats.DBSizeBytes = pc.rel.dbSizeBytes
 
 	// Replication state. All queries here are non-fatal: a user without
 	// pg_monitor/REPLICATION privileges should still get the rest of the
@@ -511,6 +511,44 @@ func (pc *postgresCollector) query(ctx context.Context, conn *sql.Conn) (*Postgr
 	}
 
 	return stats, nil
+}
+
+// relationStatsDue reports whether the poll reading at should read the
+// relation statistics: none read yet, or pgRelationStatsInterval since the
+// last read, give or take half a poll interval of jitter.
+func (pc *postgresCollector) relationStatsDue(at time.Time) bool {
+	interval := pc.session.timeouts.interval
+	every := max(pgRelationStatsInterval, interval)
+	return pc.relAt.IsZero() || at.Sub(pc.relAt) >= every-interval/2
+}
+
+// queryRelationStats reads table health across all user tables (dead and
+// live tuples, autovacuum runs) and the database size. Both are non-fatal: a
+// query that fails leaves its fields zero.
+func (pc *postgresCollector) queryRelationStats(ctx context.Context, conn *sql.Conn) pgRelationStats {
+	var rel pgRelationStats
+	var deadTup, liveTup, vacCount sql.NullInt64
+	if err := conn.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(n_dead_tup),       0),
+			COALESCE(SUM(n_live_tup),       0),
+			COALESCE(SUM(autovacuum_count), 0)
+		FROM pg_stat_user_tables
+	`).Scan(&deadTup, &liveTup, &vacCount); err == nil {
+		rel.deadTuples, rel.liveTuples, rel.autovacuumCount = deadTup.Int64, liveTup.Int64, vacCount.Int64
+	} else {
+		pc.debugf("[postgres] pg_stat_user_tables query error: %v", err)
+	}
+
+	var dbSize sql.NullInt64
+	if err := conn.QueryRowContext(ctx,
+		"SELECT pg_database_size($1)", pc.dbName,
+	).Scan(&dbSize); err == nil {
+		rel.dbSizeBytes = dbSize.Int64
+	} else {
+		pc.debugf("[postgres] pg_database_size error: %v", err)
+	}
+	return rel
 }
 
 // calculateStats computes per-second rates from raw cumulative counters. Each

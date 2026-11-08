@@ -39,7 +39,7 @@ Lifecycle:
 | [`containers.go`](../../internal/collector/containers.go) | Docker/Podman socket + cgroups v2 | per-container CPU/mem/net/disk; a container is inspected for its PID once, kept while `/proc/<pid>/cgroup` still names it, and its state dropped when it leaves the list |
 | [`nginx.go`](../../internal/collector/nginx.go) | stub_status | connections, accepts/handled/requests rates |
 | [`apache2.go`](../../internal/collector/apache2.go) | mod_status | workers, scoreboard, rates |
-| [`postgres.go`](../../internal/collector/postgres.go) | `lib/pq`, `pg_stat_*` | connections, txns, tuples, I/O, locks, size, replication |
+| [`postgres.go`](../../internal/collector/postgres.go) | `lib/pq`, `pg_stat_*` | connections, txns, tuples, I/O, locks, size, replication; table health and size once a minute |
 | [`mysql.go`](../../internal/collector/mysql.go) | `go-sql-driver/mysql`, `SHOW GLOBAL STATUS` | threads, queries, InnoDB, replication |
 | [`custom.go`](../../internal/collector/custom.go) | Unix socket `kula.sock` (JSON) | user-defined chart groups |
 | [`ai.go`](../../internal/collector/ai.go) | the current `Sample` | `FormatForAI()` text for the LLM |
@@ -107,6 +107,12 @@ API and WebSocket payloads.
   them when work outlives its deadline by `abortGrace` (5 s): keepalives cannot detect a frozen
   server whose kernel still acknowledges, or data waiting on the retransmission timer. `dbsession_test.go` checks the bounds (one client connection, at most two server
   sessions) against a fake driver.
+- **PostgreSQL's relation statistics are read once a minute.** The `pg_stat_user_tables` sums
+  and `pg_database_size` walk every relation, the latter with a `stat()` of each file (about
+  30 and 60 ms of server time at 10 000 tables), so `postgres.go` reads them every
+  `pgRelationStatsInterval` and repeats them in the polls between. Every attempt counts,
+  failed or not, so statistics slower than the statement timeout are not retried each poll.
+  `postgres_test.go` counts the queries of two minutes of polls against a fake server.
 - **Debug logging** goes through the `debugf` helper, gated by `collection.DebugLog` (which is
   set when `web.logging.level == "debug"`).
 
