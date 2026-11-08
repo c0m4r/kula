@@ -172,3 +172,26 @@ func reopenStore(t *testing.T, dir string, tiers []config.TierConfig) *Store {
 	}
 	return store
 }
+
+// TestShortViewAfterAStartPrefersRawData covers the first minutes after a
+// fresh start: the first tier-1 rollup holds only the part of its minute
+// collected so far, and must not outrank the raw tier, or a five-minute view
+// is answered with one coarse bucket instead of streaming raw samples.
+func TestShortViewAfterAStartPrefersRawData(t *testing.T) {
+	store := newMultiTierStore(t)
+	defer func() { _ = store.Close() }()
+	base := time.Date(2026, 3, 1, 12, 0, 20, 0, time.UTC) // starts 20 s into a minute
+	writeOffsetSamples(t, store, base, 0, 45, 300*time.Millisecond, func(int) float64 { return 5 })
+	if store.tiers[1].Count() == 0 {
+		t.Fatal("precondition: the first minute boundary produced no tier-1 rollup")
+	}
+	now := base.Add(45*time.Second + 300*time.Millisecond)
+	result, err := store.QueryRangeWithMeta(now.Add(-5*time.Minute), now, 534)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tier != 0 || len(result.Samples) < 40 {
+		t.Fatalf("five minutes after a start: tier %d with %d samples, want the raw tier's ~46", result.Tier, len(result.Samples))
+	}
+}
+

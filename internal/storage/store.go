@@ -587,9 +587,19 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 		complete := !oldest.After(from.Add(leftTolerance)) &&
 			!newest.Before(to.Add(-rightTolerance))
 
+		// Rank coverage from where the tier certainly holds data. A coarse
+		// tier's oldest rollup may be partial — the first one after a fresh
+		// start nearly always is, since rollup windows are wall-clock aligned
+		// — and its start is unknown without decoding it, so count from its
+		// end. Its nominal width would let one partial minute outrank raw
+		// data covering most of that minute.
+		coveredFrom := oldestStart
+		if tierIdx != 0 {
+			coveredFrom = oldest
+		}
 		overlapFrom := from
-		if oldestStart.After(overlapFrom) {
-			overlapFrom = oldestStart
+		if coveredFrom.After(overlapFrom) {
+			overlapFrom = coveredFrom
 		}
 		overlapTo := to
 		if newest.Before(overlapTo) {
