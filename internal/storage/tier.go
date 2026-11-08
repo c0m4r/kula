@@ -18,14 +18,15 @@ import (
 // File format:
 //   Header (64 bytes):
 //     [0:4]   magic "KULA"
-//     [4:8]   reserved
+//     [4:8]   header flags (uint32 LE): has tail, wrapped — see below
 //     [8:16]  version (uint64)
 //     [16:24] max data size (uint64)
 //     [24:32] write offset within data region (uint64)
 //     [32:40] total records written (uint64)
 //     [40:48] oldest timestamp (int64, unix nano)
 //     [48:56] newest timestamp (int64, unix nano)
-//     [56:64] reserved
+//     [56:64] oldest record offset within data region (uint64), the ring's
+//             tail; valid only with the has-tail flag
 //   Data region:
 //     Sequence of: [length uint32][data []byte]
 //     data is [0x03][encoded sample][crc32] for records written since 0.22.0
