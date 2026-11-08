@@ -41,6 +41,12 @@ func (s *Server) newUpgrader() websocket.Upgrader {
 	return websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
+		// Refused handshakes answer in JSON like every other API error, with
+		// the version header gorilla's default error path sends.
+		Error: func(w http.ResponseWriter, _ *http.Request, status int, _ error) {
+			w.Header().Set("Sec-Websocket-Version", "13")
+			jsonError(w, http.StatusText(status), status)
+		},
 		CheckOrigin: func(r *http.Request) bool {
 			if !s.cfg.Security.OriginValidation {
 				return true
@@ -95,13 +101,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if s.wsCount >= s.cfg.MaxWebsocketConns {
 		s.wsMu.Unlock()
 		log.Printf("WebSocket upgrade rejected: global limit reached (%d)", s.cfg.MaxWebsocketConns)
-		http.Error(w, "Global connection limit reached", http.StatusTooManyRequests)
+		jsonError(w, "global connection limit reached", http.StatusTooManyRequests)
 		return
 	}
 	if s.wsIPCounts[ip] >= s.cfg.MaxWebsocketConnsPerIP {
 		s.wsMu.Unlock()
 		log.Printf("WebSocket upgrade rejected: IP limit reached for %s (%d)", ip, s.cfg.MaxWebsocketConnsPerIP)
-		http.Error(w, "Per-IP connection limit reached", http.StatusTooManyRequests)
+		jsonError(w, "per-IP connection limit reached", http.StatusTooManyRequests)
 		return
 	}
 	s.wsCount++

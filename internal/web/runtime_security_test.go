@@ -505,6 +505,88 @@ func TestRuntimeWebSocketGates(t *testing.T) {
 	}
 }
 
+// TestRuntimeErrorsAreJSON drives every refusal the middleware and the WebSocket
+// handshake can give through the production chain: each answers with a JSON
+// {"error": ...} body labelled application/json, as the handlers' own errors do.
+func TestRuntimeErrorsAreJSON(t *testing.T) {
+	s, ts := newSecuredTestServer(t, nil)
+	res := login(t, ts, secUser, secPass)
+	if res.session == "" {
+		t.Fatal("setup login failed")
+	}
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+
+	check := func(name string, resp *http.Response, want int) {
+		t.Helper()
+		if resp == nil {
+			t.Errorf("%s: no response", name)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != want {
+			t.Errorf("%s: status = %d, want %d (body %q)", name, resp.StatusCode, want, raw)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("%s: Content-Type = %q, want application/json", name, ct)
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil || body.Error == "" {
+			t.Errorf("%s: body %q is not a JSON error (%v)", name, raw, err)
+		}
+	}
+	do := func(method, path, origin, csrf string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(method, ts.URL+path, nil)
+		req.Header.Set("Cookie", "kula_session="+res.session)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		if csrf != "" {
+			req.Header.Set("X-CSRF-Token", csrf)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		return resp
+	}
+	dial := func(name string, hdr http.Header, want int) *http.Response {
+		t.Helper()
+		conn, resp, err := websocket.DefaultDialer.Dial(wsURL, hdr)
+		if err == nil {
+			_ = conn.Close()
+			t.Fatalf("%s: WebSocket upgrade succeeded, want %d", name, want)
+		}
+		check(name, resp, want)
+		return resp
+	}
+
+	resp, err := ts.Client().Get(ts.URL + "/api/current")
+	if err != nil {
+		t.Fatalf("GET /api/current: %v", err)
+	}
+	check("no session", resp, http.StatusUnauthorized)
+	check("unknown API path", do(http.MethodGet, "/api/no-such-route", "", ""), http.StatusNotFound)
+	check("foreign origin", do(http.MethodPost, "/api/logout", "https://evil.example", res.csrf), http.StatusForbidden)
+	check("missing CSRF token", do(http.MethodPost, "/api/logout", ts.URL, ""), http.StatusForbidden)
+
+	dial("WebSocket without session", nil, http.StatusUnauthorized)
+	hdr := http.Header{}
+	hdr.Set("Cookie", "kula_session="+res.session)
+	hdr.Set("Origin", "https://evil.example")
+	if resp := dial("WebSocket from foreign origin", hdr, http.StatusForbidden); resp != nil && resp.Header.Get("Sec-Websocket-Version") != "13" {
+		t.Errorf("refused handshake lacks Sec-Websocket-Version: 13")
+	}
+	hdr.Set("Origin", ts.URL)
+	s.wsMu.Lock()
+	s.wsCount = s.cfg.MaxWebsocketConns
+	s.wsMu.Unlock()
+	dial("WebSocket over the connection limit", hdr, http.StatusTooManyRequests)
+}
+
 // TestRuntimeWebSocketClosesAtSessionDeadline proves the absolute session lifetime
 // reaches connections that are already established. Auth is checked once, at the
 // upgrade; a socket opened just before the deadline would otherwise keep streaming

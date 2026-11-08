@@ -391,6 +391,9 @@ func (s *Server) buildHandler() http.Handler {
 	apiMux.HandleFunc("/api/ollama/chat", s.handleOllamaChat)
 	apiMux.HandleFunc("/api/ollama/models", s.handleOllamaModels)
 	apiMux.HandleFunc("/api/ollama/context", s.handleOllamaContext)
+	apiMux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+		jsonError(w, "not found", http.StatusNotFound)
+	})
 
 	// Wrap apiMux with logging and CSRF protection.
 	loggedApiMux := s.auth.CSRFMiddleware(loggingMiddleware(s.cfg, "API", apiMux))

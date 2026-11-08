@@ -189,8 +189,13 @@ rejected.
 
 ### Error responses
 
-Errors are emitted via `jsonError`, which uses `json.Marshal` (not `fmt.Sprintf`) to prevent
-JSON injection.
+Every error under `/api/` and `/ws` is a JSON object, `{"error":"<message>"}`, with
+`Content-Type: application/json`: the handlers' own errors, the auth middleware's `401`, the CSRF
+middleware's `403`, `404` for an unknown `/api/` path, and a refused WebSocket handshake (`403`
+for a foreign Origin, `429` over a connection limit, `400` for a malformed upgrade).
+`jsonError` writes them with `json.Marshal` (not `fmt.Sprintf`) to prevent JSON injection.
+`/metrics` and the static assets answer errors in plain text.
+`TestRuntimeErrorsAreJSON` drives each refusal through the production handler chain.
 
 ## WebSocket (`/ws`)
 

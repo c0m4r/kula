@@ -475,7 +475,7 @@ func (a *AuthManager) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
 	})
 }
 
@@ -679,7 +679,7 @@ func (a *AuthManager) CSRFMiddleware(next http.Handler) http.Handler {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			// 1. Origin/Referer Validation (Defense in Depth)
 			if a.security.OriginValidation && !a.ValidateOrigin(r) {
-				http.Error(w, `{"error":"invalid origin"}`, http.StatusForbidden)
+				jsonError(w, "invalid origin", http.StatusForbidden)
 				return
 			}
 
@@ -693,7 +693,7 @@ func (a *AuthManager) CSRFMiddleware(next http.Handler) http.Handler {
 						expectedToken := a.GetCSRFToken(cookie.Value)
 						providedToken := r.Header.Get("X-CSRF-Token")
 						if expectedToken == "" || subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {
-							http.Error(w, `{"error":"invalid csrf token"}`, http.StatusForbidden)
+							jsonError(w, "invalid csrf token", http.StatusForbidden)
 							return
 						}
 					}
