@@ -1208,3 +1208,31 @@ func TestHandleHistoryRejectsWideRangeEvenWithinRetention(t *testing.T) {
 		t.Errorf("range after retained coverage status=%d, want 400", future.Code)
 	}
 }
+
+// TestAPIResponsesAreNotStored: every API response, errors and unknown paths
+// included, tells caches not to keep it, while static assets keep their
+// revalidating policy.
+func TestAPIResponsesAreNotStored(t *testing.T) {
+	cfg := config.WebConfig{Enabled: true, UI: true, MaxWebsocketConns: 10, MaxWebsocketConnsPerIP: 2}
+	c := collector.New(config.GlobalConfig{}, config.CollectionConfig{}, config.ApplicationsConfig{}, t.TempDir())
+	s := NewServer(cfg, config.GlobalConfig{}, c, nil, t.TempDir(), config.OllamaConfig{})
+	ts := httptest.NewServer(s.buildHandler())
+	defer ts.Close()
+
+	for path, want := range map[string]string{
+		"/api/current":     "no-store",
+		"/api/config":      "no-store",
+		"/api/auth/status": "no-store",
+		"/api/no-such":     "no-store",
+		"/js/app/main.js":  "no-cache",
+	} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if got := resp.Header.Get("Cache-Control"); got != want {
+			t.Errorf("%s (HTTP %d): Cache-Control = %q, want %q", path, resp.StatusCode, got, want)
+		}
+	}
+}

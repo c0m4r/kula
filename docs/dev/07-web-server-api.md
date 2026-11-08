@@ -197,6 +197,10 @@ for a foreign Origin, `429` over a connection limit, `400` for a malformed upgra
 `/metrics` and the static assets answer errors in plain text.
 `TestRuntimeErrorsAreJSON` drives each refusal through the production handler chain.
 
+Every response from the API mux carries `Cache-Control: no-store` (`noStore`): the data is live
+and session-bound, so neither a browser nor a proxy should keep it. A handler may set its own
+policy instead (the Ollama chat stream sends `no-cache`).
+
 ## WebSocket (`/ws`)
 
 [`websocket.go`](../../internal/web/websocket.go):

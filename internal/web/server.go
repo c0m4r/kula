@@ -410,6 +410,15 @@ func (s *Server) sessionCookieSameSite(r *http.Request) (http.SameSite, bool) {
 	return http.SameSiteStrictMode, tlsSecure
 }
 
+// noStore marks a response as not to be kept by a browser or proxy cache: API
+// responses are live and session-bound. A handler may still set its own policy.
+func noStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // buildHandler assembles the complete HTTP handler chain: the route mux, the
 // optional base-path mount, the security-header middleware, and optional gzip.
 // It performs no I/O and starts no goroutines, so tests can drive the exact
@@ -437,7 +446,7 @@ func (s *Server) buildHandler() http.Handler {
 	})
 
 	// Wrap apiMux with logging and CSRF protection.
-	loggedApiMux := s.auth.CSRFMiddleware(loggingMiddleware(s.cfg, "API", apiMux))
+	loggedApiMux := s.auth.CSRFMiddleware(loggingMiddleware(s.cfg, "API", noStore(apiMux)))
 
 	// Register /ws separately and explicitly through CORS, auth, CSRF and logging.
 	// CORS sits outermost so OPTIONS preflight short-circuits before auth/CSRF.
