@@ -16,6 +16,7 @@ const {
     liveHistoryRefreshInterval,
     resolutionMilliseconds,
     rollingTailRequest,
+    rollingTailSource,
 } = await importSource('../static/js/app/history-request.js');
 const {
     annotateHistoryItems,
@@ -148,6 +149,8 @@ for (const tail of fixture.tails ?? []) {
             lastBucketStart: last.bucketStart,
         });
         assert.deepEqual(plan, { fromMs: Date.parse(tail.tail_from), points: tail.tail_points }, 'tail request');
+        assert.deepEqual(rollingTailSource(plan, { tier: before.tier, downsampled: before.downsampled }),
+            { tier: tail.tier, requestFromMs: Date.parse(tail.request_from) }, 'tail tier hint and request start');
         assert.notEqual(liveHistoryRefreshInterval(tail.range_ms / 1000, tail.points, 1000, {
             tier: before.tier, resolution: before.resolution, sourceResolution: before.source_resolution,
             availableAggregations: before.available_aggregations,

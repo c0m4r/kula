@@ -75,11 +75,13 @@ const maxQueryCacheEntries = 256
 // (the raw samples remain safe in tier 0).
 const maxAggBufferFactor = 4
 
-// queryCacheKey identifies a query with its exact bounds and point budget.
+// queryCacheKey identifies a query with its exact bounds, point budget and
+// tier hint (stored plus one, so the zero value means none).
 type queryCacheKey struct {
 	fromNano     int64
 	toNano       int64
 	targetPoints int
+	tierHint     int
 }
 
 // queryCacheEntry is a cached query result tagged with its expiry.
@@ -542,7 +544,7 @@ func (s *Store) QueryRange(from, to time.Time) ([]*AggregatedSample, error) {
 // planHistoryQuery snapshots tier selection and cache state under a scoped
 // read lock. Callers clone cache hits and reduce history after the lock is
 // released, so neither operation holds up collection.
-func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey) ([]queryTierCandidate, *HistoryResult, uint64) {
+func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tierHint int) ([]queryTierCandidate, *HistoryResult, uint64) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	generation := s.writeGeneration
@@ -631,6 +633,15 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey) ([]
 		candidates = append(candidates, fullCandidates[:firstFull]...)
 	}
 	candidates = append(candidates, partialCandidates...)
+	// A hinted tier that retains part of the range is tried first, complete
+	// or not, as a full view of the longer window would have used it.
+	for i, candidate := range candidates {
+		if candidate.index == tierHint && i > 0 {
+			copy(candidates[1:i+1], candidates[:i])
+			candidates[0] = candidate
+			break
+		}
+	}
 	return candidates, nil, generation
 }
 
@@ -642,6 +653,16 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey) ([]
 // Results are cached for the duration of one tier-0 resolve cycle to serve
 // concurrent or repeated API calls without extra disk I/O.
 func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*HistoryResult, error) {
+	return s.QueryRangeFromTier(from, to, targetPoints, -1)
+}
+
+// QueryRangeFromTier is QueryRangeWithMeta with a tier hint: when tier retains
+// part of [from, to] it is tried first, before the tier the window alone would
+// select. The dashboard refreshes the newest buckets of a long rolling view
+// this way, so that a few minutes of a view built from tier 1 are answered
+// from tier 1 too, not from the raw tier that covers them. A negative or
+// unknown tier is no hint, and the result always names the tier it came from.
+func (s *Store) QueryRangeFromTier(from, to time.Time, targetPoints, tier int) (*HistoryResult, error) {
 	// Tier handles and their configuration are immutable after construction.
 	if len(s.tiers) == 0 {
 		return &HistoryResult{
@@ -661,12 +682,16 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 	// Exact bounds are part of the result: coalescing sub-second requests can
 	// return samples outside the caller's interval even when their display
 	// buckets happen to be identical.
+	if tier < 0 || tier >= len(s.tiers) {
+		tier = -1
+	}
 	cacheKey := queryCacheKey{
 		fromNano:     from.UnixNano(),
 		toNano:       to.UnixNano(),
 		targetPoints: targetPoints,
+		tierHint:     tier + 1,
 	}
-	candidates, cachedResult, generation := s.planHistoryQuery(from, to, cacheKey)
+	candidates, cachedResult, generation := s.planHistoryQuery(from, to, cacheKey, tier)
 	if cachedResult != nil {
 		// Cache entries are immutable. Copy without serializing other hits.
 		return cloneHistoryResult(cachedResult), nil

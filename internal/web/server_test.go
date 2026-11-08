@@ -899,6 +899,59 @@ func TestHandleHistoryThirtyDays(t *testing.T) {
 	}
 }
 
+// TestHandleHistoryTierHint covers the tier hint a dashboard tail refresh
+// sends: a few minutes of a tier-1 view must come from tier 1, not from the
+// raw tier the window alone would pick, and a malformed hint is refused.
+func TestHandleHistoryTierHint(t *testing.T) {
+	store, err := storage.NewStore(config.StorageConfig{
+		Directory: t.TempDir(),
+		Tiers: []config.TierConfig{
+			{Resolution: time.Second, MaxBytes: 4 * 1024 * 1024},
+			{Resolution: time.Minute, MaxBytes: 4 * 1024 * 1024},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 1; i <= 600; i++ {
+		if err := store.WriteSample(&collector.Sample{Timestamp: base.Add(time.Duration(i) * time.Second)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Server{store: store}
+	query := func(extra string) (int, storage.HistoryResult) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		url := "/api/history?from=" + base.Add(5*time.Minute).Format(time.RFC3339) +
+			"&to=" + base.Add(8*time.Minute).Format(time.RFC3339) + "&points=3" + extra
+		s.handleHistory(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		var result storage.HistoryResult
+		if rec.Code == http.StatusOK {
+			if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return rec.Code, result
+	}
+	if code, result := query(""); code != http.StatusOK || result.Tier != 0 {
+		t.Fatalf("no hint: status %d, tier %d, want 200 from tier 0", code, result.Tier)
+	}
+	if code, result := query("&tier=1"); code != http.StatusOK || result.Tier != 1 || result.Resolution != "1m" {
+		t.Fatalf("tier=1: status %d, tier %d at %s, want 200 from tier 1 at 1m", code, result.Tier, result.Resolution)
+	}
+	// A tier the store does not have is no hint.
+	if code, result := query("&tier=7"); code != http.StatusOK || result.Tier != 0 {
+		t.Fatalf("tier=7: status %d, tier %d, want 200 from tier 0", code, result.Tier)
+	}
+	for _, bad := range []string{"&tier=-1", "&tier=one", "&tier=1.5"} {
+		if code, _ := query(bad); code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", bad, code)
+		}
+	}
+}
+
 func TestHandleHistoryIncludesPSU(t *testing.T) {
 	store, err := storage.NewStore(config.StorageConfig{
 		Directory: t.TempDir(),

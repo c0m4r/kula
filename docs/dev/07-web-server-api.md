@@ -104,10 +104,15 @@ Sources: [Linux block statistics](https://docs.kernel.org/block/stat.html),
 [network sysfs ABI](https://github.com/torvalds/linux/blob/master/Documentation/ABI/testing/sysfs-class-net),
 and [DMTF SMBIOS specification, section 7.18](https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.9.0.pdf).
 
-### `GET /api/history?from=&to=&points=&sections=`
+### `GET /api/history?from=&to=&points=&sections=&tier=`
 
 - `from`, `to` — RFC 3339 timestamps. Defaults: `to = now`, `from = to − 5m`.
 - `points` — desired data points, default `450`, **capped at 5000** (min 1).
+- `tier` — optional tier hint (a non-negative integer, else `400`). When that tier retains any
+  of the window it is tried first, before the tier the window alone would select; a tier the
+  store does not have is ignored, and `tier` in the response always names the tier used. The
+  dashboard sends it when it refreshes the newest buckets of a view built from tier 1 or 2, so
+  those few minutes are answered from the same tier rather than from raw data.
 - `sections` — optional comma-separated top-level sample sections. Accepted values are
   `cpu,lavg,mem,swap,net,disk,sys,proc,self,gpu,psu,apps`. Unknown names return `400`.
 - Inverted ranges and all windows over 31 days return `400`.

@@ -16,6 +16,7 @@ const {
     historyViewAcceptsLiveSamples,
     liveHistoryRefreshInterval,
     rollingTailRequest,
+    rollingTailSource,
     updateLiveSampleInterval,
 } = await importSource('../static/js/app/history-request.js');
 const { diskKey, diskMember, diskLabel, diskDOMKey, migrateDiskSelection } =
@@ -965,6 +966,21 @@ test('a rolling tail request starts on a bucket boundary and asks one point per 
     assert.equal(rollingTailRequest({ ...view, rangeMs: 6000, toMs: 1003500, lastBucketStart: 1000000 }), null);
     assert.equal(rollingTailRequest({ ...view, points: 900, toMs: 1003500, lastBucketStart: 1000000 }), null);
     assert.equal(rollingTailRequest({ ...view, toMs: 999000, lastBucketStart: 1000000 }), null);
+});
+
+test('a rolling tail names its tier and starts where its buckets do', () => {
+    const plan = { fromMs: 600000, points: 4 };
+    // A reduced raw view: buckets clip every source record at the start.
+    assert.deepEqual(rollingTailSource(plan, { tier: 0, downsampled: true }), { tier: 0, requestFromMs: 600000 });
+    // A native raw view streams instead; its observations sit off the grid.
+    assert.equal(rollingTailSource(plan, { tier: 0, downsampled: false }), null);
+    // A coarse view names its tier. Native rollups end on the grid, so the
+    // request starts just past the boundary to leave out the record ending
+    // there, which the splice keeps.
+    assert.deepEqual(rollingTailSource(plan, { tier: 1, downsampled: false }), { tier: 1, requestFromMs: 600001 });
+    assert.deepEqual(rollingTailSource(plan, { tier: 2, downsampled: true }), { tier: 2, requestFromMs: 600000 });
+    assert.equal(rollingTailSource(plan, { tier: null, downsampled: true }), null);
+    assert.equal(rollingTailSource(null, { tier: 1, downsampled: false }), null);
 });
 
 test('a merged tail replaces trailing buckets and re-derives gaps across the join', () => {

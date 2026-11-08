@@ -739,8 +739,21 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		points = 1
 	}
 
+	// An optional tier hint asks for the window from that tier when it holds
+	// any of it (see storage.QueryRangeFromTier); the response names the tier
+	// actually used.
+	tierHint := -1
+	if raw := r.URL.Query().Get("tier"); raw != "" {
+		v, convErr := strconv.Atoi(raw)
+		if convErr != nil || v < 0 {
+			jsonError(w, "invalid 'tier'", http.StatusBadRequest)
+			return
+		}
+		tierHint = v
+	}
+
 	startLoad := time.Now()
-	result, err := s.store.QueryRangeWithMeta(from, to, points)
+	result, err := s.store.QueryRangeFromTier(from, to, points, tierHint)
 	if err != nil {
 		log.Printf("[API History] query error: %v", err)
 		jsonError(w, "internal storage error", http.StatusInternalServerError)

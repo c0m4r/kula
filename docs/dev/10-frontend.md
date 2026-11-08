@@ -160,13 +160,17 @@ last successful snapshot until replacement, including during network failures. T
 cadence and snapshot time appear in the resolution tooltip. Still-selected history is never
 removed to make room for a stream of raw points.
 
-A bucketed tier-0 rolling view refreshes by its **tail**, not the whole window
-(`fetchRollingTail` in `charts-data.js`). `rollingTailRequest` re-fetches the last three
-buckets — the trailing one is still filling, and the one before it can still lack the part of a
-source record that ends in the next bucket — from a bucket boundary, asking for exactly one
-point per bucket. Every finer server step would need more buckets (consecutive steps differ by
-at least 1.5×), so the server answers at the same tier, step and epoch alignment and computes
-each bucket exactly as a full refresh would. `mergeHistoryTail` replaces the buffered buckets
+A rolling view refreshed in buckets — a reduced tier-0 view, or any view built from tier 1 or
+2 — refreshes by its **tail**, not the whole window (`fetchRollingTail` in `charts-data.js`).
+`rollingTailRequest` re-fetches the last three buckets — the trailing one is still filling, and
+the one before it can still lack the part of a source record that ends in the next bucket —
+from a bucket boundary, asking for exactly one point per bucket. Every finer server step would
+need more buckets (consecutive steps differ by at least 1.5×), so the server answers at the same
+step and epoch alignment and computes each bucket exactly as a full refresh would. The request
+names the view's tier (`rollingTailSource`, the `tier` hint of `/api/history`), or a few minutes
+of a tier-1 view would be answered from raw data. Native tier-1/2 records end on bucket
+boundaries (rollup windows are epoch-aligned), so a native view's request starts one
+millisecond past the boundary, leaving out the record that ends exactly there. `mergeHistoryTail` replaces the buffered buckets
 from that boundary on and re-derives the gap markers; the merged buffer is then rendered like a
 full response, and its coverage combines the previous left edge with the tail's right edge
 (`mergedTailCoverage`). The left edge counts as retained once the observed data reaches it, so

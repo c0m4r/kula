@@ -24,6 +24,7 @@ import {
     liveHistoryRefreshInterval,
     resolutionMilliseconds,
     rollingTailRequest,
+    rollingTailSource,
     updateLiveSampleInterval,
 } from './history-request.js';
 import {
@@ -1285,6 +1286,7 @@ function requestHistory(fromDate, toDate, points, apply, {
     queueLive = true,
     pointLimit = points,
     merge = null,
+    tier = null,
 } = {}) {
     // A delayed zoom must not start a new request after this newer view and
     // supersede it through the latest-request-wins controller.
@@ -1294,6 +1296,7 @@ function requestHistory(fromDate, toDate, points, apply, {
         to: toDate.toISOString(),
         points: String(points),
     });
+    if (Number.isInteger(tier)) query.set('tier', String(tier));
     const sections = currentHistorySections();
     if (sections) query.set('sections', sections.join(','));
 
@@ -1969,11 +1972,12 @@ function refreshRollingHistory(interval) {
 // Re-fetching the whole window for that costs the server a full reduction and
 // the client every bucket's data/min/max graphs (megabytes for 30 minutes) on
 // every step. Instead only the last ROLLING_TAIL_BUCKETS buckets are fetched
-// and spliced onto the buffer. The tail starts on a bucket boundary and asks
-// for one point per bucket, so the server answers it from the same raw tier
-// at the same step and epoch alignment, and computes each bucket exactly as a
-// full refresh would. A response that does not describe the same view falls
-// back to a full refresh, and the view is resynced in full periodically.
+// and spliced onto the buffer. The tail starts on a bucket boundary, asks for
+// one point per bucket and names the view's tier, so the server answers it
+// from the same tier at the same step and epoch alignment, and computes each
+// bucket exactly as a full refresh would (rollingTailSource). A response that
+// does not describe the same view falls back to a full refresh, and the view
+// is resynced in full periodically.
 const ROLLING_TAIL_RESYNC_MS = 5 * 60 * 1000;
 
 function historySectionsKey() {
@@ -1985,9 +1989,8 @@ function rollingTailPlan(rangeSeconds, points, toMs) {
     if (!base || base.range !== rangeSeconds || base.points !== points ||
         base.sections !== historySectionsKey() || toMs - base.syncedAt >= ROLLING_TAIL_RESYNC_MS) return null;
     if (state.historyViewEnd === null || !['complete', 'partial'].includes(state.historyStatus)) return null;
-    // Only a reduced raw-tier view: a short tail of a coarse tier's window is
-    // served from raw data and would never describe the same view.
-    if (state.currentTier !== 0 || !state.currentDownsampled) return null;
+    const view = { tier: state.currentTier, downsampled: state.currentDownsampled };
+    if (!rollingTailSource({ fromMs: 0 }, view)) return null;
     const last = historyItemContext(latestHistoryItem(state.dataBuffer));
     const request = rollingTailRequest({
         rangeMs: rangeSeconds * 1000,
@@ -1996,7 +1999,7 @@ function rollingTailPlan(rangeSeconds, points, toMs) {
         stepMs: resolutionMilliseconds(state.currentResolution),
         lastBucketStart: last?.bucketStart,
     });
-    return request && { ...request, signature: base.signature };
+    return request && { ...request, ...rollingTailSource(request, view), signature: base.signature };
 }
 
 // Metadata of the merged view: the tail's description of the view, with
@@ -2033,12 +2036,13 @@ function applyRollingView(rangeSeconds, points, toDate, render) {
 
 function fetchRollingTail(rangeSeconds, points, fromDate, toDate, plan) {
     let unmergeable = false;
-    return requestHistory(new Date(plan.fromMs), toDate, plan.points, (response, items) => {
+    return requestHistory(new Date(plan.requestFromMs), toDate, plan.points, (response, items) => {
         applyRollingView(rangeSeconds, points, toDate, () => renderHistoryBuffer(items));
     }, {
         showSpinner: false,
         queueLive: false,
         pointLimit: points,
+        tier: plan.tier,
         merge: (response, samples) => {
             const items = !Array.isArray(response) && historyViewSignature(response) === plan.signature
                 ? mergeHistoryTail(state.dataBuffer, samples, response, plan.fromMs, response.resolution)

@@ -140,6 +140,21 @@ export function rollingTailRequest({ rangeMs, points, toMs, stepMs, lastBucketSt
     return { fromMs, points: alignedBucketCount(fromMs, toMs, stepMs) };
 }
 
+// The tier a rolling tail is requested from, and where its request starts,
+// for a view described by { tier, downsampled }; null when the view cannot be
+// refreshed by its tail. A raw-tier view qualifies only when reduced: native
+// raw observations do not sit on bucket boundaries. A coarse tier's view
+// names its tier, or the server would answer a few minutes from the raw tier.
+// Its native records end on bucket boundaries, so a native view's request
+// starts just past fromMs: the record ending exactly there belongs to the
+// bucket before it, which the splice keeps. A reduced view's buckets clip
+// every source record at the request start, so it starts at fromMs itself.
+export function rollingTailSource(plan, view) {
+    if (!plan || !Number.isInteger(view?.tier) || view.tier < 0) return null;
+    if (view.tier === 0 && !view.downsampled) return null;
+    return { tier: view.tier, requestFromMs: view.downsampled ? plan.fromMs : plan.fromMs + 1 };
+}
+
 // Keep a short robust window rather than remembering the smallest interval
 // forever. One early/late tick must not turn a supported 5s collector into a
 // permanent 1s estimate (or vice versa).

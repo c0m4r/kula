@@ -51,15 +51,19 @@ type historyContractResolution struct {
 // holds, the tail it fetches some seconds later, and the full window it must
 // end up showing.
 type historyContractTail struct {
-	Name     string          `json:"name"`
-	RangeMS  int64           `json:"range_ms"`
-	Points   int             `json:"points"`
-	TailFrom time.Time       `json:"tail_from"`
-	TailTo   time.Time       `json:"tail_to"`
-	Tail     int             `json:"tail_points"`
-	Before   json.RawMessage `json:"before"`
-	Refresh  json.RawMessage `json:"refresh"`
-	After    json.RawMessage `json:"after"`
+	Name     string    `json:"name"`
+	RangeMS  int64     `json:"range_ms"`
+	Points   int       `json:"points"`
+	TailFrom time.Time `json:"tail_from"`
+	TailTo   time.Time `json:"tail_to"`
+	Tail     int       `json:"tail_points"`
+	// RequestFrom and Tier are what the tail was requested with: the
+	// dashboard must derive both from the view (rollingTailSource).
+	RequestFrom time.Time       `json:"request_from"`
+	Tier        int             `json:"tier"`
+	Before      json.RawMessage `json:"before"`
+	Refresh     json.RawMessage `json:"refresh"`
+	After       json.RawMessage `json:"after"`
 }
 
 type historyContractFixture struct {
@@ -290,53 +294,95 @@ func TestHistoryResponsesMatchDashboardContract(t *testing.T) {
 		}
 		return encoded
 	}
+	// recordTail checks a tail refresh against the full refresh it stands in
+	// for, and adds it to the fixture: the tail must be answered as the same
+	// view, and every bucket it holds must equal the full refresh's.
+	recordTail := func(name string, store *Store, rangeDur time.Duration, points int, before *HistoryResult, to time.Time) {
+		t.Helper()
+		step, err := time.ParseDuration(before.Resolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tailFrom := before.Samples[len(before.Samples)-1].BucketStart.Add(-2 * step)
+		for alignedBucketCount(tailFrom, to, step) < 3 {
+			tailFrom = tailFrom.Add(-step)
+		}
+		tailPoints := int(alignedBucketCount(tailFrom, to, step))
+		// As the dashboard asks (rollingTailSource): from the view's tier,
+		// and a native view's request starting just past the boundary.
+		requestFrom := tailFrom
+		if !before.Downsampled {
+			requestFrom = tailFrom.Add(time.Millisecond)
+		}
+		refresh, err := store.QueryRangeFromTier(requestFrom, to, tailPoints, before.Tier)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after := contractQuery(t, store, to.Add(-rangeDur), to, points)
+		if refresh.Tier != after.Tier || refresh.Resolution != after.Resolution ||
+			refresh.SourceResolution != after.SourceResolution || refresh.Downsampled != after.Downsampled ||
+			!reflect.DeepEqual(refresh.AvailableAggregations, after.AvailableAggregations) ||
+			!reflect.DeepEqual(refresh.ValidAggregations, after.ValidAggregations) ||
+			!reflect.DeepEqual(refresh.ExtremaProfiles, after.ExtremaProfiles) {
+			t.Fatalf("%s: tail answered as tier=%d %s/%s downsampled=%v available=%v profiles=%v, want the full view's tier=%d %s/%s",
+				name, refresh.Tier, refresh.Resolution, refresh.SourceResolution, refresh.Downsampled,
+				refresh.AvailableAggregations, refresh.ExtremaProfiles, after.Tier, after.Resolution, after.SourceResolution)
+		}
+		fullBuckets := make(map[int64]json.RawMessage, len(after.Samples))
+		for _, sample := range after.Samples {
+			fullBuckets[sample.BucketStart.UnixNano()] = marshal(&HistoryResult{Samples: []*AggregatedSample{sample}})
+		}
+		// A reduced tail answers every bucket; a native one has no record yet
+		// for the window still being rolled up.
+		if len(refresh.Samples) > tailPoints || (refresh.Downsampled && len(refresh.Samples) != tailPoints) || len(refresh.Samples) == 0 {
+			t.Fatalf("%s: tail: %d buckets for %d points", name, len(refresh.Samples), tailPoints)
+		}
+		// Equal up to float rounding: where a scan cuts its decode batches
+		// depends on where it starts, and a bucket merged across a batch
+		// boundary can differ in the last bit of a mean or of an extremum.
+		for _, sample := range refresh.Samples {
+			if sample.BucketStart.Before(tailFrom) {
+				t.Fatalf("%s: tail bucket %s starts before the tail", name, sample.BucketStart.Format(time.RFC3339Nano))
+			}
+			want, ok := fullBuckets[sample.BucketStart.UnixNano()]
+			if got := marshal(&HistoryResult{Samples: []*AggregatedSample{sample}}); !ok || !jsonNumbersClose(t, got, want) {
+				t.Fatalf("%s: tail bucket %s differs from the full refresh:\n got %s\nwant %s",
+					name, sample.BucketStart.Format(time.RFC3339Nano), got, want)
+			}
+		}
+		fixture.Tails = append(fixture.Tails, historyContractTail{
+			Name:        name,
+			RangeMS:     rangeDur.Milliseconds(),
+			Points:      points,
+			TailFrom:    tailFrom,
+			TailTo:      to,
+			Tail:        tailPoints,
+			RequestFrom: requestFrom,
+			Tier:        before.Tier,
+			Before:      marshal(before),
+			Refresh:     marshal(refresh),
+			After:       marshal(after),
+		})
+	}
+
 	const rollingRange, rollingPoints = 300 * time.Second, 300
 	writeRolling(1, 990)
 	before := contractQuery(t, rolling, at(990.9).Add(-rollingRange), at(990.9), rollingPoints)
 	metadata("tail before", before, 0, "2s", true, extrema)
 	writeRolling(991, 1000)
-	step := 2 * time.Second
-	tailFrom := before.Samples[len(before.Samples)-1].BucketStart.Add(-2 * step)
-	tailPoints := int(alignedBucketCount(tailFrom, at(1000.9), step))
-	refresh := contractQuery(t, rolling, tailFrom, at(1000.9), tailPoints)
-	after := contractQuery(t, rolling, at(1000.9).Add(-rollingRange), at(1000.9), rollingPoints)
-	if refresh.Tier != after.Tier || refresh.Resolution != after.Resolution ||
-		refresh.SourceResolution != after.SourceResolution || refresh.Downsampled != after.Downsampled ||
-		!reflect.DeepEqual(refresh.AvailableAggregations, after.AvailableAggregations) ||
-		!reflect.DeepEqual(refresh.ValidAggregations, after.ValidAggregations) ||
-		!reflect.DeepEqual(refresh.ExtremaProfiles, after.ExtremaProfiles) {
-		t.Fatalf("tail answered as tier=%d %s/%s downsampled=%v available=%v profiles=%v, want the full view's tier=%d %s/%s",
-			refresh.Tier, refresh.Resolution, refresh.SourceResolution, refresh.Downsampled,
-			refresh.AvailableAggregations, refresh.ExtremaProfiles, after.Tier, after.Resolution, after.SourceResolution)
-	}
-	fullBuckets := make(map[int64]json.RawMessage, len(after.Samples))
-	for _, sample := range after.Samples {
-		fullBuckets[sample.BucketStart.UnixNano()] = marshal(&HistoryResult{Samples: []*AggregatedSample{sample}})
-	}
-	if len(refresh.Samples) != tailPoints {
-		t.Fatalf("tail: %d buckets, want %d", len(refresh.Samples), tailPoints)
-	}
-	// Equal up to float rounding: where a scan cuts its decode batches depends
-	// on where it starts, and a bucket merged across a batch boundary can
-	// differ in the last bit of a mean or of an extremum taken from one.
-	for _, sample := range refresh.Samples {
-		want, ok := fullBuckets[sample.BucketStart.UnixNano()]
-		if got := marshal(&HistoryResult{Samples: []*AggregatedSample{sample}}); !ok || !jsonNumbersClose(t, got, want) {
-			t.Fatalf("tail bucket %s differs from the full refresh:\n got %s\nwant %s",
-				sample.BucketStart.Format(time.RFC3339Nano), got, want)
-		}
-	}
-	fixture.Tails = append(fixture.Tails, historyContractTail{
-		Name:     "rolling five minutes in 2s buckets",
-		RangeMS:  rollingRange.Milliseconds(),
-		Points:   rollingPoints,
-		TailFrom: tailFrom,
-		TailTo:   at(1000.9),
-		Tail:     tailPoints,
-		Before:   marshal(before),
-		Refresh:  marshal(refresh),
-		After:    marshal(after),
-	})
+	recordTail("rolling five minutes in 2s buckets", rolling, rollingRange, rollingPoints, before, at(1000.9))
+
+	// A three-hour rolling view is built from tier 1's native rollups. Its
+	// tail names tier 1, or the server would answer those few minutes from
+	// raw data, which never describes the same view.
+	coarseRolling := newMultiTierStore(t)
+	t.Cleanup(func() { _ = coarseRolling.Close() })
+	writeOffsetSamples(t, coarseRolling, base, 1, 3*3600, 370*time.Millisecond, func(i int) float64 { return float64(10 + i%31) })
+	const coarseRange = 3 * time.Hour
+	coarseBefore := contractQuery(t, coarseRolling, at(3*3600+0.9).Add(-coarseRange), at(3*3600+0.9), 534)
+	metadata("coarse tail before", coarseBefore, 1, "1m", false, extrema)
+	writeOffsetSamples(t, coarseRolling, base, 3*3600+1, 3*3600+200, 370*time.Millisecond, func(i int) float64 { return float64(10 + i%31) })
+	recordTail("rolling three hours of tier-1 minutes", coarseRolling, coarseRange, 534, coarseBefore, at(3*3600+200.9))
 
 	// Every output step and supported tier resolution the server can format.
 	seen := make(map[string]bool)
