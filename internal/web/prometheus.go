@@ -411,19 +411,30 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			"Apache2 open (unused) worker slots.",
 			host, float64(a.OpenSlots))
 		gauge("kula_apache2_cpu_load",
-			"Apache2 server CPU load (percentage).",
+			"Apache2 CPU load (percentage), averaged since the server started.",
 			host, a.CPULoad)
 		gauge("kula_apache2_uptime_seconds",
 			"Apache2 server uptime in seconds.",
 			host, float64(a.Uptime))
+		// Current rates, from the change in the access and kbyte totals since
+		// the previous poll (they need ExtendedStatus On).
+		gauge("kula_apache2_accesses_per_second",
+			"Apache2 requests served per second since the previous poll.",
+			host, a.AccessesPS)
+		gauge("kula_apache2_served_bytes_per_second",
+			"Bytes Apache2 served per second since the previous poll.",
+			host, a.KBytesPS*1024)
+		// Deprecated: mod_status's ReqPerSec and BytesPerSec are averages over
+		// Apache2's whole uptime, not current rates. Kept under their old names
+		// so existing queries keep working until they are removed.
 		gauge("kula_apache2_requests_per_second",
-			"Apache2 requests served per second.",
+			"Deprecated: Apache2's average requests per second since it started, not the current rate; use kula_apache2_accesses_per_second.",
 			host, a.ReqPerSec)
 		gauge("kula_apache2_bytes_per_second",
-			"Apache2 bytes served per second.",
+			"Deprecated: Apache2's average bytes per second since it started, not the current rate; use kula_apache2_served_bytes_per_second.",
 			host, a.BytesPerSec)
 		gauge("kula_apache2_bytes_per_request",
-			"Average response size in bytes per Apache2 request.",
+			"Average response size in bytes per Apache2 request since the server started.",
 			host, a.BytesPerReq)
 		counter("kula_apache2_accesses_total",
 			"Total Apache2 accesses since server start.",

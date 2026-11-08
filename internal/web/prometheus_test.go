@@ -91,6 +91,7 @@ func newTestStoreWithSample(t *testing.T) *storage.Store {
 			},
 			Apache2: &collector.Apache2Stats{
 				BusyWorkers: 4, IdleWorkers: 16, TotalAccesses: 2500, TotalKBytes: 8000,
+				AccessesPS: 12, KBytesPS: 48,
 				ReqPerSec: 2.5, BytesPerSec: 4096, BytesPerReq: 1638, CPULoad: 0.75,
 				Uptime: 3600, Waiting: 14, Reading: 1, Sending: 3, Keepalive: 0,
 				Starting: 0, DNS: 0, Closing: 1, Logging: 0, Graceful: 0,
@@ -213,6 +214,12 @@ func TestHandleMetrics(t *testing.T) {
 	for _, want := range []string{
 		`kula_cpu_usage_percent{host="testhost"} 1.42`,
 		`kula_memory_total_bytes{host="testhost"} 8589934592`,
+		// Apache2's current rates, beside the deprecated since-start averages.
+		`kula_apache2_accesses_per_second{host="testhost"} 12`,
+		`kula_apache2_served_bytes_per_second{host="testhost"} 49152`,
+		`kula_apache2_requests_per_second{host="testhost"} 2.5`,
+		"# HELP kula_apache2_requests_per_second Deprecated:",
+		"# HELP kula_apache2_bytes_per_second Deprecated:",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("rounded metric %q not found in /metrics output", want)

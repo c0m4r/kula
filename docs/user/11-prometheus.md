@@ -95,10 +95,16 @@ neither).
 - **nginx:** `kula_nginx_active_connections`, `kula_nginx_{reading,writing,waiting}`,
   `kula_nginx_{accepts,handled,requests}_per_second`, `kula_nginx_{accepts,handled,requests}_total`.
 - **Apache2:** `kula_apache2_busy_workers`, `kula_apache2_idle_workers`,
-  `kula_apache2_open_slots`, `kula_apache2_requests_per_second`,
-  `kula_apache2_bytes_per_second`, `kula_apache2_bytes_per_request`, `kula_apache2_cpu_load`,
-  `kula_apache2_accesses_total`, `kula_apache2_kbytes_total`, `kula_apache2_scoreboard`,
-  `kula_apache2_uptime_seconds`.
+  `kula_apache2_open_slots`, `kula_apache2_accesses_per_second`,
+  `kula_apache2_served_bytes_per_second`, `kula_apache2_bytes_per_request`,
+  `kula_apache2_cpu_load`, `kula_apache2_accesses_total`, `kula_apache2_kbytes_total`,
+  `kula_apache2_scoreboard`, `kula_apache2_uptime_seconds`. The two rates are current (the
+  change since the previous poll; they need `ExtendedStatus On`); `bytes_per_request` and
+  `cpu_load` are Apache's averages since it started.
+  **Deprecated:** `kula_apache2_requests_per_second` and `kula_apache2_bytes_per_second` are
+  also averages since Apache started, not current rates, though their names say otherwise.
+  They stay for now so existing queries keep working, and will be removed in a later release;
+  use `kula_apache2_accesses_per_second` and `kula_apache2_served_bytes_per_second` instead.
 - **PostgreSQL:** `kula_postgres_connections_*`, `kula_postgres_transactions_*_per_second`,
   `kula_postgres_tuples_*_per_second`, `kula_postgres_buffer_cache_hit_percent`,
   `kula_postgres_blocks_*_per_second`, `kula_postgres_buffers_*_per_second`,
