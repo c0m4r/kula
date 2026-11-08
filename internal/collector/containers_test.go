@@ -493,3 +493,41 @@ func TestContainerPIDsAreInspectedOncePerProcess(t *testing.T) {
 			cc.prevCPU, cc.prevDisk, cc.prevNet, cc.pids)
 	}
 }
+
+// TestDecodeContainerListPastTheOldCap: a list far beyond the former 1 MiB
+// cap (which truncated it and lost every container) decodes whole, and one
+// past the current cap is refused by name rather than as broken JSON.
+func TestDecodeContainerListPastTheOldCap(t *testing.T) {
+	padding := strings.Repeat("x", 2500) // about the size of a real entry
+	var b strings.Builder
+	b.WriteString("[")
+	const n = 2000
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"Id":"c%04d","Names":["/c%04d"],"State":"running","Labels":{"pad":%q}}`, i, i, padding)
+	}
+	b.WriteString("]")
+	body := b.String()
+	if len(body) <= 1<<20 {
+		t.Fatalf("test list is only %d bytes", len(body))
+	}
+
+	containers, err := decodeContainerList(strings.NewReader(body))
+	if err != nil || len(containers) != n || containers[n-1].ID != fmt.Sprintf("c%04d", n-1) {
+		t.Fatalf("decoded %d containers, err %v", len(containers), err)
+	}
+
+	saved := maxContainerListBytes
+	maxContainerListBytes = 1 << 20
+	defer func() { maxContainerListBytes = saved }()
+	if _, err := decodeContainerList(strings.NewReader(body)); err == nil || !strings.Contains(err.Error(), "larger than 1 MiB") {
+		t.Fatalf("over-cap list: err = %v, want the cap named", err)
+	}
+	exact := `[{"Id":"a","Names":["/a"],"State":"running"}]`
+	maxContainerListBytes = int64(len(exact))
+	if got, err := decodeContainerList(strings.NewReader(exact)); err != nil || len(got) != 1 {
+		t.Fatalf("list exactly at the cap: %v, %v", got, err)
+	}
+}

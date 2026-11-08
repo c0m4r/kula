@@ -36,7 +36,7 @@ Lifecycle:
 | [`gpu_nvidia.go`](../../internal/collector/gpu_nvidia.go) | `nvidia.log` (CSV, atomic read) | NVIDIA temp/load/power/VRAM |
 | [`gpu_sysfs.go`](../../internal/collector/gpu_sysfs.go) | sysfs | AMD/Intel temp/power/VRAM/load |
 | [`psu.go`](../../internal/collector/psu.go) | `/sys/class/power_supply` ([`cadence.go`](../../internal/collector/cadence.go)) | battery/PSU status every `power_supply_interval` |
-| [`containers.go`](../../internal/collector/containers.go) | Docker/Podman socket + cgroups v2 | per-container CPU/mem/net/disk; a container is inspected for its PID once, kept while `/proc/<pid>/cgroup` still names it, and its state dropped when it leaves the list |
+| [`containers.go`](../../internal/collector/containers.go) | Docker/Podman socket + cgroups v2 | per-container CPU/mem/net/disk; a container is inspected for its PID once, kept while `/proc/<pid>/cgroup` still names it, and its state dropped when it leaves the list; the list is stream-decoded up to 64 MiB (about 25,000 containers), and a failure to read it is logged when it changes |
 | [`nginx.go`](../../internal/collector/nginx.go) | stub_status | connections, accepts/handled/requests rates |
 | [`apache2.go`](../../internal/collector/apache2.go) | mod_status | workers, scoreboard, rates |
 | [`postgres.go`](../../internal/collector/postgres.go) | `lib/pq`, `pg_stat_*` | connections, txns, tuples, I/O, locks, size, replication; table health and size once a minute |

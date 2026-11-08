@@ -46,6 +46,7 @@ type containerCollector struct {
 	socket    string // resolved socket path
 	debugDone bool   // set after first collection cycle
 	lastCount int    // previous container count; log only on change
+	listErr   string // last container-list failure logged, "" when listing works
 }
 
 // ContainersCollectorConfig is the internal config needed by the container collector.
@@ -292,6 +293,42 @@ func (cc *containerCollector) collect() {
 	cc.mu.Unlock()
 }
 
+// maxContainerListBytes bounds the /containers/json response. An entry is
+// about 2.5 KB, so this holds some 25,000 containers; the list is decoded as
+// it streams, keeping only the few fields Kula reads, so a large one costs
+// little memory. A variable so tests can lower it.
+var maxContainerListBytes int64 = 64 << 20
+
+// decodeContainerList reads a /containers/json body, refusing one past
+// maxContainerListBytes instead of failing on its truncated JSON.
+func decodeContainerList(body io.Reader) ([]dockerContainer, error) {
+	limited := &io.LimitedReader{R: body, N: maxContainerListBytes + 1}
+	var containers []dockerContainer
+	err := json.NewDecoder(limited).Decode(&containers)
+	if limited.N <= 0 {
+		return nil, fmt.Errorf("container list is larger than %d MiB; not collecting containers", maxContainerListBytes>>20)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("decoding the container list: %w", err)
+	}
+	return containers, nil
+}
+
+// reportList logs a failure to list containers when it changes, and the
+// recovery once, so a socket that stops answering is reported but not every
+// cycle. msg "" means the list was read.
+func (cc *containerCollector) reportList(msg string) {
+	if msg == cc.listErr {
+		return
+	}
+	if msg != "" {
+		log.Printf("[containers] %s", msg)
+	} else {
+		log.Printf("[containers] listing containers again")
+	}
+	cc.listErr = msg
+}
+
 // collectViaSocket discovers containers via the Docker/Podman API.
 func (cc *containerCollector) collectViaSocket(elapsed float64) []ContainerStats {
 	cc.initHTTPClient()
@@ -301,23 +338,22 @@ func (cc *containerCollector) collectViaSocket(elapsed float64) []ContainerStats
 
 	resp, err := cc.client.Get("http://localhost/containers/json")
 	if err != nil {
+		cc.reportList(fmt.Sprintf("listing containers: %v", err))
 		return nil
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		cc.reportList(fmt.Sprintf("listing containers: HTTP %d", resp.StatusCode))
 		return nil
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+	containers, err := decodeContainerList(resp.Body)
 	if err != nil {
+		cc.reportList(err.Error())
 		return nil
 	}
-
-	var containers []dockerContainer
-	if err := json.Unmarshal(body, &containers); err != nil {
-		return nil
-	}
+	cc.reportList("")
 
 	// Log only on state transitions (count changes) to avoid per-cycle spam.
 	if len(containers) != cc.lastCount {
