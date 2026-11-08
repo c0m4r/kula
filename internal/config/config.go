@@ -920,7 +920,8 @@ func normalizeOrigin(raw string) (string, error) {
 	if strings.Contains(host, ":") {
 		host = "[" + host + "]"
 	}
-	if port := u.Port(); port != "" && !(scheme == "http" && port == "80") && !(scheme == "https" && port == "443") {
+	defaultPort := map[string]string{"http": "80", "https": "443"}[scheme]
+	if port := u.Port(); port != "" && port != defaultPort {
 		host += ":" + port
 	}
 	return scheme + "://" + host, nil

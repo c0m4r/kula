@@ -210,20 +210,20 @@ func TestLoadRejectsBrokenWebLimits(t *testing.T) {
 }
 
 func TestNormalizeOrigin(t *testing.T) {
-	for in, want := range map[string]string{
-		"https://app.example.com":      "https://app.example.com",
-		" HTTPS://App.Example.COM/ ":   "https://app.example.com",
-		"https://app.example.com:443":  "https://app.example.com",
-		"http://app.example.com:80/":   "http://app.example.com",
-		"https://app.example.com:8443": "https://app.example.com:8443",
-		"http://app.example.com:443":   "http://app.example.com:443",
-		"http://[::1]:8080":            "http://[::1]:8080",
-		"http://[::1]:80":              "http://[::1]",
-		"http://192.0.2.1":             "http://192.0.2.1",
+	for _, tc := range []struct{ in, want string }{
+		{"https://app.example.com", "https://app.example.com"},
+		{" HTTPS://App.Example.COM/ ", "https://app.example.com"},
+		{"https://app.example.com:443", "https://app.example.com"},
+		{"http://app.example.com:80/", "http://app.example.com"},
+		{"https://app.example.com:8443", "https://app.example.com:8443"},
+		{"http://app.example.com:443", "http://app.example.com:443"},
+		{"http://[::1]:8080", "http://[::1]:8080"},
+		{"http://[::1]:80", "http://[::1]"},
+		{"http://192.0.2.1", "http://192.0.2.1"},
 	} {
-		got, err := normalizeOrigin(in)
-		if err != nil || got != want {
-			t.Errorf("normalizeOrigin(%q) = %q, %v; want %q", in, got, err, want)
+		got, err := normalizeOrigin(tc.in)
+		if err != nil || got != tc.want {
+			t.Errorf("normalizeOrigin(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
 		}
 	}
 	for _, in := range []string{

@@ -166,13 +166,6 @@ func (c *Collector) debugf(format string, args ...any) {
 	}
 }
 
-// appErrorf logs an application error only once at startup — regardless of debug mode.
-func (c *Collector) appErrorf(format string, args ...any) {
-	if !c.debugDone.Load() {
-		log.Printf(format, args...)
-	}
-}
-
 // requestContext ends status-page requests when the collector stops.
 func (c *Collector) requestContext() context.Context {
 	if c.appCtx != nil {
