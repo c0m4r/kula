@@ -304,7 +304,8 @@ applied whenever the browser reports `prefers-reduced-motion`, regardless of thi
 
 - `access` — request lines (`[API]` / `[WEB]` tags, client IP, method, path, status).
 - `perf` — adds storage fetch performance for `/api/history`.
-- `debug` — adds collector auto-discovery logging.
+- `debug` — adds collector auto-discovery logging and WebSocket write errors (a dashboard that
+  disconnected or stopped reading).
 
 ### `web.prometheus_metrics`
 

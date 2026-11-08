@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -207,6 +209,9 @@ func waitForHub(t *testing.T, h *wsHub, what string, cond func() bool) {
 // used here so the upgrade gate never trips: a run in which dials are being
 // rejected is not exercising the disconnect path, so the dial count is asserted
 // rather than ignored.
+//
+// The disconnects are ordinary ones, so at the default log level they must stay
+// out of the log, however many of the server's writes they make fail.
 func TestHubUnregisterDoesNotRaceBroadcast(t *testing.T) {
 	const (
 		dialers      = 16
@@ -228,6 +233,11 @@ func TestHubUnregisterDoesNotRaceBroadcast(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	var logs bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(orig)
 
 	// Broadcast continuously so a disconnect is likely to land while broadcast
 	// holds the read lock and is iterating the clients map — the window the
@@ -267,9 +277,14 @@ func TestHubUnregisterDoesNotRaceBroadcast(t *testing.T) {
 
 	close(stop)
 	pump.Wait()
+	log.SetOutput(orig) // handlers still exiting can no longer write to logs
 
 	if n := succeeded.Load(); n < minSuccesses {
 		t.Fatalf("only %d of %d dials connected; the disconnect path was not exercised", n, totalDials)
+	}
+	if got := logs.String(); strings.Contains(got, "WebSocket write error") ||
+		strings.Contains(got, "WebSocket read unexpected error") {
+		t.Fatalf("ordinary disconnects were logged at the default level:\n%s", got)
 	}
 }
 

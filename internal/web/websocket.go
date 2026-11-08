@@ -230,7 +230,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-				log.Printf("WebSocket write error: %v", err)
+				// A failed write means the client has gone or stopped reading,
+				// and the connection ends either way. Like the read failures
+				// isUnexpectedWebSocketClose leaves quiet, that is the client's
+				// doing, so it is logged only at debug level. (The error does
+				// not say which: with compression, gorilla reports both as a
+				// flate stream error.)
+				if s.cfg.Logging.Enabled && s.cfg.Logging.Level == "debug" {
+					log.Printf("WebSocket write error: %v", err)
+				}
 				return
 			}
 		case <-ticker.C:

@@ -244,7 +244,7 @@ web:
     enabled: true
     # "access" (request details)
     # "perf" (adds DB fetch metrics)
-    # "debug" (i.e. collector auto-discovery)
+    # "debug" (e.g. collector auto-discovery, WebSocket write errors)
     level: "perf"
 
   # Prometheus metrics endpoint (optional)

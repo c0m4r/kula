@@ -204,6 +204,10 @@ JSON injection.
 - A **read pump** accepts JSON control commands: `{"action":"pause"}` and
   `{"action":"resume"}` (the dashboard auto-pauses while you zoom). Incoming messages are read
   with a 4096-byte limit and a 60-second deadline refreshed by pong handlers.
+- The **write pump** sends each broadcast with a 10-second write deadline and pings every 50
+  seconds. A failed write ends the connection and is logged only at `web.logging.level: debug`:
+  the client went away or stopped reading, and the error cannot say which (with compression,
+  gorilla reports both as a flate stream error).
 - Unregister is guarded by `sync.Once` to avoid double-decrementing the connection counters.
 
 ## Prometheus (`/metrics`)
