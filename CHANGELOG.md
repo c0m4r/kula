@@ -18,8 +18,12 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Rolling views refresh only their newest buckets instead of the whole range
 - History queries read only their time range instead of the whole tier file
 - Faster restarts: each tier keeps a small `tier_N.idx` seek index
+- Stored records carry a checksum (older versions can't read the new records)
+- Backups no longer pause collection or the dashboard
 - Tier 1 and 2 rollups align to wall-clock minutes, so rolling and past views agree
 - `/api/history` accepts an optional `tier` hint
+- API and WebSocket errors are always JSON
+- Failed WebSocket writes are logged only at debug level
 - tui: history reads only its time range
 - Cards keep one consistent order everywhere
 - Split charts expand and collapse like every other chart
@@ -47,6 +51,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - A crash no longer loses the rollup of the minute it interrupted
 - Seek index temp files left by a crash are cleaned up
 - A rolling view no longer stays marked "partial" after one late refresh
+- Reading a damaged tier file no longer hangs
+- Bearer tokens work with auth status and logout
 
 ### Security
 
