@@ -348,7 +348,11 @@ and skipped. The reverse does not hold; an older binary may misread a newer reco
   estimate. `--verbose` additionally prints the latest recorded metrics of each tier
   (`InspectLatestTierSample`).
 - [`addons/inspect_tier.py`](../../addons/inspect_tier.py) is a standalone Python decoder of the
-  same format — useful for offline analysis and as a cross-check on the Go codec.
+  same format — useful for offline analysis and as a cross-check on the Go codec. It walks the
+  ring as the Go reader does: the same wrap state and tail validation, segments clipped to the
+  file, the 64 MiB record cap, and resync past holes in the active pass, so after an unclean
+  shutdown it reports the same latest record as `kula inspect --verbose`.
+  `TestInspectorWalksTheRingLikeTheReader` compares the records both visit on damaged tiers.
 
 ## Mock data
 

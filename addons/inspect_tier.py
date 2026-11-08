@@ -11,8 +11,10 @@ import os
 import datetime
 import json
 import math
+import mmap
+import re
 import zlib
-from typing import Optional, Tuple, BinaryIO, Dict, Any, List
+from typing import Optional, Tuple, Dict, Any, Iterator, List
 
 MAGIC = b"KULA"
 HEADER_SIZE = 64
@@ -43,6 +45,16 @@ FIXED_BLOCK_SIZE = 218  # must match fixedBlockSize in codec.go
 RECORD_KIND_BINARY = 0x02  # written before 0.22.0, no checksum
 RECORD_KIND_CHECKSUMMED = 0x03  # [0x03][encoded sample][crc32 u32 LE]
 RECORD_CHECKSUM_SIZE = 4
+
+# Ring walking, as Tier.walkSegment and resyncToNextRecord in tier.go do it.
+MAX_RECORD_BYTES = 64 << 20  # maxRecordBytes
+RESYNC_PEEK = 4096  # resyncPeek: window for the two-records-in-a-row check
+SCAN_BUFFER = 1 << 20  # the scan's bufio size; resync verifies no larger record
+# Resync rejects timestamps before 2000 (local time, as Go's Year() reads it)
+# and more than an hour past the header's newest sample.
+MIN_SANE_NS = int(datetime.datetime(2000, 1, 1).timestamp()) * 10**9
+MAX_AHEAD_NS = 3600 * 10**9
+_NONZERO = re.compile(rb"[^\x00]")
 
 
 # ---------------------------------------------------------------------------
@@ -969,43 +981,174 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def find_latest_record(
-    f: BinaryIO, wrapped: bool, write_off: int, max_data: int, old_start: int = 0
-) -> Optional[bytes]:
-    """Find the latest record in the ring buffer.
+class Ring:
+    """Walks the records of a tier's data region the way the Go reader does.
 
-    old_start is the byte offset of the oldest surviving record (the tail);
-    the old segment runs from there to the sentinel near max_data.
+    Offsets are data-region offsets (0 is the first byte after the header).
+    In the active segment a bad length is a hole an unclean shutdown left,
+    and the walk resyncs past it; in the old segment it is the end.
     """
-    segments: List[Tuple[int, int]] = []
-    if wrapped:
-        segments.append((old_start, max_data - old_start))
-        segments.append((0, write_off))
-    else:
-        segments.append((0, write_off))
 
-    last_payload: Optional[bytes] = None
-    for start, size in segments:
-        f.seek(HEADER_SIZE + start)
-        bytes_read = 0
-        while bytes_read < size:
-            if size - bytes_read < 4:
-                break
-            len_buf = f.read(4)
-            if len(len_buf) < 4:
-                break
-            data_len = struct.unpack("<I", len_buf)[0]
-            if data_len == 0 or data_len > max_data:
-                break
-            record_len = 4 + data_len
-            if bytes_read + record_len > size:
-                break
-            payload = f.read(data_len)
-            if len(payload) < data_len:
-                break
-            last_payload = payload
-            bytes_read += record_len
-    return last_payload
+    def __init__(self, buf: Any, max_data: int, codec_ver: int, newest_nano: int) -> None:
+        self.buf = buf  # the whole file (mmap or bytes)
+        self.max_data = max_data
+        self.codec_ver = codec_ver or 1
+        self.newest_nano = newest_nano
+
+    def _u32(self, pos: int) -> int:
+        return struct.unpack_from("<I", self.buf, HEADER_SIZE + pos)[0]
+
+    def _byte(self, pos: int) -> int:
+        return self.buf[HEADER_SIZE + pos]
+
+    def valid_len(self, data_len: int) -> bool:
+        """validRecordLen: no zero sentinel, within the ring and the cap."""
+        return 0 < data_len <= MAX_RECORD_BYTES and data_len <= self.max_data
+
+    def header_sane(self, pos: int, window_end: int) -> Optional[int]:
+        """recordHeaderSane: the payload length of a plausible record at pos."""
+        if window_end - pos < 13:
+            return None
+        data_len = self._u32(pos)
+        if not self.valid_len(data_len):
+            return None
+        kind = self._byte(pos + 4)
+        if kind in (RECORD_KIND_BINARY, RECORD_KIND_CHECKSUMMED):
+            ts = struct.unpack_from("<q", self.buf, HEADER_SIZE + pos + 5)[0]
+        elif self.codec_ver >= CODEC_V2:
+            return None  # a v2 record always carries its kind byte
+        else:
+            ts = struct.unpack_from("<q", self.buf, HEADER_SIZE + pos + 4)[0]
+        if ts < MIN_SANE_NS:
+            return None
+        if self.newest_nano > 0 and ts > self.newest_nano + MAX_AHEAD_NS:
+            return None
+        return data_len
+
+    def intact(self, pos: int, record_len: int) -> bool:
+        """peekedRecordIntact: a checksummed record verifies whole."""
+        if record_len > SCAN_BUFFER:
+            return True
+        payload = self.buf[HEADER_SIZE + pos + 4:HEADER_SIZE + pos + record_len]
+        try:
+            checked_record_body(payload)
+        except ValueError:
+            return False
+        return True
+
+    def resync(self, pos: int, end: int) -> Optional[int]:
+        """resyncToNextRecord: the next plausible record start in [pos, end)."""
+        while end - pos >= 13:
+            if self.buf[HEADER_SIZE + pos:HEADER_SIZE + pos + 4] == b"\0\0\0\0":
+                # No record starts on a zero length: jump to 3 bytes before the
+                # next non-zero byte, the first place one could.
+                found = _NONZERO.search(self.buf, HEADER_SIZE + pos, HEADER_SIZE + end)
+                if found is None:
+                    return None
+                pos = found.start() - HEADER_SIZE - 3
+                continue
+            window_end = min(pos + RESYNC_PEEK, end)
+            data_len = self.header_sane(pos, window_end)
+            if data_len is not None:
+                record_len = 4 + data_len
+                if pos + record_len > end:
+                    pass  # runs past the segment: no record of it
+                elif self._byte(pos + 4) == RECORD_KIND_CHECKSUMMED:
+                    if self.intact(pos, record_len):
+                        return pos
+                elif pos + record_len == end:
+                    return pos
+                elif record_len + 13 <= window_end - pos:
+                    if self.header_sane(pos + record_len, window_end) is not None:
+                        return pos
+                else:
+                    return pos
+            pos += 1
+        return None
+
+    def walk(self, start: int, size: int, resync: bool) -> Iterator[Tuple[int, int]]:
+        """walkSegment: yields (offset, payload length) of each record."""
+        pos, end = start, start + size
+        while end - pos >= 4:
+            data_len = self._u32(pos)
+            if not self.valid_len(data_len) or pos + 4 + data_len > end:
+                nxt = self.resync(pos, end) if resync else None
+                if nxt is None:
+                    return
+                pos = nxt
+                continue
+            yield pos, data_len
+            pos += 4 + data_len
+
+    def payload(self, pos: int, data_len: int) -> bytes:
+        return bytes(self.buf[HEADER_SIZE + pos + 4:HEADER_SIZE + pos + 4 + data_len])
+
+
+def ring_segments(
+    wrapped: bool, write_off: int, max_data: int, old_start: int, file_size: int
+) -> List[Tuple[int, int, bool]]:
+    """ringSegments: (start, size, resync) in chronological order.
+
+    While wrapped, the previous pass [old_start, max_data) and then the active
+    one [0, write_off); each is clipped to the bytes the file holds.
+    """
+    segments = []
+    if wrapped:
+        segments.append((old_start, max_data - old_start, False))
+    segments.append((0, write_off, True))
+    data_size = file_size - HEADER_SIZE
+    return [(start, max(0, min(size, data_size - start)), resync) for start, size, resync in segments]
+
+
+def tier_records(filepath: str) -> List[Tuple[int, int]]:
+    """Every record (offset, payload length) a full scan visits, oldest first."""
+    with open(filepath, "rb") as f:
+        with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as buf:
+            ring, segments = open_ring(buf, parse_header(buf[:HEADER_SIZE]), len(buf))
+            return [rec for start, size, resync in segments for rec in ring.walk(start, size, resync)]
+
+
+def timestamp_at(buf: Any, max_data: int, file_size: int, pos: int) -> Optional[int]:
+    """readTimestampAt: the timestamp (ns) of the record at pos, if readable."""
+    if HEADER_SIZE + pos + 13 > file_size:
+        return None
+    data_len, kind = struct.unpack_from("<IB", buf, HEADER_SIZE + pos)
+    if not 0 < data_len <= min(MAX_RECORD_BYTES, max_data):
+        return None
+    if kind in (RECORD_KIND_BINARY, RECORD_KIND_CHECKSUMMED):
+        return struct.unpack_from("<q", buf, HEADER_SIZE + pos + 5)[0] if data_len >= 9 else None
+    if kind == ord("{"):
+        return None  # JSON tiers predate tail tracking, so no tail to validate
+    return struct.unpack_from("<q", buf, HEADER_SIZE + pos + 4)[0] if data_len >= 8 else None
+
+
+def ring_layout(buf: Any, header: Tuple, file_size: int) -> Tuple[bool, int]:
+    """readHeader's wrap state: (wrapped, offset of the oldest record).
+
+    A persisted tail is trusted only when it decodes to a sane oldest record.
+    Otherwise (and for files written before tail tracking) a file larger than
+    [0, write_off) has wrapped, and its old pass is taken to start at
+    write_off, as the reader before tail tracking did.
+    """
+    _, header_flags, _, max_data, write_off, count, _, newest_nano, oldest_off = header
+    if header_flags & FLAG_HAS_TAIL:
+        if not header_flags & FLAG_WRAPPED:
+            return False, 0
+        if write_off <= oldest_off < max_data:
+            ts = timestamp_at(buf, max_data, file_size, oldest_off)
+            if ts is not None and (newest_nano <= 0 or ts <= newest_nano):
+                return True, oldest_off
+    if count > 0 and file_size > HEADER_SIZE + write_off:
+        return True, write_off
+    return False, 0
+
+
+def open_ring(buf: Any, header: Tuple, file_size: int) -> Tuple[Ring, List[Tuple[int, int, bool]]]:
+    """The walker and segments for a parsed header."""
+    _, _, codec_ver, max_data, write_off, _, _, newest_nano, _ = header
+    wrapped, old_start = ring_layout(buf, header, file_size)
+    ring = Ring(buf, max_data, codec_ver, newest_nano)
+    return ring, ring_segments(wrapped, write_off, max_data, old_start, file_size)
 
 
 # ---------------------------------------------------------------------------
@@ -1040,88 +1183,72 @@ def print_record(payload: bytes, codec_ver: int) -> None:
 
 def inspect_tier(filepath: str) -> None:
     """Inspect a tier file and print its header and latest record."""
-    # pylint: disable=too-many-locals
     try:
-        file_size = os.path.getsize(filepath)
         with open(filepath, "rb") as f:
-            buf = f.read(HEADER_SIZE)
-            if len(buf) < HEADER_SIZE:
+            file_size = os.fstat(f.fileno()).st_size
+            if file_size < HEADER_SIZE:
                 print(
-                    f"Error: File too small ({len(buf)} bytes, expected {HEADER_SIZE})",
+                    f"Error: File too small ({file_size} bytes, expected {HEADER_SIZE})",
                     file=sys.stderr,
                 )
                 sys.exit(1)
-
-            (
-                magic,
-                header_flags,
-                codec_ver,
-                max_data,
-                write_off,
-                count,
-                oldest_nano,
-                newest_nano,
-                oldest_off,
-            ) = parse_header(buf)
-
-            if magic != MAGIC:
-                print(
-                    f"Error: Invalid magic: {magic.decode('utf-8', errors='replace')}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
-            if header_flags & FLAG_HAS_TAIL:
-                # Written by tail-tracking code: trust the persisted wrap state.
-                wrapped = bool(header_flags & FLAG_WRAPPED)
-            else:
-                # Legacy file: fall back to the file-size heuristic. The file's
-                # max extent after a wrap is HEADER_SIZE + write_off_at_wrap
-                # (+ a 4-byte sentinel), strictly less than HEADER_SIZE +
-                # max_data, so comparing against write_off (not max_data) is
-                # the only signal available pre-tail-tracking.
-                wrapped = count > 0 and file_size > HEADER_SIZE + write_off
-            # The oldest surviving record starts at oldest_off once wrapped;
-            # for non-wrapped (incl. self-healed) tiers it is at offset 0.
-            old_start = oldest_off if wrapped else 0
-            codec_label = "v2 binary" if codec_ver >= CODEC_V2 else "v1 JSON (legacy)"
-
-            print(f"File:          {filepath}")
-            print(f"Codec:         {codec_label} (version={codec_ver})")
-            current_data = max_data if wrapped else write_off
-            pct = (current_data / max_data * 100) if max_data > 0 else 0.0
-            print(f"Data Size:     {current_data:,} / {max_data:,} bytes ({pct:.2f}%)")
-            print(f"Write Offset:  {write_off:,}")
-            print(f"Total Records: {count:,}")
-            oldest_ts = (
-                datetime.datetime.fromtimestamp(oldest_nano / 1e9).astimezone()
-                if oldest_nano > 0
-                else None
-            )
-            newest_ts = (
-                datetime.datetime.fromtimestamp(newest_nano / 1e9).astimezone()
-                if newest_nano > 0
-                else None
-            )
-            print(f"Oldest:        {oldest_ts.isoformat() if oldest_ts else '(none)'}")
-            print(f"Newest:        {newest_ts.isoformat() if newest_ts else '(none)'}")
-            print(f"Wrapped:       {wrapped}")
-            if oldest_ts and newest_ts:
-                print(f"Time Covered:  {newest_ts - oldest_ts}")
-
-            if count == 0:
-                print("\nLatest Record: (none)")
-                return
-
-            payload = find_latest_record(f, wrapped, write_off, max_data, old_start)
-            if payload:
-                print_record(payload, codec_ver)
-            else:
-                print("\nLatest Record: (none found)")
-
+            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as buf:
+                print_tier(filepath, buf, file_size)
     except OSError as err:
         print(f"Error inspecting tier file: {err}", file=sys.stderr)
         sys.exit(1)
+
+
+def print_tier(filepath: str, buf: Any, file_size: int) -> None:
+    """Print the header of a mapped tier file and its latest record."""
+    header = parse_header(buf[:HEADER_SIZE])
+    magic, _, codec_ver, max_data, write_off, count, oldest_nano, newest_nano, _ = header
+    if magic != MAGIC:
+        print(
+            f"Error: Invalid magic: {magic.decode('utf-8', errors='replace')}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    wrapped, _ = ring_layout(buf, header, file_size)
+    codec_label = "v2 binary" if codec_ver >= CODEC_V2 else "v1 JSON (legacy)"
+
+    print(f"File:          {filepath}")
+    print(f"Codec:         {codec_label} (version={codec_ver})")
+    current_data = max_data if wrapped else write_off
+    pct = (current_data / max_data * 100) if max_data > 0 else 0.0
+    print(f"Data Size:     {current_data:,} / {max_data:,} bytes ({pct:.2f}%)")
+    print(f"Write Offset:  {write_off:,}")
+    print(f"Total Records: {count:,}")
+    oldest_ts = (
+        datetime.datetime.fromtimestamp(oldest_nano / 1e9).astimezone()
+        if oldest_nano > 0
+        else None
+    )
+    newest_ts = (
+        datetime.datetime.fromtimestamp(newest_nano / 1e9).astimezone()
+        if newest_nano > 0
+        else None
+    )
+    print(f"Oldest:        {oldest_ts.isoformat() if oldest_ts else '(none)'}")
+    print(f"Newest:        {newest_ts.isoformat() if newest_ts else '(none)'}")
+    print(f"Wrapped:       {wrapped}")
+    if oldest_ts and newest_ts:
+        print(f"Time Covered:  {newest_ts - oldest_ts}")
+
+    if count == 0:
+        print("\nLatest Record: (none)")
+        return
+
+    ring, segments = open_ring(buf, header, file_size)
+    latest = None
+    for start, size, resync in segments:
+        for record in ring.walk(start, size, resync):
+            latest = record
+    if latest:
+        print_record(ring.payload(*latest), codec_ver)
+    else:
+        print("\nLatest Record: (none found)")
 
 
 if __name__ == "__main__":

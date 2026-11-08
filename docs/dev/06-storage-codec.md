@@ -191,7 +191,9 @@ So a downgrade needs the backup taken before the upgrade.
 
 The Python decoder [`addons/inspect_tier.py`](../../addons/inspect_tier.py) re-implements this
 exact layout (same flag constants, same section order). Any codec change must be mirrored there,
-or it will mis-decode records. It serves as both an offline tool and a parity check.
+or it will mis-decode records. It serves as both an offline tool and a parity check. A change to
+how the ring is walked (`readHeader`, `ringSegments`, `walkSegment`, `resyncToNextRecord`)
+belongs in its `Ring` class too.
 
 ## Tests
 
