@@ -210,6 +210,30 @@ export function mergeHistoryTail(buffer, samples, response, fromMs, resolution) 
     return insertHistoryGaps([...kept, ...tail], resolution);
 }
 
+// Coverage of a view merged from an earlier view and a tail that refreshed its
+// newest buckets: the left edge as the earlier view saw it, the right edge as
+// the tail sees it. The left edge counts as retained when the earlier view
+// said its whole range was, or when its observed data starts within one source
+// resolution of the new window start: a rolling window only slides forward, so
+// data that reached its left edge once still does. Deriving it from the
+// observed start rather than only from the earlier verdict keeps one lagging
+// tail from marking the view partial until the next full refresh.
+export function mergedTailCoverage(previous, tail, fromMs, toMs) {
+    const priorFrom = Date.parse(previous?.actualFrom);
+    const actualFrom = Number.isFinite(priorFrom) ? Math.max(priorFrom, fromMs) : NaN;
+    const actualTo = Date.parse(tail?.actual_to);
+    const tolerance = resolutionMilliseconds(tail?.source_resolution ?? tail?.resolution);
+    const leftRetained = previous?.retentionComplete === true ||
+        (Number.isFinite(priorFrom) && priorFrom <= fromMs + tolerance);
+    return {
+        actual_from: Number.isFinite(actualFrom) ? new Date(actualFrom).toISOString() : null,
+        actual_to: Number.isFinite(actualTo) ? new Date(actualTo).toISOString() : null,
+        complete: leftRetained && tail?.complete !== false,
+        exact_complete: Number.isFinite(actualFrom) && Number.isFinite(actualTo) &&
+            actualFrom <= fromMs && actualTo >= toMs,
+    };
+}
+
 // Restrict extrema before any chart consumer sees them. Partial profiles use
 // exact scalar JSON paths; they never certify whole sections or collections.
 // Missing/unknown profiles fail closed. Older API responses retain the strict

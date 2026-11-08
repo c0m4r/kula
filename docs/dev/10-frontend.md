@@ -168,7 +168,9 @@ point per bucket. Every finer server step would need more buckets (consecutive s
 at least 1.5×), so the server answers at the same tier, step and epoch alignment and computes
 each bucket exactly as a full refresh would. `mergeHistoryTail` replaces the buffered buckets
 from that boundary on and re-derives the gap markers; the merged buffer is then rendered like a
-full response, and its coverage combines the previous left edge with the tail's right edge.
+full response, and its coverage combines the previous left edge with the tail's right edge
+(`mergedTailCoverage`). The left edge counts as retained once the observed data reaches it, so
+the next complete tail clears a partial verdict a lagging one left behind.
 The tail is used only when its `historyViewSignature` (tier, step, source resolution,
 aggregations, extrema profiles) matches the snapshot it extends, with the same point budget
 and Focus Mode sections; anything else, a failed or empty tail, or a snapshot older than five

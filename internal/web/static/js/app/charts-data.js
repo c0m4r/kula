@@ -37,6 +37,7 @@ import {
     historyViewSignature,
     insertHistoryGaps,
     mergeHistoryTail,
+    mergedTailCoverage,
     normalizeHistoryItem,
     resolveAggregation,
 } from './history-data.js';
@@ -1998,13 +1999,9 @@ function rollingTailPlan(rangeSeconds, points, toMs) {
     return request && { ...request, signature: base.signature };
 }
 
-// Coverage of the merged view: its left edge as the previous view saw it,
-// its right edge as the tail sees it.
+// Metadata of the merged view: the tail's description of the view, with
+// coverage combined from the previous view and the tail (mergedTailCoverage).
 function rollingTailResponse(tail, fromDate, toDate) {
-    const previous = state.historyCoverage;
-    const priorFrom = Date.parse(previous?.actualFrom);
-    const actualFrom = Number.isFinite(priorFrom) ? Math.max(priorFrom, fromDate.getTime()) : NaN;
-    const actualTo = Date.parse(tail.actual_to);
     return {
         tier: tail.tier,
         resolution: tail.resolution,
@@ -2015,11 +2012,7 @@ function rollingTailResponse(tail, fromDate, toDate) {
         extrema_profiles: tail.extrema_profiles,
         requested_from: fromDate.toISOString(),
         requested_to: toDate.toISOString(),
-        actual_from: Number.isFinite(actualFrom) ? new Date(actualFrom).toISOString() : null,
-        actual_to: Number.isFinite(actualTo) ? new Date(actualTo).toISOString() : null,
-        complete: previous?.retentionComplete !== false && tail.complete !== false,
-        exact_complete: Number.isFinite(actualFrom) && Number.isFinite(actualTo) &&
-            actualFrom <= fromDate.getTime() && actualTo >= toDate.getTime(),
+        ...mergedTailCoverage(state.historyCoverage, tail, fromDate.getTime(), toDate.getTime()),
     };
 }
 

@@ -45,6 +45,7 @@ const {
     historySectionsForFocus,
     historyViewSignature,
     mergeHistoryTail,
+    mergedTailCoverage,
     normalizeHistoryItem,
     normalizeValidAggregations,
     historyItemSample,
@@ -992,6 +993,31 @@ test('a merged tail replaces trailing buckets and re-derives gaps across the joi
     assert.equal(mergeHistoryTail(buffer, [bucket(994, 30)], response, 996000, '2s'), null);
     assert.equal(mergeHistoryTail(buffer, [], response, 996000, '2s'), null);
     assert.equal(mergeHistoryTail([{ ts: '1970-01-01T00:16:40Z', data: {} }], [bucket(996, 4)], response, 996000, '2s'), null);
+});
+
+test('a merged tail recovers completeness as soon as the tail is complete again', () => {
+    const iso = ms => new Date(ms).toISOString();
+    const tail = (complete, actualTo) => ({ resolution: '2s', source_resolution: '1s', complete, actual_to: iso(actualTo) });
+    // The full view was incomplete only at its right edge: the collector
+    // lagged. Its data reached the left edge, so a complete tail restores it.
+    const lagged = { actualFrom: iso(1000000), retentionComplete: false };
+    const recovered = mergedTailCoverage(lagged, tail(true, 1004000), 1002000, 1004000);
+    assert.equal(recovered.complete, true);
+    assert.equal(recovered.exact_complete, true);
+    assert.equal(recovered.actual_from, iso(1002000));
+    // A lagging tail marks the view partial, and the next complete tail
+    // clears it again instead of the verdict sticking until a full refresh.
+    const stalled = mergedTailCoverage({ actualFrom: iso(1002000), retentionComplete: true }, tail(false, 1003000), 1004000, 1006000);
+    assert.equal(stalled.complete, false);
+    const after = mergedTailCoverage({ actualFrom: stalled.actual_from, retentionComplete: stalled.complete }, tail(true, 1008000), 1006000, 1008000);
+    assert.equal(after.complete, true);
+
+    // Data that starts inside the window (a recent first start) leaves the
+    // left edge unretained until the window slides past that start.
+    const young = { actualFrom: iso(1010000), retentionComplete: false };
+    assert.equal(mergedTailCoverage(young, tail(true, 1020000), 1005000, 1020000).complete, false);
+    assert.equal(mergedTailCoverage(young, tail(true, 1026000), 1010500, 1026000).complete, true);
+    assert.equal(mergedTailCoverage(null, tail(true, 1026000), 1010500, 1026000).complete, false);
 });
 
 test('history view signatures change with anything that shapes the buckets', () => {
