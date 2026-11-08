@@ -140,6 +140,35 @@ func TestOllamaStreamChat_Integration(t *testing.T) {
 	}
 }
 
+// TestOllamaProxyDoesNotFollowRedirects: the loopback-validated URL is the
+// only place the proxy goes. A redirect is reported with its target, and the
+// target never sees a request, for chat and model listing alike.
+func TestOllamaProxyDoesNotFollowRedirects(t *testing.T) {
+	var reached atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		reached.Add(1)
+	}))
+	defer target.Close()
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer redirecting.Close()
+
+	cfg := config.OllamaConfig{Enabled: true, URL: redirecting.URL, Model: "llama3", Timeout: "5s"}
+	client := newOllamaClient(cfg)
+	rec := httptest.NewRecorder()
+	err := client.streamChat(context.Background(), cfg.Model, []ollamaMessage{{Role: "user", Content: "hi"}}, nil, nil, rec, rec, false)
+	if err == nil || !strings.Contains(err.Error(), "not followed") || !strings.Contains(err.Error(), target.URL) {
+		t.Errorf("streamChat error = %v, want the refused redirect named", err)
+	}
+	if _, err := client.fetchModels(context.Background(), false); err == nil {
+		t.Error("fetchModels followed a redirect")
+	}
+	if n := reached.Load(); n != 0 {
+		t.Errorf("redirect target received %d request(s)", n)
+	}
+}
+
 // Ensure streamChat returns an error when Ollama is unreachable.
 func TestOllamaStreamChat_Unreachable(t *testing.T) {
 	cfg := config.OllamaConfig{Enabled: true, URL: "http://127.0.0.1:1", Model: "llama3", Timeout: "1s"}

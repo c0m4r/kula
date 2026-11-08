@@ -444,8 +444,7 @@ func (oc *ollamaClient) doStreamRound(
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	// Use a fresh http.Client with the configured timeout.
-	httpClient := &http.Client{Timeout: oc.timeout}
+	httpClient := newOllamaHTTPClient(oc.timeout)
 	apiURL := strings.TrimRight(oc.cfg.URL, "/") + "/api/chat"
 	if debugLog {
 		log.Printf("[DEBUG] [Ollama] POST %s (model=%s)", apiURL, model)
@@ -469,7 +468,7 @@ func (oc *ollamaClient) doStreamRound(
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return nil, fmt.Errorf("ollama returned %d%s: %s", resp.StatusCode, redirectNotFollowed(resp), strings.TrimSpace(string(b)))
 	}
 
 	scanner := bufio.NewScanner(io.LimitReader(resp.Body, ollamaMaxResponse)) // [M6]
@@ -549,7 +548,7 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpClient := &http.Client{Timeout: oc.timeout}
+	httpClient := newOllamaHTTPClient(oc.timeout)
 	apiURL := strings.TrimRight(oc.cfg.URL, "/") + "/v1/chat/completions"
 	if debugLog {
 		log.Printf("[DEBUG] [Ollama/OpenAI] POST %s (model=%s)", apiURL, model)
@@ -573,7 +572,7 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("api returned %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return nil, fmt.Errorf("api returned %d%s: %s", resp.StatusCode, redirectNotFollowed(resp), strings.TrimSpace(string(b)))
 	}
 
 	scanner := bufio.NewScanner(io.LimitReader(resp.Body, ollamaMaxResponse))
@@ -729,9 +728,30 @@ func (oc *ollamaClient) fetchModels(ctx context.Context, debugLog bool) ([]strin
 	return names, err
 }
 
+// newOllamaHTTPClient returns a client that does not follow redirects. The
+// configured URL is validated to be loopback; a redirect could lead the proxy
+// anywhere else, so it is reported instead (see redirectNotFollowed).
+func newOllamaHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// redirectNotFollowed names the target of a refused redirect for an error
+// message, so the operator can point ollama.url at it; "" for other statuses.
+func redirectNotFollowed(resp *http.Response) string {
+	if resp.StatusCode < 300 || resp.StatusCode > 399 {
+		return ""
+	}
+	return fmt.Sprintf(" (redirect to %q not followed; set ollama.url to the final address)", resp.Header.Get("Location"))
+}
+
 // fetchModelsOllama queries the native Ollama /api/tags endpoint.
 func (oc *ollamaClient) fetchModelsOllama(ctx context.Context, debugLog bool) ([]string, error) {
-	httpClient := &http.Client{Timeout: 5 * time.Second}
+	httpClient := newOllamaHTTPClient(5 * time.Second)
 	apiURL := strings.TrimRight(oc.cfg.URL, "/") + "/api/tags"
 	if debugLog {
 		log.Printf("[DEBUG] [Ollama] fetchModels: GET %s", apiURL)
@@ -749,7 +769,7 @@ func (oc *ollamaClient) fetchModelsOllama(ctx context.Context, debugLog bool) ([
 		log.Printf("[DEBUG] [Ollama] fetchModels: HTTP %d", resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ollama returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("ollama returned %d%s", resp.StatusCode, redirectNotFollowed(resp))
 	}
 	var result struct {
 		Models []struct {
@@ -773,7 +793,7 @@ func (oc *ollamaClient) fetchModelsOllama(ctx context.Context, debugLog bool) ([
 
 // fetchModelsOpenAI queries an OpenAI-compatible /v1/models endpoint.
 func (oc *ollamaClient) fetchModelsOpenAI(ctx context.Context, debugLog bool) ([]string, error) {
-	httpClient := &http.Client{Timeout: 5 * time.Second}
+	httpClient := newOllamaHTTPClient(5 * time.Second)
 	apiURL := strings.TrimRight(oc.cfg.URL, "/") + "/v1/models"
 	if debugLog {
 		log.Printf("[DEBUG] [Ollama/OpenAI] fetchModels: GET %s", apiURL)
@@ -791,7 +811,7 @@ func (oc *ollamaClient) fetchModelsOpenAI(ctx context.Context, debugLog bool) ([
 		log.Printf("[DEBUG] [Ollama/OpenAI] fetchModels: HTTP %d", resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("api returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("api returned %d%s", resp.StatusCode, redirectNotFollowed(resp))
 	}
 	var result struct {
 		Data []struct {
