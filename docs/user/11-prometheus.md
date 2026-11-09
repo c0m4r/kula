@@ -48,6 +48,12 @@ scrape_configs:
       - targets: ["server:27960"]
 ```
 
+With web auth disabled, Kula answers only local `Host` names (DNS rebinding protection, see
+[`web.security.allowed_hosts`](04-configuration.md#websecurity)). A scrape target that is a
+regular DNS name, such as `kula.example.com:27960`, therefore gets `403` on an unauthenticated
+`/metrics` until the name is listed in `allowed_hosts`. With a bearer token set, `/metrics`
+answers any `Host`.
+
 ## Exposed metrics
 
 All metrics are prefixed `kula_`. The exporter covers the full collection surface:

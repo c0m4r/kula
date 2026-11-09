@@ -276,7 +276,7 @@ answers only `Host` names that no public DNS server can answer for:
 - this machine's hostname, the hosts in `allowed_origins`, and the names in `allowed_hosts`.
 
 Any other name gets `403 {"error": "host not allowed: …"}`, logged once per name; `/health`
-and `/status` stay open to probes. **Add the name you reach Kula by** if it is a regular DNS
+and `/status` stay open to probes, and so does `/metrics` when it has a bearer token. **Add the name you reach Kula by** if it is a regular DNS
 name, such as `kula.example.com` from internal DNS or a reverse proxy that forwards `Host`
 (see [Reverse Proxy](13-reverse-proxy.md)). Entries are host names or IP addresses; case, a
 port and a trailing dot are ignored, and a scheme, path or wildcard stops startup. `"*"` answers

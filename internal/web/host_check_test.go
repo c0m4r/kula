@@ -65,6 +65,25 @@ func TestHostCheckRefusesRebindingNames(t *testing.T) {
 			t.Errorf("%s with a public Host: %d, want 200 for probes", path, rec.Code)
 		}
 	}
+	// Behind a bearer token /metrics is not readable by a rebinding page, and
+	// Prometheus scrapes by regular DNS names: the token check answers instead.
+	tokened := hostTestHandler(t, func(cfg *config.WebConfig) { cfg.PrometheusMetrics.Token = "scrape-secret" })
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Host = "kula.example.com:27960"
+	rec := httptest.NewRecorder()
+	tokened.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("tokened /metrics with a public Host and no token: %d, want 401", rec.Code)
+	}
+	req.Header.Set("Authorization", "Bearer scrape-secret")
+	rec = httptest.NewRecorder()
+	tokened.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("tokened /metrics with a public Host and its token: %d, want 200", rec.Code)
+	}
+	if rec := serveHost(tokened, "attacker.example", "/api/current"); rec.Code != http.StatusForbidden {
+		t.Errorf("a metrics token opened /api/current to a public Host: %d", rec.Code)
+	}
 	for _, host := range []string{
 		"127.0.0.1:27960", "192.0.2.10", "[::1]:27960", "[2001:db8::1]",
 		"localhost:27960", "LOCALHOST.", "kula.localhost", "kula", "kula:27960",

@@ -21,7 +21,9 @@ import (
 // localhost, single-label names, local-only domains, this machine's hostname,
 // and the names in web.security.allowed_hosts or allowed_origins. With auth
 // on, the page has no session to send; on a Unix socket, no browser connects
-// directly. /health and /status stay open to probes.
+// directly. /health and /status stay open to probes, and so does /metrics
+// behind a bearer token: a rebinding page cannot supply the token, and a
+// Prometheus server reaches its targets by regular DNS names.
 
 // localSuffixes are domains no public DNS server answers for: special-use
 // names (RFC 6761, RFC 8375, ICANN's .internal) and the private suffixes home
@@ -33,7 +35,8 @@ var localSuffixes = []string{"localhost", "local", "internal", "home.arpa", "lan
 const maxLoggedHosts = 64
 
 type hostPolicy struct {
-	names map[string]bool // allowed beyond the built-in rules, normalized
+	names        map[string]bool // allowed beyond the built-in rules, normalized
+	metricsToken bool            // /metrics asks for a bearer token
 
 	mu     sync.Mutex
 	logged map[string]bool
@@ -45,7 +48,7 @@ func newHostPolicy(cfg config.WebConfig, machine string) *hostPolicy {
 	if cfg.Auth.Enabled || cfg.UnixSocket != "" {
 		return nil
 	}
-	p := &hostPolicy{names: map[string]bool{}, logged: map[string]bool{}}
+	p := &hostPolicy{names: map[string]bool{}, logged: map[string]bool{}, metricsToken: cfg.PrometheusMetrics.Token != ""}
 	for _, name := range cfg.Security.AllowedHosts {
 		if name == "*" {
 			return nil
@@ -131,7 +134,8 @@ func hostCheckMiddleware(p *hostPolicy, next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" && r.URL.Path != "/status" && !p.allows(r.Host) {
+		open := r.URL.Path == "/health" || r.URL.Path == "/status" || (p.metricsToken && r.URL.Path == "/metrics")
+		if !open && !p.allows(r.Host) {
 			p.logRefusal(r.Host)
 			jsonError(w, "host not allowed: add it to web.security.allowed_hosts", http.StatusForbidden)
 			return

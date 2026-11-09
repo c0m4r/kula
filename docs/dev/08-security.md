@@ -86,7 +86,8 @@ disabled on a TCP listener, only names a public DNS server cannot answer for: IP
 names, the machine's hostname (`os.Hostname`), the hosts of `allowed_origins`, and
 `web.security.allowed_hosts` (normalized at load; `"*"` disables the check). Anything else gets
 a JSON `403`, logged once per name for up to 64 names. It wraps every route inside the base
-path except `/health` and `/status`. With auth enabled the page has no session cookie to send,
+path except `/health`, `/status` and a `/metrics` that asks for a bearer token (a rebinding
+page cannot supply it). With auth enabled the page has no session cookie to send,
 and a Unix socket has no browser connecting directly, so neither is checked.
 
 ## Web security headers
