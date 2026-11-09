@@ -209,6 +209,29 @@ func TestDBSessionShutdownIsQuiet(t *testing.T) {
 	}
 }
 
+// TestDBSessionLogsRecoveryFromAPollError: a poll the server refuses on a
+// healthy session (a missing privilege, say) is logged once, and so is the
+// first poll that succeeds again.
+func TestDBSessionLogsRecoveryFromAPollError(t *testing.T) {
+	srv := newFakeDBServer()
+	clock := time.Unix(1_700_000_000, 0)
+	s := fakeSession(t, srv, &clock)
+	var lines []string
+	s.logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	if _, err := s.acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lines = nil
+	for range 3 {
+		s.fail(context.Background(), errors.New("permission denied for view pg_stat_replication"))
+	}
+	s.succeed()
+	s.succeed()
+	if len(lines) != 2 || !strings.Contains(lines[0], "permission denied") || !strings.Contains(lines[1], "polling \"db\" again") {
+		t.Fatalf("log after a recurring poll error and recovery: %q; want the error once, then the recovery once", lines)
+	}
+}
+
 func TestDBSessionNeverPollsBesideAnAbandonedSession(t *testing.T) {
 	srv := newFakeDBServer()
 	clock := time.Unix(1_800_000_000, 0)

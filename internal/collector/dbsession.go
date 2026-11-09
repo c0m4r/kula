@@ -254,9 +254,10 @@ func (s *dbSession) reapAbandoned(ctx context.Context) error {
 	return firstErr
 }
 
-// succeed records a completed poll.
+// succeed records a completed poll, and says so after a logged failure: a
+// connection lost, or a poll the server refused on a healthy session.
 func (s *dbSession) succeed() {
-	if s.failures > 0 {
+	if s.failures > 0 || s.lastErr != "" {
 		s.printf("%s polling %q again", s.name, s.label)
 	}
 	s.failures = 0
