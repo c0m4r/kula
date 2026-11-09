@@ -307,7 +307,11 @@ func (s *Server) securityMiddleware(next http.Handler) http.Handler {
 			if s.cfg.Security.FrameProtection {
 				w.Header().Set("X-Frame-Options", "DENY")
 			}
-			csp := fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self' 'unsafe-inline';", nonce)
+			// No 'unsafe-inline' for styles: the pages carry no style
+			// attributes or <style> elements, and scripts style elements
+			// through the CSSOM (element.style), which the policy allows.
+			// The Chromium fixtures fail on any violation.
+			csp := fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self';", nonce)
 			if s.cfg.Security.FrameProtection {
 				csp += " frame-ancestors 'none';"
 			}

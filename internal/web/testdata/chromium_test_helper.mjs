@@ -130,3 +130,25 @@ export async function launchChromium(browserPath, args, userDataDir, { timeoutMs
         }
     }
 }
+
+// Content-Security-Policy violations reach the test through a CDP binding, so
+// they are collected across navigations. Call watchCSPViolations once after
+// attaching to the page (Runtime must be enabled for the events), and hand
+// every CDP event to cspViolation, which returns a violation's description
+// or null. Kula's policy has no 'unsafe-inline' for styles: an inline style
+// attribute, a <style> element or setAttribute('style') fails a fixture.
+const CSP_BINDING = 'kulaCSPViolation';
+
+export async function watchCSPViolations(call) {
+    await call('Runtime.addBinding', { name: CSP_BINDING });
+    await call('Page.enable');
+    await call('Page.addScriptToEvaluateOnNewDocument', { source: `document.addEventListener(
+        'securitypolicyviolation', e => globalThis.${CSP_BINDING}?.(JSON.stringify({
+            directive: e.effectiveDirective, blocked: e.blockedURI, page: location.pathname,
+            source: e.sourceFile, line: e.lineNumber, sample: e.sample })));` });
+}
+
+export function cspViolation(message) {
+    return message.method === 'Runtime.bindingCalled' && message.params?.name === CSP_BINDING
+        ? message.params.payload : null;
+}

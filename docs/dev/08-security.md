@@ -81,9 +81,12 @@ When `web.security.headers` is on (default), responses carry:
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY` (when `frame_protection`)
 - `Content-Security-Policy` with a **fresh random nonce per request**:
-  `default-src 'self'; script-src 'self' 'nonce-<rand>'; style-src 'self' 'unsafe-inline';`
+  `default-src 'self'; script-src 'self' 'nonce-<rand>'; style-src 'self';`
   plus `frame-ancestors 'none'` when `frame_protection` and `connect-src 'self' <url>` when
-  `game_score_url` is configured
+  `game_score_url` is configured. Styles come only from the served stylesheets: no inline
+  `style` attribute, `<style>` element or `setAttribute('style', …)` works, so the frontend
+  sets styles through the CSSOM (`element.style.x = …`), which the policy allows. The Chromium
+  fixtures (`watchCSPViolations` in `chromium_test_helper.mjs`) fail on any violation.
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy: geolocation=(), microphone=(), camera=()`
 - `Strict-Transport-Security` (HSTS) when TLS or trusted `X-Forwarded-Proto: https` is present

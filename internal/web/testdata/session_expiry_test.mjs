@@ -13,7 +13,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { delay, findChromium, launchChromium, stopProcess } from './chromium_test_helper.mjs';
+import { cspViolation, delay, findChromium, launchChromium, stopProcess, watchCSPViolations } from './chromium_test_helper.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const browserPath = findChromium();
@@ -24,6 +24,7 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'kula-session-test-'));
 let server, serverClosed, browser, browserClosed, socket;
 let serverOutput = '';
 const errors = [];
+const cspViolations = [];
 
 async function freePort() {
     return new Promise((resolve, reject) => {
@@ -122,6 +123,8 @@ try {
         } else if (message.method === 'Runtime.exceptionThrown') {
             errors.push(message.params.exceptionDetails?.exception?.description ||
                 message.params.exceptionDetails?.text);
+        } else if (cspViolation(message)) {
+            cspViolations.push(cspViolation(message));
         }
     });
     const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
@@ -134,6 +137,7 @@ try {
     const call = (method, params) => send(method, params, sessionId);
     await call('Network.enable');
     await call('Runtime.enable');
+    await watchCSPViolations(call);
     const evaluate = async expression => {
         const out = await call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
         if (out.exceptionDetails) throw new Error(JSON.stringify(out.exceptionDetails));
@@ -175,10 +179,12 @@ try {
 
     await signIn();
     assert.deepEqual(errors, [], 'the dashboard threw exceptions');
+    assert.deepEqual(cspViolations, [], 'the page broke its Content-Security-Policy');
     console.log(JSON.stringify({ status: 'pass', sockets }));
 } catch (error) {
     if (serverOutput) console.error(`kula serve output:\n${serverOutput}`);
     if (errors.length) console.error(`dashboard exceptions:\n${errors.join('\n')}`);
+    if (cspViolations.length) console.error(`CSP violations:\n${cspViolations.join('\n')}`);
     throw error;
 } finally {
     socket?.close();

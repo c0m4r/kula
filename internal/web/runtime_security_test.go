@@ -354,10 +354,14 @@ func TestRuntimeSecurityHeaders(t *testing.T) {
 		t.Error("Permissions-Policy missing")
 	}
 	csp := h.Get("Content-Security-Policy")
-	for _, want := range []string{"default-src 'self'", "nonce-", "frame-ancestors 'none'"} {
+	for _, want := range []string{"default-src 'self'", "nonce-", "frame-ancestors 'none'", "style-src 'self';"} {
 		if !strings.Contains(csp, want) {
 			t.Errorf("CSP %q missing %q", csp, want)
 		}
+	}
+	// Inline styles stay refused; the Chromium fixtures fail on a violation.
+	if strings.Contains(csp, "unsafe-inline") {
+		t.Errorf("CSP %q allows inline code or styles", csp)
 	}
 
 	// Nonce must differ between two requests (it gates inline <script> exec).

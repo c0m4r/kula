@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert/strict';
-import { delay, findChromium, launchChromium, stopProcess } from './chromium_test_helper.mjs';
+import { cspViolation, delay, findChromium, launchChromium, stopProcess, watchCSPViolations } from './chromium_test_helper.mjs';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const browserPath = findChromium();
 if (!browserPath) throw new Error('Chromium/Chrome not found; set KULA_CHROMIUM');
@@ -75,6 +75,9 @@ const server = http.createServer((req, res) => {
                 .replace(/window.KULA_BASE_PATH = \{\{\.BasePath\}\}/, `window.KULA_BASE_PATH = "/${variant}"`)
                 .replace(/\s*integrity="[^"]*"/g, '').replace(/\{\{[^}]*\}\}/g, '')
                 .replace(/<script type="module"[\s\S]*?<\/script>/, `<script type="module" src="audit-client.js"></script>`);
+            // The server's style policy, alone: this harness strips the script
+            // nonces, so a full policy would block its own pre-paint script.
+            res.setHeader('Content-Security-Policy', "style-src 'self'");
             res.setHeader('Content-Type', 'text/html'); return res.end(html);
         }
         const mime = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
@@ -104,11 +107,14 @@ try {
     socket = new WebSocket(endpoint);
     await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
     let id = 0; const pending = new Map();
+    const cspViolations = [];
     socket.addEventListener('message', e => {
         const message = JSON.parse(e.data);
         if (pending.has(message.id)) {
             const { resolve, reject } = pending.get(message.id); pending.delete(message.id);
             if (message.error) reject(new Error(JSON.stringify(message.error))); else resolve(message.result);
+        } else if (cspViolation(message)) {
+            cspViolations.push(cspViolation(message));
         }
     });
     const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
@@ -124,6 +130,8 @@ try {
         return out.result.value;
     };
     await call('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await call('Runtime.enable');
+    await watchCSPViolations(call);
     await call('Page.navigate', { url: `http://127.0.0.1:${port}/fixture/` });
     let ready;
     for (let i = 0; i < 2400; i++) {
@@ -136,6 +144,7 @@ try {
     assert.ok(ready, 'Dashboard fixture timed out');
     const result = await evaluate('window.result');
     assert.equal(result.status, 'pass');
+    assert.deepEqual(cspViolations, [], `the dashboard broke its style policy:\n${cspViolations.join('\n')}`);
     if (process.env.KULA_SYSTEM_INFO_SCREENSHOTS) {
         const outputDir = process.env.KULA_SYSTEM_INFO_SCREENSHOTS;
         fs.mkdirSync(outputDir, { recursive: true });
