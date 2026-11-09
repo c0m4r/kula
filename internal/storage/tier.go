@@ -1122,6 +1122,31 @@ func (t *Tier) OldestTimestamp() time.Time {
 	return t.oldestTS
 }
 
+// OldestDuration returns the duration of the oldest record in this tier, or 0
+// when it cannot be read. A rollup tier's oldest record spans its whole
+// window unless it is the store's first, which holds only the part of the
+// window the store has run for.
+func (t *Tier) OldestDuration() time.Duration {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.count == 0 || t.file == nil {
+		return 0
+	}
+	dataLen, ok := t.recordLenAt(t.oldestOff)
+	if !ok {
+		return 0
+	}
+	data := make([]byte, dataLen)
+	if _, err := t.file.ReadAt(data, headerSize+t.oldestOff+4); err != nil {
+		return 0
+	}
+	sample, err := t.readRecord(data)
+	if err != nil {
+		return 0
+	}
+	return sample.Duration
+}
+
 // NewestTimestamp returns the newest sample timestamp in this tier.
 func (t *Tier) NewestTimestamp() time.Time {
 	t.mu.RLock()

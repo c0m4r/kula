@@ -631,6 +631,16 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 		leftTolerance, rightTolerance := tierCoverageTolerances(resDur)
 		complete := !oldest.After(from.Add(leftTolerance)) &&
 			!coveredTo.Before(to.Add(-rightTolerance))
+		// The left tolerance assumes the oldest rollup spans its whole window.
+		// A store's first rollup holds only the part it ran for, and a fresh
+		// start would otherwise answer a 5-minute view with one partial 5m
+		// point. Where the tolerance is what admits a coarse tier, count from
+		// the start its oldest rollup really has, give or take a raw interval.
+		if complete && tierIdx != 0 && oldest.After(from) {
+			if width := tier.OldestDuration(); width > 0 && width < resDur {
+				complete = !oldest.Add(-width).After(from.Add(s.configs[0].Resolution))
+			}
+		}
 
 		// Rank coverage from where the tier certainly holds data. A coarse
 		// tier's oldest rollup may be partial — the first one after a fresh

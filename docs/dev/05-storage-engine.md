@@ -237,7 +237,12 @@ On 36 hours of mock history at the default tier sizes (223 MB tier 0), a clean r
    holds the source tier's newest record when that is later, since every earlier window has
    closed. After a restart that followed a downtime, tier 1 therefore keeps covering the live
    edge, its last rollup being the partial minute before the shutdown, instead of yielding to
-   tier 2 until the first minute after the restart is rolled up.
+   tier 2 until the first minute after the restart is rolled up. The retention-edge tolerance
+   assumes the oldest rollup spans its whole window; when that tolerance is what makes a coarse
+   tier complete, the planner reads the oldest rollup's duration (`Tier.OldestDuration`) and
+   counts from where it really starts. A store's first rollups hold only the seconds it ran
+   for, so on a fresh start a 5-minute view stays on raw data (partial) instead of becoming one
+   5m point.
 2. Prefer the finest fully covering tier whose estimated read fits the fixed **7,500 source
    record** target. This target is independent of `points`, so requesting a wider canvas cannot
    unexpectedly unlock a different tier. A denser tier is skipped only when another fully

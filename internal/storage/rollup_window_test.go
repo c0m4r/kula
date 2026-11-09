@@ -307,3 +307,30 @@ func TestRestartAfterADowntimeKeepsTierOneAtTheLiveEdge(t *testing.T) {
 			got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
 	}
 }
+
+// TestFreshStoreKeepsShortViewsOnTheRawTier: a coarse tier's left coverage
+// tolerance assumes its oldest rollup spans a whole window, while a store's
+// first rollup holds only the part of the window it has run for. Forty seconds
+// after a fresh start that crossed a five-minute boundary, a 5-minute view
+// must stay on the raw samples, not become one partial 5m point.
+func TestFreshStoreKeepsShortViewsOnTheRawTier(t *testing.T) {
+	store := newMultiTierStore(t)
+	defer func() { _ = store.Close() }()
+	base := time.Date(2026, 3, 1, 10, 4, 20, 0, time.UTC)
+	writeOffsetSamples(t, store, base, 0, 40, 300*time.Millisecond, func(int) float64 { return 7 })
+	if store.tiers[2].Count() == 0 {
+		t.Fatal("precondition: no 5m rollup after crossing a five-minute boundary")
+	}
+
+	to := base.Add(40*time.Second + 300*time.Millisecond)
+	for _, points := range []int{300, 1800} {
+		result, err := store.QueryRangeWithMeta(to.Add(-5*time.Minute), to, points)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Tier != 0 || result.Complete {
+			t.Fatalf("5-minute view at %d points: tier %d (%s), complete %v; want tier 0, partial",
+				points, result.Tier, result.Resolution, result.Complete)
+		}
+	}
+}

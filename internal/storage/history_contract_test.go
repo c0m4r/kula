@@ -287,6 +287,23 @@ func TestHistoryResponsesMatchDashboardContract(t *testing.T) {
 			}
 		})
 
+	// A fresh store that crossed a five-minute boundary: its first 5m rollup
+	// holds only the seconds it ran for, so a phone's 5-minute view stays on
+	// the raw tier, partial, in 2s buckets.
+	fresh := newMultiTierStore(t)
+	t.Cleanup(func() { _ = fresh.Close() })
+	freshStart := base.Add(-40 * time.Second) // base is on a five-minute boundary
+	writeOffsetSamples(t, fresh, freshStart, 0, 80, 377*time.Millisecond, func(i int) float64 { return float64(10 + i%13) })
+	freshEdge := freshStart.Add(80*time.Second + 377*time.Millisecond)
+	add("fresh store five minutes past its first 5m rollup", fresh, freshEdge.Add(-5*time.Minute), freshEdge, 300,
+		historyContractExpect{Live: false, Aggregations: extrema},
+		func(r *HistoryResult) {
+			metadata("fresh", r, 0, "2s", true, extrema)
+			if r.Complete {
+				t.Fatal("fresh: 80 seconds of data answered as a complete 5-minute view")
+			}
+		})
+
 	// A rolling view refreshed by its tail. Records end 0.37s into each second
 	// so source intervals straddle every bucket boundary, as they do live.
 	rolling := newTestStore(t)
