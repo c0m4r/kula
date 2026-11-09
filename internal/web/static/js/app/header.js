@@ -118,16 +118,19 @@ export function updateSubtitles(s) {
             el('diskspace-subtitle', `${formatBytesShort(used)} / ${formatBytesShort(total)} (${pct.toFixed(1)}%)`);
         }
     }
-    if (s.proc) el('proc-subtitle', `${s.proc.total || 0} total, ${s.proc.running || 0} running`);
-    if (s.self) el('self-subtitle', `${(s.self.cpu_pct || 0).toFixed(1)}% cpu, ${formatBytesShort(s.self.mem_rss || 0)} rss, ${s.self.fds || 0} fds`);
+    if (s.proc) el('proc-subtitle', i18n.format('proc_subtitle', { total: s.proc.total || 0, running: s.proc.running || 0 }));
+    if (s.self) {
+        el('self-subtitle', i18n.format('self_subtitle', { cpu: (s.self.cpu_pct || 0).toFixed(1),
+            rss: formatBytesShort(s.self.mem_rss || 0), fds: s.self.fds || 0 }));
+    }
 
     if (s.gpu && s.gpu.length > 0) {
         const g = s.gpu.find(g => g.name === state.selectedGpuLoad) || s.gpu[0];
         if (g) {
             const parts = [];
-            if (g.load_pct > 0) parts.push(`${g.load_pct.toFixed(1)}% load`);
+            if (g.load_pct > 0) parts.push(i18n.format('gpu_load_subtitle', { pct: g.load_pct.toFixed(1) }));
             if (g.power_w > 0) parts.push(`${g.power_w.toFixed(1)}W`);
-            el('gpuload-subtitle', parts.length > 0 ? parts.join(', ') : 'No metrics available');
+            el('gpuload-subtitle', parts.length > 0 ? parts.join(', ') : i18n.t('no_metrics_available'));
             if (g.vram_total > 0) {
                 el('vram-subtitle', `${formatBytesShort(g.vram_used || 0)} / ${formatBytesShort(g.vram_total)} (${(g.vram_pct || 0).toFixed(1)}%)`);
             }

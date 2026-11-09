@@ -5,6 +5,7 @@
 'use strict';
 import { apiUrl } from './api.js';
 import { readPref, writePref } from './prefs.js';
+import { setDiskIdentityTranslator } from './disk-identity.js';
 
 export const i18n = {
     currentLang: 'en',
@@ -161,6 +162,16 @@ export const i18n = {
         return this.translations[key] || key;
     },
 
+    /**
+     * A translation with its {name} placeholders filled from values. The
+     * replacement is a function, so a "$" in a value (a host name, a clock
+     * source) stays literal.
+     */
+    format(key, values = {}) {
+        return Object.entries(values)
+            .reduce((out, [name, value]) => out.replaceAll(`{${name}}`, () => String(value)), this.t(key));
+    },
+
     setupDropdown() {
         const btn = document.getElementById('lang-btn');
         const menu = document.getElementById('lang-menu');
@@ -193,3 +204,6 @@ export const i18n = {
         });
     }
 };
+
+// disk-identity.js imports nothing, so it is handed the translator.
+setDiskIdentityTranslator(key => i18n.t(key));

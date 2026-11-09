@@ -144,7 +144,7 @@ export function handleLogin(e) {
         body: JSON.stringify({ username: user, password: pass }),
     })
         .then(r => {
-            if (!r.ok) throw new Error('Invalid credentials');
+            if (!r.ok) throw new LoginError(LOGIN_ERRORS[r.status] || 'login_failed');
             return r.json();
         })
         .then(async data => {
@@ -161,10 +161,40 @@ export function handleLogin(e) {
         })
         .catch(err => {
             if (errorEl) {
-                errorEl.textContent = err.message;
+                errorEl.textContent = loginText(err instanceof LoginError ? err.key : 'login_failed');
                 errorEl.classList.remove('hidden');
             }
         });
+}
+
+// The login form's message for a refused sign-in: a wrong password, the
+// per-IP rate limit, and every password-hashing slot being busy are
+// different answers, and only the first means the credentials were wrong.
+const LOGIN_ERRORS = {
+    401: 'login_invalid_credentials',
+    429: 'login_rate_limited',
+    503: 'login_busy',
+};
+
+// /api/i18n needs a session, so a first sign-in has no translations yet and
+// shows these; a page whose session expired keeps its language.
+const LOGIN_ENGLISH = {
+    login_invalid_credentials: 'Invalid username or password',
+    login_rate_limited: 'Too many sign-in attempts. Try again later.',
+    login_busy: 'The server is busy. Try again in a moment.',
+    login_failed: 'Sign-in failed. Try again.',
+};
+
+function loginText(key) {
+    const translated = i18n.t(key);
+    return translated !== key ? translated : LOGIN_ENGLISH[key];
+}
+
+class LoginError extends Error {
+    constructor(key) {
+        super(key);
+        this.key = key;
+    }
 }
 
 export function handleLogout() {

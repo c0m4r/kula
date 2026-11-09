@@ -7,12 +7,29 @@ export function diskMember(disks, key) {
     return key && Array.isArray(disks) ? disks.find(disk => diskKey(disk) === key) : undefined;
 }
 
+// This module imports nothing (tests load it on its own), so the dashboard
+// hands it a translator; until then, and for a key it lacks, English is used.
+const ENGLISH = {
+    disk_unstable_name: '{name} (unstable)',
+    disk_no_identity: 'No persistent identity; this kernel name may refer to a different drive after reboot.',
+};
+let translate = null;
+
+export function setDiskIdentityTranslator(fn) {
+    translate = fn;
+}
+
+function text(key) {
+    const translated = translate?.(key);
+    return translated && translated !== key ? translated : ENGLISH[key];
+}
+
 export function diskLabel(disk) {
-    return disk?.id ? disk.name : `${disk?.name || ''} (unstable)`;
+    return disk?.id ? disk.name : text('disk_unstable_name').replaceAll('{name}', () => disk?.name || '');
 }
 
 export function diskTitle(disk) {
-    return disk?.id || 'No persistent identity; this kernel name may refer to a different drive after reboot.';
+    return disk?.id || text('disk_no_identity');
 }
 
 // Encode every code point: replacing punctuation with '_' would collide for

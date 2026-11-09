@@ -160,6 +160,17 @@ try {
 
     await call('Page.navigate', { url: `${base}/` });
     await waitFor(loginShown, 'the dashboard did not ask to sign in');
+    // A wrong password is reported as such, in the page's language (a rate
+    // limit or a busy server has a message of its own).
+    await evaluate(`(() => {
+        document.getElementById('login-user').value = 'admin';
+        document.getElementById('login-pass').value = 'not-the-password';
+        document.getElementById('login-form').requestSubmit();
+    })()`);
+    await waitFor(() => evaluate(`(() => {
+        const error = document.getElementById('login-error');
+        return !error.classList.contains('hidden') && error.textContent === 'Invalid username or password';
+    })()`), 'a wrong password did not show the invalid-credentials message');
     await signIn();
 
     // A restart without sessions.json forgets the session the page holds.

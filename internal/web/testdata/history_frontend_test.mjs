@@ -19,8 +19,22 @@ const {
     rollingTailSource,
     updateLiveSampleInterval,
 } = await importSource('../static/js/app/history-request.js');
-const { diskKey, diskMember, diskLabel, diskDOMKey, migrateDiskSelection } =
+const { diskKey, diskMember, diskLabel, diskTitle, diskDOMKey, migrateDiskSelection, setDiskIdentityTranslator } =
     await importSource('../static/js/app/disk-identity.js');
+
+test('disk identity text is translated once a translator is set, English until then', () => {
+    assert.equal(diskLabel({ name: 'sda' }), 'sda (unstable)');
+    assert.equal(diskLabel({ id: 'wwid:A', name: 'sda' }), 'sda');
+    // i18n.t returns the key itself for a missing translation: English then.
+    setDiskIdentityTranslator(key => key === 'disk_unstable_name' ? '{name} (instabil)' : key);
+    try {
+        assert.equal(diskLabel({ name: 'sd$&a' }), 'sd$&a (instabil)', 'a "$" in a name stays literal');
+        assert.match(diskTitle({ name: 'sda' }), /^No persistent identity/);
+        assert.equal(diskTitle({ id: 'wwid:A' }), 'wwid:A');
+    } finally {
+        setDiskIdentityTranslator(null);
+    }
+});
 
 test('disk selection and envelopes follow identity through kernel renames', () => {
     const old = [{ id: 'wwid:A', name: 'sda', read_bps: 10 }, { id: 'wwid:B', name: 'sdb', read_bps: 100 }];

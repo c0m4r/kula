@@ -351,6 +351,26 @@ const { evaluateAlerts } = await import('./js/app/alerts.js');
 const alertEmpty = () => document.querySelector('#alert-list .alert-empty')?.textContent;
 evaluateAlerts({ cpu: { num_cores: 2 } });
 check(alertEmpty() === 'Brak aktywnych alertów', `Alert empty state is not translated: ${alertEmpty()}`);
+// Alert titles and details are translated with their values filled in; a
+// "$" pattern in a host-supplied value stays literal.
+evaluateAlerts({ cpu: { num_cores: 2, total: { usage: 99 } }, lavg: { load1: 4.5 },
+    sys: { clock_synced: false, clock_source: 'tsc$&' }, swap: { used_pct: 97 } });
+const alertText = [...document.querySelectorAll('#alert-list .alert-item')].map(item => item.textContent.replace(/\s+/g, ' ').trim());
+check(alertText.length === 4 && alertText.some(t => t.includes('Zegar nie jest zsynchronizowany') && t.includes('Źródło: tsc$&')) &&
+    alertText.some(t => t.includes('Obciążenie przekracza liczbę rdzeni') && t.includes('4.50') && t.includes('rdzenie: 2')) &&
+    alertText.some(t => t.includes('Wysokie zużycie CPU') && t.includes('CPU: 99.0%')) &&
+    alertText.some(t => t.includes('Wysokie zużycie swap') && t.includes('Swap: 97.0%')) &&
+    !alertText.some(t => /\{[a-z]+\}/.test(t)), `Alerts are not translated: ${JSON.stringify(alertText)}`);
+const { updateSubtitles } = await import('./js/app/header.js');
+updateSubtitles({ proc: { total: 300, running: 4 }, self: { cpu_pct: 1.25, mem_rss: 1048576, fds: 12 } });
+check(document.getElementById('proc-subtitle')?.textContent === '300 łącznie, 4 uruchomionych' &&
+    document.getElementById('self-subtitle')?.textContent.startsWith('CPU 1.3%') &&
+    document.getElementById('self-subtitle')?.textContent.endsWith('otwarte pliki: 12'),
+    `Header subtitles are not translated: ${document.getElementById('proc-subtitle')?.textContent} / ${document.getElementById('self-subtitle')?.textContent}`);
+const identity = await import('./js/app/disk-identity.js');
+check(identity.diskLabel({ name: 'sda' }) === 'sda (nazwa niestała)' &&
+    identity.diskTitle({ name: 'sda' }).startsWith('Brak trwałego identyfikatora'), 'Disk identity text is not translated');
+evaluateAlerts({ cpu: { num_cores: 2 } });
 await i18n.loadTranslations('en');
 i18n.applyTranslations();
 document.dispatchEvent(new Event('kula-i18n-changed'));

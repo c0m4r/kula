@@ -128,7 +128,7 @@ function getActiveSession() {
 function createSession({ label, context, kind } = {}) {
     const sess = {
         id: nextSessionId++,
-        label: label || 'Current metrics',
+        label: label || i18n.t('ai_session_current'),
         kind: kind || 'current',
         context: context || 'current',
         history: [],
@@ -655,7 +655,7 @@ async function streamChatResponse({ prompt, messages, context, assistantBody }) 
     });
 
     if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: 'Request failed' }));
+        const err = await resp.json().catch(() => ({ error: i18n.t('ai_request_failed') }));
         throw new Error(err.error || `HTTP ${resp.status}`);
     }
 

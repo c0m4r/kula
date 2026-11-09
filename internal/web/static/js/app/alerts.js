@@ -8,13 +8,15 @@ import { i18n } from './i18n.js';
 export function evaluateAlerts(sample) {
     const alerts = [];
     const numCores = sample.cpu?.num_cores || 1;
+    // Alerts are evaluated with every sample, so a language change reaches
+    // them with the next one.
 
     // Clock not synced
     if (sample.sys?.clock_synced === false) {
         alerts.push({
             icon: '⏱',
-            title: 'Clock not synchronized',
-            detail: 'Source: ' + (sample.sys.clock_source || 'unknown'),
+            title: i18n.format('alert_clock_unsynced'),
+            detail: i18n.format('alert_clock_source', { source: sample.sys.clock_source || i18n.t('alert_clock_source_unknown') }),
         });
     }
 
@@ -22,8 +24,8 @@ export function evaluateAlerts(sample) {
     if (sample.sys?.entropy !== undefined && sample.sys.entropy < 256) {
         alerts.push({
             icon: '🎲',
-            title: 'Low entropy',
-            detail: `Current: ${sample.sys.entropy} (min recommended: 256)`,
+            title: i18n.format('alert_low_entropy'),
+            detail: i18n.format('alert_entropy_detail', { value: sample.sys.entropy, min: 256 }),
         });
     }
 
@@ -31,8 +33,8 @@ export function evaluateAlerts(sample) {
     if (sample.lavg?.load1 > numCores) {
         alerts.push({
             icon: '🔥',
-            title: 'Load exceeds core count',
-            detail: `Load1: ${sample.lavg.load1.toFixed(2)}, Cores: ${numCores}`,
+            title: i18n.format('alert_load_high'),
+            detail: i18n.format('alert_load_detail', { load: sample.lavg.load1.toFixed(2), cores: numCores }),
         });
     }
 
@@ -40,8 +42,8 @@ export function evaluateAlerts(sample) {
     if (sample.cpu?.total?.usage > 95) {
         alerts.push({
             icon: '🔥',
-            title: 'High CPU usage',
-            detail: `CPU: ${sample.cpu.total.usage.toFixed(1)}%`,
+            title: i18n.format('alert_cpu_high'),
+            detail: i18n.format('alert_cpu_detail', { pct: sample.cpu.total.usage.toFixed(1) }),
         });
     }
 
@@ -49,8 +51,8 @@ export function evaluateAlerts(sample) {
     if (sample.mem?.used_pct > 95) {
         alerts.push({
             icon: '💾',
-            title: 'High memory usage',
-            detail: `RAM: ${sample.mem.used_pct.toFixed(1)}%`,
+            title: i18n.format('alert_memory_high'),
+            detail: i18n.format('alert_memory_detail', { pct: sample.mem.used_pct.toFixed(1) }),
         });
     }
 
@@ -58,8 +60,8 @@ export function evaluateAlerts(sample) {
     if (sample.swap?.used_pct > 95) {
         alerts.push({
             icon: '💾',
-            title: 'High swap usage',
-            detail: `Swap: ${sample.swap.used_pct.toFixed(1)}%`,
+            title: i18n.format('alert_swap_high'),
+            detail: i18n.format('alert_swap_detail', { pct: sample.swap.used_pct.toFixed(1) }),
         });
     }
 
