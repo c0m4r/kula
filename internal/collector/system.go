@@ -1,9 +1,11 @@
 package collector
 
 import (
+	"encoding/binary"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -97,7 +99,7 @@ func clockSyncedFromTimex(tx *unix.Timex) bool {
 func countLoggedInUsers() int {
 	utmpUsers, haveUtmp := -1, false
 	for _, path := range []string{filepath.Join(runPath, "utmp"), filepath.Join(varRunPath, "utmp")} {
-		if n, ok := countUtmpUsers(path); ok {
+		if n, ok := countUtmpUsers(path, utmpRecordSize(runtime.GOARCH)); ok {
 			utmpUsers, haveUtmp = n, true
 			break
 		}
@@ -111,8 +113,22 @@ func countLoggedInUsers() int {
 	return utmpUsers
 }
 
-// countUtmpUsers counts USER_PROCESS records with a user name in a utmp file.
-func countUtmpUsers(path string) (int, bool) {
+// utmpRecordSize is glibc's sizeof(struct utmp) on goarch. Where glibc sets
+// __WORDSIZE_TIME64_COMPAT32 (x86, riscv, powerpc64, mips, arm), ut_session
+// and ut_tv stay 32-bit so 32- and 64-bit programs can share the file: 384
+// bytes. aarch64 clears it, making them a long and a struct timeval: 400. The
+// fields read here sit at the same offsets in both; check bits/wordsize.h
+// before adding an architecture.
+func utmpRecordSize(goarch string) int {
+	if goarch == "arm64" {
+		return 400
+	}
+	return 384
+}
+
+// countUtmpUsers counts USER_PROCESS records with a user name in a utmp file
+// of recordSize-byte records.
+func countUtmpUsers(path string, recordSize int) (int, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, false
@@ -120,23 +136,17 @@ func countUtmpUsers(path string) (int, bool) {
 	defer func() { _ = f.Close() }()
 
 	count := 0
-	// utmp record size on x86_64 Linux is 384 bytes
-	const recordSize = 384
-	const utTypeOffset = 0
-	// ut_user follows ut_type (4), ut_pid (4), ut_line (32) and ut_id (4).
+	// ut_type is a short in the host's byte order. ut_user follows ut_type
+	// (2, padded to 4), ut_pid (4), ut_line (32) and ut_id (4).
 	const utUserOffset = 44
 	const userProcess = 7
 
 	buf := make([]byte, recordSize)
 	for {
-		n, err := io.ReadFull(f, buf)
-		if n < recordSize || err != nil {
+		if _, err := io.ReadFull(f, buf); err != nil {
 			break
 		}
-
-		utType := int32(buf[utTypeOffset]) | int32(buf[utTypeOffset+1])<<8 |
-			int32(buf[utTypeOffset+2])<<16 | int32(buf[utTypeOffset+3])<<24
-		if utType != userProcess {
+		if int16(binary.NativeEndian.Uint16(buf[0:2])) != userProcess {
 			continue
 		}
 

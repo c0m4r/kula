@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -78,13 +79,47 @@ func TestCollectSelf(t *testing.T) {
 	}
 }
 
-// utmpRecord builds one 384-byte x86_64 utmp record.
-func utmpRecord(utType int32, line, user string) []byte {
-	record := make([]byte, 384)
-	binary.LittleEndian.PutUint32(record[0:], uint32(utType))
+// utmpRecord builds one utmp record of size bytes, as glibc lays it out.
+func utmpRecord(size int, utType int16, line, user string) []byte {
+	record := make([]byte, size)
+	binary.NativeEndian.PutUint16(record[0:], uint16(utType))
 	copy(record[8:40], line)
 	copy(record[44:76], user)
 	return record
+}
+
+// hostUtmpRecord builds a utmp record for the architecture under test.
+func hostUtmpRecord(utType int16, line, user string) []byte {
+	return utmpRecord(utmpRecordSize(runtime.GOARCH), utType, line, user)
+}
+
+// TestUtmpRecordSizes: glibc's struct utmp is 400 bytes on aarch64, where
+// ut_session and ut_tv are 64-bit, and 384 elsewhere. Reading one layout at
+// the other's stride misaligns every record after the first.
+func TestUtmpRecordSizes(t *testing.T) {
+	for goarch, want := range map[string]int{"amd64": 384, "386": 384, "arm": 384, "riscv64": 384, "arm64": 400} {
+		if got := utmpRecordSize(goarch); got != want {
+			t.Errorf("utmpRecordSize(%s) = %d, want %d", goarch, got, want)
+		}
+	}
+	for _, size := range []int{384, 400} {
+		var utmp []byte
+		utmp = append(utmp, utmpRecord(size, 2, "~", "reboot")...) // BOOT_TIME
+		for _, user := range []string{"alice", "bob", "carol"} {
+			utmp = append(utmp, utmpRecord(size, 7, "pts/0", user)...)
+		}
+		path := filepath.Join(t.TempDir(), "utmp")
+		if err := os.WriteFile(path, utmp, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := countUtmpUsers(path, size); !ok || got != 3 {
+			t.Errorf("%d-byte records: %d users (ok %v), want 3", size, got, ok)
+		}
+		other := 784 - size
+		if got, _ := countUtmpUsers(path, other); got == 3 {
+			t.Errorf("%d-byte records read at a %d-byte stride still counted 3: the fixture does not tell the layouts apart", size, other)
+		}
+	}
 }
 
 func TestLoggedInUsersFromUtmpLogindOrUnknown(t *testing.T) {
@@ -131,11 +166,11 @@ func TestLoggedInUsersFromUtmpLogindOrUnknown(t *testing.T) {
 
 	// utmp wins when present: USER_PROCESS records with a user name.
 	var utmp []byte
-	utmp = append(utmp, utmpRecord(2, "~", "reboot")...) // BOOT_TIME
-	utmp = append(utmp, utmpRecord(7, "tty1", "alice")...)
-	utmp = append(utmp, utmpRecord(7, "pts/0", "bob")...)
-	utmp = append(utmp, utmpRecord(6, "tty2", "LOGIN")...) // LOGIN_PROCESS
-	utmp = append(utmp, utmpRecord(7, "pts/1", "")...)
+	utmp = append(utmp, hostUtmpRecord(2, "~", "reboot")...) // BOOT_TIME
+	utmp = append(utmp, hostUtmpRecord(7, "tty1", "alice")...)
+	utmp = append(utmp, hostUtmpRecord(7, "pts/0", "bob")...)
+	utmp = append(utmp, hostUtmpRecord(6, "tty2", "LOGIN")...) // LOGIN_PROCESS
+	utmp = append(utmp, hostUtmpRecord(7, "pts/1", "")...)
 	if err := os.WriteFile(filepath.Join(varRunPath, "utmp"), utmp, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +179,7 @@ func TestLoggedInUsersFromUtmpLogindOrUnknown(t *testing.T) {
 	}
 
 	// utmp that records logins wins over logind, as for `who`.
-	if err := os.WriteFile(filepath.Join(varRunPath, "utmp"), utmpRecord(7, "tty1", "alice"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(varRunPath, "utmp"), hostUtmpRecord(7, "tty1", "alice"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := countLoggedInUsers(); got != 1 {
