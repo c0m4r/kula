@@ -467,6 +467,12 @@ them once work outlives its deadline by 5 s.
   `e8c02e6` the restart replays the open window and the first sample flushes it, so only a
   downtime of roughly 2–10 minutes leaves tier 1 short of its tolerance, for at most a minute,
   and only for a fresh load (an open view's tier hint keeps tier 1).
+  **✅ `6a79604`:** a coarse tier now covers the live edge as far as its rollups are final: the
+  start of the window holding the source tier's newest record, when that is past its newest
+  rollup (every earlier window has closed, the downtime ones with nothing to roll up), unless an
+  older window is still buffered (a failed write). Measured on 2 h 20 min of samples, a restart
+  and five minutes down: a 2 h 10 min view came from tier 2 (5 m) before, tier 1 now.
+  `TestRestartAfterADowntimeKeepsTierOneAtTheLiveEdge` and a contract scenario pin it.
 - **✅ `30c9d19`** (found while verifying): a crash between creating and renaming `tier_N.idx`
   left a temporary file nobody removed; `OpenTier` sweeps it.
 - **✅ `f2589f4`** (from verification): read-only stores (the TUI) kept no seek index, so every
@@ -505,6 +511,14 @@ them once work outlives its deadline by 5 s.
 - DNS-rebinding exposure with auth off (no Host allowlist). *Open (needs a design decision):* an
   opt-in allowlist protects only those who set it; a default-on loopback rule breaks a same-host
   reverse proxy that forwards `Host`.
+  **✅ `f94a7ea`** (default on, decided by the maintainer): with auth disabled on a TCP listener,
+  only `Host` names no public DNS can answer for are served — IP addresses, `localhost`,
+  single-label names, `.local`/`.lan`/`.home`/`.localdomain`/`.internal`/`.home.arpa`, the
+  machine's hostname, the hosts of `allowed_origins` and the new `web.security.allowed_hosts`
+  (`"*"` turns it off, with a startup warning). Anything else gets a JSON 403, logged once per
+  name; `/health` and `/status` stay open. Auth on and Unix sockets are unaffected. A proxy that
+  forwards a public `Host` with auth off must list it (upgrade note in `07-authentication.md`).
+  Verified live under Landlock.
 - gzip exclusion for `/api/ollama/` is dead under `base_path` (`server.go:214`). **✅ `cfd99c1`.**
 
 **collector**
@@ -549,10 +563,16 @@ them once work outlives its deadline by 5 s.
   server does not validate either; the live Chromium fixture loads a malformed preference.
 - Second undocumented Chart.js private dependency `TimeScale._unit` (`charts-init.js:170`).
   **✅ `8969984`** (documented; `TestChartBundle` asserts it).
-- Full chart build runs twice at startup (`main.js:393` + `auth.js:109`). *Open.*
+- Full chart build runs twice at startup (`main.js:393` + `auth.js:109`). **✅ `33e8899`:** the
+  second build only applied the four Graph Bounds ceilings from `/api/config`; charts created
+  with a `graphBound` now take them in place (`applyChartBounds()`), as does a bound applied
+  from a card's menu, which also rebuilt every chart and re-fetched history. One build measured
+  60–80 ms on the review host, 430–475 ms with Chromium's CPU throttled 6×.
 - O(total points) scan per update in the accessibility plugin (`chart-accessibility.js:446-455`).
   **Partly ✅ `0eceeba`:** one pass instead of two, ending at the first unavailable point. Still
-  O(points) per update; caching per data change is open.
+  O(points) per update. *Won't fix (measured):* 0.3–0.5 ms per tick for 40 charts × 4 series ×
+  ~900 points, 2.9 ms only at 3,600 raw points per series; live data changes every tick, so a
+  per-change cache would not help the live view.
 - `_sanitize()` in `split.js:306-308` can collide `eth0.1` / `eth0_1` into one card ID and abort
   the rebuild. **✅ `c6f2fef`**: a later name in sorted order gets `-2`, `-3`, …; a name that
   collides with nothing keeps its id, so stored card orders still apply.
@@ -567,6 +587,12 @@ them once work outlives its deadline by 5 s.
   before; those messages fall back to English, as `/api/i18n` needs a session. *Still English:*
   about 110 application-chart titles, legends and subtitles in `charts-data.js` (nginx,
   Apache2, PostgreSQL, MySQL, power supplies), and abbreviations such as `usr:`/`sys:`/`estab:`.
+  **✅ `315dc91`:** 72 keys in all 26 locales — card titles ("Nginx — <metric>"), plain-language
+  legends and subtitle words, battery status, the disk-space legend. Technical terms sysadmins
+  keep in English stay plain labels (Commits/s, Keepalive, DNS, Blks, Tuples, Bufs, InnoDB
+  Buffer Pool, Background Writer, SQL verbs), as do abbreviations. Each locale keeps its own
+  per-second unit and Disk I/O wording. Legends, titles and subtitles follow a language change
+  without a rebuild, paused views included.
 - CSP `style-src 'unsafe-inline'` appears unnecessary (`server.go:269`) — verify `game.js` first.
   **✅ `ec39733`:** `style-src 'self'`. The Chromium fixtures watch `securitypolicyviolation`
   through a CDP binding (`watchCSPViolations`) and fail on any; the dashboard harness serves
@@ -692,10 +718,14 @@ them once work outlives its deadline by 5 s.
 > `21ded1c`; the four browser fixtures last ran at `a8af522` (no frontend change since).
 > **Lows (2026-11-09):** 23 small fixes and the Apache2 decision, `a6fc9fa`…`6148b5b`, marked
 > in §3; one bug found on the way (the retransmit counter's source, H4 follow-up `9420996`).
-> Then replication lag `e8d9f60`, CSP `ec39733`, translations `7179daf`. Still open: DNS
-> rebinding, the restart/5 m buckets window, the startup double chart build, the
-> application-chart strings, and caching the accessibility scan. Won't fix: GPU length
-> gating, the Unix socket chmod window.
+> Then replication lag `e8d9f60`, CSP `ec39733`, translations `7179daf`.
+> **Last open items (2026-11-09):** startup double chart build `33e8899`, restart/5 m buckets
+> window `6a79604`, application-chart strings `315dc91`, DNS rebinding `f94a7ea` (default on).
+> Nothing is open. Won't fix: GPU length gating, the Unix socket chmod window, caching the
+> accessibility scan (measured, below 1 ms per tick). Found on the way: split-card titles and
+> legends, and a sensorless device's temperature legend, ignored a language change
+> (`0117ba9`); system-info device names were English (`5b67f68`); one Portuguese string was
+> Spanish (`d1d1222`).
 
 1. ~~**H1 + H2** (auth) — small changes, high impact.~~ ✅
 2. ~~**H4** (`retrans_ps`: bit 13 + Python mirror) and **H3** (disk utilization: restore or remove)
