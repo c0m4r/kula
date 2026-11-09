@@ -5,7 +5,7 @@
 import { state, storedAggregation } from './state.js';
 import { isAggregation } from './history-navigation.js';
 import { readPref } from './prefs.js';
-import { initCharts } from './charts-init.js';
+import { applyChartBounds } from './charts-init.js';
 import { updateAllCharts, clearAllChartData, cancelHistoryRequest } from './charts-data.js';
 import { connectWS, disconnectWS } from './websocket.js';
 import { applyTheme } from './settings.js';
@@ -107,7 +107,7 @@ export function fetchConfig() {
             }
             if (cfg.graphs) {
                 state.configMax = cfg.graphs;
-                initCharts(); // reload boundaries immediately on bootstrap/login
+                applyChartBounds();
                 if (cfg.graphs.split) {
                     applySplitFromConfig(cfg.graphs.split);
                 }

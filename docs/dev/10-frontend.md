@@ -62,7 +62,10 @@ to read the original sources in browser developer tools.
 `main.js` `init()` first arranges the cards in the stored order (see [Card order](#card-order)),
 then loads translations, restores the URL state and layout, then waits for one
 painted frame (`afterNextPaint()`) before `initCharts()` builds every Chart.js instance: the build
-holds the main thread, and the static page should be on screen first.
+holds the main thread, and the static page should be on screen first. It runs once per page
+load: `/api/config` arrives later with the server's Graph Bounds defaults, and those, like a
+bound applied from a card's menu, change the Y-axis ceilings in place (`applyChartBounds()`,
+for every chart created with a `graphBound` in its Y-axis options).
 
 | Module | Responsibility |
 |--------|----------------|

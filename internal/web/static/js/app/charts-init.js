@@ -30,9 +30,15 @@ import { minimumZoomSpan } from './history-navigation.js';
 Chart.register(envelopePlugin, chartAccessibilityPlugin, crosshairPlugin, tooltipGesturePlugin);
 
 // ---- Chart Initialization ----
+// yConfig.graphBound names the Graph Bounds setting (cpu_temp, network,
+// disk_temp, gpu_temp) that sets the Y-axis ceiling; applyChartBounds() keeps
+// it current without rebuilding the chart.
 export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlugins = {}) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return null;
+
+    const { graphBound, ...scaleConfig } = yConfig;
+    if (graphBound) scaleConfig.max = getChartMaxBound(graphBound);
 
     // Filled-to-zero areas obscure neighboring series and smooth curves imply
     // observations that never occurred. Historical variability is rendered by
@@ -173,7 +179,7 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
                 },
                 y: {
                     beginAtZero: true,
-                    ...yConfig,
+                    ...scaleConfig,
                     grid: { color: 'rgba(55, 65, 81, 0.2)' },
                 },
             },
@@ -188,6 +194,7 @@ export function createTimeSeriesChart(canvasId, datasets, yConfig = {}, extraPlu
     // arbitrary option function as a scriptable value before the plugin sees
     // it. Chart-local state remains a function and follows language changes.
     chart.$kulaHistoryStatus = state.historyStatus;
+    if (graphBound) chart.$kulaGraphBound = graphBound;
     const detachAccessibility = attachChartAccessibility(chart, {
         translate: key => i18n.t(key),
         formatTimestamp: value => formatFullTimestamp(value, state.timeZone, i18n.currentLang),
@@ -276,13 +283,9 @@ export function initCharts() {
     ], { max: 100, ticks: { callback: v => formatMetricNumber(v) + '%' } });
 
     state.cpuTempSensorNames = [];
-    let cpuTempYConfig = { ticks: { callback: v => v.toFixed(1) + '°C' } };
-    let cpuTempMax = getChartMaxBound('cpu_temp');
-    if (cpuTempMax !== undefined) cpuTempYConfig.max = cpuTempMax;
-
     state.charts.cputemp = createTimeSeriesChart('chart-cpu-temp', [
         { label: i18n.t('temperature'), borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [] },
-    ], cpuTempYConfig);
+    ], { graphBound: 'cpu_temp', ticks: { callback: v => v.toFixed(1) + '°C' } });
 
     // Load Average
     state.charts.loadavg = createTimeSeriesChart('chart-loadavg', [
@@ -311,14 +314,10 @@ export function initCharts() {
         tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + formatBytesShort(ctx.parsed.y) } }
     });
 
-    let networkYConfig = { ticks: { callback: v => v.toFixed(1) + ' Mbps' } };
-    let networkMax = getChartMaxBound('network');
-    if (networkMax !== undefined) networkYConfig.max = networkMax;
-
     state.charts.network = createTimeSeriesChart('chart-network', [
         { label: i18n.t('rx'), borderColor: colors.cyan, backgroundColor: colors.cyanAlpha, fill: true, data: [] },
         { label: i18n.t('tx'), borderColor: colors.pink, backgroundColor: colors.pinkAlpha, fill: true, data: [] },
-    ], networkYConfig);
+    ], { graphBound: 'network', ticks: { callback: v => v.toFixed(1) + ' Mbps' } });
 
     state.charts.pps = createTimeSeriesChart('chart-pps', [
         { label: i18n.t('rx_pps'), borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
@@ -365,13 +364,9 @@ export function initCharts() {
     }
 
     state.diskTempSensorNames = [];
-    let diskTempYConfig = { ticks: { callback: v => v.toFixed(1) + '°C' } };
-    let diskTempMax = getChartMaxBound('disk_temp');
-    if (diskTempMax !== undefined) diskTempYConfig.max = diskTempMax;
-
     state.charts.disktemp = createTimeSeriesChart('chart-disk-temp', [
         { label: i18n.t('temperature'), borderColor: colors.red, backgroundColor: colors.redAlpha, fill: true, data: [] },
-    ], diskTempYConfig);
+    ], { graphBound: 'disk_temp', ticks: { callback: v => v.toFixed(1) + '°C' } });
 
     // Disk Space — datasets are added dynamically per mount on first sample
     state.diskSpaceMountNames = [];
@@ -427,11 +422,9 @@ export function initCharts() {
     });
 
     // GPU Temperature
-    let gpuTempMax = getChartMaxBound('gpu_temp');
-    let gpuTempYConfig = { max: gpuTempMax, ticks: { callback: v => v.toFixed(1) + '°C' } };
     state.charts.gputemp = createTimeSeriesChart('chart-gpu-temp', [
         { label: i18n.t('temperature'), borderColor: colors.red, backgroundColor: colors.redAlpha, fill: true, data: [] },
-    ], gpuTempYConfig);
+    ], { graphBound: 'gpu_temp', ticks: { callback: v => v.toFixed(1) + '°C' } });
 
     // Self monitoring
     state.charts.self = createTimeSeriesChart('chart-self', [
@@ -491,6 +484,20 @@ export function setChartTimeRange() {
     };
 
     forEachRegisteredChart(applyToChart);
+}
+
+// Re-read every chart's Graph Bounds ceiling (stored preference, else the
+// server default from /api/config) in place. Rebuilding the charts for it
+// costs tens of milliseconds of main thread, hundreds on slow clients, and
+// discards their data.
+export function applyChartBounds() {
+    forEachRegisteredChart(chart => {
+        if (!chart.$kulaGraphBound || !chart.options?.scales?.y) return;
+        const max = getChartMaxBound(chart.$kulaGraphBound);
+        if (chart.options.scales.y.max === max) return;
+        chart.options.scales.y.max = max;
+        queueChartUpdate(chart);
+    });
 }
 
 export function updateChartLabels() {

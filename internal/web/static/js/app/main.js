@@ -6,11 +6,9 @@
 'use strict';
 import { graphMaxPrefs, state } from './state.js';
 import { writeJsonPref, writePref } from './prefs.js';
-import { initCharts } from './charts-init.js';
+import { applyChartBounds, initCharts } from './charts-init.js';
 import { i18n } from './i18n.js';
 import {
-    fetchCustomHistory,
-    fetchHistory,
     redrawChartsFromBuffer,
     renderSamplingInfo,
     syncZoom,
@@ -230,13 +228,7 @@ function setupChartActions() {
                 };
                 writeJsonPref('kula_graphs_max', preferences);
                 dropdown.classList.add('hidden');
-
-                initCharts();
-                if (state.timeRange !== null) {
-                    fetchHistory(state.timeRange);
-                } else if (state.customFrom && state.customTo) {
-                    fetchCustomHistory(state.customFrom, state.customTo);
-                }
+                applyChartBounds();
             });
 
             const dismissDropdown = event => {

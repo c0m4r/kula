@@ -4,10 +4,10 @@
    configurable from the dashboard or config file.
    ============================================================ */
 'use strict';
-import { state, colors, getChartMaxBound, graphMaxPrefs } from './state.js';
+import { state, colors, graphMaxPrefs } from './state.js';
 import { writeJsonPref } from './prefs.js';
 import { diskKey, diskMember, diskLabel, diskTitle, diskDOMKey } from './disk-identity.js';
-import { createTimeSeriesChart } from './charts-init.js';
+import { applyChartBounds, createTimeSeriesChart } from './charts-init.js';
 import { formatBytesShort, formatMetricNumber, formatPPS } from './format.js';
 import { i18n } from './i18n.js';
 import { queueChartUpdate } from './chart-controller.js';
@@ -538,7 +538,7 @@ function _makeSplitCard(cardId, title, type, graphId = null) {
 
     // Y-axis settings button (only for types that support Y-axis limits)
     if (graphId) {
-        _addSettingsDropdown(header, actions, graphId, type);
+        _addSettingsDropdown(header, actions, graphId);
     }
 
     // Expand, save-image and hover-pause behave as on every other card.
@@ -547,7 +547,7 @@ function _makeSplitCard(cardId, title, type, graphId = null) {
     return card;
 }
 
-function _addSettingsDropdown(header, actions, graphId, type) {
+function _addSettingsDropdown(header, actions, graphId) {
     const sBtn = document.createElement('button');
     sBtn.className = 'btn-icon';
     sBtn.dataset.i18nTitle = 'graph_bounds';
@@ -667,18 +667,8 @@ function _addSettingsDropdown(header, actions, graphId, type) {
         };
         writeJsonPref('kula_graphs_max', prefs);
         dropdown.classList.add('hidden');
-        // Rebuild split charts for this type to apply the new Y-axis bound
-        _rebuildSplitType(type);
+        applyChartBounds();
     });
-}
-
-function _rebuildSplitType(type) {
-    const options = _getOptions(type, null);
-    if (options.length > 0) {
-        _buildSplitChartsForType(type, options);
-        splitOptionsCache[type] = options.join(',');
-        _triggerRedraw();
-    }
 }
 
 // Split cards belong to the card they replace: by default they follow it in
@@ -703,14 +693,10 @@ function _buildSplitChartsForType(type, options) {
             const netCard = _makeSplitCard(netCardId, `${i18n.t('network_throughput')}: ${iface}`, type, 'network');
             _placeSplitCard(netCard, 'system', 'card-pps', rank++);
 
-            let yConf = { ticks: { callback: v => v.toFixed(1) + ' Mbps' } };
-            const netMax = getChartMaxBound('network');
-            if (netMax !== undefined) yConf.max = netMax;
-
             charts[`net_${iface}`] = createTimeSeriesChart(`canvas-${netCardId}`, [
                 { label: i18n.t('rx'), borderColor: colors.cyan, backgroundColor: colors.cyanAlpha, fill: true, data: [] },
                 { label: i18n.t('tx'), borderColor: colors.pink, backgroundColor: colors.pinkAlpha, fill: true, data: [] },
-            ], yConf);
+            ], { graphBound: 'network', ticks: { callback: v => v.toFixed(1) + ' Mbps' } });
             if (charts[`net_${iface}`]) netCard.classList.remove('hidden');
 
             // PPS card
@@ -773,9 +759,7 @@ function _buildSplitChartsForType(type, options) {
 
     if (type === 'disktemp') {
         let rank = 0;
-        let diskTempMax = getChartMaxBound('disk_temp');
-        let diskTempYConf = { ticks: { callback: v => v.toFixed(1) + '°C' } };
-        if (diskTempMax !== undefined) diskTempYConf.max = diskTempMax;
+        const diskTempYConf = { graphBound: 'disk_temp', ticks: { callback: v => v.toFixed(1) + '°C' } };
 
         for (const dev of options) {
             const safe = diskDOMKey(dev);
@@ -794,8 +778,7 @@ function _buildSplitChartsForType(type, options) {
     if (type === 'gpu') {
         let mainRank = 0;
         let thermRank = 0;
-        let gpuTempMax = getChartMaxBound('gpu_temp');
-        let gpuTempYConf = { max: gpuTempMax, ticks: { callback: v => v.toFixed(1) + '°C' } };
+        const gpuTempYConf = { graphBound: 'gpu_temp', ticks: { callback: v => v.toFixed(1) + '°C' } };
 
         for (const gpu of options) {
             const safe = _splitId('gpu', gpu);

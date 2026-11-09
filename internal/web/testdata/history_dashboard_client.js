@@ -31,6 +31,13 @@ window.WebSocket = class {
 await import('./js/app/main.js');
 for (let i = 0; !window.socketCreated && i < 500; i++) await pause(10);
 check(window.socketCreated, 'Dashboard bootstrap did not reach the WebSocket connection');
+// /api/config arrives after the first chart build and only brings Graph
+// Bounds ceilings, which apply in place: startup builds every chart once.
+const startupCharts = Object.values(Chart.instances);
+check(startupCharts.length && startupCharts.every(chart => chart.id < startupCharts.length),
+    'Startup built charts and threw them away');
+check(Chart.getChart(document.getElementById('chart-cpu-temp'))?.options.scales.y.max === 95,
+    'The server Graph Bounds default did not reach its chart');
 state.timeRange = null;
 state.customTo = new Date('2026-09-05T10:00:00Z');
 state.customFrom = new Date('2026-09-04T10:00:00Z');
@@ -194,6 +201,18 @@ for (const fixture of [
         'Graph bounds adopted unexpected properties or lost a saved limit');
     boundsButton.click();
 }
+// Applying a bound changes that ceiling in place: no rebuild, no refetch.
+const networkChart = Chart.getChart(document.getElementById('chart-network'));
+const boundRequests = window.historyRequests;
+localStorage.setItem('kula_graphs_max', '{}');
+boundsButton.click();
+boundsDropdown.querySelector('select').value = 'on';
+boundsDropdown.querySelector('input').value = '321';
+boundsDropdown.querySelector('button[data-i18n="apply"]').click();
+await frame();
+check(Chart.getChart(document.getElementById('chart-network')) === networkChart &&
+    networkChart.options.scales.y.max === 321 && window.historyRequests === boundRequests,
+    'Applying a Graph Bounds limit rebuilt the chart or refetched history');
 if (savedGraphBounds === null) localStorage.removeItem('kula_graphs_max');
 else localStorage.setItem('kula_graphs_max', savedGraphBounds);
 

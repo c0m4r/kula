@@ -221,6 +221,8 @@ Cancel, Done, Reset and the announcements.
 History replay reports median preparation time and enforces a DOM-mutation budget proportional
 to chart count. Device-selection checks preserve unrelated datasets and shared gap metadata;
 all chart coordinates must remain valid for disabled Chart.js parsing.
+Startup must build each chart once (the `/api/config` Graph Bounds default reaches its chart in
+place), and applying a bound from a card's menu must keep the chart and fetch no history.
 Three network split/join cycles check that document click listeners do not accumulate and the
 Chart.js instance count returns to baseline. Each cycle also checks that Graph Bounds opens
 and dismisses on both a body click and an unrelated theme-button click.
