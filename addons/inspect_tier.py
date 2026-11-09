@@ -1257,8 +1257,16 @@ def print_tier(filepath: str, buf: Any, file_size: int) -> None:
         print("\nLatest Record: (none found)")
 
 
+def main(argv: Optional[List[str]] = None) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Show a Kula tier file's header, coverage and latest record.",
+        epilog="Use -- before a path that starts with a dash.",
+    )
+    parser.add_argument("path", help="tier file, e.g. /var/lib/kula/tier_0.dat")
+    inspect_tier(parser.parse_args(argv).path)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python inspect_tier.py <path-to-tier-file>", file=sys.stderr)
-        sys.exit(1)
-    inspect_tier(sys.argv[1])
+    main()

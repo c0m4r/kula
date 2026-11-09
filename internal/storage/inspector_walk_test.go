@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -169,5 +170,41 @@ print(json.dumps(module.tier_records(sys.argv[1])))`, path)
 				t.Fatalf("Python visits %d records, Go %d\nPython: %v\nGo:     %v", len(got), len(want), got, want)
 			}
 		})
+	}
+}
+
+// TestInspectorCommandLine: inspect_tier.py answers -h/--help with its usage
+// instead of trying to open a file of that name, and reads a tier file.
+func TestInspectorCommandLine(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	run := func(args ...string) (string, error) {
+		out, err := exec.Command(python, append([]string{"-I", "../../addons/inspect_tier.py"}, args...)...).CombinedOutput()
+		return string(out), err
+	}
+	for _, help := range []string{"-h", "--help"} {
+		if out, err := run(help); err != nil || !strings.Contains(out, "usage:") || strings.Contains(out, "Traceback") {
+			t.Errorf("%s: %v\n%s", help, err, out)
+		}
+	}
+	if out, err := run(); err == nil || !strings.Contains(out, "usage:") {
+		t.Errorf("no path: %v, want a usage error\n%s", err, out)
+	}
+
+	path := t.TempDir() + "/tier_0.dat"
+	tier, err := OpenTier(path, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tier.Write(varSample(time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC), 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tier.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(path); err != nil || !strings.Contains(out, "Latest Record") {
+		t.Errorf("reading a tier file: %v\n%s", err, out)
 	}
 }
