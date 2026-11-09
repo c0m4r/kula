@@ -176,6 +176,39 @@ func breakConn(t *testing.T, conn *sql.Conn) {
 	}
 }
 
+// TestDBSessionShutdownIsQuiet: a poll or a connection attempt that shutdown
+// cuts short is no server failure. The session closes without logging a lost
+// connection, without remembering itself for reaping, and without backing off.
+func TestDBSessionShutdownIsQuiet(t *testing.T) {
+	srv := newFakeDBServer()
+	clock := time.Unix(1_700_000_000, 0)
+	s := fakeSession(t, srv, &clock)
+	var lines []string
+	s.logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+
+	if _, err := s.acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lines = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.fail(ctx, context.Canceled)
+	if len(lines) != 0 || len(s.abandoned) != 0 || s.failures != 0 || s.conn != nil {
+		t.Fatalf("a poll cut short by shutdown: log %q, abandoned %d, failures %d, connection kept %v",
+			lines, len(s.abandoned), s.failures, s.conn != nil)
+	}
+	if clientOpen, sessions := srv.state(); clientOpen != 0 || sessions != 0 {
+		t.Fatalf("after shutdown: %d client connections, %d server sessions; want none", clientOpen, sessions)
+	}
+
+	if _, err := s.acquire(ctx); err == nil {
+		t.Fatal("acquire succeeded on a cancelled context")
+	}
+	if len(lines) != 0 || s.failures != 0 {
+		t.Fatalf("a connection attempt cut short by shutdown: log %q, failures %d", lines, s.failures)
+	}
+}
+
 func TestDBSessionNeverPollsBesideAnAbandonedSession(t *testing.T) {
 	srv := newFakeDBServer()
 	clock := time.Unix(1_800_000_000, 0)

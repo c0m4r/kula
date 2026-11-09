@@ -172,6 +172,9 @@ func (s *dbSession) acquire(ctx context.Context) (*sql.Conn, error) {
 	}
 	if s.conn == nil {
 		if err := s.open(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil, err // shutting down, not a failed connection
+			}
 			s.backoff()
 			s.logOnce(fmt.Sprintf("%s cannot connect to %q: %v", s.name, s.label, err))
 			return nil, err
@@ -265,8 +268,14 @@ func (s *dbSession) succeed() {
 // the session is intact (the server rejected one statement) and stays. When it
 // does not — a timeout, or a connection broken mid-query — the server may
 // still be running that session: it is remembered for reaping, the
-// connection is closed, and the collector backs off.
+// connection is closed, and the collector backs off. A poll that shutdown
+// (ctx) cut short only closes the connection: the server is not at fault,
+// and closing it ends the session.
 func (s *dbSession) fail(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		s.release()
+		return
+	}
 	if s.conn != nil {
 		pingCtx, cancel := s.bound(ctx, min(s.timeouts.poll, 5*time.Second))
 		pingErr := s.conn.PingContext(pingCtx)
