@@ -128,8 +128,9 @@ WebSocket close code 1008 signals session expiry or revocation: the dashboard ca
 history, stops reconnecting, clears authenticated readings and returns to login. A refused
 handshake (a 401 once the session expired while the page slept) reaches the page only as a
 close before open, so after one the dashboard asks `/api/auth/status` and does the same when
-the session is gone; otherwise (server down, connection limit) it keeps backing off (×1.5 per
-attempt up to 30 s, each wait drawn between half and all of it). Successful
+the session is gone; otherwise (server down, connection limit, or no answer within 5 s, as
+where packets are dropped) it keeps backing off (×1.5 per attempt up to 30 s, each wait drawn
+between half and all of it). Successful
 login opens a fresh connection and reloads the selected preset or custom interval.
 
 Every buffer observation uses the canonical `ts`, `data`, optional `min`/`max`, `dur`, and

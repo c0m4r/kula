@@ -113,16 +113,24 @@ export function connectWS() {
     };
 }
 
+// SESSION_PROBE_TIMEOUT_MS bounds the session probe below. Where packets are
+// dropped (host unreachable, a VPN flap) a request can wait for the browser's
+// connect timeout, minutes, and the page would not retry in the meantime.
+const SESSION_PROBE_TIMEOUT_MS = 5000;
+
 // A refused handshake -- a 401 once the session expired while the page slept,
 // a 429 at the connection limit -- reaches the page only as a close before
 // open (code 1006), without its status. Ask the server whether the session
 // still holds: retrying cannot renew one that has expired.
 function recheckSessionThenReconnect(generation) {
-    fetch(apiUrl('/api/auth/status'))
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SESSION_PROBE_TIMEOUT_MS);
+    fetch(apiUrl('/api/auth/status'), { signal: controller.signal })
         .then(r => r.json())
         .then(data => Boolean(data?.auth_required && !data.authenticated))
         .catch(() => false)
         .then(expired => {
+            clearTimeout(timeout);
             if (generation !== connectGeneration || state.ws) return;
             if (expired) requireLogin();
             else scheduleReconnect();

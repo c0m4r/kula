@@ -105,6 +105,7 @@ try {
     // status, so a socket that closes without a 101 counts as refused.
     const sockets = { created: 0, accepted: 0, refused: 0 };
     const upgraded = new Set();
+    let heldProbes = 0;
     socket.addEventListener('message', event => {
         const message = JSON.parse(event.data);
         if (pending.has(message.id)) {
@@ -120,6 +121,8 @@ try {
             upgraded.add(message.params.requestId);
         } else if (message.method === 'Network.webSocketClosed' && !upgraded.delete(message.params.requestId)) {
             sockets.refused++;
+        } else if (message.method === 'Fetch.requestPaused') {
+            heldProbes++; // never continued: a probe on a network that drops packets
         } else if (message.method === 'Runtime.exceptionThrown') {
             errors.push(message.params.exceptionDetails?.exception?.description ||
                 message.params.exceptionDetails?.text);
@@ -189,9 +192,24 @@ try {
     assert.equal(sockets.created, settled, `reconnects continued behind the login screen: ${JSON.stringify(sockets)}`);
 
     await signIn();
+
+    // A refused handshake asks /api/auth/status before retrying. Where packets
+    // are dropped that request hangs, held here, and the page must give up on
+    // it and keep retrying rather than wait for the browser's connect timeout.
+    await call('Fetch.enable', { patterns: [{ urlPattern: '*/api/auth/status*' }] });
+    await stopProcess(server, serverClosed);
+    await waitFor(() => heldProbes > 0, 'a refused reconnect did not ask whether the session holds');
+    const probing = sockets.created;
+    await waitFor(() => sockets.created > probing, 'a hung session probe stopped the reconnects');
+    await call('Fetch.disable');
+    const acceptedBefore = sockets.accepted;
+    await startServer();
+    await waitFor(async () => sockets.accepted > acceptedBefore && !(await loginShown()),
+        'the dashboard did not stream again once the server was back', 30000);
+
     assert.deepEqual(errors, [], 'the dashboard threw exceptions');
     assert.deepEqual(cspViolations, [], 'the page broke its Content-Security-Policy');
-    console.log(JSON.stringify({ status: 'pass', sockets }));
+    console.log(JSON.stringify({ status: 'pass', sockets, heldProbes }));
 } catch (error) {
     if (serverOutput) console.error(`kula serve output:\n${serverOutput}`);
     if (errors.length) console.error(`dashboard exceptions:\n${errors.join('\n')}`);
