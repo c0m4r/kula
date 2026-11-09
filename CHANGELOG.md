@@ -37,6 +37,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Apache2 charts and the AI assistant show current request and byte rates
 - The login form tells a wrong password apart from a rate limit or a busy server
 - Dashboards reconnect at staggered times after a restart
+- Charts are built once on page load, and Graph Bounds apply without reloading them
 
 ### Deprecated
 
@@ -71,7 +72,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - nginx and Apache2 failures are logged when they change, and redirects are not followed
 - An expired session returns to the login screen instead of reconnecting forever
 - AI panel actions no longer run twice after signing in again
-- Alerts, card subtitles, and login, AI panel and disk messages are translated
+- Alerts, application and battery charts, card subtitles, device names, and login, AI panel and disk messages are translated
+- Split charts follow a language change
+- Long views keep 1-minute detail right after a restart
 - `inspect_tier.py` walks damaged tiers the way Kula does
 - Settings that would break login or WebSockets are refused at startup, and `allowed_origins` is normalized
 - A standby of a quiet PostgreSQL primary no longer shows a growing replication lag
@@ -94,6 +97,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - API responses are not stored by browsers or proxies
 - The Ollama proxy no longer follows redirects
 - A startup warning when `allowed_origins` without `origin_validation` exposes the live stream
+- DNS rebinding protection: with auth disabled, only local host names and `web.security.allowed_hosts` are answered (list the name a reverse proxy forwards)
 
 ## [0.21.0] - 2026-10-01
 
