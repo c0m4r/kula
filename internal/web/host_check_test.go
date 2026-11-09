@@ -31,7 +31,7 @@ func hostTestHandler(t *testing.T, edit func(*config.WebConfig)) http.Handler {
 	if edit != nil {
 		edit(&cfg)
 	}
-	s := NewServer(cfg, config.GlobalConfig{Hostname: "testhost"}, &collector.Collector{}, newTestStoreWithSample(t), t.TempDir(), config.OllamaConfig{})
+	s := NewServer(cfg, config.GlobalConfig{Hostname: "testhost.example.com"}, &collector.Collector{}, newTestStoreWithSample(t), t.TempDir(), config.OllamaConfig{})
 	return s.buildHandler()
 }
 
@@ -125,11 +125,28 @@ func TestHostCheckAppliesOnlyWithoutAuthOverTCP(t *testing.T) {
 }
 
 // TestHostCheckMatchesTheMachineName covers the machine's own hostname, which
-// a LAN resolver may serve with its search domain stripped or not at all.
+// a LAN resolver may serve with its search domain stripped or not at all, and
+// global.hostname, often the FQDN where os.Hostname is the short name.
 func TestHostCheckMatchesTheMachineName(t *testing.T) {
 	p := newHostPolicy(config.WebConfig{}, "Build-Box.corp.example.")
 	if !p.allows("build-box.corp.example:27960") || p.allows("other.corp.example") {
 		t.Error("the machine's hostname is not matched exactly")
+	}
+	p = newHostPolicy(config.WebConfig{}, "polaris2", "Polaris2.Example.com", "")
+	for _, host := range []string{"polaris2:27960", "polaris2.example.com", "polaris2.example.com.:27960"} {
+		if !p.allows(host) {
+			t.Errorf("%s: this machine's configured name was refused", host)
+		}
+	}
+	for _, host := range []string{"polaris2.attacker.com", "polaris2.example.com.attacker.com", "example.com"} {
+		if p.allows(host) {
+			t.Errorf("%s: a name only extending this machine's was allowed", host)
+		}
+	}
+
+	h := hostTestHandler(t, nil) // global.hostname "testhost.example.com"
+	if rec := serveHost(h, "testhost.example.com:27960", "/api/current"); rec.Code == http.StatusForbidden {
+		t.Errorf("global.hostname as Host was refused: %s", rec.Body.String())
 	}
 }
 

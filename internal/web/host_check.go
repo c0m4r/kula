@@ -18,8 +18,9 @@ import (
 // Origin check passes too: Origin and Host name the same site). Such a request
 // still carries the attacker's name in Host, so while auth is off Kula answers
 // only Host names a public DNS server cannot answer for: IP addresses,
-// localhost, single-label names, local-only domains, this machine's hostname,
-// and the names in web.security.allowed_hosts or allowed_origins. With auth
+// localhost, single-label names, local-only domains, this machine's hostname
+// and global.hostname, and the names in web.security.allowed_hosts or
+// allowed_origins. With auth
 // on, the page has no session to send; on a Unix socket, no browser connects
 // directly. /health and /status stay open to probes, and so does /metrics
 // behind a bearer token: a rebinding page cannot supply the token, and a
@@ -43,8 +44,9 @@ type hostPolicy struct {
 }
 
 // newHostPolicy returns the Host check for cfg, or nil when none applies.
-// machine is this host's own name (os.Hostname).
-func newHostPolicy(cfg config.WebConfig, machine string) *hostPolicy {
+// machine lists this host's own names (os.Hostname, global.hostname), each
+// matched exactly: a name with any suffix added is not this machine.
+func newHostPolicy(cfg config.WebConfig, machine ...string) *hostPolicy {
 	if cfg.Auth.Enabled || cfg.UnixSocket != "" {
 		return nil
 	}
@@ -60,8 +62,10 @@ func newHostPolicy(cfg config.WebConfig, machine string) *hostPolicy {
 			p.names[host] = true
 		}
 	}
-	if machine = normalizeHostName(machine); machine != "" {
-		p.names[machine] = true
+	for _, name := range machine {
+		if name = normalizeHostName(name); name != "" {
+			p.names[name] = true
+		}
 	}
 	return p
 }

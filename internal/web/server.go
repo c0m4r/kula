@@ -86,7 +86,7 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 		ollama:          newOllamaClient(ollamaCfg),
 		ollamaLimiter:   newChatRateLimiter(),
 		ollamaMetaLim:   newMetaRateLimiter(),
-		hosts:           newHostPolicy(cfg, machineHostname()),
+		hosts:           newHostPolicy(cfg, machineHostname(), global.Hostname),
 	}
 	if cfg.UI && cfg.MinifyAssets {
 		srv.assets = minifiedStatic()
