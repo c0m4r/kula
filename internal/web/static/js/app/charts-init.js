@@ -500,6 +500,29 @@ export function applyChartBounds() {
     });
 }
 
+// A legend entry that follows the language: updateChartLabels() re-reads
+// $kulaLabelKey. Technical terms (Commits/s, Keepalive, Blks Hit/s) and
+// abbreviations keep a plain English label.
+export function series(key, options) {
+    return { label: i18n.t(key), $kulaLabelKey: key, ...options };
+}
+
+// A device without named sensors reports a single temperature reading under
+// this name. It identifies the dataset ($kulaSensorName); its legend follows
+// the language.
+export const FALLBACK_SENSOR = 'Temperature';
+
+// labelFallbackSensor returns datasets, the fallback reading's translated.
+export function labelFallbackSensor(datasets) {
+    for (const dataset of datasets) {
+        if (dataset.$kulaSensorName === FALLBACK_SENSOR && !dataset.$kulaLabelKey) {
+            dataset.$kulaLabelKey = 'temperature';
+            dataset.label = i18n.t('temperature');
+        }
+    }
+    return datasets;
+}
+
 export function updateChartLabels() {
     // Datasets created with a translation key (application and battery
     // charts) follow the language wherever they are.

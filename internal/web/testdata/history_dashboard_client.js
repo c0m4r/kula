@@ -252,6 +252,40 @@ try {
 check(splitClickListeners === 0, 'Split rebuild retained document click listeners');
 check(Object.values(Chart.instances).length === originalCharts.length, 'Split rebuild retained chart instances');
 
+// Split cards built in English follow a language change: the metric half of
+// each title, the legends, and the main card's split button. So does a
+// sensorless device's single temperature series.
+const { FALLBACK_SENSOR, labelFallbackSensor } = await import('./js/app/charts-init.js');
+const switchLanguage = async lang => {
+    await i18n.loadTranslations(lang);
+    i18n.applyTranslations();
+    document.dispatchEvent(new Event('kula-i18n-changed'));
+};
+document.getElementById('btn-split-network').click();
+await frame();
+const splitText = () => {
+    const card = document.querySelector('[data-split-type="network"]');
+    return {
+        title: card?.querySelector('h3')?.textContent,
+        legend: Object.values(state.splitCharts.network)[0]?.data.datasets.map(dataset => dataset.label).join(),
+        button: document.getElementById('btn-split-diskio')?.title,
+    };
+};
+const sensors = [{ label: 'Temperature', $kulaSensorName: FALLBACK_SENSOR }, { label: 'Core 0', $kulaSensorName: 'Core 0' }];
+await switchLanguage('pl');
+let split = splitText();
+labelFallbackSensor(sensors);
+check(split.title?.startsWith('Przepustowość sieci: ') && split.legend === 'Odbieranie (RX),Wysyłanie (TX)' &&
+    split.button === 'Podziel według urządzenia', `Split cards kept English after a language change: ${JSON.stringify(split)}`);
+check(sensors[0].label === 'Temperatura' && sensors[1].label === 'Core 0',
+    `A sensorless temperature series is not translated: ${JSON.stringify(sensors.map(dataset => dataset.label))}`);
+await switchLanguage('en');
+split = splitText();
+check(split.title?.startsWith('Network Throughput: ') && split.legend === 'RX,TX' && split.button === 'Split by device',
+    `Split cards kept Polish after a language change: ${JSON.stringify(split)}`);
+document.getElementById('btn-split-network').click();
+await frame();
+
 // A local raw-data zoom must retain a known interior outage rather than mark
 // the new view complete merely because its outer bounds fit the buffer.
 const localFrom = new Date('2026-09-04T16:00:00Z');

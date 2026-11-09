@@ -7,7 +7,7 @@
 import { state, colors, graphMaxPrefs } from './state.js';
 import { writeJsonPref } from './prefs.js';
 import { diskKey, diskMember, diskLabel, diskTitle, diskDOMKey } from './disk-identity.js';
-import { applyChartBounds, createTimeSeriesChart } from './charts-init.js';
+import { applyChartBounds, createTimeSeriesChart, FALLBACK_SENSOR, labelFallbackSensor, series } from './charts-init.js';
 import { formatBytesShort, formatMetricNumber, formatPPS } from './format.js';
 import { i18n } from './i18n.js';
 import { queueChartUpdate } from './chart-controller.js';
@@ -106,7 +106,7 @@ export function updateSplitSelectors(s) {
                 const title = document.getElementById(`card-split-${type}-${diskDOMKey(key)}`)?.querySelector('h3');
                 const disk = state.diskDevices.get(key);
                 if (title && disk) {
-                    title.textContent = `${i18n.t(type === 'diskio' ? 'disk_io' : 'disk_temp')}: ${diskLabel(disk)}`;
+                    _setSplitTitle(title, [type === 'diskio' ? 'disk_io' : 'disk_temp', diskLabel(disk)]);
                     title.title = diskTitle(disk);
                 }
             }
@@ -217,7 +217,7 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
                     maximum: _memberBy(maxDev?.sensors, 'name', sensor.name)?.value,
                 }))
                 : hasTemp ? [{
-                    name: 'Temperature',
+                    name: FALLBACK_SENSOR,
                     value: dev.temp,
                     minimum: minDev?.temp,
                     maximum: maxDev?.temp,
@@ -225,12 +225,12 @@ export function addSampleToSplitCharts(s, minimum, maximum, ts, hasEnvelope = fa
             const hasHistory = chart.data.datasets.some(hasEnvelopeData);
             if (readings.length > 0 || hasHistory) {
                 const byName = new Map(readings.map(reading => [reading.name, reading]));
-                const datasets = ensureSensorDatasets(
+                const datasets = labelFallbackSensor(ensureSensorDatasets(
                     chart,
                     readings.map(reading => reading.name),
                     pairs,
                     ts,
-                );
+                ));
                 chart._sensorNames = datasets.map(dataset => dataset.$kulaSensorName || dataset.label);
                 datasets.forEach(dataset => {
                     const reading = byName.get(dataset.$kulaSensorName || dataset.label);
@@ -431,7 +431,8 @@ function _addSplitButtons() {
             btn.className = 'btn-icon btn-split-chart';
             btn.dataset.splitBtnType = type;
             if (idx === 0) btn.id = `btn-split-${type}`;
-            btn.title = i18n.t('split_by_device') || 'Split by device';
+            btn.dataset.i18nTitle = 'split_by_device';
+            btn.title = i18n.t('split_by_device');
             btn.textContent = '⊟';
             btn.style.fontSize = '0.85rem';
             btn.style.padding = '0.15rem 0.35rem';
@@ -497,6 +498,16 @@ function _destroySplitChartsForType(type) {
     document.querySelectorAll(`[data-split-type="${type}"]`).forEach(el => el.remove());
 }
 
+// _setSplitTitle writes "metric: device" into h3, with the metric (a
+// translation key) in its own data-i18n span so a language change retitles it.
+function _setSplitTitle(h3, [key, name]) {
+    const metric = document.createElement('span');
+    metric.dataset.i18n = key;
+    metric.textContent = i18n.t(key);
+    h3.replaceChildren(metric, `: ${name}`);
+}
+
+// title is [translation key, device name].
 function _makeSplitCard(cardId, title, type, graphId = null) {
     const card = document.createElement('div');
     card.className = 'chart-card hidden';
@@ -504,11 +515,12 @@ function _makeSplitCard(cardId, title, type, graphId = null) {
     card.dataset.splitType = type;
     card.innerHTML = `
         <div class="chart-header">
-            <h3>${_escapeHtml(title)}</h3>
+            <h3></h3>
             <div class="chart-header-right"></div>
         </div>
         <div class="chart-body"><canvas id="canvas-${_escapeHtml(cardId)}"></canvas></div>
     `;
+    _setSplitTitle(card.querySelector('h3'), title);
 
     const header = card.querySelector('.chart-header');
     const actions = card.querySelector('.chart-header-right');
@@ -690,23 +702,23 @@ function _buildSplitChartsForType(type, options) {
 
             // Throughput card
             const netCardId = `card-split-net-${safe}`;
-            const netCard = _makeSplitCard(netCardId, `${i18n.t('network_throughput')}: ${iface}`, type, 'network');
+            const netCard = _makeSplitCard(netCardId, ['network_throughput', iface], type, 'network');
             _placeSplitCard(netCard, 'system', 'card-pps', rank++);
 
             charts[`net_${iface}`] = createTimeSeriesChart(`canvas-${netCardId}`, [
-                { label: i18n.t('rx'), borderColor: colors.cyan, backgroundColor: colors.cyanAlpha, fill: true, data: [] },
-                { label: i18n.t('tx'), borderColor: colors.pink, backgroundColor: colors.pinkAlpha, fill: true, data: [] },
+                series('rx', { borderColor: colors.cyan, backgroundColor: colors.cyanAlpha, fill: true, data: [] }),
+                series('tx', { borderColor: colors.pink, backgroundColor: colors.pinkAlpha, fill: true, data: [] }),
             ], { graphBound: 'network', ticks: { callback: v => v.toFixed(1) + ' Mbps' } });
             if (charts[`net_${iface}`]) netCard.classList.remove('hidden');
 
             // PPS card
             const ppsCardId = `card-split-pps-${safe}`;
-            const ppsCard = _makeSplitCard(ppsCardId, `${i18n.t('packets_sec')}: ${iface}`, type);
+            const ppsCard = _makeSplitCard(ppsCardId, ['packets_sec', iface], type);
             _placeSplitCard(ppsCard, 'system', 'card-pps', rank++);
 
             charts[`pps_${iface}`] = createTimeSeriesChart(`canvas-${ppsCardId}`, [
-                { label: i18n.t('rx_pps'), borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
-                { label: i18n.t('tx_pps'), borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [] },
+                series('rx_pps', { borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] }),
+                series('tx_pps', { borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [] }),
             ], { ticks: { callback: v => formatPPS(v) } }, {
                 tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + formatPPS(Math.round(ctx.parsed.y)) } }
             });
@@ -719,15 +731,15 @@ function _buildSplitChartsForType(type, options) {
         for (const dev of options) {
             const safe = diskDOMKey(dev);
             const cardId = `card-split-diskio-${safe}`;
-            const card = _makeSplitCard(cardId, `${i18n.t('disk_io')}: ${diskLabel(state.diskDevices.get(dev))}`, type);
+            const card = _makeSplitCard(cardId, ['disk_io', diskLabel(state.diskDevices.get(dev))], type);
             card.querySelector('h3').title = diskTitle(state.diskDevices.get(dev));
             _placeSplitCard(card, 'system', 'card-disk-io', rank++);
 
             charts[`diskio_${dev}`] = createTimeSeriesChart(`canvas-${cardId}`, [
-                { label: i18n.t('read_bs'), borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [], yAxisID: 'y' },
-                { label: i18n.t('write_bs'), borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [], yAxisID: 'y' },
-                { label: i18n.t('reads_s'), borderColor: colors.cyan, data: [], fill: false, borderDash: [4, 2], yAxisID: 'y1' },
-                { label: i18n.t('writes_s'), borderColor: colors.pink, data: [], fill: false, borderDash: [4, 2], yAxisID: 'y1' },
+                series('read_bs', { borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [], yAxisID: 'y' }),
+                series('write_bs', { borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [], yAxisID: 'y' }),
+                series('reads_s', { borderColor: colors.cyan, data: [], fill: false, borderDash: [4, 2], yAxisID: 'y1' }),
+                series('writes_s', { borderColor: colors.pink, data: [], fill: false, borderDash: [4, 2], yAxisID: 'y1' }),
             ], { ticks: { callback: v => formatBytesShort(v) + '/s' } }, {
                 tooltip: { callbacks: { label: ctx => ctx.dataset.yAxisID === 'y1' ? ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(0) + ' IOPS' : ctx.dataset.label + ': ' + formatBytesShort(Math.round(ctx.parsed.y)) + '/s' } }
             });
@@ -745,7 +757,7 @@ function _buildSplitChartsForType(type, options) {
         for (const mount of options) {
             const safe = _splitId('diskspace', mount);
             const cardId = `card-split-diskspace-${safe}`;
-            const card = _makeSplitCard(cardId, `${i18n.t('disk_space')}: ${mount}`, type);
+            const card = _makeSplitCard(cardId, ['disk_space', mount], type);
             _placeSplitCard(card, 'system', 'card-disk-space', rank++);
 
             charts[`diskspace_${mount}`] = createTimeSeriesChart(`canvas-${cardId}`, [
@@ -764,12 +776,12 @@ function _buildSplitChartsForType(type, options) {
         for (const dev of options) {
             const safe = diskDOMKey(dev);
             const cardId = `card-split-disktemp-${safe}`;
-            const card = _makeSplitCard(cardId, `${i18n.t('disk_temp')}: ${diskLabel(state.diskDevices.get(dev))}`, type, 'disk_temp');
+            const card = _makeSplitCard(cardId, ['disk_temp', diskLabel(state.diskDevices.get(dev))], type, 'disk_temp');
             card.querySelector('h3').title = diskTitle(state.diskDevices.get(dev));
             _placeSplitCard(card, 'thermals', 'card-disk-temp', rank++);
 
             charts[`disktemp_${dev}`] = createTimeSeriesChart(`canvas-${cardId}`, [
-                { label: i18n.t('temperature'), borderColor: colors.red, backgroundColor: colors.redAlpha, fill: true, data: [] },
+                series('temperature', { borderColor: colors.red, backgroundColor: colors.redAlpha, fill: true, data: [] }),
             ], diskTempYConf);
             // Card visibility is controlled in addSampleToSplitCharts when data arrives
         }
@@ -785,12 +797,12 @@ function _buildSplitChartsForType(type, options) {
 
             // GPU Load card (in main grid)
             const loadCardId = `card-split-gpuload-${safe}`;
-            const loadCard = _makeSplitCard(loadCardId, `${i18n.t('gpu_load')}: ${gpu}`, type);
+            const loadCard = _makeSplitCard(loadCardId, ['gpu_load', gpu], type);
             _placeSplitCard(loadCard, 'system', 'card-vram', mainRank++);
 
             charts[`gpuload_${gpu}`] = createTimeSeriesChart(`canvas-${loadCardId}`, [
-                { label: i18n.t('load_pct'), borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
-                { label: i18n.t('power_w'), borderColor: colors.orange, data: [], fill: false, yAxisID: 'y1' },
+                series('load_pct', { borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] }),
+                series('power_w', { borderColor: colors.orange, data: [], fill: false, yAxisID: 'y1' }),
             ], { max: 100, ticks: { callback: v => formatMetricNumber(v) + '%' } });
             const loadCh = charts[`gpuload_${gpu}`];
             if (loadCh) {
@@ -800,22 +812,22 @@ function _buildSplitChartsForType(type, options) {
 
             // VRAM card (in main grid)
             const vramCardId = `card-split-vram-${safe}`;
-            const vramCard = _makeSplitCard(vramCardId, `${i18n.t('vram_usage')}: ${gpu}`, type);
+            const vramCard = _makeSplitCard(vramCardId, ['vram_usage', gpu], type);
             _placeSplitCard(vramCard, 'system', 'card-vram', mainRank++);
 
             charts[`vram_${gpu}`] = createTimeSeriesChart(`canvas-${vramCardId}`, [
-                { label: i18n.t('used'), borderColor: colors.purple, backgroundColor: colors.purpleAlpha, fill: true, data: [] },
+                series('used', { borderColor: colors.purple, backgroundColor: colors.purpleAlpha, fill: true, data: [] }),
             ], { ticks: { callback: v => formatBytesShort(v) } }, {
                 tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + formatBytesShort(ctx.parsed.y) } }
             });
 
             // GPU Temp card (in thermals grid)
             const tempCardId = `card-split-gputemp-${safe}`;
-            const tempCard = _makeSplitCard(tempCardId, `${i18n.t('gpu_temp')}: ${gpu}`, type, 'gpu_temp');
+            const tempCard = _makeSplitCard(tempCardId, ['gpu_temp', gpu], type, 'gpu_temp');
             _placeSplitCard(tempCard, 'thermals', 'card-gpu-temp', thermRank++);
 
             charts[`gputemp_${gpu}`] = createTimeSeriesChart(`canvas-${tempCardId}`, [
-                { label: i18n.t('temperature'), borderColor: colors.red, backgroundColor: colors.redAlpha, fill: true, data: [] },
+                series('temperature', { borderColor: colors.red, backgroundColor: colors.redAlpha, fill: true, data: [] }),
             ], gpuTempYConf);
             // Visibility controlled in addSampleToSplitCharts
         }

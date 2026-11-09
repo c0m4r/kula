@@ -7,7 +7,14 @@ import { state, colors } from './state.js';
 import { writePref } from './prefs.js';
 import { diskKey, diskMember, diskLabel, diskTitle, migrateDiskSelection } from './disk-identity.js';
 import { formatBytesShort, formatMetricNumber, formatRangeTimestamp } from './format.js';
-import { createTimeSeriesChart, setChartTimeRange, updateChartLabels } from './charts-init.js';
+import {
+    createTimeSeriesChart,
+    FALLBACK_SENSOR,
+    labelFallbackSensor,
+    series,
+    setChartTimeRange,
+    updateChartLabels,
+} from './charts-init.js';
 import { updateHeader, updateSubtitles } from './header.js';
 import { updateGauges } from './gauges.js';
 import { evaluateAlerts } from './alerts.js';
@@ -62,13 +69,6 @@ import { updateChartAccessibility } from './chart-accessibility.js';
 import { batchChartUI, updateChartUI, setChartHidden, setChartSubtitle } from './chart-ui.js';
 
 const historyRequests = new HistoryRequestController();
-
-// A legend entry that follows the language: updateChartLabels() re-reads
-// $kulaLabelKey. Technical terms (Commits/s, Keepalive, Blks Hit/s) and
-// abbreviations keep a plain English label.
-function series(key, options) {
-    return { label: i18n.t(key), $kulaLabelKey: key, ...options };
-}
 
 // The power-supply states the kernel reports (POWER_SUPPLY_STATUS); any other
 // value is shown as it is.
@@ -220,7 +220,7 @@ export function addSampleToCharts(item, ts, {
                 maximum: memberBy(maximum?.cpu?.sensors, 'name', sensor.name)?.value,
             }))
             : s.cpu?.temp > 0 ? [{
-                name: 'Temperature',
+                name: FALLBACK_SENSOR,
                 value: s.cpu.temp,
                 minimum: minimum?.cpu?.temp,
                 maximum: maximum?.cpu?.temp,
@@ -241,12 +241,12 @@ export function addSampleToCharts(item, ts, {
                 [colors.cyan, colors.cyanAlpha],
             ];
             const byName = new Map(readings.map(reading => [reading.name, reading]));
-            const datasets = ensureSensorDatasets(
+            const datasets = labelFallbackSensor(ensureSensorDatasets(
                 state.charts.cputemp,
                 readings.map(reading => reading.name),
                 cpuTempColorPairs,
                 ts,
-            );
+            ));
             state.cpuTempSensorNames = datasets.map(dataset => dataset.$kulaSensorName || dataset.label);
             datasets.forEach(dataset => {
                 const reading = byName.get(dataset.$kulaSensorName || dataset.label);
@@ -382,7 +382,7 @@ export function addSampleToCharts(item, ts, {
                 maximum: memberBy(maxDisk?.sensors, 'name', sensor.name)?.value,
             }))
             : hasTemp ? [{
-                name: 'Temperature',
+                name: FALLBACK_SENSOR,
                 value: d.temp,
                 minimum: minDisk?.temp,
                 maximum: maxDisk?.temp,
@@ -398,12 +398,12 @@ export function addSampleToCharts(item, ts, {
                 [colors.cyan, colors.cyanAlpha],
             ];
             const byName = new Map(readings.map(reading => [reading.name, reading]));
-            const datasets = ensureSensorDatasets(
+            const datasets = labelFallbackSensor(ensureSensorDatasets(
                 state.charts.disktemp,
                 readings.map(reading => reading.name),
                 tempColorPairs,
                 ts,
-            );
+            ));
             state.diskTempSensorNames = datasets.map(dataset => dataset.$kulaSensorName || dataset.label);
             datasets.forEach(dataset => {
                 const reading = byName.get(dataset.$kulaSensorName || dataset.label);
