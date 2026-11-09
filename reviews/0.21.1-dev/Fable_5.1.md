@@ -152,6 +152,12 @@ TCP fields (`internal/storage/tcp_ext_codec.go`). Mirrored in `inspect_tier.py`;
 records still decode (rate 0) and match Python. New `TestCodecPersistsEveryAggregatedNumericField`
 gives every `agg`-tagged numeric field a distinct value and round-trips Data/Min/Max — before the
 fix it flagged exactly `net.tcp.retrans_ps`, nothing else. Next free bit is now 14.
+**Follow-up `9420996` (found while fixing the TCP Low):** the rate was 0 live as well on every
+real host. The collector looked for `TCPRetransSegs` in `/proc/net/netstat`, which has no such
+counter; the kernel reports `RetransSegs` in the `Tcp:` line of `/proc/net/snmp`, which the
+collector already parsed (here: 0 read against 12,319). The "live tail shows values" above was
+mock data, which sets the field directly. It now reads `RetransSegs`; history written before
+holds 0.
 
 **H5 [display/perf] Rolling 30 m and 1 h views re-fetch the whole window every output step and
 rebuild every chart.**
@@ -447,14 +453,20 @@ them once work outlives its deadline by 5 s.
 **storage**
 - Query cache (`store.go:534-620`) almost never hits for the dashboard (exact-ns keys,
   `to = now`, evicted every tick by the live-edge sweep) — harmless, but not the saving the docs
-  imply.
+  imply. **✅ `bda96c2`** (documented, not changed: `05-storage-engine.md` and the
+  `QueryRangeWithMeta` comment say it serves concurrent identical requests and past windows).
 - `defer s.mu.RUnlock()` inside the candidate loop (`store.go:617`) is correct only because
-  every path returns — fragile.
+  every path returns — fragile. **✅ `57c2d01`** (`cacheHistoryResult` with its own lock scope).
 - Unclamped narrowing casts `uint16(FDs)`, `uint8(UserCount)`, `uint16(NumCores)` in
-  `appendFixed` while neighbouring fields are clamped.
-- `downsampleHistory` (`query_planner.go:227`) is test-only dead code.
+  `appendFixed` while neighbouring fields are clamped. **✅** `UserCount` since `897d9b4`;
+  cores and descriptors `a6fc9fa` (`clampUint16`, same bytes for every value that fits).
+- `downsampleHistory` (`query_planner.go:227`) is test-only dead code. **✅ `fb5ff4e`** (moved
+  into `store_test.go`: `source_budget_test.go` uses it as the reference result).
 - After a restart, tier 1 lags > 2 min, so 3–12 h views silently drop to 5 m buckets until the
-  first rollup lands (observed).
+  first rollup lands (observed). *Open, likely narrower now (from the code, not measured):* since
+  `e8c02e6` the restart replays the open window and the first sample flushes it, so only a
+  downtime of roughly 2–10 minutes leaves tier 1 short of its tolerance, for at most a minute,
+  and only for a fresh load (an open view's tier hint keeps tier 1).
 - **✅ `30c9d19`** (found while verifying): a crash between creating and renaming `tier_N.idx`
   left a temporary file nobody removed; `OpenTier` sweeps it.
 - **✅ `f2589f4`** (from verification): read-only stores (the TUI) kept no seek index, so every
@@ -463,71 +475,105 @@ them once work outlives its deadline by 5 s.
 
 **codec**
 - Apache2 version byte ≥ 3 consumes nothing and decodes garbage as custom metrics
-  (`codec.go:1423-1516`), whereas PSU/disk-ID sections error.
+  (`codec.go:1423-1516`), whereas PSU/disk-ID sections error. **✅ `9a1d725`**, with the same
+  gap in PostgreSQL (`>= 2`) and MySQL (`>= 3`), which read a future version as their newest
+  layout; mirrored in `inspect_tier.py`, the adding-metrics template refuses unknown versions.
+  `TestDecodeRefusesUnknownSectionVersions` checks Go and Python.
 - GPU is the only length-gated (fail-open) section (`codec.go:1094-1098`). Documented in
-  `df5c50e`; behavior unchanged.
+  `df5c50e`; behavior unchanged. *Won't fix:* a flag would need a new bit, and records from
+  before the GPU section still need the length gate.
 - The decode template in `docs/dev/14-adding-metrics.md:131-134` lacks the `need(1, …)` guard
   and would panic if copied. **✅ `5072b86`.**
 - Custom-metric `value` is the only user-fed quantity stored as float32 (exact only to 2^24);
-  undocumented.
+  undocumented. **✅ `9c4c3c3`** (documented in `09-custom-metrics.md`).
 
 **web**
-- Ollama proxy follows redirects (`ollama.go:448, 552, 734, 776`).
+- Ollama proxy follows redirects (`ollama.go:448, 552, 734, 776`). **✅ `7ffc2a2`**: the URL is
+  validated to be loopback, and a redirect could have left it; the error names the target.
 - `origin_validation: false` + `allowed_origins` + auth → WebSocket readable cross-site with no
-  warning.
+  warning. **✅ `78882f2`** (startup warning; `04-configuration.md` says to keep validation on).
 - Config accepts `argon2.time/threads: 0` (panics on login), `session_timeout: 0`,
   `max_websocket_conns: 0`, unnormalized `allowed_origins`. **✅ `d9c54a3`:** refused at load
   (`kula hash-password` panicked too); origins normalized (case, trailing slash, default port),
   and an entry with a path, wildcard or no scheme stops startup.
 - The `get_metrics` AI tool bypasses the 31-day / inversion guards (`ollama.go:933-958`).
-- Dead option `web.graphs.gpu_temp` (already reported for 0.20.0).
-- DNS-rebinding exposure with auth off (no Host allowlist).
+  **✅ `dde14cb`** (`validateHistoryRange`, shared with `/api/history`; an unreadable bound is an
+  error instead of a silent fallback to the last hour, and `from` defaults to an hour before `to`).
+- Dead option `web.graphs.gpu_temp` (already reported for 0.20.0). **✅ `8a2f61b`**: sent in
+  `/api/config` (the dashboard already read it); `"auto"` uses `max_value`, as no GPU limit is
+  detected. Added to `config.example.yaml` and `04-configuration.md`.
+- DNS-rebinding exposure with auth off (no Host allowlist). *Open (needs a design decision):* an
+  opt-in allowlist protects only those who set it; a default-on loopback rule breaks a same-host
+  reverse proxy that forwards `Host`.
 - gzip exclusion for `/api/ollama/` is dead under `base_path` (`server.go:214`). **✅ `cfd99c1`.**
 
 **collector**
 - Unguarded `Total-Free-Buffers-Cached` (`cpu.go:425, 434`) can wrap on inconsistent meminfo
-  snapshots; `Total - MemAvailable` would match modern tools.
+  snapshots; `Total - MemAvailable` would match modern tools. **✅ `ded8fba`** (clamped at 0,
+  swap too; the formula is unchanged so history keeps its meaning).
 - `prev > 0` idiom drops the first error burst for TCP errs/rsts/retrans (`network.go:262-270`).
-- `/proc/mounts` `\040` escapes not unescaped before `Statfs` (`disk.go:383-434`).
+  **✅ `05fdf8c`**: a baseline flag from the previous successful read; a failed read (or a
+  counter that does not parse) drops it. Found on the way: the retransmit counter was read from
+  the wrong file (H4 follow-up, `9420996`).
+- `/proc/mounts` `\040` escapes not unescaped before `Statfs` (`disk.go:383-434`). **✅
+  `69237b4`**, with the replacer `internal/sysinfo` already used, so the inventory's join by
+  mount path now matches such mounts too.
 - Standby replication-lag seconds grow without bound on an idle primary (`postgres.go:300-305`).
+  *Open (decision pending).*
 - Apache `ReqPerSec` / `BytesPerSec` are lifetime averages presented as current
-  (`charts-data.js:651`, `ai.go:387`).
+  (`charts-data.js:651`, `ai.go:387`). **✅** Prometheus `036c3a6`: new
+  `kula_apache2_accesses_per_second` and `kula_apache2_served_bytes_per_second`; the old
+  `requests_per_second` / `bytes_per_second` stay, deprecated in their HELP text and the docs.
+  Dashboard and AI context `6148b5b` use the current rates (both record versions store them).
 - MySQL DSN built with `Sprintf` (`mysql.go:41-45`). **✅ `0721fc4`** (driver `Config`; PostgreSQL
   values quoted too).
-- 1 MiB cap on `/containers/json` truncates at ~400 containers.
+- 1 MiB cap on `/containers/json` truncates at ~400 containers. *Correction:* the truncated JSON
+  failed to parse, so past the cap *every* container dropped out, silently. **✅ `c37963b`**
+  (stream-decoded up to 64 MiB, a failure to list logged when it changes).
 - Unsynchronized `sysTempSensors` global touched from the HTTP goroutine (`cpu.go:27, 205`).
+  **✅ `2643cc0`** (per-collector `sync.Once`).
 - Initial Postgres connect failures are never logged (**✅ `0721fc4`**, logged on change);
   nginx follows redirects; nginx/apache failures logged only on the first cycle (**✅ both
   `79b7ab6`**: no redirects, failures logged on change and on recovery).
 
 **frontend**
 - Stored `kula_aggregation` pref interpolated unvalidated into a CSS selector (`main.js:480`) —
-  a stale value blanks the dashboard.
+  a stale value blanks the dashboard. **✅ `4c990d8`**, with `web.default_aggregation`, which the
+  server does not validate either; the live Chromium fixture loads a malformed preference.
 - Second undocumented Chart.js private dependency `TimeScale._unit` (`charts-init.js:170`).
   **✅ `8969984`** (documented; `TestChartBundle` asserts it).
-- Full chart build runs twice at startup (`main.js:393` + `auth.js:109`).
+- Full chart build runs twice at startup (`main.js:393` + `auth.js:109`). *Open.*
 - O(total points) scan per update in the accessibility plugin (`chart-accessibility.js:446-455`).
+  **Partly ✅ `0eceeba`:** one pass instead of two, ending at the first unavailable point. Still
+  O(points) per update; caching per data change is open.
 - `_sanitize()` in `split.js:306-308` can collide `eth0.1` / `eth0_1` into one card ID and abort
-  the rebuild.
+  the rebuild. **✅ `c6f2fef`**: a later name in sorted order gets `-2`, `-3`, …; a name that
+  collides with nothing keeps its id, so stored card orders still apply.
 - Split cards reimplement expand / hover-pause / bounds menus instead of sharing
   `chart-card-actions.js`. **✅** Already shared at the time of §4's check
   (`attachDynamicChartCardActions`).
 - Hardcoded English strings bypass i18n (`alerts.js`, `header.js`, `ollama.js`, `auth.js`,
-  `disk-identity.js`).
+  `disk-identity.js`). *Open.*
 - CSP `style-src 'unsafe-inline'` appears unnecessary (`server.go:269`) — verify `game.js` first.
+  *Open:* no `style=` attribute or `<style>` element found in the templates, the app JS or the
+  vendored bundle; removing it needs a Chromium run that listens for CSP violations.
 
 ### Nits
 
 - Stale header-layout comment in `tier.go:18-30` (`[4:8]` and `[56:64]` are not reserved).
-- Stray `)` in `codec.go:26-29` (**✅ `df5c50e`**); Postgres decode comment omits v3.
+  **✅ `14a80da`.**
+- Stray `)` in `codec.go:26-29` (**✅ `df5c50e`**); Postgres decode comment omits v3
+  (**✅ `9a1d725`**).
 - `utUserOffset = 8` actually addresses `ut_line` (`system.go:100`); count still right.
   **✅ `897d9b4`** (offset 44).
-- `appendVariable(nil)` writes an undecodable shape (unreachable).
-- Interface order in `/api/current` changes every tick (map iteration).
+- `appendVariable(nil)` writes an undecodable shape (unreachable). **✅ `e93aeb2`** (an error).
+- Interface order in `/api/current` changes every tick (map iteration). **✅ `6acdf35`.**
 - `http.Error` vs `jsonError` inconsistencies (**✅ `5fd41c6`** for `/api` and `/ws`); no
-  `Cache-Control` on `/api/current|history|config`.
-- WebSocket backoff without jitter; initial WS write has no deadline.
-- Unix sockets created at umask then chmod'ed (brief window).
+  `Cache-Control` on `/api/current|history|config` (**✅ `04e25c3`**, `no-store` on the API mux).
+- WebSocket backoff without jitter; initial WS write has no deadline. **✅ `2550264`.**
+- Unix sockets created at umask then chmod'ed (brief window). *Won't fix:* under the usual
+  umask 022 the socket starts at 0755 (owner-only connect), tighter than the final 0660; a
+  process-wide umask around `Listen` would also tighten files other goroutines create then.
 
 ---
 
@@ -629,6 +675,12 @@ them once work outlives its deadline by 5 s.
 > `max_connections` `477d7ae`, disk temperature and power supply intervals `a458c93`,
 > PostgreSQL relation statistics once a minute `21ded1c`. No Medium is open. Gate passes at
 > `21ded1c`; the four browser fixtures last ran at `a8af522` (no frontend change since).
+> **Lows (2026-11-09):** 23 small fixes and the Apache2 decision, `a6fc9fa`…`6148b5b`, marked
+> in §3; one bug found on the way (the retransmit counter's source, H4 follow-up `9420996`).
+> Still open: DNS rebinding, replication lag on an idle primary, the restart/5 m buckets
+> window, the startup double chart build, hardcoded English strings, CSP `'unsafe-inline'`,
+> and caching the accessibility scan. Won't fix: GPU length gating, the Unix socket chmod
+> window.
 
 1. ~~**H1 + H2** (auth) — small changes, high impact.~~ ✅
 2. ~~**H4** (`retrans_ps`: bit 13 + Python mirror) and **H3** (disk utilization: restore or remove)
