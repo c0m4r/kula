@@ -6,8 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
+(a release that needs action when upgrading opens with Upgrade notes)
 
 ## [0.22.0] - TBA
+
+### Upgrade notes
+
+- Everyone signs in again once
+- Take a backup if you may downgrade: older versions can't read the new tier records
+- Without auth, list the name you reach Kula by in `web.security.allowed_hosts` unless it is local (reverse proxies that forward `Host`, Tailscale, internal DNS)
+- Prometheus scraping `/metrics` by a DNS name needs a bearer token or the name in `web.security.allowed_hosts`
+- Invalid `allowed_origins` and zero session, WebSocket or Argon2 limits now stop startup
+- PgBouncer in front of PostgreSQL needs `ignore_startup_parameters`
+- Docker: mount `/run/utmp` or `/run/systemd/sessions` to keep the logged-in user count
 
 ### Added
 
@@ -38,6 +49,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - The login form tells a wrong password apart from a rate limit or a busy server
 - Dashboards reconnect at staggered times after a restart
 - Charts are built once on page load, and Graph Bounds apply without reloading them
+- Settings that would break login or WebSockets are refused at startup, and `allowed_origins` is normalized
+- `kula_system_logged_in_users` is omitted when the host has neither utmp nor logind sessions
 
 ### Deprecated
 
@@ -61,7 +74,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Rootless Podman is found for the user Kula runs as
 - `https://` targets and PostgreSQL `verify-ca`/`verify-full` work under the sandbox
 - An `https://` Ollama URL without a port works under the sandbox
-- Logged-in user count works under the sandbox, with a systemd-logind fallback
+- Logged-in user count works under the sandbox and on arm64, with a systemd-logind fallback
 - History no longer goes missing after a tier wraps with growing records
 - A crash no longer loses the rollup of the minute it interrupted
 - Seek index temp files left by a crash are cleaned up
@@ -76,7 +89,6 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Split charts follow a language change
 - Long views keep 1-minute detail right after a restart
 - `inspect_tier.py` walks damaged tiers the way Kula does
-- Settings that would break login or WebSockets are refused at startup, and `allowed_origins` is normalized
 - A standby of a quiet PostgreSQL primary no longer shows a growing replication lag
 - Hosts with hundreds of containers no longer lose their container metrics
 - Mounts with a space in their path are measured
@@ -97,7 +109,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - API responses are not stored by browsers or proxies
 - The Ollama proxy no longer follows redirects
 - A startup warning when `allowed_origins` without `origin_validation` exposes the live stream
-- DNS rebinding protection: with auth disabled, only local host names and `web.security.allowed_hosts` are answered (list the name a reverse proxy forwards)
+- DNS rebinding protection: with auth disabled, and on `/metrics` without a token, only local host names and `web.security.allowed_hosts` are answered
 
 ## [0.21.0] - 2026-10-01
 
