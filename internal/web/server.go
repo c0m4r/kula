@@ -999,13 +999,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.auth.UserLimiter.Allow(userLimiterKey(creds.Username, ip)) {
+	userKey := userLimiterKey(creds.Username, ip)
+	if !s.auth.UserLimiter.Allow(userKey) {
 		jsonError(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
 
 	release, ok := s.auth.acquireHashSlot(r.Context())
 	if !ok {
+		// No password was checked, so the attempt does not count: an
+		// operator retrying through a hashing flood is not locked out.
+		s.auth.Limiter.Refund(ip)
+		s.auth.UserLimiter.Refund(userKey)
 		w.Header().Set("Retry-After", "1")
 		jsonError(w, "server busy", http.StatusServiceUnavailable)
 		return

@@ -3,6 +3,7 @@ package web
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -766,6 +767,22 @@ func TestRuntimeLoginBusyWhenHashSlotsExhausted(t *testing.T) {
 	}
 	if waited := time.Since(start); waited < passwordHashWait/2 {
 		t.Errorf("busy login answered after %v, want it to wait for a slot first", waited)
+	}
+
+	// A busy answer checked no password, so it spends no login attempt:
+	// more busy answers than the per-account limit still leave the operator
+	// able to sign in. Cancelled requests take the same path without waiting.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	body := fmt.Sprintf(`{"username":%q,"password":"wrong"}`, secUser)
+	for i := 0; i <= loginIPAttemptLimit; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body)).WithContext(cancelled)
+		req.RemoteAddr = "127.0.0.1:40000"
+		rec := httptest.NewRecorder()
+		s.handleLogin(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("busy attempt %d: status = %d, want 503 (body %q)", i+1, rec.Code, rec.Body.String())
+		}
 	}
 
 	for i := 0; i < cap(s.auth.hashSlots); i++ {

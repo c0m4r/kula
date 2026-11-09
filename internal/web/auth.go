@@ -289,6 +289,21 @@ func (rl *RateLimiter) Allow(ip string) bool {
 	return true
 }
 
+// Refund takes back the newest attempt Allow counted for key, for a request
+// turned away before its password was checked.
+func (rl *RateLimiter) Refund(key string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	attempts := rl.attempts[key]
+	switch len(attempts) {
+	case 0:
+	case 1:
+		delete(rl.attempts, key)
+	default:
+		rl.attempts[key] = attempts[:len(attempts)-1]
+	}
+}
+
 // HashPassword creates an Argon2id hash with the given salt and parameters.
 func HashPassword(password, salt string, params config.Argon2Config) string {
 	keyLen := uint32(32)

@@ -139,7 +139,8 @@ Each attempt costs one Argon2id hash (`argon2.memory`, 32 MiB by default), so Ku
 how many hashes run at once across all clients: a quarter of the CPUs, between 1 and 4, and no
 more than fit in 128 MiB together (so raising `argon2.memory` lowers the count, never below 1).
 A login that finds them all busy for 2 seconds is refused with `503 Service Unavailable` and
-`Retry-After: 1`, which keeps a flood from many addresses from exhausting memory.
+`Retry-After: 1`, which keeps a flood from many addresses from exhausting memory. Such a refusal
+checked no password, so it does not count against either limit.
 
 > **Reverse proxy caution.** Behind a proxy, configure `trust_proxy` correctly. Kula uses the
 > rightmost (most-trusted) IP in `X-Forwarded-For`. A misconfigured `trust_proxy` can let a
