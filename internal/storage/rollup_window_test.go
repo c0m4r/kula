@@ -334,3 +334,34 @@ func TestFreshStoreKeepsShortViewsOnTheRawTier(t *testing.T) {
 		}
 	}
 }
+
+// TestYoungStoreAcrossRestartsKeepsTheRawTier is the case the 0.22.0 audit
+// measured: a 10-minute view at 2,000 points on a store whose data began nine
+// minutes earlier, with two restarts in between, was answered from tier 2.
+func TestYoungStoreAcrossRestartsKeepsTheRawTier(t *testing.T) {
+	store := newMultiTierStore(t)
+	cfg, dir := store.configs, store.dir
+	base := time.Date(2026, 3, 1, 10, 1, 40, 0, time.UTC) // nine minutes before 10:10:40
+	writeOffsetSamples(t, store, base, 0, 170, 250*time.Millisecond, func(int) float64 { return 3 })
+	for _, run := range [][2]int{{200, 350}, {380, 540}} { // 30 s down before each run
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		store = reopenStore(t, dir, cfg)
+		writeOffsetSamples(t, store, base, run[0], run[1], 250*time.Millisecond, func(int) float64 { return 3 })
+	}
+	defer func() { _ = store.Close() }()
+	if store.tiers[2].Count() == 0 {
+		t.Fatal("precondition: no 5m rollup")
+	}
+
+	to := base.Add(540*time.Second + 250*time.Millisecond)
+	result, err := store.QueryRangeWithMeta(to.Add(-10*time.Minute), to, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tier != 0 || result.Complete {
+		t.Fatalf("10-minute view of a nine-minute store: tier %d (%s), complete %v; want tier 0, partial",
+			result.Tier, result.Resolution, result.Complete)
+	}
+}
