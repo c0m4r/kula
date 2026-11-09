@@ -220,6 +220,11 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 	// mutate their input concurrently with the call itself.
 	owned := cloneAggregatedSample(&AggregatedSample{Data: sample})
 	sample = owned.Data
+	// Keep only the wall-clock reading. time.Now() also carries a monotonic
+	// reading taken some nanoseconds apart, and Sub prefers it: a Duration
+	// from monotonic deltas would not tile the wall-clock timestamps that
+	// records and rollup windows are keyed by.
+	sample.Timestamp = sample.Timestamp.Round(0)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -407,7 +412,10 @@ func (s *Store) flushRollup(tier int) error {
 			if width <= 0 {
 				width = s.configs[tier-1].Resolution
 			}
-			if !next.Timestamp.After(previous.Timestamp) || next.Timestamp.Add(-width).After(previous.Timestamp) ||
+			// A real hole is at least one raw interval wide (WriteSample caps
+			// a sample's duration), while durations written before 0.22.0
+			// miss the wall-clock spacing by clock-reading jitter.
+			if !next.Timestamp.After(previous.Timestamp) || next.Timestamp.Add(-width).Sub(previous.Timestamp) > s.configs[0].Resolution/2 ||
 				s.rollupWindow(tier, next.Timestamp) != s.rollupWindow(tier, previous.Timestamp) {
 				break
 			}

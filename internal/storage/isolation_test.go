@@ -131,7 +131,7 @@ func TestWriteAndLatestOwnSamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := aggregationFixture(input.Timestamp)
+	expected := aggregationFixture(input.Timestamp.Round(0)) // stored without the monotonic reading
 	if !reflect.DeepEqual(first.Data, expected) {
 		t.Fatal("WriteSample retained caller-owned fields")
 	}

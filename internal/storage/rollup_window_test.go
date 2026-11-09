@@ -164,6 +164,64 @@ func TestRestartRollsUpAWindowACrashLeftOpen(t *testing.T) {
 	}
 }
 
+// TestRollupsTolerateClockReadingJitter covers durations that miss the
+// wall-clock spacing of their timestamps by nanoseconds, as every raw record
+// written before 0.22.0 does (they were monotonic-clock deltas): a restart
+// must roll the pending minute up as one record, not one per sample, and a
+// short outage must still split tier 2 as it splits tier 1.
+func TestRollupsTolerateClockReadingJitter(t *testing.T) {
+	store := newMultiTierStore(t)
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	for i := 1; i <= 40; i++ {
+		if i > 20 && i <= 30 {
+			continue // a ten-second outage
+		}
+		ts := base.Add(time.Duration(i)*time.Second + 300*time.Millisecond)
+		if err := store.tiers[0].Write(&AggregatedSample{
+			Timestamp: ts, Duration: time.Second - 10*time.Nanosecond, Data: makeSampleWithCPU(ts, 7),
+			AggregationVersion: currentAggregationVersion, ExtremaProfile: "raw",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, dir := store.configs, store.dir
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = reopenStore(t, dir, cfg)
+	defer func() { _ = store.Close() }()
+	writeOffsetSamples(t, store, base, 41, 300, 300*time.Millisecond, func(int) float64 { return 7 })
+
+	// The outage splits the first minute, and so the first five, in two.
+	for tier, want := range map[int]int{1: 6, 2: 2} {
+		if got := store.tiers[tier].Count(); got != uint64(want) {
+			t.Fatalf("tier %d holds %d records, want %d", tier, got, want)
+		}
+	}
+}
+
+// TestWriteSampleDurationsTileWallClockTimestamps: a collector's timestamps
+// come from time.Now(), whose monotonic reading Sub would otherwise use.
+func TestWriteSampleDurationsTileWallClockTimestamps(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+	var previous time.Time
+	for i := 0; i < 500; i++ {
+		now := time.Now()
+		if err := store.WriteSample(makeSampleWithCPU(now, 1)); err != nil {
+			t.Fatal(err)
+		}
+		latest, err := store.QueryLatest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := now.Round(0).Sub(previous); i > 0 && want > 0 && latest.Duration != want {
+			t.Fatalf("sample %d covers %s, its timestamps are %s apart", i, latest.Duration, want)
+		}
+		previous = now.Round(0)
+	}
+}
+
 func reopenStore(t *testing.T, dir string, tiers []config.TierConfig) *Store {
 	t.Helper()
 	store, err := NewStore(config.StorageConfig{Directory: dir, Tiers: tiers})
