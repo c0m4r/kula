@@ -1180,7 +1180,11 @@ function cancelPendingZoomFetch() {
     _zoomFetchTimer = null;
 }
 
-function setHistoryStatus(status, response = null, error = null) {
+// setHistoryStatus records and shows the history status. A quiet update (a
+// background refresh starting) leaves the screen-reader announcement alone,
+// and the announcement is rewritten only when its text changes, so a rolling
+// view's refreshes do not speak every second or two.
+function setHistoryStatus(status, response = null, error = null, { quiet = false } = {}) {
     state.historyStatus = status;
     state.historyError = error ? (error.message || String(error)) : null;
 
@@ -1213,7 +1217,7 @@ function setHistoryStatus(status, response = null, error = null) {
     }
 
     const announcement = document.getElementById('history-status-announcement');
-    if (announcement) {
+    if (announcement && !quiet) {
         const key = {
             loading: 'history_loading',
             failed: 'history_failed',
@@ -1221,7 +1225,8 @@ function setHistoryStatus(status, response = null, error = null) {
             partial: 'history_partial',
             complete: 'history_complete',
         }[status];
-        announcement.textContent = key ? i18n.t(key) : '';
+        const text = key ? i18n.t(key) : '';
+        if (announcement.textContent !== text) announcement.textContent = text;
     }
 
     forEachRegisteredChart(chart => {
@@ -1345,7 +1350,7 @@ function requestHistory(fromDate, toDate, points, apply, {
             state.historyRequestGeneration = generation;
             state.loadingHistory = true;
             state.queueLiveDuringHistory = queueLive;
-            setHistoryStatus('loading');
+            setHistoryStatus('loading', null, null, { quiet: !showSpinner });
             const spinner = document.getElementById('loading-spinner');
             spinner?.classList.toggle('hidden', !showSpinner);
         },

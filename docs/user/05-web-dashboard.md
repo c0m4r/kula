@@ -170,7 +170,8 @@ Click anywhere outside the picker, or press Escape, to close it without applying
 ### Chart accessibility and data tables
 
 Every time-series canvas has a name, accessible summary and keyboard controls. History
-transitions and keyboard point changes are announced; pointer hover remains silent.
+transitions and keyboard point changes are announced; pointer hover remains silent, and so do
+a rolling view's background refreshes unless one fails or recovers.
 
 Data controls are off by default. Enable **Show chart data controls** in **Customization →
 Charts**, then choose **Data** on a card. The table is created on first use and shows the latest

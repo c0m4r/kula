@@ -1020,6 +1020,11 @@ window.fetch = (url, options) => String(url).includes('/api/history?')
         releaseBackground = () => resolve(backgroundFetch(url, options));
     })
     : backgroundFetch(url, options);
+// A background refresh that ends as it began says nothing to screen readers.
+const announcement = document.getElementById('history-status-announcement');
+let announced = 0;
+const announcementWatch = new MutationObserver(records => { announced += records.length; });
+announcementWatch.observe(announcement, { childList: true, characterData: true, subtree: true });
 const pendingBackground = data.fetchHistory(86400, { background: true });
 check(state.loadingHistory, 'Background refresh did not start');
 const liveDuringRefresh = structuredClone(state.lastSample);
@@ -1032,6 +1037,9 @@ check(state.liveQueue.length === 0, 'Background refresh added to the foreground 
 releaseBackground();
 await pendingBackground;
 window.fetch = backgroundFetch;
+announced += announcementWatch.takeRecords().length;
+check(announced === 0 && announcement.textContent === i18n.t('history_complete'),
+    'A background refresh was announced to screen readers');
 
 // Failure retains the previous full-span representation and reports failure.
 const successfulBuffer = state.dataBuffer;
@@ -1045,6 +1053,10 @@ check(state.historyStatus === 'failed', 'Failed refresh was reported complete');
 check(state.dataBuffer === successfulBuffer && state.historyViewEnd === successfulEnd, 'Failed refresh discarded history');
 check(document.getElementById('sampling-info').textContent.includes(i18n.t('history_failed')), 'Failed refresh is not visible');
 check(document.getElementById('sampling-info').textContent.includes('Tier 1'), 'Failed refresh removed the visible tier');
+announced += announcementWatch.takeRecords().length;
+check(announced > 0 && announcement.textContent === i18n.t('history_failed'),
+    'A failed background refresh was not announced');
+announcementWatch.disconnect();
 window.fetch = nativeFetch;
 window.Date = NativeDate;
 
