@@ -557,8 +557,10 @@ func (s *Server) Start() error {
 		}
 	}
 
-	if s.hosts != nil {
+	if s.hosts != nil && s.hosts.allRoutes {
 		log.Printf("Host check: auth is disabled, so only IP addresses, local names and web.security.allowed_hosts are answered (DNS rebinding protection)")
+	} else if s.hosts != nil {
+		log.Printf("Host check: /metrics has no bearer token, so it answers only IP addresses, local names and web.security.allowed_hosts (DNS rebinding protection)")
 	} else if !s.cfg.Auth.Enabled && s.cfg.UnixSocket == "" {
 		log.Printf("Security Warning: web.security.allowed_hosts is \"*\" and auth is disabled. Any website a visitor opens can rebind its name to this server and read the dashboard and API.")
 	}

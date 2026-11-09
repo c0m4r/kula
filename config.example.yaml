@@ -178,11 +178,13 @@ web:
     # only these Host names: IP addresses, localhost, single-label names
     # (myserver), names ending in .local, .lan, .home, .localdomain,
     # .internal or .home.arpa, this machine's hostname and global.hostname,
-    # the hosts in allowed_origins, and the names listed here. Any other name gets a 403
-    # (logged once per name); /health and /status stay open. Add the name
-    # you reach Kula by, e.g. through internal DNS or a reverse proxy that
-    # forwards Host. "*" answers any Host (not recommended). No effect with
-    # auth enabled or on a Unix socket. Ports and a trailing dot are ignored.
+    # the hosts in allowed_origins, and the names listed here. Any other name
+    # gets a 403 (logged once per name); /health and /status stay open, and
+    # so does /metrics with a bearer token. Add the name you reach Kula by,
+    # e.g. through internal DNS or a reverse proxy that forwards Host. "*"
+    # answers any Host (not recommended). With auth enabled, only /metrics
+    # without a token is checked; no effect on a Unix socket. Ports and a
+    # trailing dot are ignored.
     # allowed_hosts:
     #   - kula.example.com
 
@@ -278,7 +280,8 @@ web:
   # Prometheus metrics endpoint (optional)
   prometheus_metrics:
     enabled: false
-    # The endpoint is unauthorized by default.
+    # The endpoint is unauthorized by default, and then answers only local
+    # Host names (see web.security.allowed_hosts).
     # You can optionally set a bearer token to secure it.
     # Scrapers must send: Authorization: Bearer <token>
     token: ""

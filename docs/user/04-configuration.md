@@ -279,11 +279,14 @@ answers only `Host` names that no public DNS server can answer for:
 Any other name gets `403 {"error": "host not allowed: …"}`, logged once per name; `/health`
 and `/status` stay open to probes, and so does `/metrics` when it has a bearer token. **Add the
 name you reach Kula by** if it is a regular DNS name, such as `kula.example.com` from internal
-DNS or a reverse proxy that forwards `Host`
-(see [Reverse Proxy](13-reverse-proxy.md)). Entries are host names or IP addresses; case, a
-port and a trailing dot are ignored, and a scheme, path or wildcard stops startup. `"*"` answers
-any `Host` and turns the protection off (Kula warns at startup). The check does not apply with
-`auth.enabled: true` (a rebinding page has no session to send) or on a `unix_socket`.
+DNS or a reverse proxy that forwards `Host` (see [Reverse Proxy](13-reverse-proxy.md)). Entries
+are host names or IP addresses; case, a port and a trailing dot are ignored, and a scheme, path
+or wildcard stops startup. `"*"` answers any `Host` and turns the protection off (Kula warns at
+startup when auth is disabled). With `auth.enabled: true` a rebinding page has no session to
+send, so the check applies only to a `/metrics` without a bearer token, which auth does not
+cover; a Prometheus server that scrapes it by a regular DNS name needs that name listed, or a
+token (see [Prometheus Exporter](11-prometheus.md#authentication-optional)). It never applies
+on a `unix_socket`.
 
 ### `web` display options
 

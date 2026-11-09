@@ -20,11 +20,12 @@ import (
 // only Host names a public DNS server cannot answer for: IP addresses,
 // localhost, single-label names, local-only domains, this machine's hostname
 // and global.hostname, and the names in web.security.allowed_hosts or
-// allowed_origins. With auth
-// on, the page has no session to send; on a Unix socket, no browser connects
-// directly. /health and /status stay open to probes, and so does /metrics
-// behind a bearer token: a rebinding page cannot supply the token, and a
-// Prometheus server reaches its targets by regular DNS names.
+// allowed_origins. /health and /status stay open to probes, and so does
+// /metrics behind a bearer token: a rebinding page cannot supply the token,
+// and a Prometheus server reaches its targets by regular DNS names. With auth
+// on, the page has no session to send, so only a /metrics without a token,
+// the one route with data and no credential of its own, is checked. On a Unix
+// socket no browser connects directly, and nothing is.
 
 // localSuffixes are domains no public DNS server answers for: special-use
 // names (RFC 6761, RFC 8375, ICANN's .internal) and the private suffixes home
@@ -37,6 +38,7 @@ const maxLoggedHosts = 64
 
 type hostPolicy struct {
 	names        map[string]bool // allowed beyond the built-in rules, normalized
+	allRoutes    bool            // auth is off: every route but the probes is checked
 	metricsToken bool            // /metrics asks for a bearer token
 
 	mu     sync.Mutex
@@ -47,10 +49,16 @@ type hostPolicy struct {
 // machine lists this host's own names (os.Hostname, global.hostname), each
 // matched exactly: a name with any suffix added is not this machine.
 func newHostPolicy(cfg config.WebConfig, machine ...string) *hostPolicy {
-	if cfg.Auth.Enabled || cfg.UnixSocket != "" {
+	openMetrics := cfg.PrometheusMetrics.Enabled && cfg.PrometheusMetrics.Token == ""
+	if cfg.UnixSocket != "" || (cfg.Auth.Enabled && !openMetrics) {
 		return nil
 	}
-	p := &hostPolicy{names: map[string]bool{}, logged: map[string]bool{}, metricsToken: cfg.PrometheusMetrics.Token != ""}
+	p := &hostPolicy{
+		names:        map[string]bool{},
+		logged:       map[string]bool{},
+		allRoutes:    !cfg.Auth.Enabled,
+		metricsToken: cfg.PrometheusMetrics.Token != "",
+	}
 	for _, name := range cfg.Security.AllowedHosts {
 		if name == "*" {
 			return nil
@@ -96,6 +104,18 @@ func requestHostName(host string) string {
 	return normalizeHostName(host)
 }
 
+// guards reports whether requests for path, relative to the base path, are
+// checked.
+func (p *hostPolicy) guards(path string) bool {
+	switch path {
+	case "/health", "/status":
+		return false
+	case "/metrics":
+		return !p.metricsToken
+	}
+	return p.allRoutes
+}
+
 func (p *hostPolicy) allows(host string) bool {
 	name := requestHostName(host)
 	if name == "" {
@@ -128,7 +148,11 @@ func (p *hostPolicy) logRefusal(host string) {
 		log.Printf("Host check: more refused host names; no longer logging them")
 		return
 	}
-	log.Printf("Host check: refused Host %q (auth is disabled). If this is how you reach Kula, add it to web.security.allowed_hosts", name)
+	reason := "auth is disabled"
+	if !p.allRoutes {
+		reason = "/metrics has no bearer token"
+	}
+	log.Printf("Host check: refused Host %q (%s). If this is how you reach Kula, add it to web.security.allowed_hosts", name, reason)
 }
 
 // hostCheckMiddleware refuses requests whose Host the policy does not allow.
@@ -138,8 +162,7 @@ func hostCheckMiddleware(p *hostPolicy, next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		open := r.URL.Path == "/health" || r.URL.Path == "/status" || (p.metricsToken && r.URL.Path == "/metrics")
-		if !open && !p.allows(r.Host) {
+		if p.guards(r.URL.Path) && !p.allows(r.Host) {
 			p.logRefusal(r.Host)
 			jsonError(w, "host not allowed: add it to web.security.allowed_hosts", http.StatusForbidden)
 			return

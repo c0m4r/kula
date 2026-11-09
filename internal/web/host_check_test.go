@@ -19,6 +19,12 @@ import (
 // reads from.
 func hostTestHandler(t *testing.T, edit func(*config.WebConfig)) http.Handler {
 	t.Helper()
+	return hostTestServer(t, edit).buildHandler()
+}
+
+// hostTestServer is hostTestHandler's server, for checks on its Host policy.
+func hostTestServer(t *testing.T, edit func(*config.WebConfig)) *Server {
+	t.Helper()
 	cfg := config.WebConfig{
 		Enabled:                true,
 		UI:                     true,
@@ -31,8 +37,7 @@ func hostTestHandler(t *testing.T, edit func(*config.WebConfig)) http.Handler {
 	if edit != nil {
 		edit(&cfg)
 	}
-	s := NewServer(cfg, config.GlobalConfig{Hostname: "testhost.example.com"}, &collector.Collector{}, newTestStoreWithSample(t), t.TempDir(), config.OllamaConfig{})
-	return s.buildHandler()
+	return NewServer(cfg, config.GlobalConfig{Hostname: "testhost.example.com"}, &collector.Collector{}, newTestStoreWithSample(t), t.TempDir(), config.OllamaConfig{})
 }
 
 func serveHost(h http.Handler, host, path string) *httptest.ResponseRecorder {
@@ -102,25 +107,57 @@ func TestHostCheckRefusesRebindingNames(t *testing.T) {
 	}
 }
 
-// TestHostCheckAppliesOnlyWithoutAuthOverTCP: signed-in access has no session
-// to lend a rebinding page, a Unix socket has no browser connecting to it, and
-// "*" turns the check off.
-func TestHostCheckAppliesOnlyWithoutAuthOverTCP(t *testing.T) {
+// TestHostCheckScope: signed-in access has no session to lend a rebinding
+// page, so with auth on only a /metrics without a bearer token, which auth
+// does not cover, is checked. A Unix socket has no browser connecting to it,
+// and "*" turns the check off.
+func TestHostCheckScope(t *testing.T) {
+	withAuth := func(cfg *config.WebConfig) {
+		cfg.Auth.Enabled = true
+		cfg.Auth.Username = "admin"
+		cfg.Auth.PasswordHash = "00"
+		cfg.Auth.PasswordSalt = "00"
+		cfg.Auth.Argon2 = config.Argon2Config{Time: 1, Memory: 8, Threads: 1}
+	}
 	for name, edit := range map[string]func(*config.WebConfig){
-		"auth enabled": func(cfg *config.WebConfig) {
-			cfg.Auth.Enabled = true
-			cfg.Auth.Username = "admin"
-			cfg.Auth.PasswordHash = "00"
-			cfg.Auth.PasswordSalt = "00"
-			cfg.Auth.Argon2 = config.Argon2Config{Time: 1, Memory: 8, Threads: 1}
-		},
+		"auth enabled":      withAuth,
 		"unix socket":       func(cfg *config.WebConfig) { cfg.UnixSocket = "/run/kula/kula.sock" },
 		"allowed_hosts '*'": func(cfg *config.WebConfig) { cfg.Security.AllowedHosts = []string{"kula.example.com", "*"} },
 	} {
 		h := hostTestHandler(t, edit)
-		if rec := serveHost(h, "attacker.example", "/"); rec.Code == http.StatusForbidden {
-			t.Errorf("%s: a public Host was refused: %s", name, rec.Body.String())
+		for _, path := range []string{"/", "/api/current", "/api/login"} {
+			if rec := serveHost(h, "attacker.example", path); rec.Code == http.StatusForbidden &&
+				strings.Contains(rec.Body.String(), "allowed_hosts") {
+				t.Errorf("%s: %s with a public Host was refused: %s", name, path, rec.Body.String())
+			}
 		}
+	}
+
+	// Auth does not cover /metrics: without a token it answers only local
+	// names, as with auth off.
+	h := hostTestHandler(t, withAuth)
+	if rec := serveHost(h, "attacker.example", "/metrics"); rec.Code != http.StatusForbidden {
+		t.Errorf("auth enabled, /metrics without a token, public Host: %d, want 403", rec.Code)
+	}
+	if rec := serveHost(h, "127.0.0.1:27960", "/metrics"); rec.Code != http.StatusOK {
+		t.Errorf("auth enabled, /metrics without a token, local Host: %d, want 200", rec.Code)
+	}
+	if hostTestServer(t, withAuth).hosts.allRoutes {
+		t.Error("auth enabled: the Host check covers every route, not only /metrics")
+	}
+	tokened := hostTestServer(t, func(cfg *config.WebConfig) {
+		withAuth(cfg)
+		cfg.PrometheusMetrics.Token = "scrape-secret"
+	})
+	if tokened.hosts != nil {
+		t.Error("auth enabled and /metrics behind a token: a Host check is still installed")
+	}
+	disabled := hostTestServer(t, func(cfg *config.WebConfig) {
+		withAuth(cfg)
+		cfg.PrometheusMetrics.Enabled = false
+	})
+	if disabled.hosts != nil {
+		t.Error("auth enabled and /metrics off: a Host check is still installed")
 	}
 }
 

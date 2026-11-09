@@ -22,7 +22,8 @@ It works even with `web.ui: false` — you can run Kula purely as an exporter wi
 
 ## Authentication (optional)
 
-By default `/metrics` is unauthenticated. Set a bearer token to protect it:
+By default `/metrics` is unauthenticated, and answers only local `Host` names (see below). Set
+a bearer token to protect it:
 
 ```yaml
   prometheus_metrics:
@@ -48,11 +49,11 @@ scrape_configs:
       - targets: ["server:27960"]
 ```
 
-With web auth disabled, Kula answers only local `Host` names (DNS rebinding protection, see
-[`web.security.allowed_hosts`](04-configuration.md#websecurity)). A scrape target that is a
-regular DNS name, such as `kula.example.com:27960`, therefore gets `403` on an unauthenticated
-`/metrics` until the name is listed in `allowed_hosts`. With a bearer token set, `/metrics`
-answers any `Host`.
+Without a token, `/metrics` answers only local `Host` names, whether or not web auth is enabled
+(DNS rebinding protection, see [`web.security.allowed_hosts`](04-configuration.md#websecurity)):
+a web page cannot read it by pointing its own domain at your server. A scrape target that is a
+regular DNS name, such as `kula.example.com:27960`, therefore gets `403` until the name is
+listed in `allowed_hosts`. With a bearer token set, `/metrics` answers any `Host`.
 
 ## Exposed metrics
 

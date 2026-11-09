@@ -167,9 +167,10 @@ type SecurityConfig struct {
 	// OriginValidation, and switches session cookies to SameSite=None;Secure.
 	AllowedOrigins []string `yaml:"allowed_origins"`
 	// AllowedHosts lists further Host names Kula answers while auth is
-	// disabled, besides IP addresses, localhost, single-label names, local-only
-	// domains and the machine's hostname (DNS rebinding protection). "*"
-	// answers any Host. Normalized at load: lowercase, no trailing dot or port.
+	// disabled, and on a /metrics without a bearer token, besides IP
+	// addresses, localhost, single-label names, local-only domains and the
+	// machine's names (DNS rebinding protection). "*" answers any Host.
+	// Normalized at load: lowercase, no trailing dot or port.
 	AllowedHosts []string `yaml:"allowed_hosts"`
 }
 
