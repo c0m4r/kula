@@ -194,3 +194,58 @@ func TestShortViewAfterAStartPrefersRawData(t *testing.T) {
 		t.Fatalf("five minutes after a start: tier %d with %d samples, want the raw tier's ~46", result.Tier, len(result.Samples))
 	}
 }
+
+// restartedAfterADowntime returns a store that collected for 2 h 20 min, was
+// restarted after five minutes down, and has collected for 15 s since, with
+// the time of its newest sample. Tier 1's newest rollup is then the partial
+// minute before the shutdown, and the minute in progress is not rolled up yet.
+func restartedAfterADowntime(t *testing.T) (*Store, time.Time) {
+	t.Helper()
+	store := newMultiTierStore(t)
+	base := time.Date(2026, 3, 1, 8, 0, 20, 0, time.UTC)
+	usage := func(i int) float64 { return float64(10 + i%13) }
+	writeOffsetSamples(t, store, base, 0, 8400, 300*time.Millisecond, usage)
+	cfg, dir := store.configs, store.dir
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = reopenStore(t, dir, cfg)
+	t.Cleanup(func() { _ = store.Close() })
+	resume := base.Add(8400*time.Second + 5*time.Minute + 20*time.Second) // 10:25:40
+	writeOffsetSamples(t, store, resume, 0, 14, 300*time.Millisecond, usage)
+	return store, resume.Add(14*time.Second + 300*time.Millisecond)
+}
+
+// TestRestartAfterADowntimeKeepsTierOneAtTheLiveEdge covers the minute after
+// a restart: tier 1's newest rollup predates the downtime, but every minute
+// since has closed with nothing to roll up, so a view longer than the raw
+// tier's source budget is still answered from tier 1, not from 5 m rollups.
+func TestRestartAfterADowntimeKeepsTierOneAtTheLiveEdge(t *testing.T) {
+	store, edge := restartedAfterADowntime(t)
+	if newest := store.tiers[1].NewestTimestamp(); newest.After(edge.Add(-5 * time.Minute)) {
+		t.Fatalf("precondition: tier 1's newest rollup ends %s, not before the downtime", newest.Format(time.RFC3339Nano))
+	}
+	result, err := store.QueryRangeWithMeta(edge.Add(-130*time.Minute), edge, 534)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tier != 1 || !result.Complete {
+		t.Fatalf("2 h 10 min view after a restart: tier %d, complete %v; want tier 1, complete", result.Tier, result.Complete)
+	}
+
+	// A window still buffered before the one in progress (its write failed)
+	// is not final: the coverage stays at the newest rollup.
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	pending := store.tier1Buf
+	defer func() { store.tier1Buf = pending }()
+	if got, want := store.rolledUpThrough(1), edge.Truncate(time.Minute); !got.Equal(want) {
+		t.Fatalf("tier 1 rolled up through %s, want the minute in progress's start %s", got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+	stuck := &AggregatedSample{Timestamp: edge.Add(-3 * time.Minute), Duration: time.Second}
+	store.tier1Buf = append([]*AggregatedSample{stuck}, pending...)
+	if got, want := store.rolledUpThrough(1), store.tiers[1].NewestTimestamp(); !got.Equal(want) {
+		t.Fatalf("with an older window still buffered, tier 1 rolled up through %s, want its newest rollup %s",
+			got.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
+	}
+}

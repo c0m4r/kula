@@ -274,6 +274,19 @@ func TestHistoryResponsesMatchDashboardContract(t *testing.T) {
 		historyContractExpect{Live: false, Aggregations: extrema},
 		func(r *HistoryResult) { metadata("aligned past", r, 1, "1m", true, extrema) })
 
+	// Right after a restart that followed a downtime, a view past the raw
+	// tier's source budget stays on tier 1. Until the minute in progress is
+	// rolled up, the downtime is the view's empty right edge, not a gap.
+	restarted, restartEdge := restartedAfterADowntime(t)
+	add("tier-1 rolling view right after a restart", restarted, restartEdge.Add(-130*time.Minute), restartEdge, 534,
+		historyContractExpect{Live: false, Aggregations: extrema},
+		func(r *HistoryResult) {
+			metadata("restart", r, 1, "1m", false, extrema)
+			if !r.Complete {
+				t.Fatal("restart: tier 1 was not complete")
+			}
+		})
+
 	// A rolling view refreshed by its tail. Records end 0.37s into each second
 	// so source intervals straddle every bucket boundary, as they do live.
 	rolling := newTestStore(t)

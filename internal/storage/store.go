@@ -504,6 +504,37 @@ func tierCoverageTolerances(resolution time.Duration) (left, right time.Duration
 	return resolution, 2 * resolution
 }
 
+// rolledUpThrough returns how far coarse tier's rollups are final: its newest
+// rollup, or the start of the window that holds the source tier's newest
+// record when that is later. Every earlier window has closed, and one with
+// no rollup closed with nothing to roll up, as after a downtime: a restart
+// would otherwise leave tier 1 short of the live edge until the first minute
+// after it ends. A window still buffered before that one (a failed write)
+// keeps the newest rollup. Caller holds s.mu.
+func (s *Store) rolledUpThrough(tier int) time.Time {
+	newest := s.tiers[tier].NewestTimestamp()
+	if tier <= 0 || s.rollupRatio(tier) <= 0 {
+		return newest
+	}
+	var source time.Time
+	if tier == 1 {
+		source = s.tiers[0].NewestTimestamp()
+	} else {
+		source = s.rolledUpThrough(tier - 1)
+	}
+	if source.IsZero() {
+		return newest
+	}
+	window := s.rollupWindow(tier, source)
+	if buffer, _ := s.rollupBuffer(tier); len(*buffer) > 0 && s.rollupWindow(tier, (*buffer)[0].Timestamp) < window {
+		return newest
+	}
+	if closed := s.rollupWindowEnd(tier, window-1); closed.After(newest) {
+		return closed
+	}
+	return newest
+}
+
 func cloneHistoryResult(result *HistoryResult) *HistoryResult {
 	if result == nil {
 		return nil
@@ -583,9 +614,15 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 			continue
 		}
 
+		// A coarse tier covers the live edge as far as its rollups are final,
+		// which may be past its newest rollup (see rolledUpThrough).
+		coveredTo := newest
+		if tierIdx != 0 {
+			coveredTo = s.rolledUpThrough(tierIdx)
+		}
 		leftTolerance, rightTolerance := tierCoverageTolerances(resDur)
 		complete := !oldest.After(from.Add(leftTolerance)) &&
-			!newest.Before(to.Add(-rightTolerance))
+			!coveredTo.Before(to.Add(-rightTolerance))
 
 		// Rank coverage from where the tier certainly holds data. A coarse
 		// tier's oldest rollup may be partial — the first one after a fresh
@@ -602,8 +639,8 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 			overlapFrom = coveredFrom
 		}
 		overlapTo := to
-		if newest.Before(overlapTo) {
-			overlapTo = newest
+		if coveredTo.Before(overlapTo) {
+			overlapTo = coveredTo
 		}
 
 		candidate := queryTierCandidate{

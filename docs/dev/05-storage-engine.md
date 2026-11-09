@@ -232,7 +232,12 @@ On 36 hours of mock history at the default tier sizes (223 MB tier 0), a clean r
 
 1. Classify retained tiers by whether they cover both requested edges. The retention-edge
    tolerance is one tier resolution; the live-edge tolerance is two resolutions to account for
-   bucket-end timestamps, rollup delay, and normal collection jitter.
+   bucket-end timestamps, rollup delay, and normal collection jitter. A coarse tier reaches the
+   live edge as far as its rollups are final: its newest rollup, or the start of the window that
+   holds the source tier's newest record when that is later, since every earlier window has
+   closed. After a restart that followed a downtime, tier 1 therefore keeps covering the live
+   edge, its last rollup being the partial minute before the shutdown, instead of yielding to
+   tier 2 until the first minute after the restart is rolled up.
 2. Prefer the finest fully covering tier whose estimated read fits the fixed **7,500 source
    record** target. This target is independent of `points`, so requesting a wider canvas cannot
    unexpectedly unlock a different tier. A denser tier is skipped only when another fully
