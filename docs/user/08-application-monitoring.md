@@ -181,6 +181,19 @@ CA certificates, or against `~/.postgresql/root.crt` (or `PGSSLROOTCERT`) for a 
 client certificate is read from `~/.postgresql/postgresql.crt` and `.key` (or `PGSSLCERT` and
 `PGSSLKEY`). The sandbox allows reading exactly those files.
 
+**PgBouncer:** since 0.22.0, Kula sends its session limits (`statement_timeout`, `lock_timeout`,
+`idle_in_transaction_session_timeout`, `tcp_keepalives_idle`, `tcp_keepalives_interval`,
+`tcp_keepalives_count`; see [Database connections](#database-connections)) as startup
+parameters. PgBouncer refuses a connection carrying a parameter it does not track
+(`unsupported startup parameter`) unless `pgbouncer.ini` lists it:
+
+```ini
+ignore_startup_parameters = statement_timeout,lock_timeout,idle_in_transaction_session_timeout,tcp_keepalives_idle,tcp_keepalives_interval,tcp_keepalives_count
+```
+
+PgBouncer then drops them, so those server-side limits do not apply to Kula's session. Point
+Kula at PostgreSQL directly where you can.
+
 ---
 
 ## MySQL / MariaDB
