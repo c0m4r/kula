@@ -70,7 +70,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - PostgreSQL and MySQL monitoring no longer piles up server connections
 - PostgreSQL polls stuck on a frozen server are cut off at their time limit
 - MySQL passwords with `@`, `/` or `:` and IPv6 hosts work; PostgreSQL settings are quoted
-- nginx, Apache2, PostgreSQL and MySQL rates no longer spike after a restart or failed poll
+- nginx, Apache2, PostgreSQL, MySQL and container rates no longer spike after a restart or failed poll
 - Rootless Podman is found for the user Kula runs as
 - `https://` targets and PostgreSQL `verify-ca`/`verify-full` work under the sandbox
 - An `https://` Ollama URL without a port works under the sandbox
@@ -86,9 +86,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - An expired session returns to the login screen instead of reconnecting forever
 - AI panel actions no longer run twice after signing in again
 - Alerts, application and battery charts, card subtitles, device names, and login, AI panel and disk messages are translated
-- Split charts follow a language change
+- Split charts and the sampling tooltip follow a language change
 - Long views keep 1-minute detail right after a restart
-- `inspect_tier.py` walks damaged tiers the way Kula does
+- `inspect_tier.py` walks damaged tiers the way Kula does and answers `--help`
 - A standby of a quiet PostgreSQL primary no longer shows a growing replication lag
 - Hosts with hundreds of containers no longer lose their container metrics
 - Mounts with a space in their path are measured
@@ -96,6 +96,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - `web.graphs.gpu_temp` takes effect
 - Split charts no longer merge devices whose names differ only in punctuation
 - A malformed aggregation preference no longer blanks the dashboard
+- `kula hash-password` refuses an empty password, answers `--help` and keeps spaces in a piped password
+- Rolling views no longer announce every refresh to screen readers
 - The AI assistant's metrics tool keeps to the history range limits
 - Records from a newer version are skipped instead of misread, in `inspect_tier.py` too
 
