@@ -4,6 +4,15 @@ Authentication is **optional**. When enabled, Kula protects the dashboard and it
 with username/password login, issuing secure session cookies. The health and Prometheus
 endpoints are governed separately.
 
+With auth disabled, Kula answers only `Host` names that a web page cannot point at your
+server through its own DNS (IP addresses, `localhost`, local names, the machine's hostname,
+and [`web.security.allowed_hosts`](04-configuration.md#websecurity)), so a site you visit
+cannot read your dashboard by DNS rebinding.
+
+> **Upgrading from 0.21.x or earlier without auth?** If you reach Kula by a regular DNS name
+> (internal DNS, or a reverse proxy that forwards `Host`), that name now gets `403 host not
+> allowed` until you add it to `web.security.allowed_hosts`. Kula logs each refused name.
+
 ## Enabling auth
 
 ### 1. Generate a password hash

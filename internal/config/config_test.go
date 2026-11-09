@@ -309,6 +309,55 @@ func TestLoadNormalizesAllowedOrigins(t *testing.T) {
 	}
 }
 
+func TestNormalizeAllowedHost(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"kula.example.com", "kula.example.com"},
+		{" Kula.Example.COM. ", "kula.example.com"},
+		{"kula.example.com:8443", "kula.example.com"},
+		{"[::1]:27960", "::1"},
+		{"[fe80::1]", "fe80::1"},
+		{"192.0.2.1", "192.0.2.1"},
+		{"*", "*"},
+	} {
+		got, err := normalizeAllowedHost(tc.in)
+		if err != nil || got != tc.want {
+			t.Errorf("normalizeAllowedHost(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+		}
+	}
+	for _, in := range []string{
+		"", " ", ".", "https://kula.example.com", "kula.example.com/", "kula.example.com/path",
+		"user@kula.example.com", "*.example.com", "kula*", "bücher.example",
+	} {
+		if got, err := normalizeAllowedHost(in); err == nil {
+			t.Errorf("normalizeAllowedHost(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
+func TestLoadNormalizesAllowedHosts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := fmt.Sprintf("storage:\n  directory: %s\nweb:\n  security:\n    allowed_hosts:\n      - Kula.Example.com:443\n", dir)
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Web.Security.AllowedHosts; len(got) != 1 || got[0] != "kula.example.com" {
+		t.Errorf("AllowedHosts = %q, want [kula.example.com]", got)
+	}
+
+	yaml = fmt.Sprintf("storage:\n  directory: %s\nweb:\n  security:\n    allowed_hosts:\n      - https://kula.example.com\n", dir)
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Error("Load() accepted an allowed host with a scheme")
+	}
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	cfg, err := Load("/nonexistent/path/config.yaml")
 	if err != nil {

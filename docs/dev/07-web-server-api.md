@@ -63,8 +63,10 @@ through `corsMiddleware → AuthMiddleware`.
 
 ## Middleware chain
 
-gzip (if `enable_compression`) wraps `securityMiddleware` (headers); per route the chain is
-CORS → auth → CSRF → logging (`[API]`/`[WEB]` tagged) → handler. Security headers, CSP nonce, and
+gzip (if `enable_compression`) wraps `securityMiddleware` (headers), then the base-path mount,
+then, while auth is disabled on a TCP listener, the `Host` check against DNS rebinding (every
+route but `/health` and `/status`; see [Security Model](08-security.md#dns-rebinding)); per
+route the chain is CORS → auth → CSRF → logging (`[API]`/`[WEB]` tagged) → handler. Security headers, CSP nonce, and
 SRI behavior are detailed in [Security Model](08-security.md).
 
 ## REST API details

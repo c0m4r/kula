@@ -63,8 +63,8 @@ Monitoring NVIDIA GPUs might require additional setup — see [GPU troubleshooti
 - **[AI assistant][ai]** — optional chat about your metrics, powered by a local Ollama model.
 - **[Authentication][auth]** — optional Argon2id login, with multiple users.
 - **[Backups][backups]** — scheduled snapshots of the storage tiers.
-- **Secure by default** — strict headers, CSRF protection and rate limits, and a
-  [Landlock sandbox][sandbox] that confines file and network access. See the
+- **Secure by default** — strict headers, CSRF protection, rate limits, DNS rebinding
+  protection, and a [Landlock sandbox][sandbox] that confines file and network access. See the
   [security model][security].
 
 ## ⚙️ How It Works

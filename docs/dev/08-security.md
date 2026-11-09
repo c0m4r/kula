@@ -74,6 +74,21 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
 *` together with credentials. It sends `Vary: Origin`, and only echoes origins explicitly listed
 in `web.security.allowed_origins`.
 
+## DNS rebinding
+
+With auth disabled, a page on another site can point its own domain at the address Kula
+listens on. The browser then treats Kula as that site, so the page's script can read the
+dashboard, the API and `/ws`, and the Origin check passes as well (Origin and `Host` name the
+same site). The request still carries the attacker's name in `Host`. `hostCheckMiddleware`
+([`host_check.go`](../../internal/web/host_check.go)) therefore answers, while auth is
+disabled on a TCP listener, only names a public DNS server cannot answer for: IP addresses,
+`localhost`, single-label names, `.local`/`.lan`/`.home`/`.localdomain`/`.internal`/`.home.arpa`
+names, the machine's hostname (`os.Hostname`), the hosts of `allowed_origins`, and
+`web.security.allowed_hosts` (normalized at load; `"*"` disables the check). Anything else gets
+a JSON `403`, logged once per name for up to 64 names. It wraps every route inside the base
+path except `/health` and `/status`. With auth enabled the page has no session cookie to send,
+and a Unix socket has no browser connecting directly, so neither is checked.
+
 ## Web security headers
 
 When `web.security.headers` is on (default), responses carry:
@@ -160,7 +175,10 @@ Security-critical paths have dedicated tests:
 - `ollama_test.go` — model validation, prompt sanitization, rate limiting, tool execution.
 - `prometheus_test.go` — bearer auth, label escaping.
 - `sandbox_test.go` — writes/exec/network outside the allowed set fail.
-- `config_test.go` — YAML parsing, env overrides, tier validation.
+- `host_check_test.go` — DNS rebinding: refused and answered `Host` names, when the check
+  applies, bounded logging.
+- `config_test.go` — YAML parsing, env overrides, tier validation, `allowed_origins` and
+  `allowed_hosts` normalization.
 
 Plus the external **[kula-scan](13-kula-scan.md)** scanner, which verifies these defenses over
 the wire against a *running* instance.

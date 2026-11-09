@@ -250,6 +250,8 @@ Key points:
     origin_validation: true  # reject cross-origin state-changing requests / WS upgrades
     # allowed_origins:
     #   - https://app.example.com
+    # allowed_hosts:         # Host names answered while auth is disabled
+    #   - kula.example.com
 ```
 
 Defaults preserve strict behavior. Relax these to embed Kula in an `<iframe>` or to allow
@@ -262,6 +264,24 @@ it with an error. Keep `origin_validation` on alongside `allowed_origins`: with 
 cross-site cookies reach a WebSocket that accepts any origin, so any page a signed-in user visits
 can read the live stream (Kula warns about this at startup). See
 [Security Model](../dev/08-security.md).
+
+`allowed_hosts` guards against DNS rebinding while auth is disabled: a web page can point its
+own domain at your server's address, and the browser then lets its script read the dashboard
+and API as if they were that page's own. With auth disabled and a TCP listener, Kula therefore
+answers only `Host` names that no public DNS server can answer for:
+
+- IP addresses (`192.0.2.10`, `[::1]`), `localhost` and `*.localhost`;
+- single-label names (`myserver`);
+- names ending in `.local`, `.lan`, `.home`, `.localdomain`, `.internal` or `.home.arpa`;
+- this machine's hostname, the hosts in `allowed_origins`, and the names in `allowed_hosts`.
+
+Any other name gets `403 {"error": "host not allowed: …"}`, logged once per name; `/health`
+and `/status` stay open to probes. **Add the name you reach Kula by** if it is a regular DNS
+name, such as `kula.example.com` from internal DNS or a reverse proxy that forwards `Host`
+(see [Reverse Proxy](13-reverse-proxy.md)). Entries are host names or IP addresses; case, a
+port and a trailing dot are ignored, and a scheme, path or wildcard stops startup. `"*"` answers
+any `Host` and turns the protection off (Kula warns at startup). The check does not apply with
+`auth.enabled: true` (a rebinding page has no session to send) or on a `unix_socket`.
 
 ### `web` display options
 

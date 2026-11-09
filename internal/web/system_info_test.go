@@ -89,7 +89,7 @@ func TestSystemInfoDetailsOption(t *testing.T) {
 	}
 	fetch := func() (sysinfo.Snapshot, map[string]json.RawMessage) {
 		t.Helper()
-		r := httptest.NewRequest("GET", "/api/system-info", nil)
+		r := httptest.NewRequest("GET", "http://localhost/api/system-info", nil)
 		r.Header.Set("Authorization", "Bearer "+token)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)

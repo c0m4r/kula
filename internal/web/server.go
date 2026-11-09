@@ -54,6 +54,7 @@ type Server struct {
 	ollama          *ollamaClient
 	ollamaLimiter   *chatRateLimiter
 	ollamaMetaLim   *chatRateLimiter
+	hosts           *hostPolicy // nil: every Host is answered (see host_check.go)
 
 	wsMu       sync.Mutex
 	wsCount    int
@@ -85,6 +86,7 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 		ollama:          newOllamaClient(ollamaCfg),
 		ollamaLimiter:   newChatRateLimiter(),
 		ollamaMetaLim:   newMetaRateLimiter(),
+		hosts:           newHostPolicy(cfg, machineHostname()),
 	}
 	if cfg.UI && cfg.MinifyAssets {
 		srv.assets = minifiedStatic()
@@ -519,7 +521,7 @@ func (s *Server) buildHandler() http.Handler {
 		mux.HandleFunc("/status", s.handleHealth)
 	}
 
-	routed := mountWithBasePath(mux, s.cfg.BasePath)
+	routed := mountWithBasePath(hostCheckMiddleware(s.hosts, mux), s.cfg.BasePath)
 	if s.cfg.BasePath != "" {
 		log.Printf("Web routes mounted under base path %q", s.cfg.BasePath)
 	}
@@ -553,6 +555,12 @@ func (s *Server) Start() error {
 		if !s.cfg.Security.OriginValidation && s.cfg.Auth.Enabled {
 			log.Printf("Security Warning: allowed_origins is set and origin_validation is disabled. Session cookies are SameSite=None and the WebSocket accepts any Origin, so any site a signed-in user visits can open /ws with their session and read live metrics.")
 		}
+	}
+
+	if s.hosts != nil {
+		log.Printf("Host check: auth is disabled, so only IP addresses, local names and web.security.allowed_hosts are answered (DNS rebinding protection)")
+	} else if !s.cfg.Auth.Enabled && s.cfg.UnixSocket == "" {
+		log.Printf("Security Warning: web.security.allowed_hosts is \"*\" and auth is disabled. Any website a visitor opens can rebind its name to this server and read the dashboard and API.")
 	}
 
 	go s.hub.run()

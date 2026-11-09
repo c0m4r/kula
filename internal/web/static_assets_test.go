@@ -73,7 +73,7 @@ func TestWOFF2FontServedWithoutGzip(t *testing.T) {
 	s := NewServer(config.WebConfig{UI: true, EnableCompression: true}, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
 	handler := s.buildHandler()
 
-	req := httptest.NewRequest(http.MethodGet, font, nil)
+	req := httptest.NewRequest(http.MethodGet, "http://localhost"+font, nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -92,7 +92,7 @@ func TestWOFF2FontServedWithoutGzip(t *testing.T) {
 	}
 
 	// Other assets are still compressed.
-	req = httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	req = httptest.NewRequest(http.MethodGet, "http://localhost/style.css", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -202,7 +202,7 @@ func TestStaticAssetsRevalidate(t *testing.T) {
 		s := NewServer(config.WebConfig{UI: true, MinifyAssets: true, EnableCompression: compress}, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
 		handler := s.buildHandler()
 		get := func(path, ifNoneMatch string) *httptest.ResponseRecorder {
-			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req := httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil)
 			req.Header.Set("Accept-Encoding", "gzip")
 			if ifNoneMatch != "" {
 				req.Header.Set("If-None-Match", ifNoneMatch)

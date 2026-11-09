@@ -22,6 +22,25 @@ header (so a client can't spoof it).
 > limiting and logging. Make sure your proxy appends the real client IP correctly. A
 > misconfigured `trust_proxy` can let clients spoof their IP to evade the login limiter.
 
+## The `Host` name, with auth disabled
+
+With `auth.enabled: false` and a TCP listener, Kula answers only `Host` names that no public DNS
+server can answer for (IP addresses, `localhost`, single-label and `.local`/`.lan`-style names,
+the machine's hostname), as protection against DNS rebinding. A proxy that forwards the
+browser's `Host` (`proxy_set_header Host $host`, as below) passes your public name through, so
+list it:
+
+```yaml
+web:
+  security:
+    allowed_hosts:
+      - monitoring.example.com
+```
+
+Otherwise every request is answered `403 host not allowed`, and Kula logs the refused name. A
+proxy that sends the upstream address (nginx's default `Host $proxy_host`) or connects over a
+`unix_socket` needs nothing. See [`web.security`](04-configuration.md#websecurity).
+
 ## Base path (sub-path hosting)
 
 To serve Kula under a URL prefix like `https://example.com/kula/`, set:

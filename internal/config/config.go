@@ -166,6 +166,11 @@ type SecurityConfig struct {
 	// response headers for matching origins, accepts them in
 	// OriginValidation, and switches session cookies to SameSite=None;Secure.
 	AllowedOrigins []string `yaml:"allowed_origins"`
+	// AllowedHosts lists further Host names Kula answers while auth is
+	// disabled, besides IP addresses, localhost, single-label names, local-only
+	// domains and the machine's hostname (DNS rebinding protection). "*"
+	// answers any Host. Normalized at load: lowercase, no trailing dot or port.
+	AllowedHosts []string `yaml:"allowed_hosts"`
 }
 
 type MetricsConfig struct {
@@ -625,6 +630,10 @@ func load(path string, mustExist bool) (*Config, error) {
 		return nil, err
 	}
 
+	if err := cfg.normalizeAllowedHosts(); err != nil {
+		return nil, err
+	}
+
 	if cfg.Ollama.Enabled {
 		if err := validateOllamaURL(cfg.Ollama.URL); err != nil {
 			return nil, err
@@ -976,6 +985,48 @@ func normalizeOrigin(raw string) (string, error) {
 		host += ":" + port
 	}
 	return scheme + "://" + host, nil
+}
+
+// normalizeAllowedHosts rewrites each web.security.allowed_hosts entry into
+// the form it is compared in — a lowercase name without a trailing dot, port
+// or IPv6 brackets — and rejects entries no Host header can match. "*" is
+// kept as it is.
+func (c *Config) normalizeAllowedHosts() error {
+	hosts := c.Web.Security.AllowedHosts
+	for i, raw := range hosts {
+		host, err := normalizeAllowedHost(raw)
+		if err != nil {
+			return fmt.Errorf("web.security.allowed_hosts: %q: %w", raw, err)
+		}
+		hosts[i] = host
+	}
+	return nil
+}
+
+func normalizeAllowedHost(raw string) (string, error) {
+	host := strings.ToLower(strings.TrimSpace(raw))
+	if host == "*" {
+		return host, nil
+	}
+	if strings.Contains(host, "://") || strings.ContainsAny(host, "/?#@") {
+		return "", fmt.Errorf("must be a host name or IP address, without a scheme or path")
+	}
+	if strings.Contains(host, "*") {
+		return "", fmt.Errorf(`wildcards are not supported; list each name, or use "*" alone to answer any Host`)
+	}
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		host = name
+	}
+	host = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"), ".")
+	if host == "" {
+		return "", fmt.Errorf("is empty")
+	}
+	for _, r := range host {
+		if r > unicode.MaxASCII {
+			return "", fmt.Errorf("browsers send an internationalized host in its punycode (xn--) form; use that")
+		}
+	}
+	return host, nil
 }
 
 // parseRetention parses a duration string with the suffixes s, m, h, or d.

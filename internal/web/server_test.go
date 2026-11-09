@@ -231,7 +231,7 @@ func TestMountWithBasePath(t *testing.T) {
 			{"/kula/", "root:/"},
 		} {
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://localhost"+tc.path, nil))
 			if rec.Code != http.StatusOK {
 				t.Errorf("%s: code=%d body=%q", tc.path, rec.Code, rec.Body.String())
 				continue
@@ -350,7 +350,7 @@ func TestWebContentAccessLog(t *testing.T) {
 			defer log.SetOutput(orig)
 
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req := httptest.NewRequest(http.MethodGet, "http://localhost"+tc.path, nil)
 			s.buildHandler().ServeHTTP(rec, req)
 
 			got := buf.String()
@@ -380,7 +380,7 @@ func TestAccessLogEscapesThePath(t *testing.T) {
 	defer log.SetOutput(orig)
 
 	const forged = "/x%0a2026/01/01%2000:00:00%20[API]%2010.0.0.1%20POST%20/api/login%20200%201ms%0d"
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, forged, nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://localhost"+forged, nil))
 
 	got := buf.String()
 	if n := strings.Count(got, "\n"); n != 1 {
@@ -406,7 +406,7 @@ func TestWebContentAccessLogDisabled(t *testing.T) {
 	defer log.SetOutput(orig)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/style.css", nil)
 	s.buildHandler().ServeHTTP(rec, req)
 
 	if strings.Contains(buf.String(), "[WEB]") {
@@ -517,7 +517,7 @@ func TestHandleHealth(t *testing.T) {
 	for _, path := range []string{"/health", "/status"} {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req := httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil)
 
 			http.HandlerFunc(s.handleHealth).ServeHTTP(rec, req)
 
