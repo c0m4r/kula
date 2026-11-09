@@ -420,6 +420,8 @@
     "login_busy": "The server is busy. Try again in a moment.",
     "login_failed": "Sign-in failed. Try again.",
     "disk_unstable_name": "{name} (unstable)",
+    "disk_unavailable_option": "{name} (unavailable)",
+    "not_available": "n/a",
     "disk_no_identity": "No persistent identity; this kernel name may refer to a different drive after reboot.",
     "app_connections": "Connections",
     "app_requests": "Requests",

@@ -356,12 +356,12 @@ function attachAIButtonToCard(card) {
         const chartInstance = canvas.id ? Chart.getChart(canvas.id) : null;
         if (!chartInstance) return;
 
-        let titleText = 'Chart';
+        let titleText = i18n.t('chart');
         if (isGauge) {
             titleText = header.textContent;
         } else {
             const h3 = header.querySelector('h3');
-            titleText = h3 ? h3.textContent : 'Chart';
+            if (h3) titleText = h3.textContent;
         }
 
         // [H2] catch unhandled rejection from the async function

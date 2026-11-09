@@ -420,6 +420,8 @@
     "login_busy": "서버가 바쁩니다. 잠시 후 다시 시도하세요.",
     "login_failed": "로그인에 실패했습니다. 다시 시도하세요.",
     "disk_unstable_name": "{name} (불안정)",
+    "disk_unavailable_option": "{name} (사용 불가)",
+    "not_available": "사용 불가",
     "disk_no_identity": "영구 식별자가 없습니다. 재부팅 후 이 커널 이름이 다른 드라이브를 가리킬 수 있습니다.",
     "app_connections": "연결",
     "app_requests": "요청",

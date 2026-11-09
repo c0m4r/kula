@@ -420,6 +420,8 @@
     "login_busy": "Serverul este ocupat. Încercați din nou peste câteva momente.",
     "login_failed": "Autentificarea a eșuat. Încercați din nou.",
     "disk_unstable_name": "{name} (instabil)",
+    "disk_unavailable_option": "{name} (indisponibil)",
+    "not_available": "n/d",
     "disk_no_identity": "Nicio identitate persistentă; acest nume de kernel poate indica altă unitate după repornire.",
     "app_connections": "Conexiuni",
     "app_requests": "Cereri",

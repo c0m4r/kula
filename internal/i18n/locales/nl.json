@@ -420,6 +420,8 @@
     "login_busy": "De server is bezet. Probeer het zo opnieuw.",
     "login_failed": "Inloggen mislukt. Probeer het opnieuw.",
     "disk_unstable_name": "{name} (instabiel)",
+    "disk_unavailable_option": "{name} (niet beschikbaar)",
+    "not_available": "n.b.",
     "disk_no_identity": "Geen vaste identiteit; deze kernelnaam kan na een herstart naar een ander station verwijzen.",
     "app_connections": "Verbindingen",
     "app_requests": "Verzoeken",

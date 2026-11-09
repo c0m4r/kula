@@ -420,6 +420,8 @@
     "login_busy": "Serwer jest zajęty. Spróbuj ponownie za chwilę.",
     "login_failed": "Logowanie nie powiodło się. Spróbuj ponownie.",
     "disk_unstable_name": "{name} (nazwa niestała)",
+    "disk_unavailable_option": "{name} (niedostępny)",
+    "not_available": "b.d.",
     "disk_no_identity": "Brak trwałego identyfikatora; po ponownym uruchomieniu ta nazwa jądra może wskazywać inny dysk.",
     "app_connections": "Połączenia",
     "app_requests": "Żądania",

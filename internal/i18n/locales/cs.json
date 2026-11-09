@@ -420,6 +420,8 @@
     "login_busy": "Server je zaneprázdněn. Zkuste to za chvíli.",
     "login_failed": "Přihlášení se nezdařilo. Zkuste to znovu.",
     "disk_unstable_name": "{name} (nestálý)",
+    "disk_unavailable_option": "{name} (nedostupný)",
+    "not_available": "nedostupné",
     "disk_no_identity": "Žádná trvalá identita; tento název jádra může po restartu označovat jiný disk.",
     "app_connections": "Připojení",
     "app_requests": "Požadavky",

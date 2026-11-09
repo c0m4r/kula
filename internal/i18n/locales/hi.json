@@ -420,6 +420,8 @@
     "login_busy": "सर्वर व्यस्त है। थोड़ी देर में पुनः प्रयास करें।",
     "login_failed": "साइन-इन विफल रहा। पुनः प्रयास करें।",
     "disk_unstable_name": "{name} (अस्थिर)",
+    "disk_unavailable_option": "{name} (उपलब्ध नहीं)",
+    "not_available": "उपलब्ध नहीं",
     "disk_no_identity": "कोई स्थायी पहचान नहीं; रीबूट के बाद यह कर्नेल नाम किसी दूसरी ड्राइव को संदर्भित कर सकता है।",
     "app_connections": "कनेक्शन",
     "app_requests": "अनुरोध",

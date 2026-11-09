@@ -420,6 +420,8 @@
     "login_busy": "Der Server ist ausgelastet. Bitte gleich erneut versuchen.",
     "login_failed": "Anmeldung fehlgeschlagen. Bitte erneut versuchen.",
     "disk_unstable_name": "{name} (instabil)",
+    "disk_unavailable_option": "{name} (nicht verfügbar)",
+    "not_available": "k. A.",
     "disk_no_identity": "Keine dauerhafte Kennung; dieser Kernel-Name kann nach einem Neustart auf ein anderes Laufwerk verweisen.",
     "app_connections": "Verbindungen",
     "app_requests": "Anfragen",

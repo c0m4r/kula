@@ -292,6 +292,7 @@ function setDisplayTimeZone(mode) {
         syncCustomRangeUI(state.customFrom, state.customTo, { preserveDraft: true });
     }
     refreshCustomTimePicker(previousZone);
+    renderSamplingInfo();
     renderCrosshairTime(crosshairSnapshot());
     if (state.lastSample) updateHeader(state.lastSample);
     updateAllCharts();

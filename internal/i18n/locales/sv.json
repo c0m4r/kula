@@ -420,6 +420,8 @@
     "login_busy": "Servern är upptagen. Försök igen om en stund.",
     "login_failed": "Inloggningen misslyckades. Försök igen.",
     "disk_unstable_name": "{name} (instabilt)",
+    "disk_unavailable_option": "{name} (ej tillgänglig)",
+    "not_available": "ej tillg.",
     "disk_no_identity": "Ingen beständig identitet; det här kärnnamnet kan peka på en annan enhet efter omstart.",
     "app_connections": "Anslutningar",
     "app_requests": "Förfrågningar",

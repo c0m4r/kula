@@ -420,6 +420,8 @@
     "login_busy": "Pelayan sibuk. Cuba lagi sebentar lagi.",
     "login_failed": "Log masuk gagal. Cuba lagi.",
     "disk_unstable_name": "{name} (tidak stabil)",
+    "disk_unavailable_option": "{name} (tidak tersedia)",
+    "not_available": "t/a",
     "disk_no_identity": "Tiada identiti kekal; nama kernel ini mungkin merujuk kepada pemacu lain selepas but semula.",
     "app_connections": "Sambungan",
     "app_requests": "Permintaan",

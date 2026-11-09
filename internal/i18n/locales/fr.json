@@ -420,6 +420,8 @@
     "login_busy": "Le serveur est occupé. Réessayez dans un instant.",
     "login_failed": "Échec de la connexion. Réessayez.",
     "disk_unstable_name": "{name} (instable)",
+    "disk_unavailable_option": "{name} (indisponible)",
+    "not_available": "n/d",
     "disk_no_identity": "Aucune identité persistante ; ce nom de noyau peut désigner un autre disque après un redémarrage.",
     "app_connections": "Connexions",
     "app_requests": "Requêtes",

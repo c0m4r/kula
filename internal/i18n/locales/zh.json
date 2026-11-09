@@ -420,6 +420,8 @@
     "login_busy": "服务器繁忙，请稍后再试。",
     "login_failed": "登录失败，请重试。",
     "disk_unstable_name": "{name} (不稳定)",
+    "disk_unavailable_option": "{name} (不可用)",
+    "not_available": "不可用",
     "disk_no_identity": "无持久标识；重启后此内核名称可能指向另一块磁盘。",
     "app_connections": "连接",
     "app_requests": "请求",

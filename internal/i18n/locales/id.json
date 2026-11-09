@@ -420,6 +420,8 @@
     "login_busy": "Server sedang sibuk. Coba lagi sebentar lagi.",
     "login_failed": "Gagal masuk. Coba lagi.",
     "disk_unstable_name": "{name} (tidak stabil)",
+    "disk_unavailable_option": "{name} (tidak tersedia)",
+    "not_available": "t/a",
     "disk_no_identity": "Tidak ada identitas tetap; nama kernel ini dapat merujuk ke drive lain setelah reboot.",
     "app_connections": "Koneksi",
     "app_requests": "Permintaan",

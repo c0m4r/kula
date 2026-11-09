@@ -420,6 +420,8 @@
     "login_busy": "El servidor está ocupado. Inténtalo de nuevo en un momento.",
     "login_failed": "No se pudo iniciar sesión. Inténtalo de nuevo.",
     "disk_unstable_name": "{name} (inestable)",
+    "disk_unavailable_option": "{name} (no disponible)",
+    "not_available": "n/d",
     "disk_no_identity": "Sin identidad persistente; este nombre del kernel puede referirse a otra unidad tras reiniciar.",
     "app_connections": "Conexiones",
     "app_requests": "Solicitudes",

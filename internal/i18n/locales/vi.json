@@ -420,6 +420,8 @@
     "login_busy": "Máy chủ đang bận. Vui lòng thử lại sau giây lát.",
     "login_failed": "Đăng nhập thất bại. Vui lòng thử lại.",
     "disk_unstable_name": "{name} (không ổn định)",
+    "disk_unavailable_option": "{name} (không khả dụng)",
+    "not_available": "không có",
     "disk_no_identity": "Không có định danh cố định; tên kernel này có thể trỏ đến ổ đĩa khác sau khi khởi động lại.",
     "app_connections": "Kết nối",
     "app_requests": "Yêu cầu",

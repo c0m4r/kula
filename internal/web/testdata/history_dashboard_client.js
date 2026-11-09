@@ -384,6 +384,8 @@ await i18n.loadTranslations('pl');
 i18n.applyTranslations();
 document.dispatchEvent(new Event('kula-i18n-changed'));
 check(i18n.t('last_1_h') !== 'Last 1h', 'Fixture did not load the Polish locale');
+check(document.getElementById('sampling-info').title.startsWith(`${i18n.t('tier')} `) &&
+    i18n.t('tier') !== 'Tier', 'The sampling tooltip kept the previous language');
 check(document.getElementById('time-range-display').textContent === i18n.t('last_1_h'),
     'Language change reset the active range label to five minutes');
 check(state.charts.loadavg.data.datasets[0].label === i18n.t('1_min') &&
@@ -807,6 +809,7 @@ check(picker.classList.contains('hidden'), 'Outside pointer click did not dismis
 await openPicker();
 document.querySelector('.time-zone-btn[data-time-zone="utc"]').click();
 check(picker.classList.contains('hidden'), 'Outside settings click did not dismiss the picker');
+check(document.getElementById('sampling-info').title.endsWith(' · UTC'), 'The sampling tooltip kept the previous time zone');
 await openPicker();
 // Today's end defaults to now, so the chart does not end in empty future time.
 const today = new Date().toISOString().slice(0, 10);

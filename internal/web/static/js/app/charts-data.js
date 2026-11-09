@@ -789,7 +789,7 @@ export function addSampleToCharts(item, ts, {
                 setChartSubtitle('mysql-repl-subtitle', () => {
                     const io  = i18n.t(m.replica_io_running  ? 'app_thread_running' : 'app_thread_stopped');
                     const sql = i18n.t(m.replica_sql_running ? 'app_thread_running' : 'app_thread_stopped');
-                    const lag = secs === null ? 'n/a' : `${secs}s`;
+                    const lag = secs === null ? i18n.t('not_available') : `${secs}s`;
                     // Surface a non-zero errno or a non-waiting IO state
                     // inline so an operator alerted by the IO/SQL flip can
                     // see *why* without opening a SQL client.
@@ -1674,7 +1674,7 @@ function updateDiskSelector(disks, type, selectionField, optionsField) {
     if (selected && !state[optionsField].includes(selected)) {
         const opt = document.createElement('option');
         opt.value = selected;
-        opt.textContent = `${selected} (unavailable)`;
+        opt.textContent = i18n.format('disk_unavailable_option', { name: selected });
         sel.appendChild(opt);
     }
     sel.value = selected;
@@ -1955,6 +1955,13 @@ export function renderSamplingInfo(status = state.historyStatus) {
         ? `${i18n.t('tier')} ${state.currentTier}` : '';
     const label = { failed: 'history_failed', partial: 'partial_range', empty: 'history_empty' }[status];
     el.textContent = [state.currentResolution, tier, label ? i18n.t(label) : ''].filter(Boolean).join(' · ');
+    // The tooltip is rendered here too, so a language or time-zone change
+    // reaches it without waiting for the next history response.
+    const source = state.currentDownsampled
+        ? `${i18n.t('source')}: ${state.currentSourceResolution}`
+        : '';
+    el.title = [tier, source, state.timeZone === 'utc' ? 'UTC' : i18n.t('time_zone_local')]
+        .filter(Boolean).join(' · ');
 }
 
 export function updateSamplingInfo(
@@ -1979,15 +1986,7 @@ export function updateSamplingInfo(
     });
     applyAggregationValidity(validAggregations);
 
-    const el = document.getElementById('sampling-info');
-    if (!el) return;
-    const name = Number.isInteger(tier) && tier >= 0 ? `${i18n.t('tier')} ${tier}` : '';
     renderSamplingInfo(complete === false ? 'partial' : 'complete');
-    const source = state.currentDownsampled
-        ? `${i18n.t('source')}: ${state.currentSourceResolution}`
-        : '';
-    el.title = [name, source, state.timeZone === 'utc' ? 'UTC' : i18n.t('time_zone_local')]
-        .filter(Boolean).join(' · ');
 }
 
 // Describe the loaded view from the server's response rather than the

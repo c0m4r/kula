@@ -420,6 +420,8 @@
     "login_busy": "الخادم مشغول. حاول مرة أخرى بعد قليل.",
     "login_failed": "فشل تسجيل الدخول. حاول مرة أخرى.",
     "disk_unstable_name": "{name} (غير ثابت)",
+    "disk_unavailable_option": "{name} (غير متاح)",
+    "not_available": "غير متاح",
     "disk_no_identity": "لا توجد هوية دائمة؛ قد يشير اسم النواة هذا إلى قرص مختلف بعد إعادة التشغيل.",
     "app_connections": "الاتصالات",
     "app_requests": "الطلبات",

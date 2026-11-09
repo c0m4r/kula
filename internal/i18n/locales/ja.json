@@ -420,6 +420,8 @@
     "login_busy": "サーバーが混雑しています。少し待ってから再試行してください。",
     "login_failed": "サインインに失敗しました。再試行してください。",
     "disk_unstable_name": "{name} (不安定)",
+    "disk_unavailable_option": "{name} (利用不可)",
+    "not_available": "利用不可",
     "disk_no_identity": "永続的な識別子がありません。再起動後、このカーネル名は別のドライブを指す可能性があります。",
     "app_connections": "接続",
     "app_requests": "リクエスト",

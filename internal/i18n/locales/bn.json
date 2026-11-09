@@ -420,6 +420,8 @@
     "login_busy": "সার্ভার ব্যস্ত। একটু পরে আবার চেষ্টা করুন।",
     "login_failed": "সাইন-ইন ব্যর্থ হয়েছে। আবার চেষ্টা করুন।",
     "disk_unstable_name": "{name} (অস্থির)",
+    "disk_unavailable_option": "{name} (উপলভ্য নয়)",
+    "not_available": "উপলভ্য নয়",
     "disk_no_identity": "কোনো স্থায়ী পরিচয় নেই; রিবুটের পরে এই কার্নেল নামটি অন্য ড্রাইভকে নির্দেশ করতে পারে।",
     "app_connections": "কানেকশন",
     "app_requests": "অনুরোধ",

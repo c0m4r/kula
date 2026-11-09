@@ -420,6 +420,8 @@
     "login_busy": "Sunucu meşgul. Birazdan tekrar deneyin.",
     "login_failed": "Giriş başarısız. Tekrar deneyin.",
     "disk_unstable_name": "{name} (kararsız)",
+    "disk_unavailable_option": "{name} (kullanılamıyor)",
+    "not_available": "yok",
     "disk_no_identity": "Kalıcı kimlik yok; bu çekirdek adı yeniden başlatmadan sonra başka bir sürücüyü gösterebilir.",
     "app_connections": "Bağlantılar",
     "app_requests": "İstekler",

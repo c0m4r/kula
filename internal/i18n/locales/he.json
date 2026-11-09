@@ -420,6 +420,8 @@
     "login_busy": "השרת עמוס. נסו שוב בעוד רגע.",
     "login_failed": "ההתחברות נכשלה. נסו שוב.",
     "disk_unstable_name": "{name} (לא יציב)",
+    "disk_unavailable_option": "{name} (לא זמין)",
+    "not_available": "לא זמין",
     "disk_no_identity": "אין זהות קבועה; ייתכן ששם הליבה הזה יצביע על כונן אחר לאחר אתחול.",
     "app_connections": "חיבורים",
     "app_requests": "בקשות",
