@@ -15,6 +15,7 @@ const {
     alignedBucketCount,
     historyViewAcceptsLiveSamples,
     liveHistoryRefreshInterval,
+    rollingBudgetHolds,
     rollingTailRequest,
     rollingTailSource,
     updateLiveSampleInterval,
@@ -985,6 +986,14 @@ test('aligned bucket counts match the server with an exclusive end', () => {
     assert.equal(alignedBucketCount(1500, 2500, 2000), 2);
     assert.equal(alignedBucketCount(700377, 1000377, 2000), 151);
     assert.equal(alignedBucketCount(10, 5, 2000), 0);
+});
+
+test('a rolling view keeps refreshing its tail when its plot width moves by a few pixels', () => {
+    // Tick labels changing width move a 563 px plot area by a few pixels; a
+    // resize moves it much further and reloads the view.
+    for (const points of [563, 560, 548, 590, 600]) assert.ok(rollingBudgetHolds(563, points), `563 → ${points}`);
+    for (const points of [380, 500, 630, 1800]) assert.ok(!rollingBudgetHolds(563, points), `563 → ${points}`);
+    assert.ok(!rollingBudgetHolds(undefined, 563) && !rollingBudgetHolds(0, 0) && !rollingBudgetHolds(563, NaN));
 });
 
 test('a rolling tail request starts on a bucket boundary and asks one point per bucket', () => {

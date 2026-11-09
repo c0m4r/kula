@@ -30,6 +30,7 @@ import {
     HistoryRequestController,
     liveHistoryRefreshInterval,
     resolutionMilliseconds,
+    rollingBudgetHolds,
     rollingTailRequest,
     rollingTailSource,
     updateLiveSampleInterval,
@@ -2037,20 +2038,21 @@ function historySectionsKey() {
 
 function rollingTailPlan(rangeSeconds, points, toMs) {
     const base = state.rollingTail;
-    if (!base || base.range !== rangeSeconds || base.points !== points ||
+    if (!base || base.range !== rangeSeconds || !rollingBudgetHolds(base.points, points) ||
         base.sections !== historySectionsKey() || toMs - base.syncedAt >= ROLLING_TAIL_RESYNC_MS) return null;
     if (state.historyViewEnd === null || !['complete', 'partial'].includes(state.historyStatus)) return null;
     const view = { tier: state.currentTier, downsampled: state.currentDownsampled };
     if (!rollingTailSource({ fromMs: 0 }, view)) return null;
     const last = historyItemContext(latestHistoryItem(state.dataBuffer));
+    // The tail continues the view as it was loaded, at its own budget.
     const request = rollingTailRequest({
         rangeMs: rangeSeconds * 1000,
-        points,
+        points: base.points,
         toMs,
         stepMs: resolutionMilliseconds(state.currentResolution),
         lastBucketStart: last?.bucketStart,
     });
-    return request && { ...request, ...rollingTailSource(request, view), signature: base.signature };
+    return request && { ...request, ...rollingTailSource(request, view), signature: base.signature, viewPoints: base.points };
 }
 
 // Metadata of the merged view: the tail's description of the view, with
@@ -2111,7 +2113,7 @@ export function fetchHistory(rangeSeconds, { background = false, tail = false } 
     const points = historyPointBudget();
     state.historyRefreshAttempt = toDate.getTime();
     const plan = tail ? rollingTailPlan(rangeSeconds, points, toDate.getTime()) : null;
-    if (plan) return fetchRollingTail(rangeSeconds, points, fromDate, toDate, plan);
+    if (plan) return fetchRollingTail(rangeSeconds, plan.viewPoints, fromDate, toDate, plan);
     const sections = historySectionsKey();
     return requestHistory(fromDate, toDate, points, (response, samples) => {
         const interval = applyRollingView(rangeSeconds, points, toDate,

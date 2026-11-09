@@ -128,6 +128,19 @@ export const ROLLING_TAIL_BUCKETS = 3;
 // or return null when it must be refreshed whole: the tail would reach the
 // window's start, or the window no longer fits the point budget at this step
 // (a full refresh would then answer a coarser one).
+// ROLLING_TAIL_BUDGET_SLACK is how far, as a fraction, the point budget may
+// move from the one a rolling view was loaded with before a refresh reloads the
+// whole window. Plot widths move by a few pixels whenever an axis's tick labels
+// change width, and steps come in coarse 1/2/5 classes, so such a move rarely
+// changes the view; the periodic full resync adopts the new budget. A resize
+// moves it further and reloads at once.
+export const ROLLING_TAIL_BUDGET_SLACK = 0.1;
+
+export function rollingBudgetHolds(viewPoints, points) {
+    return Number.isFinite(viewPoints) && Number.isFinite(points) && viewPoints > 0 &&
+        Math.abs(points - viewPoints) <= viewPoints * ROLLING_TAIL_BUDGET_SLACK;
+}
+
 export function rollingTailRequest({ rangeMs, points, toMs, stepMs, lastBucketStart }) {
     if (![rangeMs, points, toMs, stepMs, lastBucketStart].every(Number.isFinite)) return null;
     if (stepMs <= 0 || lastBucketStart % stepMs !== 0 || lastBucketStart > toMs) return null;

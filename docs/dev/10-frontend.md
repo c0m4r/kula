@@ -185,9 +185,11 @@ full response, and its coverage combines the previous left edge with the tail's 
 (`mergedTailCoverage`). The left edge counts as retained once the observed data reaches it, so
 the next complete tail clears a partial verdict a lagging one left behind.
 The tail is used only when its `historyViewSignature` (tier, step, source resolution,
-aggregations, extrema profiles) matches the snapshot it extends, with the same point budget
-and Focus Mode sections; anything else, a failed or empty tail, or a snapshot older than five
-minutes, falls back to a full refresh. On a 30-minute view that is a few kilobytes per step
+aggregations, extrema profiles) matches the snapshot it extends, with the same Focus Mode
+sections and a point budget within 10% of the snapshot's (`rollingBudgetHolds`: plot widths move
+by a few pixels whenever tick labels change width, and the tail continues the view at its own
+budget); anything else, a failed or empty tail, or a snapshot older than five minutes, falls
+back to a full refresh. On a 30-minute view that is a few kilobytes per step
 instead of megabytes. `TestHistoryResponsesMatchDashboardContract` checks against a real store
 that the tail is answered at the view's step and that the merged buffer equals a fresh full
 refresh.
