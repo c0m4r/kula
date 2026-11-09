@@ -1960,7 +1960,12 @@ export function renderSamplingInfo(status = state.historyStatus) {
     const source = state.currentDownsampled
         ? `${i18n.t('source')}: ${state.currentSourceResolution}`
         : '';
-    el.title = [tier, source, state.timeZone === 'utc' ? 'UTC' : i18n.t('time_zone_local')]
+    const note = state.rollingRefreshNote;
+    const refresh = note
+        ? `${i18n.t('history_refresh_every')} ${Math.ceil(note.interval / 1000)}s · ` +
+            `${i18n.t('updated')}: ${formatRangeTimestamp(note.at, state.timeZone, i18n.currentLang)}`
+        : '';
+    el.title = [tier, source, state.timeZone === 'utc' ? 'UTC' : i18n.t('time_zone_local'), refresh]
         .filter(Boolean).join(' · ');
 }
 
@@ -1986,6 +1991,8 @@ export function updateSamplingInfo(
     });
     applyAggregationValidity(validAggregations);
 
+    // A rolling view sets its refresh note again as it renders (applyRollingView).
+    state.rollingRefreshNote = null;
     renderSamplingInfo(complete === false ? 'partial' : 'complete');
 }
 
@@ -2070,11 +2077,8 @@ function applyRollingView(rangeSeconds, points, toDate, render) {
     trimChartsToTimeRange();
     updateAllCharts();
     updateLatestHistorySample(latest);
-    const info = document.getElementById('sampling-info');
-    if (info && interval > 0) {
-        info.title += ` · ${i18n.t('history_refresh_every')} ${Math.ceil(interval / 1000)}s` +
-            ` · ${i18n.t('updated')}: ${formatRangeTimestamp(toDate, state.timeZone, i18n.currentLang)}`;
-    }
+    state.rollingRefreshNote = interval > 0 ? { interval, at: toDate } : null;
+    renderSamplingInfo();
     return interval;
 }
 

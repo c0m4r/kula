@@ -35,6 +35,7 @@ export const state = {
     maxBufferSize: 10000,
     historyPointLimit: 5000,
     historyViewEnd: null, // last successful rolling snapshot, when refreshed in buckets
+    rollingRefreshNote: null, // { interval, at } of a rolling view, shown in the sampling tooltip
     historyRefreshAttempt: 0,
     // The last full rolling snapshot a tail refresh may extend (charts-data.js).
     rollingTail: null,

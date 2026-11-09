@@ -1014,6 +1014,8 @@ const span = Date.parse(state.dataBuffer.at(-1).ts) - Date.parse(state.dataBuffe
 check(span > 23 * 3600000, 'Live ingestion lost the start of the selected 24-hour interval');
 check(state.historyViewEnd > now - 300000, 'Rolling snapshot stopped refreshing');
 check(state.timeRange === 86400 && state.historyStatus === 'complete', 'Rolling history lost range or coverage');
+check(document.getElementById('sampling-info').title.includes(`${i18n.t('history_refresh_every')} `),
+    'The sampling tooltip lost the rolling refresh interval');
 
 // A background snapshot must not freeze live gauges while its response is pending.
 const backgroundFetch = window.fetch;
