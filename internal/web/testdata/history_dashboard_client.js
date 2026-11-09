@@ -389,11 +389,27 @@ check(document.getElementById('proc-subtitle')?.textContent === '300 łącznie, 
 const identity = await import('./js/app/disk-identity.js');
 check(identity.diskLabel({ name: 'sda' }) === 'sda (nazwa niestała)' &&
     identity.diskTitle({ name: 'sda' }).startsWith('Brak trwałego identyfikatora'), 'Disk identity text is not translated');
+// Application cards built in English follow a language change: the metric
+// half of the title, the legends and the subtitle (even with no new sample).
+const nginxText = () => ({
+    title: document.querySelector('#card-nginx-rw h3')?.textContent,
+    legend: state.charts.nginxRw?.data.datasets.map(dataset => dataset.label),
+    subtitle: document.getElementById('nginx-rw-subtitle')?.textContent,
+});
+let nginx = nginxText();
+check(i18n.t('app_workers') !== 'Workers' && i18n.t('app_waiting') !== 'Waiting' && i18n.t('app_wait') !== 'Wait' &&
+    nginx.title === `Nginx \u2014 ${i18n.t('app_workers')}` &&
+    nginx.legend?.join() === ['app_reading', 'app_writing', 'app_waiting'].map(key => i18n.t(key)).join() &&
+    nginx.subtitle?.includes(`  ${i18n.t('app_wait')}: `),
+    `Application charts are not translated: ${JSON.stringify(nginx)}`);
 evaluateAlerts({ cpu: { num_cores: 2 } });
 await i18n.loadTranslations('en');
 i18n.applyTranslations();
 document.dispatchEvent(new Event('kula-i18n-changed'));
 check(alertEmpty() === 'No active alerts', 'A language change did not retranslate the alert empty state');
+nginx = nginxText();
+check(nginx.title === 'Nginx \u2014 Workers' && nginx.legend?.join() === 'Reading,Writing,Waiting' &&
+    /^R: \d+ {2}W: \d+ {2}Wait: \d+$/.test(nginx.subtitle), `Application charts kept the previous language: ${JSON.stringify(nginx)}`);
 state.timeRange = null;
 state.customFrom = new Date('2026-09-04T10:00:00Z');
 state.customTo = new Date('2026-09-05T10:00:00Z');

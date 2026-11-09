@@ -63,9 +63,42 @@ import { batchChartUI, updateChartUI, setChartHidden, setChartSubtitle } from '.
 
 const historyRequests = new HistoryRequestController();
 
+// A legend entry that follows the language: updateChartLabels() re-reads
+// $kulaLabelKey. Technical terms (Commits/s, Keepalive, Blks Hit/s) and
+// abbreviations keep a plain English label.
+function series(key, options) {
+    return { label: i18n.t(key), $kulaLabelKey: key, ...options };
+}
+
+// The power-supply states the kernel reports (POWER_SUPPLY_STATUS); any other
+// value is shown as it is.
+const PSU_STATUS_KEYS = {
+    Charging: 'psu_charging',
+    Discharging: 'psu_discharging',
+    Full: 'psu_full',
+    'Not charging': 'psu_not_charging',
+    Unknown: 'psu_status_unknown',
+};
+
+// appendTitle writes "Product — metric" into element, with the metric (a
+// translation key) in its own data-i18n span so a language change retitles it.
+// A plain string title is written as it is.
+function appendTitle(element, title) {
+    if (!Array.isArray(title)) {
+        element.textContent = title;
+        return;
+    }
+    const [product, key] = title;
+    const metric = document.createElement('span');
+    metric.dataset.i18n = key;
+    metric.textContent = i18n.t(key);
+    element.append(`${product} \u2014 `, metric);
+}
+
 // createAppChartCard builds a chart-card for an application metric and places
 // it in the Applications section, ordered by group (APP_GROUPS in
-// card-order.js), then rank. Returns the canvas ID for createTimeSeriesChart.
+// card-order.js), then rank. title is a string or [product, translation key].
+// Returns the canvas ID for createTimeSeriesChart.
 function createAppChartCard(cardId, chartId, subtitleId, title, group, rank = 0) {
     if (!document.getElementById('applications-grid')) return null;
 
@@ -76,7 +109,7 @@ function createAppChartCard(cardId, chartId, subtitleId, title, group, rank = 0)
     const header = document.createElement('div');
     header.className = 'chart-header';
     const h3 = document.createElement('h3');
-    h3.textContent = title;
+    appendTitle(h3, title);
     const span = document.createElement('span');
     span.className = 'chart-subtitle';
     span.id = subtitleId;
@@ -381,16 +414,15 @@ export function addSampleToCharts(item, ts, {
 
     // Disk Space — single dataset for selected mount — skip when split is active
     if (!state.splitDiskSpace && wantsChart(state.charts.diskspace) && s.disk?.filesystems && s.disk.filesystems.length > 0) {
-        if ((state.charts.diskspace.data.datasets.length !== 1 || state.charts.diskspace.data.datasets[0].label !== 'Space Used %')) {
-            state.charts.diskspace.data.datasets = [{
-                label: 'Space Used %',
+        if (state.charts.diskspace.data.datasets.length !== 1 || state.charts.diskspace.data.datasets[0].$kulaLabelKey !== 'space_used_pct') {
+            state.charts.diskspace.data.datasets = [series('space_used_pct', {
                 borderColor: colors.purple,
                 backgroundColor: colors.purpleAlpha,
                 fill: false,
                 tension: 0,
                 data: [],
                 pointHitRadius: 5,
-            }];
+            })];
         }
         let usedPct = 0, used = 0, total = 0;
         const fs = s.disk.filesystems.find(f => f.mount === state.selectedDiskSpace);
@@ -485,7 +517,14 @@ export function addSampleToCharts(item, ts, {
                     const header = document.createElement('div');
                     header.className = 'chart-header';
                     const h3 = document.createElement('h3');
-                    h3.textContent = `${ps.type} \u2014 ${ps.name}`;
+                    if (ps.type === 'Battery') {
+                        const type = document.createElement('span');
+                        type.dataset.i18n = 'battery';
+                        type.textContent = i18n.t('battery');
+                        h3.append(type, ` \u2014 ${ps.name}`);
+                    } else {
+                        h3.textContent = `${ps.type} \u2014 ${ps.name}`;
+                    }
                     const span = document.createElement('span');
                     span.className = 'chart-subtitle';
                     span.id = `${psuKey}-subtitle`;
@@ -503,8 +542,8 @@ export function addSampleToCharts(item, ts, {
                     placeCard(wrapper, { section: 'system', family: 'psu' });
 
                     state.psuCharts[psuKey] = createTimeSeriesChart(`chart-${psuKey}`, [
-                        { label: 'Capacity %', borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
-                        { label: 'Power W', borderColor: colors.orange, data: [], fill: false },
+                        series('psu_capacity_pct', { borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] }),
+                        series('power_w', { borderColor: colors.orange, data: [], fill: false }),
                     ], { beginAtZero: true, max: 100, ticks: { callback: v => formatMetricNumber(v) + '%' } });
 
                     // Add second y-axis for power
@@ -530,7 +569,7 @@ export function addSampleToCharts(item, ts, {
 
             setChartSubtitle(`${psuKey}-subtitle`, () => {
                 const parts = [`${formatMetricNumber(ps.capacity)}%`];
-                if (ps.status) parts.push(ps.status);
+                if (ps.status) parts.push(PSU_STATUS_KEYS[ps.status] ? i18n.t(PSU_STATUS_KEYS[ps.status]) : ps.status);
                 if (ps.power_w > 0) parts.push(`${ps.power_w.toFixed(1)} W`);
                 if (ps.voltage_v > 0) parts.push(`${ps.voltage_v.toFixed(2)} V`);
                 return parts.join('  ');
@@ -551,22 +590,22 @@ export function addSampleToCharts(item, ts, {
         appsVisible = true;
 
         if (!state.charts.nginxConn) {
-            createAppChartCard('card-nginx-connections', 'chart-nginx-connections', 'nginx-conn-subtitle', 'Nginx \u2014 Connections', 'nginx', 0);
+            createAppChartCard('card-nginx-connections', 'chart-nginx-connections', 'nginx-conn-subtitle', ['Nginx', 'app_connections'], 'nginx', 0);
             state.charts.nginxConn = createTimeSeriesChart('chart-nginx-connections', [
-                { label: 'Active Connections', borderColor: colors.blue, backgroundColor: colors.blueAlpha, fill: true, data: [] },
+                series('app_active_connections', { borderColor: colors.blue, backgroundColor: colors.blueAlpha, fill: true, data: [] }),
             ]);
         }
         if (state.charts.nginxConn) {
             push(state.charts.nginxConn.data.datasets[0], n.active_conn, minN?.active_conn, maxN?.active_conn);
-            setChartSubtitle('nginx-conn-subtitle', () => `Active: ${n.active_conn}`);
+            setChartSubtitle('nginx-conn-subtitle', () => `${i18n.t('app_active')}: ${n.active_conn}`);
         }
 
         if (!state.charts.nginxReqs) {
-            createAppChartCard('card-nginx-requests', 'chart-nginx-requests', 'nginx-reqs-subtitle', 'Nginx \u2014 Requests', 'nginx', 1);
+            createAppChartCard('card-nginx-requests', 'chart-nginx-requests', 'nginx-reqs-subtitle', ['Nginx', 'app_requests'], 'nginx', 1);
             state.charts.nginxReqs = createTimeSeriesChart('chart-nginx-requests', [
-                { label: 'Accepts/s', borderColor: colors.green, data: [], fill: false },
-                { label: 'Handled/s', borderColor: colors.cyan, data: [], fill: false },
-                { label: 'Requests/s', borderColor: colors.blue, backgroundColor: colors.blueAlpha, fill: true, data: [] },
+                series('app_accepts_ps', { borderColor: colors.green, data: [], fill: false }),
+                series('app_handled_ps', { borderColor: colors.cyan, data: [], fill: false }),
+                series('app_requests_ps', { borderColor: colors.blue, backgroundColor: colors.blueAlpha, fill: true, data: [] }),
             ]);
         }
         if (state.charts.nginxReqs) {
@@ -575,16 +614,16 @@ export function addSampleToCharts(item, ts, {
         }
 
         if (!state.charts.nginxRw) {
-            createAppChartCard('card-nginx-rw', 'chart-nginx-rw', 'nginx-rw-subtitle', 'Nginx \u2014 Workers', 'nginx', 2);
+            createAppChartCard('card-nginx-rw', 'chart-nginx-rw', 'nginx-rw-subtitle', ['Nginx', 'app_workers'], 'nginx', 2);
             state.charts.nginxRw = createTimeSeriesChart('chart-nginx-rw', [
-                { label: 'Reading', borderColor: colors.green, data: [], fill: false },
-                { label: 'Writing', borderColor: colors.orange, data: [], fill: false },
-                { label: 'Waiting', borderColor: colors.yellow, data: [], fill: false },
+                series('app_reading', { borderColor: colors.green, data: [], fill: false }),
+                series('app_writing', { borderColor: colors.orange, data: [], fill: false }),
+                series('app_waiting', { borderColor: colors.yellow, data: [], fill: false }),
             ]);
         }
         if (state.charts.nginxRw) {
             pushFields(state.charts.nginxRw, n, minN, maxN, ['reading', 'writing', 'waiting']);
-            setChartSubtitle('nginx-rw-subtitle', () => `R: ${n.reading}  W: ${n.writing}  Wait: ${n.waiting}`);
+            setChartSubtitle('nginx-rw-subtitle', () => `R: ${n.reading}  W: ${n.writing}  ${i18n.t('app_wait')}: ${n.waiting}`);
         }
     }
 
@@ -596,19 +635,19 @@ export function addSampleToCharts(item, ts, {
         appsVisible = true;
 
         if (!state.charts.apache2Workers) {
-            createAppChartCard('card-apache2-workers', 'chart-apache2-workers', 'apache2-workers-subtitle', 'Apache2 \u2014 Workers', 'apache2', 0);
+            createAppChartCard('card-apache2-workers', 'chart-apache2-workers', 'apache2-workers-subtitle', ['Apache2', 'app_workers'], 'apache2', 0);
             state.charts.apache2Workers = createTimeSeriesChart('chart-apache2-workers', [
-                { label: 'Busy', borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [] },
-                { label: 'Idle', borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
+                series('app_busy', { borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [] }),
+                series('app_idle', { borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] }),
             ]);
         }
         if (state.charts.apache2Workers) {
             pushFields(state.charts.apache2Workers, a, minA, maxA, ['busy_workers', 'idle_workers']);
-            setChartSubtitle('apache2-workers-subtitle', () => `Busy: ${a.busy_workers}  Idle: ${a.idle_workers}`);
+            setChartSubtitle('apache2-workers-subtitle', () => `${i18n.t('app_busy')}: ${a.busy_workers}  ${i18n.t('app_idle')}: ${a.idle_workers}`);
         }
 
         if (!state.charts.apache2Tput) {
-            createAppChartCard('card-apache2-throughput', 'chart-apache2-throughput', 'apache2-tput-subtitle', 'Apache2 \u2014 Throughput', 'apache2', 1);
+            createAppChartCard('card-apache2-throughput', 'chart-apache2-throughput', 'apache2-tput-subtitle', ['Apache2', 'app_throughput'], 'apache2', 1);
             // Current rates only: mod_status's own ReqPerSec and BytesPerSec
             // are averages over Apache's whole uptime.
             state.charts.apache2Tput = createTimeSeriesChart('chart-apache2-throughput', [
@@ -623,19 +662,19 @@ export function addSampleToCharts(item, ts, {
 
         if (!state.charts.apache2States) {
             const cl = colorList;
-            createAppChartCard('card-apache2-states', 'chart-apache2-states', 'apache2-states-subtitle', 'Apache2 \u2014 Worker States', 'apache2', 2);
+            createAppChartCard('card-apache2-states', 'chart-apache2-states', 'apache2-states-subtitle', ['Apache2', 'app_worker_states'], 'apache2', 2);
             state.charts.apache2States = createTimeSeriesChart('chart-apache2-states', [
-                { label: 'Waiting',     borderColor: cl[0], data: [], fill: false },
-                { label: 'Reading',     borderColor: cl[1], data: [], fill: false },
-                { label: 'Sending',     borderColor: cl[2], data: [], fill: false },
-                { label: 'Keepalive',   borderColor: cl[3], data: [], fill: false },
-                { label: 'Starting',    borderColor: cl[4], data: [], fill: false },
-                { label: 'DNS',         borderColor: cl[5], data: [], fill: false },
-                { label: 'Closing',     borderColor: cl[6], data: [], fill: false },
-                { label: 'Logging',     borderColor: cl[7], data: [], fill: false },
-                { label: 'Graceful',    borderColor: cl[8], data: [], fill: false },
-                { label: 'IdleCleanup', borderColor: cl[9], data: [], fill: false },
-                { label: 'OpenSlots',   borderColor: cl[0], borderDash: [3, 2], data: [], fill: false },
+                series('app_waiting',      { borderColor: cl[0], data: [], fill: false }),
+                series('app_reading',      { borderColor: cl[1], data: [], fill: false }),
+                series('app_sending',      { borderColor: cl[2], data: [], fill: false }),
+                { label: 'Keepalive',        borderColor: cl[3], data: [], fill: false },
+                series('app_starting',     { borderColor: cl[4], data: [], fill: false }),
+                { label: 'DNS',              borderColor: cl[5], data: [], fill: false },
+                series('app_closing',      { borderColor: cl[6], data: [], fill: false }),
+                series('app_logging',      { borderColor: cl[7], data: [], fill: false }),
+                series('app_graceful',     { borderColor: cl[8], data: [], fill: false }),
+                series('app_idle_cleanup', { borderColor: cl[9], data: [], fill: false }),
+                series('app_open_slots',   { borderColor: cl[0], borderDash: [3, 2], data: [], fill: false }),
             ]);
         }
         if (state.charts.apache2States) {
@@ -646,7 +685,7 @@ export function addSampleToCharts(item, ts, {
                 maxA,
                 ['waiting', 'reading', 'sending', 'keepalive', 'starting', 'dns', 'closing', 'logging', 'graceful', 'idle_cleanup', 'open_slots'],
             );
-            setChartSubtitle('apache2-states-subtitle', () => `Busy: ${a.busy_workers}  Idle: ${a.idle_workers}  Slots: ${a.open_slots}`);
+            setChartSubtitle('apache2-states-subtitle', () => `${i18n.t('app_busy')}: ${a.busy_workers}  ${i18n.t('app_idle')}: ${a.idle_workers}  ${i18n.t('app_open_slots')}: ${a.open_slots}`);
         }
     }
 
@@ -659,24 +698,24 @@ export function addSampleToCharts(item, ts, {
 
         // 1. Connection States
         if (!state.charts.mysqlConn) {
-            createAppChartCard('card-mysql-connections', 'chart-mysql-connections', 'mysql-conn-subtitle', 'MySQL \u2014 Connection States', 'mysql', 0);
+            createAppChartCard('card-mysql-connections', 'chart-mysql-connections', 'mysql-conn-subtitle', ['MySQL', 'app_connection_states'], 'mysql', 0);
             state.charts.mysqlConn = createTimeSeriesChart('chart-mysql-connections', [
-                { label: 'Connected',      borderColor: colors.blue,   backgroundColor: colors.blueAlpha,   fill: true,  data: [] },
-                { label: 'Running',         borderColor: colors.green,  backgroundColor: colors.greenAlpha,  fill: true,  data: [] },
-                { label: 'Cached',          borderColor: colors.yellow, backgroundColor: colors.yellowAlpha, fill: true,  data: [] },
-                { label: 'Max Connections', borderColor: colors.purple, data: [], fill: false, borderDash: [4, 2] },
+                series('app_threads_connected', { borderColor: colors.blue,   backgroundColor: colors.blueAlpha,   fill: true,  data: [] }),
+                series('app_threads_running',   { borderColor: colors.green,  backgroundColor: colors.greenAlpha,  fill: true,  data: [] }),
+                series('app_threads_cached',    { borderColor: colors.yellow, backgroundColor: colors.yellowAlpha, fill: true,  data: [] }),
+                series('app_max_connections',   { borderColor: colors.purple, data: [], fill: false, borderDash: [4, 2] }),
             ]);
         }
         if (state.charts.mysqlConn) {
             pushFields(state.charts.mysqlConn, m, minM, maxM, ['threads_connected', 'threads_running', 'threads_cached', 'max_conns']);
-            setChartSubtitle('mysql-conn-subtitle', () => `Connected: ${m.threads_connected}  Running: ${m.threads_running}  Cached: ${m.threads_cached}  Max: ${m.max_conns}`);
+            setChartSubtitle('mysql-conn-subtitle', () => `${i18n.t('app_threads_connected')}: ${m.threads_connected}  ${i18n.t('app_threads_running')}: ${m.threads_running}  ${i18n.t('app_threads_cached')}: ${m.threads_cached}  ${i18n.t('max')}: ${m.max_conns}`);
         }
 
         // 2. Queries per Second
         if (!state.charts.mysqlQPS) {
-            createAppChartCard('card-mysql-queries', 'chart-mysql-queries', 'mysql-qps-subtitle', 'MySQL \u2014 Queries/s', 'mysql', 1);
+            createAppChartCard('card-mysql-queries', 'chart-mysql-queries', 'mysql-qps-subtitle', ['MySQL', 'app_queries_ps'], 'mysql', 1);
             state.charts.mysqlQPS = createTimeSeriesChart('chart-mysql-queries', [
-                { label: 'Queries/s',  borderColor: colors.blue,   backgroundColor: colors.blueAlpha, fill: true, data: [] },
+                series('app_queries_ps', { borderColor: colors.blue, backgroundColor: colors.blueAlpha, fill: true, data: [] }),
                 { label: 'Select/s',   borderColor: colors.green,  data: [], fill: false },
                 { label: 'Insert/s',   borderColor: colors.cyan,   data: [], fill: false },
                 { label: 'Update/s',   borderColor: colors.orange, data: [], fill: false },
@@ -690,40 +729,40 @@ export function addSampleToCharts(item, ts, {
 
         // 3. Slow Queries
         if (!state.charts.mysqlSlow) {
-            createAppChartCard('card-mysql-slow', 'chart-mysql-slow', 'mysql-slow-subtitle', 'MySQL \u2014 Slow Queries/s', 'mysql', 2);
+            createAppChartCard('card-mysql-slow', 'chart-mysql-slow', 'mysql-slow-subtitle', ['MySQL', 'app_slow_queries_ps'], 'mysql', 2);
             state.charts.mysqlSlow = createTimeSeriesChart('chart-mysql-slow', [
-                { label: 'Slow Queries/s', borderColor: colors.red, backgroundColor: colors.redAlpha, fill: true, data: [] },
+                series('app_slow_queries_ps', { borderColor: colors.red, backgroundColor: colors.redAlpha, fill: true, data: [] }),
             ]);
         }
         if (state.charts.mysqlSlow) {
             push(state.charts.mysqlSlow.data.datasets[0], m.slow_queries_ps, minM?.slow_queries_ps, maxM?.slow_queries_ps);
-            setChartSubtitle('mysql-slow-subtitle', () => `Slow: ${(m.slow_queries_ps || 0).toFixed(2)}`);
+            setChartSubtitle('mysql-slow-subtitle', () => `${i18n.t('app_slow')}: ${(m.slow_queries_ps || 0).toFixed(2)}`);
         }
 
         // 4. InnoDB Buffer Pool
         if (!state.charts.mysqlInnoDB) {
             createAppChartCard('card-mysql-innodb', 'chart-mysql-innodb', 'mysql-innodb-subtitle', 'MySQL \u2014 InnoDB Buffer Pool', 'mysql', 3);
             state.charts.mysqlInnoDB = createTimeSeriesChart('chart-mysql-innodb', [
-                { label: 'Hit %',      borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
-                { label: 'Reads/s',    borderColor: colors.orange, data: [], fill: false },
+                series('app_hit_pct', { borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] }),
+                series('reads_s',     { borderColor: colors.orange, data: [], fill: false }),
             ], { ticks: { callback: v => v.toFixed(1) + '%' } });
         }
         if (state.charts.mysqlInnoDB) {
             pushFields(state.charts.mysqlInnoDB, m, minM, maxM, ['innodb_buffer_pool_hit_pct', 'innodb_bp_reads_ps']);
-            setChartSubtitle('mysql-innodb-subtitle', () => `Hit: ${(m.innodb_buffer_pool_hit_pct || 0).toFixed(1)}%  Reads/s: ${(m.innodb_bp_reads_ps || 0).toFixed(0)}`);
+            setChartSubtitle('mysql-innodb-subtitle', () => `${i18n.t('app_hit')}: ${(m.innodb_buffer_pool_hit_pct || 0).toFixed(1)}%  ${i18n.t('reads_s')}: ${(m.innodb_bp_reads_ps || 0).toFixed(0)}`);
         }
 
         // 5. Lock Waits
         if (!state.charts.mysqlLocks) {
-            createAppChartCard('card-mysql-locks', 'chart-mysql-locks', 'mysql-locks-subtitle', 'MySQL \u2014 Lock Waits/s', 'mysql', 4);
+            createAppChartCard('card-mysql-locks', 'chart-mysql-locks', 'mysql-locks-subtitle', ['MySQL', 'app_lock_waits_ps'], 'mysql', 4);
             state.charts.mysqlLocks = createTimeSeriesChart('chart-mysql-locks', [
-                { label: 'Table Lock Waits/s', borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true,  data: [] },
-                { label: 'Row Lock Waits/s',   borderColor: colors.red,    data: [], fill: false },
+                series('app_table_lock_waits_ps', { borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true,  data: [] }),
+                series('app_row_lock_waits_ps',   { borderColor: colors.red,    data: [], fill: false }),
             ]);
         }
         if (state.charts.mysqlLocks) {
             pushFields(state.charts.mysqlLocks, m, minM, maxM, ['table_locks_waited_ps', 'row_lock_waits_ps']);
-            setChartSubtitle('mysql-locks-subtitle', () => `Table: ${(m.table_locks_waited_ps || 0).toFixed(2)}  Row: ${(m.row_lock_waits_ps || 0).toFixed(2)}`);
+            setChartSubtitle('mysql-locks-subtitle', () => `${i18n.t('app_table')}: ${(m.table_locks_waited_ps || 0).toFixed(2)}  ${i18n.t('app_row')}: ${(m.row_lock_waits_ps || 0).toFixed(2)}`);
         }
 
         // 6. Replication — only render the card when the server actually
@@ -737,10 +776,10 @@ export function addSampleToCharts(item, ts, {
         const mHasReplicas = (m.replica_count || 0) > 0;
         if (mIsReplica || mHasReplicas) {
             if (!state.charts.mysqlRepl) {
-                createAppChartCard('card-mysql-replication', 'chart-mysql-replication', 'mysql-repl-subtitle', 'MySQL — Replication', 'mysql', 5);
+                createAppChartCard('card-mysql-replication', 'chart-mysql-replication', 'mysql-repl-subtitle', ['MySQL', 'app_replication'], 'mysql', 5);
                 state.charts.mysqlRepl = createTimeSeriesChart('chart-mysql-replication', [
-                    { label: 'Seconds Behind',     borderColor: colors.red,    backgroundColor: colors.redAlpha,    fill: true,  data: [] },
-                    { label: 'Replicas Connected', borderColor: colors.blue,   data: [], fill: false },
+                    series('app_seconds_behind',     { borderColor: colors.red,    backgroundColor: colors.redAlpha,    fill: true,  data: [] }),
+                    series('app_replicas_connected', { borderColor: colors.blue,   data: [], fill: false }),
                 ]);
             }
             if (state.charts.mysqlRepl) {
@@ -748,8 +787,8 @@ export function addSampleToCharts(item, ts, {
                 push(state.charts.mysqlRepl.data.datasets[0], secs, minM?.replica_seconds_behind, maxM?.replica_seconds_behind);
                 push(state.charts.mysqlRepl.data.datasets[1], m.replica_count, minM?.replica_count, maxM?.replica_count);
                 setChartSubtitle('mysql-repl-subtitle', () => {
-                    const io  = m.replica_io_running  ? 'running' : 'stopped';
-                    const sql = m.replica_sql_running ? 'running' : 'stopped';
+                    const io  = i18n.t(m.replica_io_running  ? 'app_thread_running' : 'app_thread_stopped');
+                    const sql = i18n.t(m.replica_sql_running ? 'app_thread_running' : 'app_thread_stopped');
                     const lag = secs === null ? 'n/a' : `${secs}s`;
                     // Surface a non-zero errno or a non-waiting IO state
                     // inline so an operator alerted by the IO/SQL flip can
@@ -758,9 +797,9 @@ export function addSampleToCharts(item, ts, {
                     let extra = '';
                     if (errno) extra = `  Err: ${errno}`;
                     else if (m.replica_io_state && !/waiting for (master|source) to send/i.test(m.replica_io_state)) {
-                        extra = `  State: ${m.replica_io_state}`;
+                        extra = `  ${i18n.t('app_state')}: ${m.replica_io_state}`;
                     }
-                    return `IO: ${io}  SQL: ${sql}  Lag: ${lag}  Replicas: ${m.replica_count || 0}${extra}`;
+                    return `IO: ${io}  SQL: ${sql}  ${i18n.t('app_lag')}: ${lag}  ${i18n.t('app_replicas')}: ${m.replica_count || 0}${extra}`;
                 });
             }
         }
@@ -794,23 +833,23 @@ export function addSampleToCharts(item, ts, {
 
         // 1. Connection States (stacked area)
         if (!state.charts.pgConnStates) {
-            createAppChartCard('card-pg-connections', 'chart-pg-connections', 'pg-conn-subtitle', 'PostgreSQL \u2014 Connection States', 'postgres', 0);
+            createAppChartCard('card-pg-connections', 'chart-pg-connections', 'pg-conn-subtitle', ['PostgreSQL', 'app_connection_states'], 'postgres', 0);
             state.charts.pgConnStates = createTimeSeriesChart('chart-pg-connections', [
-                { label: 'Active',          borderColor: colors.blue,   backgroundColor: colors.blueAlpha,   fill: true,  data: [] },
-                { label: 'Idle',            borderColor: colors.green,  backgroundColor: colors.greenAlpha,  fill: true,  data: [] },
-                { label: 'Idle in Tx',      borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true,  data: [] },
-                { label: 'Waiting',         borderColor: colors.red,    backgroundColor: colors.redAlpha,    fill: true,  data: [] },
-                { label: 'Max Connections', borderColor: colors.purple, data: [], fill: false, borderDash: [4, 2] },
+                series('app_active',          { borderColor: colors.blue,   backgroundColor: colors.blueAlpha,   fill: true,  data: [] }),
+                series('app_idle',            { borderColor: colors.green,  backgroundColor: colors.greenAlpha,  fill: true,  data: [] }),
+                series('app_idle_in_tx',      { borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true,  data: [] }),
+                series('app_waiting',         { borderColor: colors.red,    backgroundColor: colors.redAlpha,    fill: true,  data: [] }),
+                series('app_max_connections', { borderColor: colors.purple, data: [], fill: false, borderDash: [4, 2] }),
             ]);
         }
         if (state.charts.pgConnStates) {
             pushFields(state.charts.pgConnStates, pg, minPG, maxPG, ['active_conns', 'idle_conns', 'idle_in_tx_conns', 'waiting_conns', 'max_conns']);
-            setChartSubtitle('pg-conn-subtitle', () => `Active: ${pg.active_conns}  Idle: ${pg.idle_conns}  IdleTx: ${pg.idle_in_tx_conns}  Wait: ${pg.waiting_conns}`);
+            setChartSubtitle('pg-conn-subtitle', () => `${i18n.t('app_active')}: ${pg.active_conns}  ${i18n.t('app_idle')}: ${pg.idle_conns}  IdleTx: ${pg.idle_in_tx_conns}  ${i18n.t('app_wait')}: ${pg.waiting_conns}`);
         }
 
         // 2. Transactions per Second
         if (!state.charts.pgTPS) {
-            createAppChartCard('card-pg-tps', 'chart-pg-tps', 'pg-tps-subtitle', 'PostgreSQL \u2014 Transactions/s', 'postgres', 1);
+            createAppChartCard('card-pg-tps', 'chart-pg-tps', 'pg-tps-subtitle', ['PostgreSQL', 'app_transactions_ps'], 'postgres', 1);
             state.charts.pgTPS = createTimeSeriesChart('chart-pg-tps', [
                 { label: 'Commits/s',   borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
                 { label: 'Rollbacks/s', borderColor: colors.red,   data: [], fill: false },
@@ -823,36 +862,36 @@ export function addSampleToCharts(item, ts, {
 
         // 3. Lock Waits & Deadlocks
         if (!state.charts.pgLocks) {
-            createAppChartCard('card-pg-locks', 'chart-pg-locks', 'pg-locks-subtitle', 'PostgreSQL \u2014 Lock Waits & Deadlocks', 'postgres', 2);
+            createAppChartCard('card-pg-locks', 'chart-pg-locks', 'pg-locks-subtitle', ['PostgreSQL', 'app_lock_waits_deadlocks'], 'postgres', 2);
             state.charts.pgLocks = createTimeSeriesChart('chart-pg-locks', [
-                { label: 'Lock Waits',   borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [] },
-                { label: 'Deadlocks/s',  borderColor: colors.red,    data: [], fill: false },
+                series('app_lock_waits',   { borderColor: colors.orange, backgroundColor: colors.orangeAlpha, fill: true, data: [] }),
+                series('app_deadlocks_ps', { borderColor: colors.red,    data: [], fill: false }),
             ]);
         }
         if (state.charts.pgLocks) {
             pushFields(state.charts.pgLocks, pg, minPG, maxPG, ['waiting_conns', 'deadlocks_ps']);
-            setChartSubtitle('pg-locks-subtitle', () => `Lock Waits: ${pg.waiting_conns}  Deadlocks/s: ${(pg.deadlocks_ps || 0).toFixed(2)}`);
+            setChartSubtitle('pg-locks-subtitle', () => `${i18n.t('app_lock_waits')}: ${pg.waiting_conns}  ${i18n.t('app_deadlocks_ps')}: ${(pg.deadlocks_ps || 0).toFixed(2)}`);
         }
 
         // 4. Row/Tuple Activity
         if (!state.charts.pgTuples) {
-            createAppChartCard('card-pg-tuples', 'chart-pg-tuples', 'pg-tuples-subtitle', 'PostgreSQL \u2014 Row Activity', 'postgres', 3);
+            createAppChartCard('card-pg-tuples', 'chart-pg-tuples', 'pg-tuples-subtitle', ['PostgreSQL', 'app_row_activity'], 'postgres', 3);
             state.charts.pgTuples = createTimeSeriesChart('chart-pg-tuples', [
-                { label: 'Fetched/s',  borderColor: colors.blue,   data: [], fill: false },
-                { label: 'Returned/s', borderColor: colors.cyan,   data: [], fill: false },
-                { label: 'Inserted/s', borderColor: colors.green,  data: [], fill: false },
-                { label: 'Updated/s',  borderColor: colors.yellow, data: [], fill: false },
-                { label: 'Deleted/s',  borderColor: colors.red,    data: [], fill: false },
+                series('app_fetched_ps',  { borderColor: colors.blue,   data: [], fill: false }),
+                series('app_returned_ps', { borderColor: colors.cyan,   data: [], fill: false }),
+                series('app_inserted_ps', { borderColor: colors.green,  data: [], fill: false }),
+                series('app_updated_ps',  { borderColor: colors.yellow, data: [], fill: false }),
+                series('app_deleted_ps',  { borderColor: colors.red,    data: [], fill: false }),
             ]);
         }
         if (state.charts.pgTuples) {
             pushFields(state.charts.pgTuples, pg, minPG, maxPG, ['tup_fetched_ps', 'tup_returned_ps', 'tup_inserted_ps', 'tup_updated_ps', 'tup_deleted_ps']);
-            setChartSubtitle('pg-tuples-subtitle', () => `Fetched/s: ${(pg.tup_fetched_ps || 0).toFixed(1)}  Ins: ${(pg.tup_inserted_ps || 0).toFixed(1)}  Upd: ${(pg.tup_updated_ps || 0).toFixed(1)}  Del: ${(pg.tup_deleted_ps || 0).toFixed(1)}`);
+            setChartSubtitle('pg-tuples-subtitle', () => `${i18n.t('app_fetched_ps')}: ${(pg.tup_fetched_ps || 0).toFixed(1)}  Ins: ${(pg.tup_inserted_ps || 0).toFixed(1)}  Upd: ${(pg.tup_updated_ps || 0).toFixed(1)}  Del: ${(pg.tup_deleted_ps || 0).toFixed(1)}`);
         }
 
         // 5. Disk I/O vs Memory (blocks)
         if (!state.charts.pgIO) {
-            createAppChartCard('card-pg-io', 'chart-pg-io', 'pg-io-subtitle', 'PostgreSQL \u2014 Disk I/O vs Cache', 'postgres', 4);
+            createAppChartCard('card-pg-io', 'chart-pg-io', 'pg-io-subtitle', ['PostgreSQL', 'app_disk_io_vs_cache'], 'postgres', 4);
             state.charts.pgIO = createTimeSeriesChart('chart-pg-io', [
                 { label: 'Blks Hit/s',  borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
                 { label: 'Blks Read/s', borderColor: colors.orange, data: [], fill: false },
@@ -865,19 +904,19 @@ export function addSampleToCharts(item, ts, {
 
         // 6. Cache Hit Ratio
         if (!state.charts.pgCacheHit) {
-            createAppChartCard('card-pg-cache-hit', 'chart-pg-cache-hit', 'pg-cache-subtitle', 'PostgreSQL \u2014 Cache Hit Ratio', 'postgres', 5);
+            createAppChartCard('card-pg-cache-hit', 'chart-pg-cache-hit', 'pg-cache-subtitle', ['PostgreSQL', 'app_cache_hit_ratio'], 'postgres', 5);
             state.charts.pgCacheHit = createTimeSeriesChart('chart-pg-cache-hit', [
-                { label: 'Cache Hit %', borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
+                series('app_cache_hit_pct', { borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] }),
             ], { min: 0, max: 100, ticks: { callback: v => v.toFixed(1) + '%' } });
         }
         if (state.charts.pgCacheHit) {
             push(state.charts.pgCacheHit.data.datasets[0], pg.blks_hit_pct, minPG?.blks_hit_pct, maxPG?.blks_hit_pct);
-            setChartSubtitle('pg-cache-subtitle', () => `Hit: ${(pg.blks_hit_pct || 0).toFixed(1)}%`);
+            setChartSubtitle('pg-cache-subtitle', () => `${i18n.t('app_hit')}: ${(pg.blks_hit_pct || 0).toFixed(1)}%`);
         }
 
         // 7. Table Health
         if (!state.charts.pgTableHealth) {
-            createAppChartCard('card-pg-table-health', 'chart-pg-table-health', 'pg-table-subtitle', 'PostgreSQL \u2014 Table Health', 'postgres', 6);
+            createAppChartCard('card-pg-table-health', 'chart-pg-table-health', 'pg-table-subtitle', ['PostgreSQL', 'app_table_health'], 'postgres', 6);
             state.charts.pgTableHealth = createTimeSeriesChart('chart-pg-table-health', [
                 { label: 'Dead Tuples', borderColor: colors.red,   backgroundColor: colors.redAlpha,   fill: true, data: [] },
                 { label: 'Live Tuples', borderColor: colors.green, backgroundColor: colors.greenAlpha, fill: true, data: [] },
@@ -907,19 +946,19 @@ export function addSampleToCharts(item, ts, {
         // check would render an empty card on every standalone server.
         if (pg.is_in_recovery || (pg.replica_count || 0) > 0) {
             if (!state.charts.pgRepl) {
-                createAppChartCard('card-pg-replication', 'chart-pg-replication', 'pg-repl-subtitle', 'PostgreSQL — Replication', 'postgres', 8);
+                createAppChartCard('card-pg-replication', 'chart-pg-replication', 'pg-repl-subtitle', ['PostgreSQL', 'app_replication'], 'postgres', 8);
                 state.charts.pgRepl = createTimeSeriesChart('chart-pg-replication', [
-                    { label: 'Lag Seconds',        borderColor: colors.red,  backgroundColor: colors.redAlpha, fill: true,  data: [] },
-                    { label: 'Replicas Connected', borderColor: colors.blue, data: [], fill: false },
+                    series('app_lag_seconds',        { borderColor: colors.red,  backgroundColor: colors.redAlpha, fill: true,  data: [] }),
+                    series('app_replicas_connected', { borderColor: colors.blue, data: [], fill: false }),
                 ]);
             }
             if (state.charts.pgRepl) {
                 pushFields(state.charts.pgRepl, pg, minPG, maxPG, ['repl_lag_seconds', 'replica_count']);
                 setChartSubtitle('pg-repl-subtitle', () => {
                     if (pg.is_in_recovery) {
-                        return `Standby  Lag: ${(pg.repl_lag_seconds || 0).toFixed(2)}s / ${formatBytesShort(pg.repl_lag_bytes || 0)}`;
+                        return `${i18n.t('app_standby')}  ${i18n.t('app_lag')}: ${(pg.repl_lag_seconds || 0).toFixed(2)}s / ${formatBytesShort(pg.repl_lag_bytes || 0)}`;
                     }
-                    return `Primary  Replicas: ${pg.replica_count || 0}`;
+                    return `${i18n.t('app_primary')}  ${i18n.t('app_replicas')}: ${pg.replica_count || 0}`;
                 });
             }
         }

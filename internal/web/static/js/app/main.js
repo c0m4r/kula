@@ -56,6 +56,7 @@ import {
 } from './settings.js';
 import { updateGauges } from './gauges.js';
 import { forEachRegisteredChart, setSharedCrosshair } from './chart-controller.js';
+import { refreshChartSubtitles } from './chart-ui.js';
 import { sharedCrosshair } from './chart-interactions.js';
 import { announceChartCursor, updateChartAccessibility } from './chart-accessibility.js';
 import { formatFullTimestamp, normalizeTimeZone } from './format.js';
@@ -554,6 +555,7 @@ async function init() {
         renderSamplingInfo();
         renderCrosshairTime(crosshairSnapshot());
         if (state.lastSample) updateHeader(state.lastSample);
+        refreshChartSubtitles();
         updateAllCharts();
     });
     document.addEventListener('kula-zoom-sync', (e) => syncZoom(e.detail));

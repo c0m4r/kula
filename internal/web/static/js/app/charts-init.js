@@ -501,6 +501,11 @@ export function applyChartBounds() {
 }
 
 export function updateChartLabels() {
+    // Datasets created with a translation key (application and battery
+    // charts) follow the language wherever they are.
+    forEachRegisteredChart(chart => chart.data?.datasets?.forEach(dataset => {
+        if (dataset.$kulaLabelKey) dataset.label = i18n.t(dataset.$kulaLabelKey);
+    }));
     if (!state.charts) return;
 
     if (state.charts.cpu) {

@@ -38,11 +38,26 @@ export function setChartHidden(id, hidden) {
     });
 }
 
+// The last formatter of each subtitle, so a language change can rewrite the
+// subtitles of a paused view or of cards whose data stopped arriving.
+const subtitleFormats = new Map();
+
+function renderSubtitle(id, formatText) {
+    const element = document.getElementById(id);
+    if (!element) return false;
+    const text = formatText();
+    if (element.textContent !== text) element.textContent = text;
+    return true;
+}
+
 export function setChartSubtitle(id, formatText) {
-    updateChartUI(`subtitle:${id}`, () => {
-        const element = document.getElementById(id);
-        if (!element) return;
-        const text = formatText();
-        if (element.textContent !== text) element.textContent = text;
-    });
+    subtitleFormats.set(id, formatText);
+    updateChartUI(`subtitle:${id}`, () => renderSubtitle(id, formatText));
+}
+
+// Re-run every subtitle's last formatter, forgetting those whose card is gone.
+export function refreshChartSubtitles() {
+    for (const [id, formatText] of subtitleFormats) {
+        if (!renderSubtitle(id, formatText)) subtitleFormats.delete(id);
+    }
 }
