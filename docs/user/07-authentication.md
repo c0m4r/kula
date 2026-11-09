@@ -22,7 +22,9 @@ a site you visit cannot read your dashboard by DNS rebinding.
 ```
 
 You'll be prompted for a password (input is masked with asterisks using terminal raw mode).
-Kula prints a `password_hash` and `password_salt` computed with **Argon2id**.
+Kula prints a `password_hash` and `password_salt` computed with **Argon2id**. Without a
+terminal, it reads one line of standard input instead (`printf '%s\n' "$PASSWORD" | ./kula
+hash-password`), dropping only the line ending. An empty password is refused.
 
 The Argon2 parameters used are taken from the `web.auth.argon2` block of your config (defaults:
 `time: 3`, `memory: 32768` KiB, `threads: 4` — double the OWASP minimum), so configure those

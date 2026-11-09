@@ -119,8 +119,20 @@ func main() {
 	}
 
 	if cmd == "hash-password" {
-		// Just to read the password, we don't return yet as we need the config
+		if err := hashPasswordArgs(flag.Args()[1:], os.Stderr); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "kula hash-password: %v\n", err)
+			os.Exit(2)
+		}
 		password := readPasswordWithAsterisks()
+		if password == "" {
+			// A config holding the hash of nothing would accept an empty
+			// password, as after a scripted run with an unset variable.
+			fmt.Fprintln(os.Stderr, "kula hash-password: the password is empty")
+			os.Exit(1)
+		}
 
 		// Load config
 		cfg, err := loadConfig(*configPath)
@@ -304,15 +316,37 @@ func runTUI(cfg *config.Config, osName, kernelVersion, cpuArch string) {
 	}
 }
 
+// hashPasswordArgs checks the arguments of `kula hash-password`, which takes
+// none; -h and --help print its usage and return flag.ErrHelp.
+func hashPasswordArgs(args []string, stderr io.Writer) error {
+	hashFlags := flag.NewFlagSet("kula hash-password", flag.ContinueOnError)
+	hashFlags.SetOutput(stderr)
+	hashFlags.Usage = func() {
+		fmt.Fprintln(stderr, "Usage: kula [global flags] hash-password")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Reads a password, typed or as one line of standard input, and prints its")
+		fmt.Fprintln(stderr, "Argon2id hash and salt for web.auth, with the config's argon2 settings.")
+	}
+	if err := hashFlags.Parse(args); err != nil {
+		return err
+	}
+	if hashFlags.NArg() > 0 {
+		hashFlags.Usage()
+		return fmt.Errorf("unexpected argument %q", hashFlags.Arg(0))
+	}
+	return nil
+}
+
 func readPasswordWithAsterisks() string {
 	fmt.Print("Enter password: ")
 	fd := uintptr(syscall.Stdin)
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
-		// Fallback to basic bufio if not running in a proper terminal
+		// Not a terminal: read one line. Only its line ending is dropped, so
+		// the hash is of exactly the password a login will send.
 		reader := bufio.NewReader(os.Stdin)
 		password, _ := reader.ReadString('\n')
-		return strings.TrimSpace(password)
+		return strings.TrimRight(password, "\r\n")
 	}
 	defer func() { _ = term.Restore(fd, oldState) }()
 
