@@ -571,7 +571,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			"PostgreSQL WAL bytes behind primary on a standby (0 on a primary).",
 			host, float64(p.ReplicationLagBytes))
 		gauge("kula_postgres_replication_lag_seconds",
-			"PostgreSQL replay lag in seconds on a standby (0 on a primary).",
+			"PostgreSQL replay lag in seconds on a standby: the time since the last replayed commit, or 0 once everything received from a connected primary is replayed (0 on a primary).",
 			host, p.ReplicationLagSeconds)
 	}
 

@@ -160,6 +160,14 @@ buffer cache hit %, blocks read/hit, checkpoint/backend buffers, deadlocks, dead
 autovacuum count, database size, replication lag (bytes & seconds), replicas connected, and
 recovery state.
 
+On a standby, replication lag in seconds is the time since the last replayed commit while
+there is WAL left to replay, and 0 once the standby has replayed everything it received from a
+connected primary, so a quiet primary no longer reads as a growing lag. When the standby loses
+its primary, the time grows again as soon as its WAL receiver gives up
+(`wal_receiver_timeout`, 60 s by default). WAL the primary has not sent yet is invisible to a
+standby, so a slow link can read as caught up. The `pg_monitor` role lets Kula see whether the
+receiver is streaming; without it, Kula only sees that a receiver is running.
+
 Dead/live tuples, autovacuum count and database size are read once a minute and repeated in
 between: both walk every table of the database, which costs the server tens of milliseconds
 per poll once it holds thousands of tables. Everything else is read every collection interval.

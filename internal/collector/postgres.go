@@ -493,11 +493,27 @@ func (pc *postgresCollector) query(ctx context.Context, conn *sql.Conn) (*Postgr
 		// guards against brief negative values caused by clock skew between
 		// primary and standby (NTP drift can leave the standby clock a few
 		// hundred ms ahead of the primary's last commit timestamp).
+		//
+		// The time since the last replayed commit is the lag only while the
+		// primary commits: on a quiet primary it grows by a second every
+		// second although nothing is left to replay. So a standby that has
+		// replayed all it received, from a WAL receiver that is connected,
+		// lags 0 s. The receiver condition keeps a standby that lost its
+		// primary from reading 0: once the receiver gives up
+		// (wal_receiver_timeout) the time grows again. Its status is visible
+		// only with pg_read_all_stats (pg_monitor); without it the view still
+		// shows that a receiver runs, with a NULL status.
 		if err := conn.QueryRowContext(ctx, `
 			SELECT
 				COALESCE(pg_wal_lsn_diff(pg_last_wal_receive_lsn(),
 				                         pg_last_wal_replay_lsn())::bigint, 0),
-				GREATEST(0, COALESCE(EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())), 0))
+				CASE
+					WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn()
+					     AND EXISTS (SELECT 1 FROM pg_stat_wal_receiver
+					                 WHERE status = 'streaming' OR status IS NULL)
+					THEN 0
+					ELSE GREATEST(0, COALESCE(EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())), 0))
+				END
 		`).Scan(&lagBytes, &lagSecs); err == nil {
 			if lagBytes.Valid {
 				stats.ReplicationLagBytes = lagBytes.Int64
