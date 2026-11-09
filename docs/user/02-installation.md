@@ -72,6 +72,22 @@ docker run -d --name kula --pid host --network host \
 docker logs -f kula
 ```
 
+**Logged-in users:** Kula counts logins from the host's utmp or systemd-logind sessions, both
+in the host's `/run`, which a container does not see. The count is then unknown: the dashboard
+footer leaves it out, the TUI shows `—`, and `kula_system_logged_in_users` is omitted. To count
+them, mount whichever of the two the host has, read-only:
+
+```bash
+docker run -d --name kula --pid host --network host \
+  -v /proc:/proc:ro -v kula_data:/app/data \
+  --mount type=bind,source=/run/utmp,target=/run/utmp,readonly \
+  --mount type=bind,source=/run/systemd/sessions,target=/run/systemd/sessions,readonly \
+  c0m4r/kula:latest
+```
+
+`--mount` refuses a source the host does not have (`-v` would create it as a directory); drop
+that line instead.
+
 A `docker-compose.yml` is provided in [`addons/docker/`](../../addons/docker/docker-compose.yml).
 Images are published on [Docker Hub](https://hub.docker.com/r/c0m4r/kula) and GHCR.
 
