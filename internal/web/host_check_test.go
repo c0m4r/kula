@@ -92,7 +92,7 @@ func TestHostCheckRefusesRebindingNames(t *testing.T) {
 	for _, host := range []string{
 		"127.0.0.1:27960", "192.0.2.10", "[::1]:27960", "[2001:db8::1]", "127.1", "10.1:27960", "0x7f.1",
 		"localhost:27960", "LOCALHOST.", "kula.localhost", "kula", "kula:27960",
-		"nas.local", "router.lan", "box.home.arpa", "svc.internal", "pi.home", "host.localdomain",
+		"nas.local", "router.lan", "box.home.arpa", "svc.internal", "pi.home", "host.localdomain", "srv.ad.corp",
 		"Kula.Example.com:443", "dash.example.org", "",
 	} {
 		if rec := serveHost(h, host, "/api/current"); rec.Code == http.StatusForbidden {
@@ -101,7 +101,7 @@ func TestHostCheckRefusesRebindingNames(t *testing.T) {
 	}
 	// Local names and allowed names match whole labels, not as prefixes.
 	for _, host := range []string{"kula.example.com.attacker.example", "local.attacker.example", "lan.attacker.example", "attacker-local.example",
-		"127.1.attacker.example", "attacker.example1", "attacker.0xample"} {
+		"127.1.attacker.example", "attacker.example1", "attacker.0xample", "corp.attacker.example"} {
 		if rec := serveHost(h, host, "/api/current"); rec.Code != http.StatusForbidden {
 			t.Errorf("Host %q was answered (%d)", host, rec.Code)
 		}

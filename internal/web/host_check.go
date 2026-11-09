@@ -28,9 +28,9 @@ import (
 // socket no browser connects directly, and nothing is.
 
 // localSuffixes are domains no public DNS server answers for: special-use
-// names (RFC 6761, RFC 8375, ICANN's .internal) and the private suffixes home
-// routers commonly hand out.
-var localSuffixes = []string{"localhost", "local", "internal", "home.arpa", "lan", "home", "localdomain"}
+// names (RFC 6761, RFC 8375, ICANN's .internal), the private suffixes home
+// routers commonly hand out, and .corp, which ICANN will not delegate either.
+var localSuffixes = []string{"localhost", "local", "internal", "home.arpa", "lan", "home", "localdomain", "corp"}
 
 // maxLoggedHosts bounds the set of refused names logged once each, so a flood
 // of distinct names cannot grow memory or the log without limit.

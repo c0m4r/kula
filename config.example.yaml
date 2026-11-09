@@ -176,7 +176,7 @@ web:
     # its own domain at this server's address and read the dashboard in a
     # visitor's browser. With auth disabled and a TCP listener, Kula answers
     # only these Host names: IP addresses, localhost, single-label names
-    # (myserver), names ending in .local, .lan, .home, .localdomain,
+    # (myserver), names ending in .local, .lan, .home, .corp, .localdomain,
     # .internal or .home.arpa, this machine's hostname and global.hostname,
     # the hosts in allowed_origins, and the names listed here. Any other name
     # gets a 403 (logged once per name); /health and /status stay open, and

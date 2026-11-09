@@ -83,7 +83,7 @@ dashboard, the API and `/ws`, and the Origin check passes as well (Origin and `H
 same site). The request still carries the attacker's name in `Host`. `hostCheckMiddleware`
 ([`host_check.go`](../../internal/web/host_check.go)) therefore answers, while auth is
 disabled on a TCP listener, only names a public DNS server cannot answer for: IP addresses,
-`localhost`, single-label names, `.local`/`.lan`/`.home`/`.localdomain`/`.internal`/`.home.arpa`
+`localhost`, single-label names, `.local`/`.lan`/`.home`/`.corp`/`.localdomain`/`.internal`/`.home.arpa`
 names, the machine's hostname (`os.Hostname`) and `global.hostname`, each matched exactly, the
 hosts of `allowed_origins`, and `web.security.allowed_hosts` (normalized at load; `"*"`
 disables the check). Anything else gets a JSON `403`, logged once per name for up to 64
