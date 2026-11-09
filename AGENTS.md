@@ -62,6 +62,11 @@ seeking scans skip those records.
 `TestSeekIndexScansMatchFullScans` requires seeking scans to equal full scans; read-only
 tiers (the TUI) build and extend their own index, checked by
 `TestReadOnlySeekIndexMatchesFullScans` and `TestReadOnlySeekIndexSurvivesAnUnseenLap`.
+The index also tracks each pass's newest backstep (a record written below an earlier
+timestamp, after the clock stepped back) and greatest timestamp: a scan stops at the first
+record past its window only beyond the backstep, and skips the previous pass only when its
+greatest timestamp precedes the window (`TestScansFindRecordsWrittenAfterAClockStep`,
+`TestScansReadThePreviousPassAcrossAClockStep`). Without an index a scan reads every record.
 
 `Tier.SnapshotTo` (backups) copies a tier without its lock, then re-copies only the header and
 the ring range written since. Code that changes any other byte of an open tier file at runtime

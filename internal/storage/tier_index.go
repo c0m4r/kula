@@ -31,6 +31,13 @@ import (
 // against the file (a valid length prefix and its exact timestamp) before it is
 // used; a scan that cannot confirm a point starts at the segment start.
 //
+// A scan stops at the first record past its window's end, which is only right
+// while no later record of the pass was written with an earlier timestamp. So
+// the index also keeps, per pass, the newest such "backstep" record and the
+// pass's greatest timestamp: a scan stops early only at or past the backstep,
+// and skips the previous pass only when its greatest timestamp precedes the
+// window. Without an index, a scan reads every record of its segments.
+//
 // Write maintains the index. OpenTier adopts the sidecar file the last clean
 // Close saved next to the tier (tier_N.idx) when it describes exactly the tier
 // on disk; otherwise it rebuilds the index with one walk of the ring. The tier
@@ -138,31 +145,54 @@ func (t *Tier) walkSegment(seg ringSegment, start int64, visit func(offset int64
 // Caller holds t.mu exclusively.
 func (t *Tier) buildSeekIndex() {
 	t.seek = nil
-	t.passMax = math.MinInt64
+	t.passMax, t.prevPassMax = math.MinInt64, math.MinInt64
+	t.backstep, t.prevBackstep = -1, -1
 	t.seekWalked = 0
 	for _, seg := range t.ringSegments() {
 		passMax := int64(math.MinInt64)
+		backstep := int64(-1)
 		last := int64(-1)
 		t.walkSegment(seg, seg.start, func(offset int64, dataLen uint32, ts int64, ok bool) bool {
 			if seg.cycle == t.writeCycle {
 				t.seekWalked = offset + 4 + int64(dataLen)
 			}
 			if !ok {
+				// Unknown from here on: every later record may step back.
 				passMax = math.MaxInt64
+				backstep = offset
 				return true
 			}
 			if last < 0 || offset-last >= seekIndexSpacing {
 				t.seek = append(t.seek, seekPoint{offset: offset, ts: ts, maxBefore: passMax, cycle: seg.cycle})
 				last = offset
 			}
+			if ts < passMax {
+				backstep = offset
+			}
 			passMax = max(passMax, ts)
 			return true
 		})
 		if seg.cycle == t.writeCycle {
-			t.passMax = passMax
+			t.passMax, t.backstep = passMax, backstep
+		} else {
+			t.prevPassMax, t.prevBackstep = passMax, backstep
 		}
 	}
 	t.seekReady = true
+}
+
+// mayStopAt reports whether a scan of seg that met a record past its window
+// at offset can stop there: no later record of its pass was written with an
+// earlier timestamp. Without an index it cannot know. Caller holds t.mu.
+func (t *Tier) mayStopAt(seg ringSegment, offset int64) bool {
+	if !t.seekReady {
+		return false
+	}
+	backstep := t.backstep
+	if seg.cycle != t.writeCycle {
+		backstep = t.prevBackstep
+	}
+	return backstep <= offset
 }
 
 // dropSeekIndex forgets the index; the next read-only scan rebuilds it.
@@ -170,7 +200,8 @@ func (t *Tier) buildSeekIndex() {
 func (t *Tier) dropSeekIndex() {
 	t.seek = nil
 	t.seekReady = false
-	t.passMax = math.MinInt64
+	t.passMax, t.prevPassMax = math.MinInt64, math.MinInt64
+	t.backstep, t.prevBackstep = -1, -1
 	t.seekWalked = 0
 }
 
@@ -215,11 +246,15 @@ func (t *Tier) prepareReadOnlySeek() {
 		t.seekWalked = offset + 4 + int64(dataLen)
 		if !ok {
 			t.passMax = math.MaxInt64
+			t.backstep = offset
 			return true
 		}
 		if last < 0 || offset-last >= seekIndexSpacing {
 			t.seek = append(t.seek, seekPoint{offset: offset, ts: ts, maxBefore: t.passMax, cycle: t.writeCycle})
 			last = offset
+		}
+		if ts < t.passMax {
+			t.backstep = offset
 		}
 		t.passMax = max(t.passMax, ts)
 		return true
@@ -254,6 +289,9 @@ func (t *Tier) seekAppend(offset, ts int64) {
 	}
 	if n := len(t.seek); n == 0 || t.seek[n-1].cycle != t.writeCycle || offset-t.seek[n-1].offset >= seekIndexSpacing {
 		t.seek = append(t.seek, seekPoint{offset: offset, ts: ts, maxBefore: t.passMax, cycle: t.writeCycle})
+	}
+	if ts < t.passMax {
+		t.backstep = offset
 	}
 	t.passMax = max(t.passMax, ts)
 }
@@ -363,23 +401,25 @@ func (t *Tier) collectLatest(segments []ringSegment, first int, start int64, n i
 //
 // Layout, little-endian:
 //
-//	[0:8]   magic "KULAIDX1"
+//	[0:8]   magic "KULAIDX2"
 //	fingerprint of the tier as Close left it:
 //	        maxData u64, writeOff u64, count u64, oldestOff u64, codecVer u64,
 //	        newestTS i64, fileSize u64, wrapped u8
-//	        passMax i64
+//	        passMax i64, prevPassMax i64, backstep i64, prevBackstep i64
 //	        count u32, then per point: offset u64, ts i64, maxBefore i64,
 //	        pass u8 (0 = current pass, 1 = previous pass)
 //	        crc32 (IEEE) of every preceding byte
 //
 // The sidecar is adopted only when the fingerprint equals the tier just opened,
 // so a crash (the header has moved on), an external rewrite, a restore from
-// backup or a resize all rebuild the index instead.
+// backup or a resize all rebuild the index instead. A KULAIDX1 sidecar (0.22.0
+// development builds, without the pass maxima and backsteps) is rebuilt too.
 
 const (
-	seekSidecarMagic = "KULAIDX1"
-	// magic, fingerprint, passMax, point count and the trailing checksum.
-	seekSidecarFixed  = 8 + 7*8 + 1 + 8 + 4 + 4
+	seekSidecarMagic = "KULAIDX2"
+	// magic, fingerprint, pass maxima and backsteps, point count and the
+	// trailing checksum.
+	seekSidecarFixed  = 8 + 7*8 + 1 + 4*8 + 4 + 4
 	seekSidecarPoint  = 3*8 + 1
 	seekSidecarMaxLen = 64 << 20
 )
@@ -420,7 +460,9 @@ func (t *Tier) saveSeekIndex() error {
 	buf := make([]byte, 0, seekSidecarFixed+len(t.seek)*seekSidecarPoint)
 	buf = append(buf, seekSidecarMagic...)
 	buf = append(buf, fingerprint...)
-	buf = binary.LittleEndian.AppendUint64(buf, uint64(t.passMax))
+	for _, v := range []int64{t.passMax, t.prevPassMax, t.backstep, t.prevBackstep} {
+		buf = binary.LittleEndian.AppendUint64(buf, uint64(v))
+	}
 	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(t.seek)))
 	for _, p := range t.seek {
 		buf = binary.LittleEndian.AppendUint64(buf, uint64(p.offset))
@@ -472,38 +514,54 @@ func (t *Tier) loadSeekIndex() error {
 	if err != nil {
 		return err
 	}
-	points, passMax, err := t.parseSeekSidecar(data)
+	points, passes, err := t.parseSeekSidecar(data)
 	if err != nil {
 		return err
 	}
-	t.seek, t.passMax, t.seekReady = points, passMax, true
+	t.seek, t.seekReady = points, true
+	t.passMax, t.prevPassMax, t.backstep, t.prevBackstep = passes.max, passes.prevMax, passes.backstep, passes.prevBackstep
 	return nil
+}
+
+// sidecarPasses is what a sidecar records about the ring's two passes.
+type sidecarPasses struct {
+	max, prevMax, backstep, prevBackstep int64
 }
 
 // parseSeekSidecar validates a sidecar against the open tier and returns its
 // points with their passes mapped onto the in-memory ring passes.
-func (t *Tier) parseSeekSidecar(data []byte) ([]seekPoint, int64, error) {
+func (t *Tier) parseSeekSidecar(data []byte) ([]seekPoint, sidecarPasses, error) {
+	var passes sidecarPasses
 	if len(data) < seekSidecarFixed || string(data[:8]) != seekSidecarMagic {
-		return nil, 0, fmt.Errorf("not a seek index sidecar")
+		return nil, passes, fmt.Errorf("not a seek index sidecar")
 	}
 	body, sum := data[:len(data)-4], binary.LittleEndian.Uint32(data[len(data)-4:])
 	if crc32.ChecksumIEEE(body) != sum {
-		return nil, 0, fmt.Errorf("seek index sidecar checksum mismatch")
+		return nil, passes, fmt.Errorf("seek index sidecar checksum mismatch")
 	}
 	fingerprint, err := t.seekFingerprint()
 	if err != nil {
-		return nil, 0, err
+		return nil, passes, err
 	}
 	off := 8
 	if string(body[off:off+len(fingerprint)]) != string(fingerprint) {
-		return nil, 0, errSeekSidecarStale
+		return nil, passes, errSeekSidecarStale
 	}
 	off += len(fingerprint)
-	passMax := int64(binary.LittleEndian.Uint64(body[off:]))
-	count := int(binary.LittleEndian.Uint32(body[off+8:]))
-	off += 12
+	for _, v := range []*int64{&passes.max, &passes.prevMax, &passes.backstep, &passes.prevBackstep} {
+		*v = int64(binary.LittleEndian.Uint64(body[off:]))
+		off += 8
+	}
+	passMax := passes.max
+	count := int(binary.LittleEndian.Uint32(body[off:]))
+	off += 4
+	if passes.backstep < -1 || passes.backstep >= max(t.writeOff, 1) ||
+		passes.prevBackstep < -1 || passes.prevBackstep >= t.maxData ||
+		(!t.wrapped && (passes.prevBackstep != -1 || passes.prevMax != math.MinInt64)) {
+		return nil, passes, fmt.Errorf("seek index sidecar backsteps lie outside their passes")
+	}
 	if count < 0 || (len(body)-off)%seekSidecarPoint != 0 || (len(body)-off)/seekSidecarPoint != count {
-		return nil, 0, fmt.Errorf("seek index sidecar length does not match its %d points", count)
+		return nil, passes, fmt.Errorf("seek index sidecar length does not match its %d points", count)
 	}
 
 	points := make([]seekPoint, 0, count)
@@ -521,19 +579,19 @@ func (t *Tier) parseSeekSidecar(data []byte) ([]seekPoint, int64, error) {
 		case pass == 1 && t.wrapped && p.offset >= t.oldestOff && p.offset < t.maxData:
 			p.cycle = t.writeCycle - 1
 		default:
-			return nil, 0, fmt.Errorf("seek index sidecar point %d is outside its pass", i)
+			return nil, passes, fmt.Errorf("seek index sidecar point %d is outside its pass", i)
 		}
 		// Ring order: the previous pass first, offsets and prefix maxima
 		// ascending within a pass.
 		if n := len(points); n > 0 {
 			prev := points[n-1]
 			if p.cycle < prev.cycle || (p.cycle == prev.cycle && (p.offset <= prev.offset || p.maxBefore < prev.maxBefore)) {
-				return nil, 0, fmt.Errorf("seek index sidecar point %d is out of order", i)
+				return nil, passes, fmt.Errorf("seek index sidecar point %d is out of order", i)
 			}
 		}
 		points = append(points, p)
 	}
-	return points, passMax, nil
+	return points, passes, nil
 }
 
 // removeStaleSeekTemps deletes temporary sidecars a crash left between

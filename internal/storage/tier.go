@@ -76,8 +76,14 @@ type Tier struct {
 	// the current one. Only trusted while seekReady.
 	seek      []seekPoint
 	seekReady bool
-	// passMax is the greatest timestamp written in pass writeCycle.
-	passMax int64
+	// passMax is the greatest timestamp written in pass writeCycle, and
+	// prevPassMax that of the pass before it.
+	passMax, prevPassMax int64
+	// backstep and prevBackstep are, for the current and the previous pass,
+	// the offset of the newest record written with a timestamp below an
+	// earlier one of its pass (the clock stepped back), or -1. A scan may
+	// stop at the first record past its window only at or beyond it.
+	backstep, prevBackstep int64
 	// seekFromSidecar records that OpenTier adopted the saved index instead
 	// of walking the ring.
 	seekFromSidecar bool
@@ -397,7 +403,8 @@ func (t *Tier) writePayload(data []byte, ts time.Time) error {
 		t.oldestOff = 0
 		t.writeCycle++
 		t.writeEnd = 0
-		t.passMax = math.MinInt64
+		t.prevPassMax, t.prevBackstep = t.passMax, t.backstep
+		t.passMax, t.backstep = math.MinInt64, -1
 	}
 	t.writeEnd = t.writeOff + int64(recordLen)
 
@@ -554,16 +561,14 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 		return err
 	}
 
-	// Segments in chronological order: while wrapped, the previous pass
-	// [oldestOff, maxData) and then the current pass [0, writeOff); otherwise
-	// only the current pass. Each starts on a record boundary, so when `from`
-	// is at or after the oldest record of the current pass the previous pass
-	// is skipped entirely.
+	// Segments in ring order: while wrapped, the previous pass [oldestOff,
+	// maxData) and then the current pass [0, writeOff); otherwise only the
+	// current pass. The previous pass is skipped when every record it holds
+	// precedes `from`. Its first record cannot tell: after the clock stepped
+	// back, the current pass can begin before the previous one ended.
 	segments := t.ringSegments()
-	if len(segments) == 2 && t.codecVer >= codecVersion2 && t.writeOff > 0 {
-		if seg2Oldest, err := t.readTimestampAt(0); err == nil && !from.Before(seg2Oldest) {
-			segments = segments[1:]
-		}
+	if len(segments) == 2 && t.seekReady && time.Unix(0, t.prevPassMax).Before(from) {
+		segments = segments[1:]
 	}
 
 	scanned := 0
@@ -631,10 +636,10 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 			// payloads without allocating or decoding their metric graphs.
 			if len(hdr) >= 13 && dataLen >= 9 && hdr[4] != '{' {
 				if ts, err := extractTimestamp(hdr[4:]); err == nil {
-					if ts.After(to) {
+					if ts.After(to) && t.mayStopAt(seg, seg.start+bytesRead) {
 						break
 					}
-					if ts.Before(from) {
+					if ts.Before(from) || ts.After(to) {
 						if _, err := br.Discard(int(recordLen)); err != nil {
 							break
 						}
@@ -657,10 +662,10 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 				// Fallback: full decode for JSON records or unreadable binary.
 				sample, decErr := t.readRecord(data)
 				if decErr == nil {
-					if sample.Timestamp.After(to) {
+					if sample.Timestamp.After(to) && t.mayStopAt(seg, seg.start+bytesRead) {
 						break
 					}
-					if !sample.Timestamp.Before(from) {
+					if !sample.Timestamp.Before(from) && !sample.Timestamp.After(to) {
 						keep(sample, seg.start+bytesRead, recordLen)
 					}
 				}
@@ -668,12 +673,13 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 				continue
 			}
 
-			// Records are chronological within a segment: past the window → done.
-			if ts.After(to) {
+			// Past the window: done, unless a record after this one was
+			// written with an earlier timestamp.
+			if ts.After(to) && t.mayStopAt(seg, seg.start+bytesRead) {
 				break
 			}
 
-			if ts.Before(from) {
+			if ts.Before(from) || ts.After(to) {
 				bytesRead += recordLen
 				continue
 			}

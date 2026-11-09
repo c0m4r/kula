@@ -206,8 +206,21 @@ the walk starts at the segment start. `Tier.Write` maintains the index: wraps an
 records drop points, every new record may add one. Anything else that writes records into an
 open tier (test helpers simulating older writers) must call `seekAppend` the same way.
 
-A clean `Close` saves the index next to the tier as `tier_N.idx` (written to a temporary file
-and renamed; CRC-32 protected; `OpenTier` deletes a temporary file a crash left behind). `OpenTier` adopts it only when its fingerprint — ring size,
+A scan stops at the first record past `to`, which is right only while no later record of the
+pass has an earlier timestamp. After the clock steps back, some does, and a window ending before
+the pre-step peak holds records on both sides of that first record. So the index also keeps,
+for the current and the previous pass, the newest **backstep** (a record written below the
+pass's greatest timestamp so far) and the pass's greatest timestamp. A scan stops early only at
+or past its pass's backstep, and skips the previous pass only when that pass's greatest
+timestamp precedes `from` (its first record cannot tell: after a step, the current pass may
+begin before the previous one ends). A pass without a backstep scans exactly as before; one
+with a backstep reads up to it until the ring overwrites it. Without an index (a legacy tier),
+a scan reads every record of its segments.
+
+A clean `Close` saves the index, with both passes' greatest timestamps and backsteps, next to
+the tier as `tier_N.idx` (magic `KULAIDX2`; written to a temporary file and renamed; CRC-32
+protected; `OpenTier` deletes a temporary file a crash left behind). `OpenTier` adopts it only
+when its fingerprint — ring size,
 write and oldest offsets, record count, codec version, newest timestamp, file size and wrap
 state — equals the tier just opened, so a crash, a restore from backup, a resize or another
 binary writing the file all fall back to rebuilding it with one walk. The tier file format is
@@ -216,8 +229,9 @@ unchanged and older versions ignore the sidecar.
 Read-only stores (the terminal UI, reading what `kula serve` writes) cannot use the sidecar —
 the owner's header moves on with every record — so each read-only tier builds its index with
 one walk on its first scan and, before each later scan, extends it over the records the owner
-appended since (`prepareReadOnlySeek`). A refresh that shows the owner wrapped trims it like
-`Tier.Write` does, and a replaced, resized or rewritten file drops it. The owner writes in ring
+appended since (`prepareReadOnlySeek`). A refresh that shows the owner wrapped, or a replaced,
+resized or rewritten file, drops it for a rebuild: the view has not walked what the owner
+appended to the finished pass since the last refresh, which may step back in time. The owner writes in ring
 order and so overwrites the newest point before anything indexed after it; when that point no
 longer holds its record, the owner lapped the ring unseen between two refreshes and the index
 is rebuilt. Scans the owner overtakes are still caught by `readOnlyScan`.
@@ -248,8 +262,9 @@ On 36 hours of mock history at the default tier sizes (223 MB tier 0), a clean r
    unexpectedly unlock a different tier. A denser tier is skipped only when another fully
    covering tier exists. If no tier covers the full window, return the tier with the greatest
    overlap and mark the result `complete: false`.
-3. Read records chronologically (handling buffer wrap), starting each segment at its seek
-   point for `from`, in batches of at most 512 decoded records. Reduce batches into stable output buckets, preserving contributing counts,
+3. Read records in ring order (handling buffer wrap), starting each segment at its seek
+   point for `from` and stopping at the first record past `to` unless a backwards clock step
+   follows it (see the seek index above), in batches of at most 512 decoded records. Reduce batches into stable output buckets, preserving contributing counts,
    sparse mean weights, and extrema across batch boundaries. Binary records outside the
    window are skipped using their timestamp headers without allocating metric payloads.
 4. Choose a stable output step from 1/2/5-style intervals (including 10, 15, and 30 units),

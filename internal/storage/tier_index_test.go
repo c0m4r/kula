@@ -184,6 +184,13 @@ func TestSeekIndexSidecarLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tier_0.dat")
 	tier, written := indexTestTier(t, path)
+	passes := func(tier *Tier) [4]int64 {
+		return [4]int64{tier.passMax, tier.prevPassMax, tier.backstep, tier.prevBackstep}
+	}
+	before := passes(tier)
+	if before[2] < 0 && before[3] < 0 {
+		t.Fatalf("precondition: the clock step left no backstep in either pass: %v", before)
+	}
 	if err := tier.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -204,6 +211,16 @@ func TestSeekIndexSidecarLifecycle(t *testing.T) {
 	tier = reopen(2 << 20)
 	if !tier.seekFromSidecar {
 		t.Fatal("clean restart rebuilt the index instead of adopting the sidecar")
+	}
+	if got := passes(tier); got != before {
+		t.Fatalf("the sidecar restored pass maxima and backsteps %v, want %v", got, before)
+	}
+	tier.mu.Lock()
+	tier.buildSeekIndex()
+	rebuilt := passes(tier)
+	tier.mu.Unlock()
+	if rebuilt != before {
+		t.Fatalf("a rebuilt index has pass maxima and backsteps %v, the maintained one %v", rebuilt, before)
 	}
 	assertSeekScansMatch(t, tier, written)
 
@@ -572,4 +589,114 @@ func TestReadOnlySeekIndexSurvivesAnUnseenLap(t *testing.T) {
 				from.Format(time.RFC3339), len(got), len(want))
 		}
 	}
+}
+
+// bruteForceRange lists the records of tier with from ≤ ts ≤ to in ring
+// order, from a scan that never stops early (its window holds every record).
+func bruteForceRange(t *testing.T, tier *Tier, from, to time.Time) []int64 {
+	t.Helper()
+	all, err := tier.ReadRange(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []int64
+	for _, ts := range timestamps(all) {
+		if ts >= from.UnixNano() && ts <= to.UnixNano() {
+			want = append(want, ts)
+		}
+	}
+	return want
+}
+
+// assertScansFindEveryRecord checks windows against bruteForceRange on the
+// owning tier and on a read-only view of its file.
+func assertScansFindEveryRecord(t *testing.T, owner *Tier, windows [][2]time.Time) {
+	t.Helper()
+	reader := &Tier{path: owner.path, readOnly: true}
+	defer func() { _ = reader.Close() }()
+	if err := reader.reloadReadOnly(); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range windows {
+		want := bruteForceRange(t, owner, w[0], w[1])
+		if len(want) == 0 {
+			t.Fatalf("precondition: no record in [%s, %s]", w[0].Format(time.RFC3339), w[1].Format(time.RFC3339))
+		}
+		for name, tier := range map[string]*Tier{"owner": owner, "read-only": reader} {
+			got, err := tier.ReadRange(w[0], w[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(timestamps(got), want) {
+				t.Errorf("%s scan of [%s, %s] returned %d records, the tier holds %d",
+					name, w[0].Format(time.RFC3339), w[1].Format(time.RFC3339), len(got), len(want))
+			}
+		}
+	}
+}
+
+// TestScansFindRecordsWrittenAfterAClockStep: after the clock stepped back,
+// a window that ends before the pre-step peak holds records on both sides of
+// the first record past its end. A scan used to stop there and miss those
+// written after the step.
+func TestScansFindRecordsWrittenAfterAClockStep(t *testing.T) {
+	tier, written := indexTestTier(t, filepath.Join(t.TempDir(), "tier_0.dat"))
+	defer func() { _ = tier.Close() }()
+	peak := written[8499] // the clock steps back ten minutes after it
+	assertScansFindEveryRecord(t, tier, [][2]time.Time{
+		{peak.Add(-8 * time.Minute), peak.Add(-6 * time.Minute)},
+		{peak.Add(-90 * time.Second), peak.Add(-30 * time.Second)},
+		{peak.Add(-10 * time.Minute), peak.Add(-1 * time.Second)},
+	})
+	if bruteForce := bruteForceRange(t, tier, peak.Add(-8*time.Minute), peak.Add(-6*time.Minute)); len(bruteForce) < 200 {
+		t.Fatalf("precondition: the window holds %d records, want both timelines (about 240)", len(bruteForce))
+	}
+}
+
+// TestScansReadThePreviousPassAcrossAClockStep: the clock stepped back just
+// before the ring wrapped, so the current pass begins earlier than the
+// previous one ends. A window between the two used to skip the previous
+// pass, judged by the current pass's first record alone.
+func TestScansReadThePreviousPassAcrossAClockStep(t *testing.T) {
+	tier, err := OpenTier(filepath.Join(t.TempDir(), "tier_0.dat"), 2<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tier.Close() }()
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	n := 0
+	write := func() {
+		t.Helper()
+		clock = clock.Add(time.Second)
+		if err := tier.Write(varSample(clock, 1+n%13)); err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	// Fill most of the first pass, step the clock back half an hour, and
+	// finish the pass well inside that half hour.
+	for tier.writeOff <= tier.maxData*9/10 {
+		write()
+	}
+	if tier.wrapped {
+		t.Fatal("precondition: wrapped before the clock step")
+	}
+	peak := clock
+	clock = clock.Add(-30 * time.Minute)
+	for !tier.wrapped {
+		write()
+	}
+	for range 50 {
+		write()
+	}
+	tier.mu.RLock()
+	first, err := tier.readTimestampAt(0)
+	tier.mu.RUnlock()
+	if err != nil || !first.Before(peak) {
+		t.Fatalf("precondition: the current pass begins at %s, not before the previous pass's peak %s", first, peak)
+	}
+	assertScansFindEveryRecord(t, tier, [][2]time.Time{
+		{first.Add(time.Second), peak},
+		{first.Add(time.Second), clock},
+	})
 }

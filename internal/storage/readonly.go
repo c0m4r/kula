@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -160,11 +159,10 @@ func (t *Tier) reloadReadOnly() error {
 	case rewritten:
 		t.dropSeekIndex()
 	case wrapped && t.seekReady:
-		// As in Write: the pass just finished becomes the old segment, and
-		// the new pass is indexed from its start.
-		t.seekTrim()
-		t.passMax = math.MinInt64
-		t.seekWalked = 0
+		// The pass just finished becomes the old segment, but this view has
+		// not walked what the owner appended to it since the last refresh,
+		// which may step back in time. Rebuild with one walk, as on first use.
+		t.dropSeekIndex()
 	}
 	return nil
 }
