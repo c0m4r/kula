@@ -519,7 +519,14 @@ them once work outlives its deadline by 5 s.
   `69237b4`**, with the replacer `internal/sysinfo` already used, so the inventory's join by
   mount path now matches such mounts too.
 - Standby replication-lag seconds grow without bound on an idle primary (`postgres.go:300-305`).
-  *Open (decision pending).*
+  **✅ `e8d9f60`:** 0 s once the standby has replayed all it received from a WAL receiver that
+  is streaming (`pg_stat_wal_receiver`; its status is hidden without `pg_monitor`, so then a
+  running receiver suffices); otherwise the time since the last replayed commit, as before, so
+  a standby that lost its primary still grows once the receiver times out. Verified on a
+  PostgreSQL 17 primary/standby pair, through Kula and as `pg_monitor` and unprivileged users:
+  idle primary 0 (old expression 8.5 s and climbing), paused replay grows, frozen or stopped
+  primary grows after `wal_receiver_timeout`, reconnection returns to 0. Same metric name, HELP
+  text updated.
 - Apache `ReqPerSec` / `BytesPerSec` are lifetime averages presented as current
   (`charts-data.js:651`, `ai.go:387`). **✅** Prometheus `036c3a6`: new
   `kula_apache2_accesses_per_second` and `kula_apache2_served_bytes_per_second`; the old
@@ -553,10 +560,18 @@ them once work outlives its deadline by 5 s.
   `chart-card-actions.js`. **✅** Already shared at the time of §4's check
   (`attachDynamicChartCardActions`).
 - Hardcoded English strings bypass i18n (`alerts.js`, `header.js`, `ollama.js`, `auth.js`,
-  `disk-identity.js`). *Open.*
+  `disk-identity.js`). **✅ `7179daf`:** 25 keys in all 26 locales; `i18n.format` fills
+  `{name}` placeholders (a `$` stays literal); `disk-identity.js`, which the node tests load
+  without imports, is handed the translator. The login form also tells a wrong password (401)
+  from a rate limit (429) and a busy server (503), which all read "Invalid credentials"
+  before; those messages fall back to English, as `/api/i18n` needs a session. *Still English:*
+  about 110 application-chart titles, legends and subtitles in `charts-data.js` (nginx,
+  Apache2, PostgreSQL, MySQL, power supplies), and abbreviations such as `usr:`/`sys:`/`estab:`.
 - CSP `style-src 'unsafe-inline'` appears unnecessary (`server.go:269`) — verify `game.js` first.
-  *Open:* no `style=` attribute or `<style>` element found in the templates, the app JS or the
-  vendored bundle; removing it needs a Chromium run that listens for CSP violations.
+  **✅ `ec39733`:** `style-src 'self'`. The Chromium fixtures watch `securitypolicyviolation`
+  through a CDP binding (`watchCSPViolations`) and fail on any; the dashboard harness serves
+  `style-src 'self'` alone, and the live fixture covers the game. A deliberate
+  `setAttribute('style')` and inline `style=` were both caught.
 
 ### Nits
 
@@ -677,10 +692,10 @@ them once work outlives its deadline by 5 s.
 > `21ded1c`; the four browser fixtures last ran at `a8af522` (no frontend change since).
 > **Lows (2026-11-09):** 23 small fixes and the Apache2 decision, `a6fc9fa`…`6148b5b`, marked
 > in §3; one bug found on the way (the retransmit counter's source, H4 follow-up `9420996`).
-> Still open: DNS rebinding, replication lag on an idle primary, the restart/5 m buckets
-> window, the startup double chart build, hardcoded English strings, CSP `'unsafe-inline'`,
-> and caching the accessibility scan. Won't fix: GPU length gating, the Unix socket chmod
-> window.
+> Then replication lag `e8d9f60`, CSP `ec39733`, translations `7179daf`. Still open: DNS
+> rebinding, the restart/5 m buckets window, the startup double chart build, the
+> application-chart strings, and caching the accessibility scan. Won't fix: GPU length
+> gating, the Unix socket chmod window.
 
 1. ~~**H1 + H2** (auth) — small changes, high impact.~~ ✅
 2. ~~**H4** (`retrans_ps`: bit 13 + Python mirror) and **H3** (disk utilization: restore or remove)
