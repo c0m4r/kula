@@ -233,7 +233,7 @@ Key points:
   [Reverse Proxy & TLS](13-reverse-proxy.md).
 - **`unix_socket`** replaces the TCP listener — ideal behind a local nginx.
 - **`max_websocket_conns`** and **`max_websocket_conns_per_ip`** cap live dashboard
-  connections; each must be at least 1.
+  connections; each must be at least 1 while the web server is enabled.
 - **`trust_proxy`** believes two headers from a reverse proxy: `X-Forwarded-Proto: https`
   (sets the `Secure` cookie flag and HSTS) and the rightmost `X-Forwarded-For` address, which
   becomes the client IP for the login, WebSocket and AI-chat limits and the access log. Enable it
@@ -387,7 +387,7 @@ See [Authentication](07-authentication.md).
     username: admin
     password_hash: ""   # from: ./kula hash-password
     password_salt: ""
-    session_timeout: 24h        # idle timeout; must be positive
+    session_timeout: 24h        # idle timeout; must be positive with auth enabled
     session_max_lifetime: 168h  # absolute cap from login; 0 disables
     argon2:
       time: 3           # at least 1

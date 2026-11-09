@@ -181,26 +181,43 @@ func TestLoadTextSizeOutOfRange(t *testing.T) {
 }
 
 // Values that load but break at runtime are refused: Argon2id panics on zero
-// time or threads, a zero session timeout expires every session at once, and a
-// zero WebSocket limit refuses every live connection.
+// time or threads (hash-password uses it with auth off), a zero session
+// timeout expires every session at once, and a zero WebSocket limit refuses
+// every live connection. The last two are left alone while auth, or the web
+// server, is off: a config that never used them loads as before.
 func TestLoadRejectsBrokenWebLimits(t *testing.T) {
-	for _, tc := range []struct{ name, yaml string }{
-		{"argon2 time", "  auth:\n    argon2:\n      time: 0\n"},
-		{"argon2 threads", "  auth:\n    argon2:\n      threads: 0\n"},
-		{"session timeout", "  auth:\n    session_timeout: 0s\n"},
-		{"negative session timeout", "  auth:\n    session_timeout: -1h\n"},
-		{"websocket conns", "  max_websocket_conns: 0\n"},
-		{"websocket conns per ip", "  max_websocket_conns_per_ip: -1\n"},
+	load := func(t *testing.T, web string) error {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		yaml := fmt.Sprintf("storage:\n  directory: %s\nweb:\n%s", dir, web)
+		if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(path)
+		return err
+	}
+	for _, tc := range []struct{ name, yaml, key string }{
+		{"argon2 time", "  auth:\n    argon2:\n      time: 0\n", "argon2.time"},
+		{"argon2 threads with auth off", "  enabled: false\n  auth:\n    argon2:\n      threads: 0\n", "argon2.threads"},
+		{"session timeout", "  auth:\n    enabled: true\n    session_timeout: 0s\n", "session_timeout"},
+		{"negative session timeout", "  auth:\n    enabled: true\n    session_timeout: -1h\n", "session_timeout"},
+		{"websocket conns", "  max_websocket_conns: 0\n", "max_websocket_conns must"},
+		{"websocket conns per ip", "  max_websocket_conns_per_ip: -1\n", "max_websocket_conns_per_ip"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, "config.yaml")
-			yaml := fmt.Sprintf("storage:\n  directory: %s\nweb:\n%s", dir, tc.yaml)
-			if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
-				t.Fatal(err)
+			if err := load(t, tc.yaml); err == nil || !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("Load() of\n%s returned %v, want a refusal naming %s", tc.yaml, err, tc.key)
 			}
-			if _, err := Load(path); err == nil {
-				t.Errorf("Load() accepted:\n%s", tc.yaml)
+		})
+	}
+	for _, tc := range []struct{ name, yaml string }{
+		{"session timeout with auth off", "  auth:\n    session_timeout: 0s\n"},
+		{"websocket limits with the web server off", "  enabled: false\n  max_websocket_conns: 0\n  max_websocket_conns_per_ip: 0\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := load(t, tc.yaml); err != nil {
+				t.Errorf("Load() refused a setting that is not in use:\n%s\n%v", tc.yaml, err)
 			}
 		})
 	}

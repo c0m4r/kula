@@ -917,7 +917,8 @@ func (c *Config) validateTextSize() error {
 // Argon2id panics on zero time or threads (at login and in hash-password,
 // whether or not auth is enabled), a non-positive session timeout expires
 // every session as it is created, and a WebSocket limit below one refuses
-// every live connection.
+// every live connection. The last two only matter with auth, and with the
+// web server, enabled.
 func (c *Config) validateWebLimits() error {
 	a := c.Web.Auth
 	if a.Argon2.Time < 1 {
@@ -926,8 +927,11 @@ func (c *Config) validateWebLimits() error {
 	if a.Argon2.Threads < 1 {
 		return fmt.Errorf("web.auth.argon2.threads must be at least 1, got %d", a.Argon2.Threads)
 	}
-	if a.SessionTimeout <= 0 {
+	if a.Enabled && a.SessionTimeout <= 0 {
 		return fmt.Errorf("web.auth.session_timeout must be positive, got %v", a.SessionTimeout)
+	}
+	if !c.Web.Enabled {
+		return nil
 	}
 	if c.Web.MaxWebsocketConns < 1 {
 		return fmt.Errorf("web.max_websocket_conns must be at least 1, got %d", c.Web.MaxWebsocketConns)
