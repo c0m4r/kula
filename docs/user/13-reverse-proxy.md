@@ -26,9 +26,9 @@ header (so a client can't spoof it).
 
 With `auth.enabled: false` and a TCP listener, Kula answers only `Host` names that no public DNS
 server can answer for (IP addresses, `localhost`, single-label and `.local`/`.lan`-style names,
-the machine's hostname and `global.hostname`), as protection against DNS rebinding. A proxy that forwards the
-browser's `Host` (`proxy_set_header Host $host`, as below) passes your public name through, so
-list it:
+the machine's hostname and `global.hostname`), as protection against DNS rebinding. A proxy
+that forwards the browser's `Host` passes your public name through, so list it. Caddy, Traefik
+and Cloudflare Tunnel do so by default; nginx does with `proxy_set_header Host $host`, as below:
 
 ```yaml
 web:

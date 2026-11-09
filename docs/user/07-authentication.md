@@ -9,9 +9,13 @@ server through its own DNS (IP addresses, `localhost`, local names, the machine'
 and `global.hostname`, and [`web.security.allowed_hosts`](04-configuration.md#websecurity)), so
 a site you visit cannot read your dashboard by DNS rebinding.
 
-> **Upgrading from 0.21.x or earlier without auth?** If you reach Kula by a regular DNS name
-> (internal DNS, or a reverse proxy that forwards `Host`), that name now gets `403 host not
-> allowed` until you add it to `web.security.allowed_hosts`. Kula logs each refused name.
+> **Upgrading from 0.21.x or earlier without auth?** If you reach Kula by a regular DNS name,
+> that name now gets `403 host not allowed` until you add it to `web.security.allowed_hosts`.
+> Kula logs each refused name. Typical ones: the machine's fully qualified name (unless it is
+> `global.hostname`), internal DNS, Tailscale MagicDNS (`*.ts.net`), Consul, a Cloudflare
+> Tunnel hostname, and Caddy or Traefik, which forward the browser's `Host` by default (nginx and
+> Apache do not unless configured to). A Prometheus server that scrapes `/metrics` by a DNS name
+> without a bearer token needs its target name listed too, with auth on or off.
 
 ## Enabling auth
 
