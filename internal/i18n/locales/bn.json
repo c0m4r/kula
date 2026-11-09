@@ -492,5 +492,7 @@
     "psu_discharging": "ডিসচার্জ হচ্ছে",
     "psu_full": "সম্পূর্ণ চার্জড",
     "psu_not_charging": "চার্জ হচ্ছে না",
-    "psu_status_unknown": "অজানা"
+    "psu_status_unknown": "অজানা",
+    "si_ac_adapter": "এসি অ্যাডাপ্টার",
+    "si_wireless": "ওয়্যারলেস মডিউল"
 }

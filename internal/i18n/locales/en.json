@@ -492,5 +492,7 @@
     "psu_discharging": "Discharging",
     "psu_full": "Full",
     "psu_not_charging": "Not charging",
-    "psu_status_unknown": "Unknown"
+    "psu_status_unknown": "Unknown",
+    "si_ac_adapter": "AC adapter",
+    "si_wireless": "Wireless"
 }

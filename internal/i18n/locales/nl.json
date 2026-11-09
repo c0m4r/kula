@@ -492,5 +492,7 @@
     "psu_discharging": "Ontladen",
     "psu_full": "Vol",
     "psu_not_charging": "Laadt niet",
-    "psu_status_unknown": "Onbekend"
+    "psu_status_unknown": "Onbekend",
+    "si_ac_adapter": "Netadapter",
+    "si_wireless": "Draadloze module"
 }

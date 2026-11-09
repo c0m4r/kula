@@ -492,5 +492,7 @@
     "psu_discharging": "Rozładowywanie",
     "psu_full": "Naładowana",
     "psu_not_charging": "Nie ładuje się",
-    "psu_status_unknown": "Nieznany"
+    "psu_status_unknown": "Nieznany",
+    "si_ac_adapter": "Zasilacz sieciowy",
+    "si_wireless": "Moduł bezprzewodowy"
 }

@@ -492,5 +492,7 @@
     "psu_discharging": "Đang xả",
     "psu_full": "Đã sạc đầy",
     "psu_not_charging": "Không sạc",
-    "psu_status_unknown": "Không xác định"
+    "psu_status_unknown": "Không xác định",
+    "si_ac_adapter": "Bộ đổi nguồn AC",
+    "si_wireless": "Mô-đun không dây"
 }

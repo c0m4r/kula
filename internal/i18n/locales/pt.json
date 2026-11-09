@@ -492,5 +492,7 @@
     "psu_discharging": "Descarregando",
     "psu_full": "Carregada",
     "psu_not_charging": "Não carregando",
-    "psu_status_unknown": "Desconhecido"
+    "psu_status_unknown": "Desconhecido",
+    "si_ac_adapter": "Adaptador de energia",
+    "si_wireless": "Módulo sem fios"
 }

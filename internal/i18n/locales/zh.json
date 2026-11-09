@@ -492,5 +492,7 @@
     "psu_discharging": "放电中",
     "psu_full": "已充满",
     "psu_not_charging": "未充电",
-    "psu_status_unknown": "未知"
+    "psu_status_unknown": "未知",
+    "si_ac_adapter": "电源适配器",
+    "si_wireless": "无线模块"
 }

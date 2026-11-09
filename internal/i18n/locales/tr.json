@@ -492,5 +492,7 @@
     "psu_discharging": "Boşalıyor",
     "psu_full": "Dolu",
     "psu_not_charging": "Şarj olmuyor",
-    "psu_status_unknown": "Bilinmiyor"
+    "psu_status_unknown": "Bilinmiyor",
+    "si_ac_adapter": "AC adaptörü",
+    "si_wireless": "Kablosuz modül"
 }

@@ -35,7 +35,8 @@ export async function testSystemInfo() {
             { device: 'board', name: 'CPU fan', value: 1240, unit: 'RPM', kind: 'fan' },
             // Unlabelled hwmon inputs repeat the same name on different devices.
             { device: 'acpitz', name: 'temp1', value: 40, unit: '°C', kind: 'temperature' },
-            { device: 'nvme', name: 'temp1', value: 41, unit: '°C', kind: 'temperature' }],
+            { device: 'nvme', name: 'temp1', value: 41, unit: '°C', kind: 'temperature' },
+            { device: 'iwlwifi', name: 'temp1', value: 39, unit: '°C', kind: 'temperature' }],
         power: [{ name: 'UPS', manufacturer: 'Example Power', status: 'Full', capacity_percent: '100' }],
         live: {
             mem: { total: 68719476736, used: 34359738368, used_pct: 50 },
@@ -149,12 +150,25 @@ export async function testSystemInfo() {
         }
         // Sensors are grouped per device and labelled by kind, never by a repeated caption.
         select('sensors');
-        check(content.querySelectorAll('.system-info-inventory-item').length === 6, 'Sensors and power supplies are not rendered as a list');
+        check(content.querySelectorAll('.system-info-inventory-item').length === 7, 'Sensors and power supplies are not rendered as a list');
         check(content.querySelector('.system-info-inventory-list')?.tagName === 'UL', 'Sensor rows are not a list');
-        check(content.querySelectorAll('.system-info-sensor-group').length === 5 &&
-            [...content.querySelectorAll('.system-info-group-heading h3')].some(heading => heading.textContent === 'CPU'),
-            'Sensors are not grouped by device with a friendly name');
-        check(content.querySelectorAll('.system-info-sensor-live').length === 5 &&
+        const sensorHeadings = [...content.querySelectorAll('.system-info-group-heading h3')].map(heading => heading.textContent);
+        check(content.querySelectorAll('.system-info-sensor-group').length === 6 &&
+            sensorHeadings.includes('CPU') && sensorHeadings.includes('Wireless') && !sensorHeadings.includes('iwlwifi'),
+            `Sensors are not grouped by device with a friendly name: ${JSON.stringify(sensorHeadings)}`);
+        // Plain-word device names follow the language; chip names do not.
+        const { i18n } = await import('./js/app/i18n.js');
+        const relanguage = async lang => {
+            await i18n.loadTranslations(lang);
+            i18n.applyTranslations();
+            document.dispatchEvent(new Event('kula-i18n-changed'));
+        };
+        await relanguage('pl');
+        const polishHeadings = [...content.querySelectorAll('.system-info-group-heading h3')].map(heading => heading.textContent);
+        await relanguage('en');
+        check(polishHeadings.includes('Moduł bezprzewodowy') && polishHeadings.includes('CPU'),
+            `Sensor device names do not follow the language: ${JSON.stringify(polishHeadings)}`);
+        check(content.querySelectorAll('.system-info-sensor-live').length === 6 &&
             content.textContent.includes('Temperature') && content.textContent.includes('Fan'),
             'Sensor kinds are not labelled');
         check(!content.textContent.includes('Current reading'),

@@ -492,5 +492,7 @@
     "psu_discharging": "בפריקה",
     "psu_full": "טעונה במלואה",
     "psu_not_charging": "לא בטעינה",
-    "psu_status_unknown": "לא ידוע"
+    "psu_status_unknown": "לא ידוע",
+    "si_ac_adapter": "מתאם מתח",
+    "si_wireless": "מודול אלחוטי"
 }

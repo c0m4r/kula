@@ -492,5 +492,7 @@
     "psu_discharging": "방전 중",
     "psu_full": "완전 충전",
     "psu_not_charging": "충전 안 함",
-    "psu_status_unknown": "알 수 없음"
+    "psu_status_unknown": "알 수 없음",
+    "si_ac_adapter": "AC 어댑터",
+    "si_wireless": "무선 모듈"
 }

@@ -492,5 +492,7 @@
     "psu_discharging": "Разряжается",
     "psu_full": "Заряжено",
     "psu_not_charging": "Не заряжается",
-    "psu_status_unknown": "Неизвестно"
+    "psu_status_unknown": "Неизвестно",
+    "si_ac_adapter": "Блок питания",
+    "si_wireless": "Беспроводной модуль"
 }

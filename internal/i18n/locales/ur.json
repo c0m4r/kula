@@ -492,5 +492,7 @@
     "psu_discharging": "ڈسچارج ہو رہی ہے",
     "psu_full": "مکمل چارج",
     "psu_not_charging": "چارج نہیں ہو رہی",
-    "psu_status_unknown": "نامعلوم"
+    "psu_status_unknown": "نامعلوم",
+    "si_ac_adapter": "اے سی اڈاپٹر",
+    "si_wireless": "وائرلیس ماڈیول"
 }

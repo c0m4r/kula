@@ -492,5 +492,7 @@
     "psu_discharging": "Wird entladen",
     "psu_full": "Voll",
     "psu_not_charging": "Wird nicht geladen",
-    "psu_status_unknown": "Unbekannt"
+    "psu_status_unknown": "Unbekannt",
+    "si_ac_adapter": "Netzteil",
+    "si_wireless": "Funkmodul"
 }

@@ -492,5 +492,7 @@
     "psu_discharging": "Розряджається",
     "psu_full": "Заряджено",
     "psu_not_charging": "Не заряджається",
-    "psu_status_unknown": "Невідомо"
+    "psu_status_unknown": "Невідомо",
+    "si_ac_adapter": "Блок живлення",
+    "si_wireless": "Бездротовий модуль"
 }

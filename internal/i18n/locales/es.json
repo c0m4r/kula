@@ -492,5 +492,7 @@
     "psu_discharging": "Descargando",
     "psu_full": "Cargada",
     "psu_not_charging": "No se carga",
-    "psu_status_unknown": "Desconocido"
+    "psu_status_unknown": "Desconocido",
+    "si_ac_adapter": "Adaptador de CA",
+    "si_wireless": "Módulo inalámbrico"
 }

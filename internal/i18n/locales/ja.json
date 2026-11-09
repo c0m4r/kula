@@ -492,5 +492,7 @@
     "psu_discharging": "放電中",
     "psu_full": "満充電",
     "psu_not_charging": "充電していません",
-    "psu_status_unknown": "不明"
+    "psu_status_unknown": "不明",
+    "si_ac_adapter": "AC アダプター",
+    "si_wireless": "無線モジュール"
 }

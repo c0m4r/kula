@@ -492,5 +492,7 @@
     "psu_discharging": "In scarica",
     "psu_full": "Carica completa",
     "psu_not_charging": "Non in carica",
-    "psu_status_unknown": "Sconosciuto"
+    "psu_status_unknown": "Sconosciuto",
+    "si_ac_adapter": "Alimentatore AC",
+    "si_wireless": "Modulo wireless"
 }

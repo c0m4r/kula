@@ -492,5 +492,7 @@
     "psu_discharging": "En décharge",
     "psu_full": "Chargée",
     "psu_not_charging": "Pas en charge",
-    "psu_status_unknown": "Inconnu"
+    "psu_status_unknown": "Inconnu",
+    "si_ac_adapter": "Adaptateur secteur",
+    "si_wireless": "Module sans fil"
 }

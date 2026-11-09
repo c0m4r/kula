@@ -492,5 +492,7 @@
     "psu_discharging": "Laddar ur",
     "psu_full": "Fulladdat",
     "psu_not_charging": "Laddar inte",
-    "psu_status_unknown": "Okänd"
+    "psu_status_unknown": "Okänd",
+    "si_ac_adapter": "Nätadapter",
+    "si_wireless": "Trådlös modul"
 }

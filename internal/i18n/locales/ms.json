@@ -492,5 +492,7 @@
     "psu_discharging": "Menyahcas",
     "psu_full": "Penuh",
     "psu_not_charging": "Tidak mengecas",
-    "psu_status_unknown": "Tidak diketahui"
+    "psu_status_unknown": "Tidak diketahui",
+    "si_ac_adapter": "Penyesuai AC",
+    "si_wireless": "Modul tanpa wayar"
 }

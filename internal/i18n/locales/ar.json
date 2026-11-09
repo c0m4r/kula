@@ -492,5 +492,7 @@
     "psu_discharging": "قيد التفريغ",
     "psu_full": "مشحونة بالكامل",
     "psu_not_charging": "لا يتم الشحن",
-    "psu_status_unknown": "غير معروف"
+    "psu_status_unknown": "غير معروف",
+    "si_ac_adapter": "محوّل التيار المتردد",
+    "si_wireless": "وحدة لاسلكية"
 }

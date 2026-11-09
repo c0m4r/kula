@@ -706,17 +706,23 @@ function sensorKindLabel(sensor) {
     return kind ? label(`kind_${kind}`) : label('kind_sensor');
 }
 
+// Kernel sensor devices shown by what they are: bus, chip and vendor names as
+// they are, plain words through translation keys.
 const deviceNames = {
     k10temp: 'CPU', coretemp: 'CPU', zenpower: 'CPU', cpu_thermal: 'CPU', k8temp: 'CPU',
     amdgpu: 'GPU', nouveau: 'GPU', radeon: 'GPU', i915: 'GPU', xe: 'GPU', nvidia: 'GPU',
     nvme: 'NVMe', acpitz: 'ACPI', acpi: 'ACPI',
-    BAT0: 'Battery', BAT1: 'Battery', BAT2: 'Battery', ACAD: 'AC adapter', AC: 'AC adapter', ADP1: 'AC adapter',
     thinkpad: 'ThinkPad', asus: 'ASUS EC', dell_smm: 'Dell EC', dell_ddv: 'Dell EC', hp_wmi: 'HP EC',
-    iwlwifi: 'Wireless', mt7921_phy0: 'Wireless', ath10k_hwmon: 'Wireless', amdgpu_hwmon: 'GPU',
+    amdgpu_hwmon: 'GPU',
+};
+const deviceKeys = {
+    BAT0: 'battery', BAT1: 'battery', BAT2: 'battery', ACAD: 'ac_adapter', AC: 'ac_adapter', ADP1: 'ac_adapter',
+    iwlwifi: 'wireless', mt7921_phy0: 'wireless', ath10k_hwmon: 'wireless',
 };
 
 function deviceLabel(device) {
-    if (deviceNames[device]) return deviceNames[device];
+    if (Object.hasOwn(deviceNames, device)) return deviceNames[device];
+    if (Object.hasOwn(deviceKeys, device)) return label(deviceKeys[device]);
     const zone = /^thermal_zone(\d+)$/.exec(device || '');
     if (zone) return `${label('thermal_zone')} ${zone[1]}`;
     return device || label('unknown_device');

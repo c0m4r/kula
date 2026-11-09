@@ -492,5 +492,7 @@
     "psu_discharging": "กำลังคายประจุ",
     "psu_full": "ชาร์จเต็ม",
     "psu_not_charging": "ไม่ได้ชาร์จ",
-    "psu_status_unknown": "ไม่ทราบ"
+    "psu_status_unknown": "ไม่ทราบ",
+    "si_ac_adapter": "อะแดปเตอร์ไฟ AC",
+    "si_wireless": "โมดูลไร้สาย"
 }

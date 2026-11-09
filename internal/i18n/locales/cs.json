@@ -492,5 +492,7 @@
     "psu_discharging": "Vybíjí se",
     "psu_full": "Nabito",
     "psu_not_charging": "Nenabíjí se",
-    "psu_status_unknown": "Neznámý"
+    "psu_status_unknown": "Neznámý",
+    "si_ac_adapter": "Napájecí adaptér",
+    "si_wireless": "Bezdrátový modul"
 }
