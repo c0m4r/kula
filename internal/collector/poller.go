@@ -16,6 +16,16 @@ func pollStale(interval time.Duration) time.Duration {
 	return max(3*time.Second, 3*interval)
 }
 
+// tickInterval is d, or a second when d is not positive: time.NewTicker
+// panics on zero. Config loading never passes one, but a caller that skips it
+// (a test, an embedding) must not take the collector down.
+func tickInterval(d time.Duration) time.Duration {
+	if d <= 0 {
+		return time.Second
+	}
+	return d
+}
+
 // poller runs an application collector's polls in one goroutine and keeps the
 // latest result, so a slow or unresponsive server delays only its own
 // readings, never the collection tick that reads them. A tick that arrives
@@ -35,7 +45,7 @@ func (p *poller[T]) start(ctx context.Context, interval time.Duration, poll func
 	go func() {
 		defer close(p.done)
 		defer cleanup()
-		ticker := time.NewTicker(interval)
+		ticker := time.NewTicker(tickInterval(interval))
 		defer ticker.Stop()
 		for {
 			if ctx.Err() != nil {

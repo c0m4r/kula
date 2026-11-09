@@ -236,7 +236,7 @@ func (cc *containerCollector) initHTTPClient() {
 // Start begins the async collection goroutine.
 func (cc *containerCollector) Start(ctx context.Context, interval time.Duration) {
 	go func() {
-		ticker := time.NewTicker(interval)
+		ticker := time.NewTicker(tickInterval(interval))
 		defer ticker.Stop()
 
 		// Initial collection

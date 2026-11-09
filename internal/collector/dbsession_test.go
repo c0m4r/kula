@@ -379,6 +379,31 @@ func TestDBSessionBoundsSessionsUnderChurn(t *testing.T) {
 
 // TestDBPollerNeverOverlapsPolls: a poll slower than the interval delays the
 // next one instead of running beside it, and its result goes stale.
+// TestPollerToleratesAZeroInterval: time.NewTicker panics on zero, which
+// would take the whole process down from a poll goroutine.
+func TestPollerToleratesAZeroInterval(t *testing.T) {
+	if got := tickInterval(0); got != time.Second {
+		t.Fatalf("tickInterval(0) = %s, want 1s", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var p poller[int]
+	polled := make(chan struct{}, 1)
+	p.start(ctx, 0, func(context.Context) *int {
+		select {
+		case polled <- struct{}{}:
+		default:
+		}
+		return nil
+	}, func() {})
+	select {
+	case <-polled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a poller with a zero interval never polled")
+	}
+	cancel()
+	p.wait(5 * time.Second)
+}
+
 func TestPollerNeverOverlapsPolls(t *testing.T) {
 	var running, peak, polls atomic.Int32
 	p := &poller[int]{stale: 50 * time.Millisecond}
