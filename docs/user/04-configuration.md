@@ -164,13 +164,15 @@ Changing `max_size` on a tier that already has data:
 - **Lowering it** is not applied. Records already written live throughout the existing ring, so
   shrinking it in place would strand them. The tier keeps running at the size it was created
   with and logs a line saying so at startup. To actually shrink a tier, stop Kula and move its
-  file (`<storage.directory>/tier_N.dat`) aside — that discards the tier's history.
+  file (`<storage.directory>/tier_N.dat`, with its `tier_N.idx`) aside — that discards the
+  tier's history.
 
 Next to each tier file Kula keeps a small seek index, `tier_N.idx` (tens of KB), saved on a
 clean shutdown. It lets history queries jump to their time range instead of reading the whole
 tier file, and lets a restart read only the end of each tier. It is only a cache: Kula uses it
 only when it matches the tier file exactly, and otherwise rebuilds it from the tier with one
-read of the file (after a crash, a restore or a `max_size` change). Deleting it is always safe.
+read of the file (after a crash, a restore or a `max_size` change). Deleting it is always safe,
+and the one of a tier you remove from `tiers` is left for you to delete.
 
 Every record carries a checksum. A power loss or kernel crash can leave the last records
 before it only partly written; such a record fails its checksum and is skipped instead of
