@@ -12,6 +12,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Added
 
 - Rearrange gauges and chart cards in the Customization menu (#51)
+- Prometheus: current Apache2 rates `kula_apache2_accesses_per_second` and `kula_apache2_served_bytes_per_second`
 
 ### Changed
 
@@ -33,6 +34,13 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Containers are inspected once instead of every second, and removed ones are forgotten
 - Hosts without a GPU look for one once a minute
 - Remove systemd service ProtectClock that prevents reading clock
+- Apache2 charts and the AI assistant show current request and byte rates
+- The login form tells a wrong password apart from a rate limit or a busy server
+- Dashboards reconnect at staggered times after a restart
+
+### Deprecated
+
+- Prometheus `kula_apache2_requests_per_second` and `kula_apache2_bytes_per_second` (use `kula_apache2_accesses_per_second` and `kula_apache2_served_bytes_per_second`)
 
 ### Fixed
 
@@ -43,7 +51,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - A Focus mode selection of only application charts no longer starts out hidden
 - Collapsing a split chart no longer reorders the application charts
 - Disk utilization is measured again (read 0% since 0.7.0)
-- TCP retransmissions are stored in history (older versions can't read the new records)
+- TCP retransmissions are measured and stored in history (older versions can't read the new records)
+- The first TCP errors and resets after a quiet boot are counted
 - PostgreSQL and MySQL monitoring no longer piles up server connections
 - PostgreSQL polls stuck on a frozen server are cut off at their time limit
 - MySQL passwords with `@`, `/` or `:` and IPv6 hosts work; PostgreSQL settings are quoted
@@ -62,9 +71,18 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - nginx and Apache2 failures are logged when they change, and redirects are not followed
 - An expired session returns to the login screen instead of reconnecting forever
 - AI panel actions no longer run twice after signing in again
-- The alert list's empty state stays translated
+- Alerts, card subtitles, and login, AI panel and disk messages are translated
 - `inspect_tier.py` walks damaged tiers the way Kula does
 - Settings that would break login or WebSockets are refused at startup, and `allowed_origins` is normalized
+- A standby of a quiet PostgreSQL primary no longer shows a growing replication lag
+- Hosts with hundreds of containers no longer lose their container metrics
+- Mounts with a space in their path are measured
+- Used memory and swap can no longer read as an absurd value
+- `web.graphs.gpu_temp` takes effect
+- Split charts no longer merge devices whose names differ only in punctuation
+- A malformed aggregation preference no longer blanks the dashboard
+- The AI assistant's metrics tool keeps to the history range limits
+- Records from a newer version are skipped instead of misread, in `inspect_tier.py` too
 
 ### Security
 
@@ -72,6 +90,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Concurrent password hashing is bounded by CPU and memory
 - Sessions are tied to the account password; everyone signs in again after upgrading
 - Request paths can no longer forge access log lines
+- Content-Security-Policy no longer allows inline styles
+- API responses are not stored by browsers or proxies
+- The Ollama proxy no longer follows redirects
+- A startup warning when `allowed_origins` without `origin_validation` exposes the live stream
 
 ## [0.21.0] - 2026-10-01
 
