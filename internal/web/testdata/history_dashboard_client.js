@@ -38,6 +38,8 @@ check(startupCharts.length && startupCharts.every(chart => chart.id < startupCha
     'Startup built charts and threw them away');
 check(Chart.getChart(document.getElementById('chart-cpu-temp'))?.options.scales.y.max === 95,
     'The server Graph Bounds default did not reach its chart');
+check(startupCharts.every(chart => chart.options.spanGaps === true),
+    'web.join_metrics did not reach the charts built before /api/config');
 state.timeRange = null;
 state.customTo = new Date('2026-09-05T10:00:00Z');
 state.customFrom = new Date('2026-09-04T10:00:00Z');

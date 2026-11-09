@@ -500,6 +500,16 @@ export function applyChartBounds() {
     });
 }
 
+// Apply web.join_metrics from /api/config to the charts built before it
+// arrived; charts created later read it at creation.
+export function applySpanGaps() {
+    forEachRegisteredChart(chart => {
+        if (!chart.options || chart.options.spanGaps === state.joinMetrics) return;
+        chart.options.spanGaps = state.joinMetrics;
+        queueChartUpdate(chart);
+    });
+}
+
 // A legend entry that follows the language: updateChartLabels() re-reads
 // $kulaLabelKey. Technical terms (Commits/s, Keepalive, Blks Hit/s) and
 // abbreviations keep a plain English label.

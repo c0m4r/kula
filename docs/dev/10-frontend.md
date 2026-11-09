@@ -65,7 +65,8 @@ painted frame (`afterNextPaint()`) before `initCharts()` builds every Chart.js i
 holds the main thread, and the static page should be on screen first. It runs once per page
 load: `/api/config` arrives later with the server's Graph Bounds defaults, and those, like a
 bound applied from a card's menu, change the Y-axis ceilings in place (`applyChartBounds()`,
-for every chart created with a `graphBound` in its Y-axis options).
+for every chart created with a `graphBound` in its Y-axis options). `web.join_metrics` reaches
+those charts the same way (`applySpanGaps()`).
 
 | Module | Responsibility |
 |--------|----------------|

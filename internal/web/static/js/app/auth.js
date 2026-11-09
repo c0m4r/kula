@@ -5,7 +5,7 @@
 import { state, storedAggregation } from './state.js';
 import { isAggregation } from './history-navigation.js';
 import { readPref } from './prefs.js';
-import { applyChartBounds } from './charts-init.js';
+import { applyChartBounds, applySpanGaps } from './charts-init.js';
 import { updateAllCharts, clearAllChartData, cancelHistoryRequest } from './charts-data.js';
 import { connectWS, disconnectWS } from './websocket.js';
 import { applyTheme } from './settings.js';
@@ -75,7 +75,10 @@ export function fetchConfig() {
                 state.collectionIntervalMs = cfg.history.collection_interval_ms || 1000;
                 state.retainedRanges = cfg.history.ranges || [];
             }
-            if (cfg.join_metrics !== undefined) state.joinMetrics = cfg.join_metrics;
+            if (cfg.join_metrics !== undefined) {
+                state.joinMetrics = cfg.join_metrics;
+                applySpanGaps();
+            }
             if (cfg.version) {
                 const versionEl = document.getElementById('kula-version');
                 if (versionEl) versionEl.textContent = 'v' + cfg.version;
