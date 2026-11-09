@@ -616,6 +616,11 @@ func (cc *containerCollector) collectContainerMetrics(id, name string, elapsed f
 	}
 	cc.debugf("[containers] id=%s name=%s pid=%d cgroupDir=%q", id, name, pid, cgroupDir)
 	if cgroupDir == "" {
+		// Nothing was read this cycle, so the next counters must not be
+		// measured against older ones over a single interval.
+		delete(cc.prevCPU, id)
+		delete(cc.prevDisk, id)
+		delete(cc.prevNet, id)
 		return s
 	}
 
@@ -632,6 +637,8 @@ func (cc *containerCollector) collectContainerMetrics(id, name string, elapsed f
 	// through direct cgroup fallback when inspect is unavailable.
 	if pid > 0 {
 		s.NetRxBPS, s.NetTxBPS = cc.readNetIO(pid, id, elapsed)
+	} else {
+		delete(cc.prevNet, id) // not read this cycle
 	}
 
 	// Disk I/O from io.stat

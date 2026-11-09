@@ -276,6 +276,64 @@ func TestCollectContainerMetricsFallsBackWithoutInspect(t *testing.T) {
 	}
 }
 
+// TestContainerRatesSkipAnUnresolvedCycle: a cycle that cannot find the
+// container's cgroup reads no counters, so the next cycle has no baseline
+// rather than one two intervals old (which read 200% for a container using
+// one core). Without a PID the network counters go unread too.
+func TestContainerRatesSkipAnUnresolvedCycle(t *testing.T) {
+	origRoot := cgroupRoot
+	cgroupRoot = t.TempDir()
+	defer func() { cgroupRoot = origRoot }()
+
+	id := strings.Repeat("e", 64)
+	dir := filepath.Join(cgroupRoot, "system.slice", "docker-"+id+".scope")
+	hidden := dir + ".hidden"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cc := &containerCollector{
+		prevCPU:  make(map[string]containerCPURaw),
+		prevNet:  make(map[string]containerNetRaw),
+		prevDisk: make(map[string]containerDiskRaw),
+	}
+	cycle := func(usageUsec int, resolved bool) float64 {
+		t.Helper()
+		where := dir
+		if !resolved {
+			where = hidden
+		}
+		stat := fmt.Sprintf("usage_usec %d\n", usageUsec)
+		if err := os.WriteFile(filepath.Join(where, "cpu.stat"), []byte(stat), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return cc.collectContainerMetrics(id, "web", 1).CPUPct
+	}
+	cycle(1_000_000, true)
+	if got := cycle(2_000_000, true); got != 100 {
+		t.Fatalf("one core for one second: %v%%, want 100", got)
+	}
+	if err := os.Rename(dir, hidden); err != nil {
+		t.Fatal(err)
+	}
+	cycle(3_000_000, false)
+	if err := os.Rename(hidden, dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := cycle(4_000_000, true); got != 0 {
+		t.Fatalf("first cycle after an unresolved one: %v%%, want 0 (no baseline)", got)
+	}
+	if got := cycle(5_000_000, true); got != 100 {
+		t.Fatalf("second cycle after an unresolved one: %v%%, want 100", got)
+	}
+
+	// No runtime PID (inspect unavailable): no network baseline is kept.
+	cc.prevNet[id] = containerNetRaw{}
+	cycle(6_000_000, true)
+	if _, ok := cc.prevNet[id]; ok {
+		t.Fatal("a cycle without a PID kept a network baseline")
+	}
+}
+
 func TestCollectViaCgroupsDiscoversQuadlets(t *testing.T) {
 	origRoot := cgroupRoot
 	cgroupRoot = t.TempDir()
