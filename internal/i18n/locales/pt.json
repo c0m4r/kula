@@ -20,7 +20,7 @@
     "swap_usage": "Uso de Swap",
     "network_throughput": "Tráfego de Rede",
     "packets_sec": "Pacotes / seg",
-    "connections_sockets": "Conexiones e Sockets",
+    "connections_sockets": "Conexões e Sockets",
     "disk_io": "E/S de Disco",
     "disk_space": "Espaço de Disco",
     "gpu_load": "Uso de GPU",
