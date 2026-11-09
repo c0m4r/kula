@@ -270,7 +270,7 @@ own domain at your server's address, and the browser then lets its script read t
 and API as if they were that page's own. With auth disabled and a TCP listener, Kula therefore
 answers only `Host` names that no public DNS server can answer for:
 
-- IP addresses (`192.0.2.10`, `[::1]`), `localhost` and `*.localhost`;
+- IP addresses (`192.0.2.10`, shorthand such as `127.1`, `[::1]`), `localhost` and `*.localhost`;
 - single-label names (`myserver`);
 - names ending in `.local`, `.lan`, `.home`, `.localdomain`, `.internal` or `.home.arpa`;
 - this machine's hostname and [`global.hostname`](#global), the hosts in `allowed_origins`,

@@ -121,7 +121,7 @@ func (p *hostPolicy) allows(host string) bool {
 	if name == "" {
 		return true // HTTP/1.0 without Host: not a browser
 	}
-	if _, err := netip.ParseAddr(name); err == nil {
+	if _, err := netip.ParseAddr(name); err == nil || endsInNumber(name) {
 		return true
 	}
 	if !strings.Contains(name, ".") || p.names[name] {
@@ -133,6 +133,21 @@ func (p *hostPolicy) allows(host string) bool {
 		}
 	}
 	return false
+}
+
+// endsInNumber reports whether name's last label is a number, as in the
+// shorthand IPv4 forms 127.1 and 0x7f.0.0.1. Browsers take such a host for an
+// address and connect without DNS, and no public DNS name ends in a number:
+// a top-level domain is never numeric. name is lowercase.
+func endsInNumber(name string) bool {
+	last := name[strings.LastIndexByte(name, '.')+1:]
+	digits := "0123456789"
+	if hex, ok := strings.CutPrefix(last, "0x"); ok {
+		last, digits = hex, "0123456789abcdef"
+	} else if last == "" {
+		return false
+	}
+	return strings.Trim(last, digits) == ""
 }
 
 // logRefusal logs each refused name once, up to maxLoggedHosts names.
