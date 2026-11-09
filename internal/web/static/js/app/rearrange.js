@@ -63,10 +63,11 @@ function announce(text) {
 
 function announceMove(card) {
     const cards = renderedSection(sectionOf(card));
-    announce(i18n.t('card_moved')
-        .replace('{name}', cardName(card))
-        .replace('{position}', String(cards.indexOf(card) + 1))
-        .replace('{total}', String(cards.length)));
+    announce(i18n.format('card_moved', {
+        name: cardName(card),
+        position: cards.indexOf(card) + 1,
+        total: cards.length,
+    }));
 }
 
 // ---- Grips ----
@@ -93,7 +94,7 @@ function gripIcon() {
 }
 
 function labelGrip(grip, card) {
-    const label = i18n.t('move_card').replace('{name}', cardName(card));
+    const label = i18n.format('move_card', { name: cardName(card) });
     grip.setAttribute('aria-label', label);
     grip.title = label;
 }

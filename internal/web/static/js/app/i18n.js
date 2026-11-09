@@ -163,13 +163,13 @@ export const i18n = {
     },
 
     /**
-     * A translation with its {name} placeholders filled from values. The
-     * replacement is a function, so a "$" in a value (a host name, a clock
-     * source) stays literal.
+     * A translation with its {name} placeholders filled from values, in one
+     * pass: a "$" in a value (a host name, a card title) stays literal, and a
+     * value that looks like a placeholder is not filled in turn.
      */
     format(key, values = {}) {
-        return Object.entries(values)
-            .reduce((out, [name, value]) => out.replaceAll(`{${name}}`, () => String(value)), this.t(key));
+        return this.t(key).replace(/\{(\w+)\}/g, (placeholder, name) =>
+            Object.hasOwn(values, name) ? String(values[name]) : placeholder);
     },
 
     setupDropdown() {

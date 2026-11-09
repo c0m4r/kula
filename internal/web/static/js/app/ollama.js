@@ -806,7 +806,7 @@ export async function analyzeChartData(chartTitle, csvData) {
         });
     }
 
-    const prompt = i18n.t('ai_analyse_prompt').replace('{title}', chartTitle);
+    const prompt = i18n.format('ai_analyse_prompt', { title: chartTitle });
     appendMessage('user', prompt);
     sess.history.push({ role: 'user', content: prompt });
 

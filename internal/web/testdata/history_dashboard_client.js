@@ -1402,6 +1402,12 @@ const beforeRearrange = allCardIds();
 document.getElementById('btn-settings').click();
 const rearrangeButton = document.getElementById('btn-rearrange');
 check(!rearrangeButton.disabled, 'Rearrange cards was unavailable');
+// Card titles reach labels literally: a custom metric group or device may be
+// named with "$" sequences or a placeholder.
+const cpuHeading = document.querySelector('#card-cpu h3');
+const cpuHeadingText = cpuHeading.textContent;
+cpuHeading.textContent = 'CPU $& $1 {total}';
+const filled = (key, values) => i18n.t(key).replace(/\{(\w+)\}/g, (m, k) => k in values ? String(values[k]) : m);
 rearrangeButton.click();
 const rearrangeBar = document.getElementById('rearrange-bar');
 check(state.rearranging && rearrangeBar && document.getElementById('settings-menu').classList.contains('hidden'),
@@ -1411,8 +1417,8 @@ check(document.getElementById('btn-focus').disabled, 'Focus mode stayed availabl
 const cpuCard = document.getElementById('card-cpu');
 const cpuGrip = cpuCard.querySelector(':scope > .card-grip');
 const cpuName = cpuCard.querySelector('h3').textContent.trim();
-check(cpuGrip?.getAttribute('aria-label') === i18n.t('move_card').replace('{name}', cpuName),
-    'The CPU grip is not labelled with its card');
+check(cpuName === 'CPU $& $1 {total}' && cpuGrip?.getAttribute('aria-label') === filled('move_card', { name: cpuName }),
+    'The CPU grip is not labelled with its card, literally');
 check(cpuCard.querySelector(':scope > .chart-body').inert && !cpuGrip.inert,
     'Rearranging left the chart interactive or the grip inert');
 check(dashboardCards().filter(card => card.getClientRects().length).every(card => card.querySelector(':scope > .card-grip')),
@@ -1425,8 +1431,8 @@ check(systemNow[0] === systemBefore[1] && systemNow[1] === 'card-cpu', 'ArrowRig
 check(document.activeElement === cpuGrip, 'Moving a card took focus from its grip');
 check(storedOrder()?.system.indexOf('card-cpu') > storedOrder()?.system.indexOf(systemBefore[1]),
     'A keyboard move was not stored');
-check(rearrangeBar.querySelector('[role="status"]').textContent === i18n.t('card_moved').replace('{name}', cpuName)
-    .replace('{position}', '2').replace('{total}', String(systemNow.length)), 'A keyboard move was not announced');
+check(rearrangeBar.querySelector('[role="status"]').textContent ===
+    filled('card_moved', { name: cpuName, position: 2, total: systemNow.length }), 'A keyboard move was not announced literally');
 pressGrip(cpuGrip, 'End');
 check(renderedIds('system').at(-1) === 'card-cpu', 'End did not move CPU last');
 pressGrip(cpuGrip, 'Home');
@@ -1446,6 +1452,7 @@ check(!state.rearranging && !document.getElementById('rearrange-bar') && !docume
     !document.querySelector('[data-rearrange-inert]') && !document.getElementById('btn-focus').disabled,
     'Leaving Rearrange mode left its controls behind');
 check(storedOrder() === null && sameIds(allCardIds(), beforeRearrange), 'Cancel did not restore the order');
+cpuHeading.textContent = cpuHeadingText;
 
 rearrangeButton.click();
 pressGrip(document.querySelector('#card-processes > .card-grip'), 'Home');
