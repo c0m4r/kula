@@ -628,7 +628,7 @@ func (a *AuthManager) SaveSessions() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	var toSave []sessionData
+	toSave := []sessionData{} // no sessions are saved as [], not null
 	now := time.Now()
 	for hashedToken, sess := range a.sessions {
 		if now.Before(sess.expiresAt) {

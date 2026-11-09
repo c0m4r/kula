@@ -214,6 +214,9 @@ func TestLoadSessionsSkippedWhenAuthDisabled(t *testing.T) {
 	if err := am.SaveSessions(); err != nil {
 		t.Fatalf("SaveSessions error: %v", err)
 	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "[]" {
+		t.Fatalf("no sessions saved as %q (%v), want []", data, err)
+	}
 
 	enabled := NewAuthManager(config.AuthConfig{Enabled: true, Username: "admin", SessionTimeout: time.Hour}, tmpDir, false, config.SecurityConfig{OriginValidation: true})
 	if err := enabled.LoadSessions(); err != nil {
