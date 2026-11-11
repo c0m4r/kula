@@ -12,7 +12,10 @@ authentication off without a word.
 If you start Kula with an explicit `-config <path>` that doesn't exist yet, Kula seeds that
 path from the packaged example config (the same `config.example.yaml`, embedded in the binary
 at build time) and logs a warning, rather than refusing to start. The file is written with
-`0600` permissions; edit it and restart to apply your settings.
+`0600` permissions; edit it and restart to apply your settings. If the file cannot be created
+there (its directory does not exist, or is not writable) or cannot be read, Kula refuses to
+start with an error naming the path: an explicit `-config` never falls back to built-in
+defaults, which would serve without authentication.
 
 ## Environment variable overrides
 

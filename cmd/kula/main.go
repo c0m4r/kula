@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math"
 	"os"
@@ -95,19 +96,10 @@ func main() {
 	})
 	loadConfig := config.Load
 	if configExplicit {
-		// When the user explicitly points -config at a path that doesn't exist,
-		// seed it from the packaged example rather than refusing to start. Fall
-		// back to built-in defaults if the file can't be written.
-		if _, statErr := os.Stat(*configPath); os.IsNotExist(statErr) {
-			if werr := os.WriteFile(*configPath, kula.ExampleConfig, 0o600); werr != nil {
-				log.Printf("Warning: config %q did not exist and could not be seeded from the packaged example: %v; using built-in defaults", *configPath, werr)
-			} else {
-				log.Printf("Warning: config %q did not exist; seeded it from the packaged example", *configPath)
-				loadConfig = config.LoadRequired
-			}
-		} else {
-			loadConfig = config.LoadRequired
+		if err := seedExplicitConfig(*configPath); err != nil {
+			log.Fatalf("Failed to load config: %v", err)
 		}
+		loadConfig = config.LoadRequired
 	}
 
 	osName := getOSName()
@@ -173,6 +165,32 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\nUsage: kula [serve|tui|hash-password|inspect|disks]\n", cmd)
 		os.Exit(1)
 	}
+}
+
+// seedExplicitConfig prepares a config path given with -config, which Kula
+// then must read: one that does not exist is created from the packaged
+// example, as on a first run. When that fails, it is an error — never a
+// start on built-in defaults, which would serve with auth off. The file is
+// created exclusively, so a link left at the path is not followed.
+func seedExplicitConfig(path string) error {
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+		return nil // exists, or cannot be looked at: loading reports it
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("config %q does not exist and cannot be created from the packaged example: %w", path, err)
+	}
+	if _, err = f.Write(kula.ExampleConfig); err == nil {
+		err = f.Close()
+	} else {
+		_ = f.Close()
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("config %q does not exist and cannot be created from the packaged example: %w", path, err)
+	}
+	log.Printf("Warning: config %q did not exist; seeded it from the packaged example", path)
+	return nil
 }
 
 // collectionStopTimeout bounds how long a shutdown waits for the collection

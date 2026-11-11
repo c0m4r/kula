@@ -88,7 +88,7 @@ directories, and configured `collection.devices` filters do not restrict the lis
 
 | Flag | Description |
 |------|-------------|
-| `-config <path>` | Path to the configuration file (default `config.yaml`). If the path is given explicitly but does not exist, Kula seeds it from the packaged example config (logging a warning) instead of failing. |
+| `-config <path>` | Path to the configuration file (default `config.yaml`). If the path is given explicitly but does not exist, Kula seeds it from the packaged example config (logging a warning) instead of failing; if it cannot be created or read, Kula refuses to start rather than run on built-in defaults. |
 | `-version`, `-v` | Print version and exit. |
 | `--verbose` | (`kula inspect` only) Also decode and print the latest recorded metrics from each tier. |
 | `-h`, `--help` | Show usage. |

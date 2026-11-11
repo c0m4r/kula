@@ -233,6 +233,9 @@ Optional bearer token on `/metrics`, constant-time compared.
   `O_EXCL|O_NOFOLLOW` in the run directory each backup makes afresh. `sessions.json` is written
   to a new `0600` file beside it and renamed over it, so a link planted there is replaced, never
   written through, and is read only as a regular file (`TestSessionsFileIsKulasOwn`).
+- An explicit `-config` that does not exist is seeded from the packaged example (created
+  exclusively, never through a link left at the path); one that cannot be created or read stops
+  startup instead of falling back to built-in defaults, which would serve with auth off.
 - Packages and the guided installer install `/etc/kula` as `root:kula 0750` and seed
   `config.yaml` as `root:kula 0640` (the snap: `0600` root), and set those modes again on
   upgrade: the secrets in it reach root and the `kula` group only, and the daemon cannot rewrite
