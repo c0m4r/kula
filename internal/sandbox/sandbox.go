@@ -189,6 +189,11 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 		}
 	}
 
+	// MySQL over TLS reads its sslrootcert for each connection.
+	if appCfg.Mysql.Enabled && appCfg.Mysql.SSLRootCert != "" {
+		fsRules = append(fsRules, landlock.ROFiles(appCfg.Mysql.SSLRootCert).IgnoreIfMissing())
+	}
+
 	// Ollama: allow outbound TCP connection to the Ollama API port
 	if ollamaCfg.Enabled && ollamaCfg.URL != "" {
 		if port, ok := urlConnectPort(ollamaCfg.URL); ok {
@@ -311,7 +316,8 @@ func needsSystemRoots(appCfg config.ApplicationsConfig, ollamaCfg config.OllamaC
 	switch {
 	case appCfg.Nginx.Enabled && https(appCfg.Nginx.StatusURL),
 		appCfg.Apache2.Enabled && https(appCfg.Apache2.StatusURL),
-		ollamaCfg.Enabled && https(ollamaCfg.URL):
+		ollamaCfg.Enabled && https(ollamaCfg.URL),
+		appCfg.Mysql.Enabled && appCfg.Mysql.SSLMode == "verify-full" && appCfg.Mysql.SSLRootCert == "":
 		return true
 	case appCfg.Postgres.Enabled:
 		mode := appCfg.Postgres.SSLMode

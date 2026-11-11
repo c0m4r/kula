@@ -527,7 +527,7 @@ func TestMysqlSurvivesAMalformedServer(t *testing.T) {
 		_, _ = conn.Write([]byte{2, 0, 0, 0, 10, 0}) // protocol 10, empty version, nothing after
 		return true
 	})
-	mc := newMysqlCollector("127.0.0.1", srv.port(), "kula", "secret", "", false, time.Second)
+	mc := newMysqlCollector("127.0.0.1", srv.port(), "kula", "secret", "", "disable", "", false, time.Second)
 	if got := within(t, 30*time.Second, "a poll of a malformed server", func() *MysqlStats {
 		return mc.poller.run(context.Background(), mc.poll)
 	}); got != nil {

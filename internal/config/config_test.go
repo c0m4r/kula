@@ -871,3 +871,48 @@ func TestGameScoreURL(t *testing.T) {
 		})
 	}
 }
+
+// MySQL TLS settings that would protect the connection less than they read
+// are refused: an unknown mode, a CA file no mode uses, TLS on a Unix socket,
+// verify-ca without its CA, verify-full without a name to check. A disabled
+// collector's settings are left alone, and the default is plaintext.
+func TestLoadValidatesMysqlTLS(t *testing.T) {
+	if mode := DefaultConfig().Applications.Mysql.SSLMode; mode != "disable" {
+		t.Fatalf("default applications.mysql.sslmode = %q, want disable", mode)
+	}
+	for _, tc := range []struct {
+		name, mysql string
+		wantErr     string
+	}{
+		{"default", "enabled: true", ""},
+		{"disable", "enabled: true\n    sslmode: disable", ""},
+		{"require", "enabled: true\n    sslmode: require", ""},
+		{"require with a CA", "enabled: true\n    sslmode: require\n    sslrootcert: /etc/kula/ca.pem", ""},
+		{"verify-ca", "enabled: true\n    sslmode: verify-ca\n    sslrootcert: /etc/kula/ca.pem", ""},
+		{"verify-full against the system CAs", "enabled: true\n    host: db.example.com\n    sslmode: verify-full", ""},
+		{"verify-full with a CA", "enabled: true\n    host: db.example.com\n    sslmode: verify-full\n    sslrootcert: /etc/kula/ca.pem", ""},
+		{"disabled collector", "enabled: false\n    sslmode: bogus", ""},
+		{"unknown mode", "enabled: true\n    sslmode: VERIFY_IDENTITY", "is not one of"},
+		{"prefer", "enabled: true\n    sslmode: prefer", "is not one of"},
+		{"CA without TLS", "enabled: true\n    sslrootcert: /etc/kula/ca.pem", "does not use TLS"},
+		{"Unix socket", "enabled: true\n    host: /run/mysqld/mysqld.sock\n    port: 0\n    sslmode: require", "Unix socket"},
+		{"verify-ca against the system CAs", "enabled: true\n    sslmode: verify-ca", "needs sslrootcert"},
+		{"verify-full without a host", "enabled: true\n    host: \"\"\n    sslmode: verify-full", "needs host"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			yaml := fmt.Sprintf("storage:\n  directory: %s\napplications:\n  mysql:\n    %s\n", dir, tc.mysql)
+			if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Load() = %v, want no error", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Load() = %v, want an error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}

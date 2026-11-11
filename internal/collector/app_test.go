@@ -481,7 +481,7 @@ func TestPostgresDSN(t *testing.T) {
 
 func TestMysqlDSN(t *testing.T) {
 	// TCP connection; the password holds DSN delimiters.
-	mc1 := newMysqlCollector("localhost", 3306, "user", "p@ss/word:1", "mydb", false, time.Second)
+	mc1 := newMysqlCollector("localhost", 3306, "user", "p@ss/word:1", "mydb", "disable", "", false, time.Second)
 	parsed, err := mysql.ParseDSN(mc1.config.FormatDSN())
 	if err != nil {
 		t.Fatalf("formatted DSN does not parse: %v", err)
@@ -496,12 +496,12 @@ func TestMysqlDSN(t *testing.T) {
 	}
 
 	// IPv6 hosts get brackets.
-	if got := newMysqlCollector("::1", 3306, "user", "", "", false, time.Second).config.Addr; got != "[::1]:3306" {
+	if got := newMysqlCollector("::1", 3306, "user", "", "", "disable", "", false, time.Second).config.Addr; got != "[::1]:3306" {
 		t.Errorf("IPv6 address = %q", got)
 	}
 
 	// Unix socket connection (port == 0)
-	mc2 := newMysqlCollector("/var/run/mysqld/mysqld.sock", 0, "user", "", "mydb", false, time.Second)
+	mc2 := newMysqlCollector("/var/run/mysqld/mysqld.sock", 0, "user", "", "mydb", "disable", "", false, time.Second)
 	if mc2.config.Net != "unix" || mc2.config.Addr != "/var/run/mysqld/mysqld.sock" {
 		t.Errorf("Unexpected Unix config: %s %s", mc2.config.Net, mc2.config.Addr)
 	}

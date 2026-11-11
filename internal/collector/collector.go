@@ -132,6 +132,8 @@ func (c *Collector) StartApplications() {
 			appCfg.Mysql.User,
 			appCfg.Mysql.Password,
 			appCfg.Mysql.DBName,
+			appCfg.Mysql.SSLMode,
+			appCfg.Mysql.SSLRootCert,
 			collCfg.DebugLog,
 			collCfg.Interval,
 		)

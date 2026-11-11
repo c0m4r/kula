@@ -47,8 +47,9 @@ type mysqlCollector struct {
 // know are applied on connect: wait_timeout ends the session once nothing has
 // been sent on it for a while (a vanished client), lock_wait_timeout keeps a
 // statement from queueing behind a metadata lock. The program_name connection
-// attribute marks the session as Kula's.
-func mysqlConfig(host string, port int, user, password, dbname string, t dbTimeouts) *mysql.Config {
+// attribute marks the session as Kula's. A TLS sslmode adds the TLS settings,
+// built for each connection (see mysqlTLSConfig).
+func mysqlConfig(host string, port int, user, password, dbname, sslmode, sslrootcert string, t dbTimeouts) *mysql.Config {
 	cfg := mysql.NewConfig()
 	cfg.User, cfg.Passwd, cfg.DBName = user, password, dbname
 	if port == 0 {
@@ -62,10 +63,20 @@ func mysqlConfig(host string, port int, user, password, dbname string, t dbTimeo
 		"wait_timeout":      strconv.Itoa(int(t.idle.Seconds())),
 		"lock_wait_timeout": strconv.Itoa(max(1, int(t.lock.Seconds()))),
 	}
+	if mysqlUsesTLS(sslmode) {
+		_ = cfg.Apply(mysql.BeforeConnect(func(_ context.Context, c *mysql.Config) error {
+			tlsCfg, err := mysqlTLSConfig(sslmode, sslrootcert, host)
+			if err != nil {
+				return err
+			}
+			c.TLS = tlsCfg
+			return nil
+		}))
+	}
 	return cfg
 }
 
-func newMysqlCollector(host string, port int, user, password, dbname string, debug bool, interval time.Duration) *mysqlCollector {
+func newMysqlCollector(host string, port int, user, password, dbname, sslmode, sslrootcert string, debug bool, interval time.Duration) *mysqlCollector {
 	t := newDBTimeouts(interval)
 	label := dbname
 	if label == "" {
@@ -78,7 +89,7 @@ func newMysqlCollector(host string, port int, user, password, dbname string, deb
 	mc := &mysqlCollector{
 		label:  label,
 		debug:  debug,
-		config: mysqlConfig(host, port, user, password, dbname, t),
+		config: mysqlConfig(host, port, user, password, dbname, sslmode, sslrootcert, t),
 	}
 	mc.poller.stale = t.stale
 	mc.poller.name, mc.poller.discard = "[mysql]", mc.discard

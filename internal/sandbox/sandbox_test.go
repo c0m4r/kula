@@ -32,13 +32,19 @@ func TestLandlockEnforcement(t *testing.T) {
 	_ = os.WriteFile(configPath, []byte("test: 1"), 0644)
 	storageDir := filepath.Join(tempDir, "storage")
 	_ = os.Mkdir(storageDir, 0750)
+	caDir := filepath.Join(tempDir, "tls")
+	_ = os.Mkdir(caDir, 0750)
+	mysqlCA := filepath.Join(caDir, "mysql-ca.pem")
+	_ = os.WriteFile(mysqlCA, []byte("ca"), 0644)
+	_ = os.WriteFile(filepath.Join(caDir, "other.pem"), []byte("other"), 0644)
 
 	// Run the helper process which will enforce the sandbox and then try to
 	// break out of it.
 	cmd := exec.Command(os.Args[0], "-test.run=TestLandlockEnforcement")
 	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1",
 		"TEST_CONFIG_PATH="+configPath,
-		"TEST_STORAGE_DIR="+storageDir)
+		"TEST_STORAGE_DIR="+storageDir,
+		"TEST_MYSQL_CA="+mysqlCA)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -77,6 +83,9 @@ func runHelperProcess() {
 	// An https:// target makes Enforce load the system roots first. Its
 	// connect rule (port 8443) leaves the dial assertion below intact.
 	apps := config.ApplicationsConfig{Nginx: config.NginxConfig{Enabled: true, StatusURL: "https://127.0.0.1:8443/status"}}
+	// MySQL over TLS with its own CA file, which it reads at connect time.
+	mysqlCA := os.Getenv("TEST_MYSQL_CA")
+	apps.Mysql = config.MysqlConfig{Enabled: true, Host: "127.0.0.1", Port: 8444, SSLMode: "verify-full", SSLRootCert: mysqlCA}
 	webCfg := config.WebConfig{Enabled: true, Port: 27999}
 	if err := Enforce(configPath, storageDir, webCfg, apps, config.OllamaConfig{}); err != nil {
 		fmt.Printf("SKIP: Enforce failed: %v\n", err)
@@ -130,7 +139,17 @@ func runHelperProcess() {
 		}
 	}
 
-	// 6. TLS targets still verify: the system roots were loaded before the
+	// 6. The MySQL CA file stays readable, and only that file of its directory.
+	if _, err := os.ReadFile(mysqlCA); err != nil {
+		fmt.Printf("FAIL: MySQL sslrootcert unreadable under the sandbox: %v\n", err)
+		os.Exit(1)
+	}
+	if _, err := os.ReadFile(filepath.Join(filepath.Dir(mysqlCA), "other.pem")); err == nil {
+		fmt.Printf("FAIL: a file beside the MySQL sslrootcert is readable under the sandbox\n")
+		os.Exit(1)
+	}
+
+	// 7. TLS targets still verify: the system roots were loaded before the
 	// CA bundle became unreadable.
 	if bundleErr == nil {
 		pool, err := x509.SystemCertPool()
@@ -161,6 +180,14 @@ func TestNeedsSystemRoots(t *testing.T) {
 		{"postgres require", config.ApplicationsConfig{Postgres: config.PostgresConfig{Enabled: true, SSLMode: "require"}}, config.OllamaConfig{}, false},
 		{"postgres verify-full", config.ApplicationsConfig{Postgres: config.PostgresConfig{Enabled: true, SSLMode: "verify-full"}}, config.OllamaConfig{}, true},
 		{"postgres verify-ca", config.ApplicationsConfig{Postgres: config.PostgresConfig{Enabled: true, SSLMode: "verify-ca"}}, config.OllamaConfig{}, true},
+		{"mysql require", config.ApplicationsConfig{Mysql: config.MysqlConfig{Enabled: true, SSLMode: "require"}}, config.OllamaConfig{}, false},
+		{"mysql verify-ca", config.ApplicationsConfig{Mysql: config.MysqlConfig{Enabled: true, SSLMode: "verify-ca", SSLRootCert: "/etc/kula/ca.pem"}}, config.OllamaConfig{}, false},
+		{"mysql verify-full", config.ApplicationsConfig{Mysql: config.MysqlConfig{Enabled: true, SSLMode: "verify-full"}}, config.OllamaConfig{}, true},
+		{"mysql verify-full with a CA file", config.ApplicationsConfig{Mysql: config.MysqlConfig{Enabled: true, SSLMode: "verify-full", SSLRootCert: "/etc/kula/ca.pem"}}, config.OllamaConfig{}, false},
+		{"mysql verify-full beside postgres", config.ApplicationsConfig{
+			Postgres: config.PostgresConfig{Enabled: true, SSLMode: "disable"},
+			Mysql:    config.MysqlConfig{Enabled: true, SSLMode: "verify-full"},
+		}, config.OllamaConfig{}, true},
 	} {
 		if got := needsSystemRoots(tc.apps, tc.ollama); got != tc.want {
 			t.Errorf("%s: needsSystemRoots = %v, want %v", tc.name, got, tc.want)

@@ -381,6 +381,13 @@ type MysqlConfig struct {
 	User     string `yaml:"user"`
 	Password string `yaml:"password"`
 	DBName   string `yaml:"dbname"`
+	// SSLMode is TLS over TCP, named as for PostgreSQL: disable (default),
+	// require (encrypted, certificate not checked), verify-ca (certificate
+	// chains to SSLRootCert or the system CAs) or verify-full (and names Host).
+	SSLMode string `yaml:"sslmode"`
+	// SSLRootCert is a PEM file of the CA certificates to check the server
+	// against instead of the system ones; require then checks it as verify-ca.
+	SSLRootCert string `yaml:"sslrootcert"`
 }
 
 func isWritable(dir string) bool {
@@ -505,6 +512,7 @@ func DefaultConfig() *Config {
 				Port:    3306,
 				User:    "kula_monitor",
 				DBName:  "",
+				SSLMode: "disable",
 			},
 		},
 		TUI: TUIConfig{
@@ -662,6 +670,10 @@ func load(path string, mustExist bool) (*Config, error) {
 		return nil, err
 	}
 
+	if err := cfg.validateMysqlTLS(); err != nil {
+		return nil, err
+	}
+
 	if cfg.Ollama.Enabled {
 		if err := validateOllamaURL(cfg.Ollama.URL); err != nil {
 			return nil, err
@@ -673,6 +685,38 @@ func load(path string, mustExist bool) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// validateMysqlTLS refuses MySQL TLS settings that would protect the
+// connection less than they read: an unknown sslmode, an sslrootcert that no
+// mode uses, TLS on a Unix socket (which needs none), verify-ca without the
+// CA to check against (against the system CAs, any publicly issued
+// certificate would pass), or verify-full without a host name to check. A
+// disabled collector is left alone.
+func (c *Config) validateMysqlTLS() error {
+	m := c.Applications.Mysql
+	if !m.Enabled {
+		return nil
+	}
+	switch m.SSLMode {
+	case "", "disable":
+		if m.SSLRootCert != "" {
+			return fmt.Errorf("applications.mysql.sslrootcert is set, but sslmode %q does not use TLS (use verify-full or verify-ca)", m.SSLMode)
+		}
+		return nil
+	case "require", "verify-ca", "verify-full":
+	default:
+		return fmt.Errorf("applications.mysql.sslmode %q is not one of disable, require, verify-ca, verify-full", m.SSLMode)
+	}
+	switch {
+	case m.Port == 0:
+		return fmt.Errorf("applications.mysql.sslmode %q applies to TCP; a Unix socket (port 0) is local and needs no TLS (use disable)", m.SSLMode)
+	case m.SSLMode == "verify-ca" && m.SSLRootCert == "":
+		return fmt.Errorf("applications.mysql.sslmode %q needs sslrootcert, the CA that issued the server's certificate (to check against the system CAs, use verify-full)", m.SSLMode)
+	case m.SSLMode == "verify-full" && m.Host == "":
+		return fmt.Errorf("applications.mysql.sslmode %q needs host, the name the server's certificate is checked against", m.SSLMode)
+	}
+	return nil
 }
 
 // GameScoreURLOrigin validates a game score endpoint and returns its origin

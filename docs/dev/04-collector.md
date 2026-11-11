@@ -146,6 +146,14 @@ API and WebSocket payloads.
   A failed query keeps the previous read's values until the next read; a second failure in a
   row reports zeros.
   `postgres_test.go` counts the queries of two minutes of polls against a fake server.
+- **MySQL TLS uses PostgreSQL's names.** `sslmode` (`disable`, `require`, `verify-ca`,
+  `verify-full`) and `sslrootcert` behave as libpq's, `require` with a CA included.
+  `mysql_tls.go` builds the `tls.Config` in the driver's `BeforeConnect` hook, so the CA file
+  is read for each connection; `verify-ca` checks the chain in `VerifyConnection`, because
+  crypto/tls verifies a chain only together with the name. Config loading refuses the settings
+  that would read as safer than they are (TLS on a Unix socket, `verify-ca` without a CA,
+  `verify-full` without a host). `mysql_tls_test.go` runs every mode against a fake server
+  speaking the MySQL handshake and TLS.
 - **Debug logging** goes through the `debugf` helper, gated by `collection.DebugLog` (which is
   set when `web.logging.level == "debug"`).
 

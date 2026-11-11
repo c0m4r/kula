@@ -439,6 +439,14 @@ applications:
     # Database to connect to. Leave empty — SHOW GLOBAL STATUS and
     # @@max_connections are server-wide and don't require a database.
     dbname: ""
+    # TLS over TCP, named as for PostgreSQL: disable | require (encrypted, the
+    # certificate unchecked) | verify-ca (issued by sslrootcert) | verify-full
+    # (issued by sslrootcert, or a system CA without one, for host). Whatever
+    # answers on host:port gets the password unless the certificate is verified:
+    # on this host prefer the Unix socket, across a network verify-full.
+    sslmode: "disable"
+    # PEM file of the CA that issued the server's certificate.
+    # sslrootcert: "/etc/kula/mysql-ca.pem"
 
 # TUI settings
 tui:

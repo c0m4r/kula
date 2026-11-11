@@ -252,7 +252,25 @@ applications:
     user: "kula_monitor"
     password: ""        # or set KULA_MYSQL_PASSWORD
     dbname: ""   # leave empty; global status is server-wide
+    sslmode: "disable"
+    # sslrootcert: "/etc/kula/mysql-ca.pem"
 ```
+
+**TLS:** `sslmode` takes the PostgreSQL names for MySQL's own `--ssl-mode` values, and applies
+to TCP (a Unix socket needs no TLS, and Kula refuses the combination):
+
+- `disable` (default): no TLS.
+- `require` (`REQUIRED`): encrypted, but the certificate is not checked. With `sslrootcert` set,
+  it is checked as for `verify-ca`.
+- `verify-ca` (`VERIFY_CA`): the certificate must be issued by the CA in `sslrootcert`, which
+  this mode requires; the name in it is not checked.
+- `verify-full` (`VERIFY_IDENTITY`): the certificate must be issued by the CA in `sslrootcert`,
+  or by one of the system CAs when none is set, and name `host`.
+
+A server that does not offer TLS is refused, never used unencrypted. `sslrootcert` is a PEM file
+read for each connection, so a CA file rewritten in place needs no restart. The sandbox allows
+reading that one file as it was at startup: one replaced by a new file (renamed over it, or a
+symlink pointed elsewhere) is readable again after a restart.
 
 **Metrics:** threads (connected/running/cached), max connections, queries/select/insert/
 update/delete/slow per second, InnoDB buffer-pool reads/s and hit %, row-lock waits,

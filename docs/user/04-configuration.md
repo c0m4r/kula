@@ -453,6 +453,8 @@ applications:
     user: "kula_monitor"
     password: ""
     dbname: ""
+    sslmode: "disable"           # require | verify-ca | verify-full: TLS over TCP
+    # sslrootcert: "/etc/kula/mysql-ca.pem"   # CA of the server certificate
 ```
 
 ---
