@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"kula/internal/collector"
@@ -59,6 +60,10 @@ type Server struct {
 	wsMu       sync.Mutex
 	wsCount    int
 	wsIPCounts map[string]int
+
+	// broadcastFailing is set while samples cannot be encoded for the
+	// WebSocket clients, so BroadcastSample logs the change, not every tick.
+	broadcastFailing atomic.Bool
 }
 
 func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Collector, s *storage.Store, storageDir string, ollamaCfg config.OllamaConfig) *Server {
@@ -104,13 +109,23 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 // unwatched instance does zero serialization work each second. A client that
 // connects later receives the current sample from collector.Latest() during
 // the WebSocket upgrade, so nothing is lost.
+//
+// A sample encoding/json refuses (a NaN or infinity in it) reaches no client,
+// and their live views stop while history keeps filling. That is logged when
+// it starts and when it ends, as it tends to last for many ticks.
 func (s *Server) BroadcastSample(sample *collector.Sample) {
 	if !s.hub.hasClients() {
 		return
 	}
 	data, err := json.Marshal(sample)
 	if err != nil {
+		if !s.broadcastFailing.Swap(true) {
+			log.Printf("WebSocket broadcast: samples are not sent, they cannot be encoded: %v", err)
+		}
 		return
+	}
+	if s.broadcastFailing.Swap(false) {
+		log.Printf("WebSocket broadcast: samples are sent again")
 	}
 	s.hub.broadcast(data)
 }

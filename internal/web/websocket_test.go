@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -170,6 +171,45 @@ func TestHubHasClientsAndBroadcast(t *testing.T) {
 	case got := <-c.sendCh:
 		t.Fatalf("paused client unexpectedly received %q", got)
 	default:
+	}
+}
+
+// TestBroadcastSampleLogsUnencodableSamples verifies that a sample which
+// cannot be encoded is not dropped in silence: the live views of every client
+// stop, so it is logged, but once when it starts and once when it ends rather
+// than on every collection tick.
+func TestBroadcastSampleLogsUnencodableSamples(t *testing.T) {
+	s := &Server{hub: newWSHub()}
+	c := &wsClient{sendCh: make(chan []byte, 4)}
+	s.hub.mu.Lock()
+	s.hub.clients[c] = true
+	s.hub.mu.Unlock()
+
+	var logs bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(orig)
+
+	bad := &collector.Sample{}
+	bad.CPU.Total.Usage = math.NaN()
+	for range 3 {
+		s.BroadcastSample(bad)
+	}
+	if n := strings.Count(logs.String(), "cannot be encoded"); n != 1 {
+		t.Errorf("three unencodable samples logged %d times, want once:\n%s", n, logs.String())
+	}
+	if len(c.sendCh) != 0 {
+		t.Errorf("an unencodable sample reached the client")
+	}
+
+	for range 2 {
+		s.BroadcastSample(&collector.Sample{})
+	}
+	if n := strings.Count(logs.String(), "sent again"); n != 1 {
+		t.Errorf("recovery logged %d times, want once:\n%s", n, logs.String())
+	}
+	if len(c.sendCh) != 2 {
+		t.Errorf("%d samples delivered after recovery, want 2", len(c.sendCh))
 	}
 }
 

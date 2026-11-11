@@ -216,7 +216,9 @@ policy instead (the Ollama chat stream sends `no-cache`).
   header are allowed). Cross-origin upgrades are rejected (CSWSH protection).
 - Enforces a **global** connection cap (`max_websocket_conns`, default 100) and a **per-IP** cap
   (`max_websocket_conns_per_ip`, default 5).
-- `Server.BroadcastSample(sample)` fans the latest sample out to all non-paused clients.
+- `Server.BroadcastSample(sample)` fans the latest sample out to all non-paused clients. A
+  sample that cannot be encoded (a NaN or infinity) reaches no client; that is logged when it
+  starts and when samples are sent again, not on every tick.
 - A **read pump** accepts JSON control commands: `{"action":"pause"}` and
   `{"action":"resume"}` (the dashboard auto-pauses while you zoom). Incoming messages are read
   with a 4096-byte limit and a 60-second deadline refreshed by pong handlers.
