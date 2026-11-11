@@ -39,7 +39,9 @@ for f in kula-linux-* ; do
     cd -
     gzip -c "$f" > "${f}.gz"
     g="$(echo "$f" | sed 's/-linux//g;')"
-    tar -czf "${g}.tar.gz" kula
+    # Root ownership in the archive: extracted as root (the installer's /opt
+    # path, or by hand), the builder's uid would otherwise own the binary.
+    tar --owner=0 --group=0 --numeric-owner -czf "${g}.tar.gz" kula
     rm -rf kula
 done
 

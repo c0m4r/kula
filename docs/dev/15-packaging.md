@@ -13,7 +13,8 @@ run the builders."
 3. Cross-compiles all architectures (`./build.sh cross` → amd64, arm64, riscv64).
 4. For each binary, assembles a `kula/` bundle containing the binary plus `CHANGELOG.md`,
    `VERSION`, `LICENSE`, `README.md`, `config.example.yaml`, `scripts/`, `bash-completion`,
-   `init/`, and `man/`, and produces both a `.tar.gz` and a gzipped single binary.
+   `init/`, and `man/`, and produces both a `.tar.gz` (its members owned by uid/gid 0, so a root
+   extraction does not hand the files to the builder's uid) and a gzipped single binary.
 5. Builds `.deb` and `.rpm` packages for amd64, arm64 and riscv64 from those binaries, then deletes
    the uncompressed binaries (only the `.gz`/`.tar.gz`/`.deb`/`.rpm` files ship). When `snapcraft`
    is installed, the `.snap` set is cross-built from source; a failed snap build only warns.

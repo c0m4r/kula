@@ -294,7 +294,7 @@ EOF
 )
 
 # Package the AUR files into the artifact install.sh downloads
-tar -czf "${AUR_TARBALL}" -C dist "kula-${VERSION}-aur"
+tar --owner=0 --group=0 --numeric-owner -czf "${AUR_TARBALL}" -C dist "kula-${VERSION}-aur"
 echo "Created ${AUR_TARBALL}"
 
 # Record checksums so install.sh can verify the AUR path (remote builds only)
