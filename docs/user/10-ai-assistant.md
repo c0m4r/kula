@@ -45,9 +45,12 @@ When enabled, a 🤖 button appears in the dashboard header.
 
 Kula proxies to Ollama through a hardened endpoint (`/api/ollama/*`). The proxy:
 
-- **Sanitizes prompts** — strips null bytes, trims whitespace, clamps length to 2000 runes.
-- **Validates model names** against `^[A-Za-z0-9._:/-]{1,200}$` — rejecting shell
-  metacharacters, spaces, and backticks.
+- **Bounds what reaches the model** — only your questions and the model's earlier answers are
+  forwarded from the browser (no system or tool messages), the newest 20 of them; the prompt
+  and each question are clamped to 2000 characters, each earlier answer to 8000, and the
+  session's metrics snapshot or chart data to 16,000. Null bytes are stripped.
+- **Runs only offered models** — a chat uses the configured `model` or one the backend lists
+  in the model selector; any other name falls back to the configured model.
 - **Rate-limits** — 10 chat requests per IP per minute; 60 metadata (model list/context)
   requests per IP per minute.
 - **Caps bodies & responses** — chat request body max 32 KB; Ollama response stream max 10 MB.

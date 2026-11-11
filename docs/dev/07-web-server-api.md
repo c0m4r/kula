@@ -272,8 +272,9 @@ requires: one invalid byte would fail the whole scrape. See
 - `handleOllamaModels` — lists locally available models.
 - `handleOllamaContext` — bootstraps a per-chart analysis session with recent data as CSV.
 
-All three apply per-IP rate limiting and response-size caps; the chat path additionally applies
-prompt sanitization, model-name validation, and a request-body cap. See
+All three apply per-IP rate limiting and response-size caps; the chat path additionally caps the
+request body, forwards only clamped user and assistant turns, and runs only a model the backend
+lists (or the configured one). See
 [AI Assistant](../user/10-ai-assistant.md) and [Security Model](08-security.md).
 
 ## Templates, SRI & embedding

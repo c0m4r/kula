@@ -174,9 +174,17 @@ of its served bytes.
 ## Ollama / AI hardening
 
 - **SSRF prevention:** Ollama URL validated to loopback-only at config load.
-- **Prompt sanitization:** null bytes stripped, length clamped to 2000 runes, whitespace
-  trimmed.
-- **Model-name validation:** `^[A-Za-z0-9._:/-]{1,200}$` — rejects shell metacharacters.
+- **What the client sends to the model** (`handleOllamaChat`, `chatHistory`): the request body
+  is capped at 32 KB. Of the conversation history only `user` and `assistant` turns are kept,
+  as text: a `system` or `tool` turn, tool calls and tool-call IDs are dropped, since the
+  server alone writes those. The newest 20 turns are kept; the prompt and each user turn are
+  clamped to 2000 runes, each assistant turn to 8000. The session context (metrics snapshot
+  or chart CSV), which goes into the system prompt, is clamped to 16,000 runes, and `lang`
+  reaches it only as a language tag (`en`, `pt-BR`). Null bytes are stripped and whitespace
+  trimmed throughout.
+- **Model restriction:** a chat runs on the configured model or on one the backend lists in
+  its latest `/api/ollama/models` listing (fetched on demand if none has been); any other name
+  falls back to the configured model. Names must also match `^[A-Za-z0-9._:/-]{1,200}$`.
 - **Response cap:** 10 MB; **tool loop cap:** 5 rounds.
 
 ## Prometheus security

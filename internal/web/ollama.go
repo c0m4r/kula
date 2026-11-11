@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -24,9 +25,21 @@ import (
 // "llama3:latest", "library/llama3.1", or "hf.co/user/model:Q4_K_M".
 var ollamaModelNameRe = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,200}$`)
 
+// ollamaLangRe matches the language tags the dashboard sends ("en", "pt-BR").
+var ollamaLangRe = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$`)
+
 const (
-	// ollamaMaxPrompt is the maximum allowed prompt length in runes.
+	// ollamaMaxPrompt is the maximum length, in runes, of the prompt and of each
+	// user turn of the conversation history.
 	ollamaMaxPrompt = 2000
+	// ollamaMaxAnswer is the maximum length, in runes, of each assistant turn
+	// of the conversation history.
+	ollamaMaxAnswer = 8000
+	// ollamaMaxMessages is the number of prior turns a chat request keeps.
+	ollamaMaxMessages = 20
+	// ollamaMaxContext is the maximum length, in runes, of the session context
+	// (a metrics snapshot or chart CSV) placed in the system prompt.
+	ollamaMaxContext = 16000
 	// ollamaMaxBody is the maximum request body size for /api/ollama/chat.
 	ollamaMaxBody = 32 * 1024
 	// ollamaDefaultTimeout is the fallback streaming timeout.
@@ -116,7 +129,8 @@ type ollamaClient struct {
 	cfg         config.OllamaConfig
 	timeout     time.Duration
 	mu          sync.RWMutex
-	detectedAPI string // "ollama" or "openai"; empty until first successful probe
+	detectedAPI string          // "ollama" or "openai"; empty until first successful probe
+	models      map[string]bool // the backend's last model listing; nil until one succeeds
 }
 
 // effectiveAPIType returns the detected API flavour, defaulting to "ollama" before detection.
@@ -237,14 +251,75 @@ type chatRequest struct {
 	Model    string          `json:"model"`    // optional: overrides the configured model
 }
 
-// sanitisePrompt strips null bytes and clamps to ollamaMaxPrompt.
-func sanitisePrompt(s string) string {
+// clampText strips null bytes, keeps at most limit runes and trims whitespace.
+func clampText(s string, limit int) string {
 	s = strings.ReplaceAll(s, "\x00", "")
-	if utf8.RuneCountInString(s) > ollamaMaxPrompt {
+	if utf8.RuneCountInString(s) > limit {
 		runes := []rune(s)
-		s = string(runes[:ollamaMaxPrompt])
+		s = string(runes[:limit])
 	}
 	return strings.TrimSpace(s)
+}
+
+// sanitisePrompt strips null bytes and clamps to ollamaMaxPrompt.
+func sanitisePrompt(s string) string {
+	return clampText(s, ollamaMaxPrompt)
+}
+
+// chatHistory keeps what the model may see of the client's prior turns: the
+// text of user and assistant turns, each clamped, the newest ollamaMaxMessages.
+// System and tool turns, and tool calls, come only from the server.
+func chatHistory(turns []ollamaMessage) []ollamaMessage {
+	kept := make([]ollamaMessage, 0, min(len(turns), ollamaMaxMessages))
+	for _, m := range turns {
+		var content string
+		switch m.Role {
+		case "user":
+			content = sanitisePrompt(m.Content)
+		case "assistant":
+			content = clampText(m.Content, ollamaMaxAnswer)
+		default:
+			continue
+		}
+		if content != "" {
+			kept = append(kept, ollamaMessage{Role: m.Role, Content: content})
+		}
+	}
+	if len(kept) > ollamaMaxMessages {
+		kept = kept[len(kept)-ollamaMaxMessages:]
+	}
+	return kept
+}
+
+// chatModel is the model a chat runs on: the requested one when the backend
+// lists it, the configured one otherwise. Before any listing has succeeded
+// (Kula restarted under an open dashboard) it asks the backend for one.
+func (oc *ollamaClient) chatModel(ctx context.Context, requested string, debugLog bool) string {
+	m := strings.TrimSpace(requested)
+	if m == "" || m == oc.cfg.Model {
+		return oc.cfg.Model
+	}
+	if !ollamaModelNameRe.MatchString(m) {
+		if debugLog {
+			log.Printf("[DEBUG] [Ollama] rejected invalid model name %q, using configured model %s", m, oc.cfg.Model)
+		}
+		return oc.cfg.Model
+	}
+	oc.mu.RLock()
+	listed, fetched := oc.models[m], oc.models != nil
+	oc.mu.RUnlock()
+	if !fetched {
+		if names, err := oc.fetchModels(ctx, debugLog); err == nil {
+			listed = slices.Contains(names, m)
+		}
+	}
+	if !listed {
+		if debugLog {
+			log.Printf("[DEBUG] [Ollama] model %q is not offered by the backend, using configured model %s", m, oc.cfg.Model)
+		}
+		return oc.cfg.Model
+	}
+	return m
 }
 
 // handleOllamaChat is the HTTP handler for POST /api/ollama/chat.
@@ -284,11 +359,8 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	messages := []ollamaMessage{
 		{Role: "system", Content: systemContent},
 	}
-	// Append prior conversation history (cap at 20 turns to stay within context)
-	if len(req.Messages) > 20 {
-		req.Messages = req.Messages[len(req.Messages)-20:]
-	}
-	messages = append(messages, req.Messages...)
+	history := chatHistory(req.Messages)
+	messages = append(messages, history...)
 
 	// Only append the current prompt if it's not already at the end of the history.
 	// This prevents duplication when the frontend sends the updated history.
@@ -298,23 +370,13 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	}
 	debugLog := s.cfg.Logging.Enabled && s.cfg.Logging.Level == "debug"
 
-	// Allow the client to override the configured model (e.g. after switching
-	// models in the UI). Reject anything that doesn't look like an Ollama
-	// identifier — length is already bounded by ollamaMaxBody, but we still want
-	// to keep control characters and shell metacharacters out of the proxied
-	// request body.
-	model := s.ollama.cfg.Model
-	if m := strings.TrimSpace(req.Model); m != "" && m != model {
-		if ollamaModelNameRe.MatchString(m) {
-			model = m
-		} else if debugLog {
-			log.Printf("[DEBUG] [Ollama] rejected invalid model name %q, using configured model %s", m, model)
-		}
-	}
+	// The client may pick another model (the dashboard's model selector), but
+	// only one the backend lists: anything else runs on the configured model.
+	model := s.ollama.chatModel(r.Context(), req.Model, debugLog)
 
 	if debugLog {
 		log.Printf("[DEBUG] [Ollama] chat: ip=%s model=%s api=%s prompt_len=%d history=%d",
-			ip, model, s.ollama.effectiveAPIType(), utf8.RuneCountInString(userPrompt), len(req.Messages))
+			ip, model, s.ollama.effectiveAPIType(), utf8.RuneCountInString(userPrompt), len(history))
 	}
 
 	// Wire up tools when storage is available.
@@ -713,7 +775,13 @@ func (oc *ollamaClient) fetchModels(ctx context.Context, debugLog bool) ([]strin
 	oc.mu.RUnlock()
 
 	if detected == "openai" {
-		return oc.fetchModelsOpenAI(ctx, debugLog)
+		names, err := oc.fetchModelsOpenAI(ctx, debugLog)
+		if err == nil {
+			oc.mu.Lock()
+			oc.setModelsLocked(names)
+			oc.mu.Unlock()
+		}
+		return names, err
 	}
 
 	// Try native Ollama API.
@@ -721,6 +789,7 @@ func (oc *ollamaClient) fetchModels(ctx context.Context, debugLog bool) ([]strin
 	if err == nil {
 		oc.mu.Lock()
 		oc.detectedAPI = "ollama"
+		oc.setModelsLocked(names)
 		oc.mu.Unlock()
 		return names, nil
 	}
@@ -735,10 +804,20 @@ func (oc *ollamaClient) fetchModels(ctx context.Context, debugLog bool) ([]strin
 	if err == nil {
 		oc.mu.Lock()
 		oc.detectedAPI = "openai"
+		oc.setModelsLocked(names)
 		oc.mu.Unlock()
 		log.Printf("[Ollama] detected OpenAI-compatible API at %s", oc.cfg.URL)
 	}
 	return names, err
+}
+
+// setModelsLocked records the backend's model listing, the models a chat may
+// ask for. Caller must hold oc.mu for writing.
+func (oc *ollamaClient) setModelsLocked(names []string) {
+	oc.models = make(map[string]bool, len(names))
+	for _, name := range names {
+		oc.models[name] = true
+	}
 }
 
 // newOllamaHTTPClient returns a client that does not follow redirects. The
@@ -848,8 +927,14 @@ func (oc *ollamaClient) fetchModelsOpenAI(ctx context.Context, debugLog bool) ([
 
 // buildOllamaSystemPrompt builds the system prompt for an Ollama request.
 // ctx is either "current" (live QueryLatest), "chart:…" (CSV data), or a
-// pre-formatted metrics snapshot string cached by the frontend.
+// pre-formatted metrics snapshot string cached by the frontend. Both come
+// from the client: ctx is clamped to ollamaMaxContext runes, and a lang that
+// is not a language tag is ignored.
 func (s *Server) buildOllamaSystemPrompt(ctx, lang string) string {
+	ctx = clampText(ctx, ollamaMaxContext)
+	if !ollamaLangRe.MatchString(lang) {
+		lang = ""
+	}
 	var sb strings.Builder
 	// These are caveman style prompts, my english is broken, but not as bad :D
 	sb.WriteString("U r linux monitoring expert.\n")
