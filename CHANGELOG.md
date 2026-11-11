@@ -28,7 +28,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 ### Changed
 
 - Rolling views refresh only their newest buckets instead of the whole range
-- History queries read only their time range instead of the whole tier file
+- History queries read only their time range instead of the whole tier file, and use far less memory
 - Faster restarts: each tier keeps a small `tier_N.idx` seek index
 - Stored records carry a checksum (older versions can't read the new records)
 - Backups no longer pause collection or the dashboard
@@ -100,6 +100,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Rolling views no longer announce every refresh to screen readers
 - The AI assistant's metrics tool keeps to the history range limits
 - Records from a newer version are skipped instead of misread, in `inspect_tier.py` too
+- An infinity, NaN or out-of-range value no longer breaks history; a sample that cannot be encoded answers an error and is logged
+- Custom metric values beyond the 32-bit float range are refused and logged once
+- Tier 1 and 2 rollups no longer carry needless statistics, so they retain more history
+- Shutdown waits for the sample being collected before closing storage
 
 ### Security
 
@@ -112,6 +116,8 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - The Ollama proxy no longer follows redirects
 - A startup warning when `allowed_origins` without `origin_validation` exposes the live stream
 - DNS rebinding protection: with auth disabled, and on `/metrics` without a token, only local host names and `web.security.allowed_hosts` are answered
+- History requests can no longer be made to read the whole raw tier
+- Login rate limits count an IPv6 client by its /64
 
 ## [0.21.0] - 2026-10-01
 
