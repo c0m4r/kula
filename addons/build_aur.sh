@@ -245,15 +245,19 @@ post_install() {
 
     # The config holds the password hash, tokens and database passwords:
     # root owns it and the daemon only reads it, through its group. Seed it
-    # from the packaged example on first install; take back one an older
-    # package gave the daemon.
+    # from the packaged example on first install. Older packages gave
+    # /etc/kula to the daemon, so once the directory is root's (nothing can
+    # swap its entries after that), tighten an existing config only if it is
+    # a plain file with one link, never a link the daemon could have left.
     chown root:kula /etc/kula
     chmod 0750 /etc/kula
-    if [ ! -e /etc/kula/config.yaml ]; then
+    if [ ! -e /etc/kula/config.yaml ] && [ ! -L /etc/kula/config.yaml ]; then
         install -m 0640 -o root -g kula /etc/kula/config.example.yaml /etc/kula/config.yaml
-    else
+    elif [ -f /etc/kula/config.yaml ] && [ ! -L /etc/kula/config.yaml ] && [ "$(stat -c %h /etc/kula/config.yaml)" = 1 ]; then
         chown root:kula /etc/kula/config.yaml
         chmod 0640 /etc/kula/config.yaml
+    else
+        echo "kula: /etc/kula/config.yaml is a link or not a plain file; its owner and mode are left as they are" >&2
     fi
 
     # Storage belongs to the daemon
