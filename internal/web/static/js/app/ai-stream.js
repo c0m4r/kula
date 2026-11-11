@@ -14,6 +14,60 @@
 export const AI_MAX_ANSWER = 32 * 1024;
 
 /**
+ * What the server keeps of a chat request (internal/web/ollama.go): the body
+ * in bytes (ollamaMaxBody), the prior turns (ollamaMaxMessages), and the
+ * characters of the prompt and each user turn (ollamaMaxPrompt), of each
+ * assistant turn (ollamaMaxAnswer) and of the context (ollamaMaxContext).
+ */
+export const AI_REQUEST_LIMITS = Object.freeze({
+    body: 32 * 1024,
+    messages: 20,
+    user: 2000,
+    assistant: 8000,
+    context: 16000,
+});
+
+/** clampChars keeps the first max characters (code points) of s. */
+function clampChars(s, max) {
+    if (typeof s !== 'string' || s.length <= max) return s; // code units ≥ code points
+    let out = '';
+    let n = 0;
+    for (const ch of s) {
+        if (n++ === max) break;
+        out += ch;
+    }
+    return out;
+}
+
+/**
+ * chatRequestBody encodes a /api/ollama/chat request holding no more than
+ * the server keeps: each turn and the context clamped as the server clamps
+ * them, and the oldest turns left out while the body is over the server's
+ * cap, which refuses the whole request. history is the session's turns,
+ * the question being asked last; it is sent as role and content only.
+ */
+export function chatRequestBody({ prompt, history, context, lang, model }, limits = AI_REQUEST_LIMITS) {
+    const turns = history.slice(-limits.messages).map(({ role, content }) => ({
+        role,
+        content: clampChars(content, role === 'assistant' ? limits.assistant : limits.user),
+    }));
+    const encode = () => JSON.stringify({
+        prompt: clampChars(prompt, limits.user),
+        messages: turns,
+        context: clampChars(context, limits.context),
+        lang,
+        model,
+    });
+    const encoder = new TextEncoder();
+    let body = encode();
+    while (turns.length > 1 && encoder.encode(body).length > limits.body) {
+        turns.shift();
+        body = encode();
+    }
+    return body;
+}
+
+/**
  * appendAnswer adds a streamed chunk to the answer so far, keeping at most
  * max code units (a surrogate pair is never split). truncated reports that
  * something was left out.

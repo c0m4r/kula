@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -821,7 +822,17 @@ func TestAIStreamFrontend(t *testing.T) {
 	if err != nil {
 		t.Skip("node is not installed; skipping AI stream module tests")
 	}
-	if out, err := exec.Command(node, "testdata/ai_stream_test.mjs").CombinedOutput(); err != nil {
+	// The panel sends no more than the server keeps: its limits are these.
+	limits, err := json.Marshal(map[string]int{
+		"body": ollamaMaxBody, "messages": ollamaMaxMessages, "user": ollamaMaxPrompt,
+		"assistant": ollamaMaxAnswer, "context": ollamaMaxContext,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, "testdata/ai_stream_test.mjs")
+	cmd.Env = append(os.Environ(), "KULA_AI_LIMITS="+string(limits))
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("AI stream module tests failed: %v\n%s", err, out)
 	}
 }

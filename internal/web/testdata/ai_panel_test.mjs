@@ -1,10 +1,11 @@
 // Run with: node --experimental-websocket internal/web/testdata/ai_panel_test.mjs
 // Starts the real `kula serve` with the AI assistant pointed at a fake Ollama
 // on loopback, and drives the dashboard's AI panel in Chromium: an answer
-// streams and renders, a chat runs on the model picked in the panel, a 1 MiB
-// answer in 8-byte chunks keeps the page responsive and is cut with a notice,
-// and a failing backend shows only a generic message. Set KULA_BINARY to
-// reuse a built binary; otherwise the test builds one.
+// streams and renders, a chat runs on the model picked in the panel, a
+// failing backend shows only a generic message, and a 1 MiB answer in 8-byte
+// chunks keeps the page responsive and is cut with a notice, after which the
+// conversation goes on. Set KULA_BINARY to reuse a built binary; otherwise
+// the test builds one.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -253,6 +254,15 @@ try {
         `${long.text.length} characters shown, over the cap`);
     assert.ok(long.text.startsWith('word b c | x |'), 'the cut answer is not rendered');
     assert.ok(long.gap < 1000, `the page stopped for ${Math.round(long.gap)} ms`);
+
+    // The conversation goes on: the cut answer is sent back as much as the
+    // server keeps of it, so the request stays under the server's body cap.
+    answer = await ask('go on');
+    assert.equal(answer.error, null, `the next question failed: ${answer.error}`);
+    assert.match(answer.html, /<td>0\.42<\/td>/);
+    const turns = chats.at(-1).messages;
+    assert.equal(turns.at(-1).content, 'go on');
+    assert.ok(turns.every(m => m.role !== 'assistant' || m.content.length <= 8000), 'an answer was sent whole');
 
     assert.deepEqual(errors, [], 'the dashboard threw exceptions');
     assert.deepEqual(cspViolations, [], 'the page broke its Content-Security-Policy');

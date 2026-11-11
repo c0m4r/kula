@@ -193,10 +193,13 @@ of its served bytes.
   in the model's output or a backend error cannot end a line and pose as an event.
 - **Response cap:** 10 MB; **tool loop cap:** 5 rounds of at most 8 tool calls each (one per
   `get_metrics` resource); further calls in a round are dropped.
-- **Showing the answer** (`ai-stream.js`): the dashboard keeps at most 32 KiB of an answer
+- **The dashboard's side** (`ai-stream.js`): the panel keeps at most 32 KiB of an answer
   (`AI_MAX_ANSWER`); past it the answer is cut with a notice and the stream closed. It repaints
   the answer at most once per animation frame, and after each repaint waits three times as long
-  as it took, so an answer streamed in tiny chunks cannot stall the tab.
+  as it took, so an answer streamed in tiny chunks cannot stall the tab. Its requests hold no
+  more than the server keeps (`chatRequestBody`, limits checked against the server's
+  constants by `TestAIStreamFrontend`): each turn and the context clamped, and the oldest
+  turns left out while the body is over 32 KB, so a long conversation is not refused.
 
 ## Prometheus security
 

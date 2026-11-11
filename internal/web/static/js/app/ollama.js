@@ -7,7 +7,7 @@
 import { state, escapeHTML } from './state.js';
 import { i18n } from './i18n.js';
 import { apiUrl } from './api.js';
-import { appendAnswer, createFrameRenderer, createSSEReader } from './ai-stream.js';
+import { appendAnswer, chatRequestBody, createFrameRenderer, createSSEReader } from './ai-stream.js';
 
 // ---- Conversation history (max 20 turns kept per session in memory) ----
 const MAX_HISTORY = 20;
@@ -648,9 +648,9 @@ async function streamChatResponse({ prompt, messages, context, assistantBody }) 
     const resp = await fetch(apiUrl('/api/ollama/chat'), {
         method: 'POST',
         headers,
-        body: JSON.stringify({
+        body: chatRequestBody({
             prompt,
-            messages: messages.slice(-MAX_HISTORY).map(({ role, content }) => ({ role, content })),
+            history: messages,
             context,
             lang: i18n.currentLang,
             model: selectedModel || undefined,

@@ -57,7 +57,8 @@ only the dashboard's components and keeps time-axis ticks on local hours across 
 also covers the calendar math of the native `Date` adapter.
 `ollama_test.go` runs [`ai_stream_test.mjs`](../../internal/web/testdata/ai_stream_test.mjs), which
 feeds the AI panel's stream reader the chat's Server-Sent Events byte by byte, and checks the
-answer's length cap and that its repaints are coalesced into animation frames.
+answer's length cap, that its repaints are coalesced into animation frames, and that a chat
+request keeps to the server's limits, which the Go test passes in from its constants.
 `TestHistoryResponsesMatchDashboardContract` (storage) checks the `/api/history` contract from
 both sides. It queries real stores the way the dashboard does (unaligned millisecond bounds and
 its point budget): raw and 2s-bucketed five-minute views, a right-edge clip, an outage, an empty
@@ -282,7 +283,8 @@ with the AI assistant pointed at a fake Ollama on loopback and drives the AI pan
 must stream and render as markdown, and a chat must run on the model picked in the panel,
 carrying only `system`, `user` and `assistant` turns. A failing backend must show a generic
 error without its address. A 1 MiB answer in 8-byte chunks must end within seconds, cut at the
-panel's cap with its notice, without stopping the page for a second. It takes a few seconds.
+panel's cap with its notice, without stopping the page for a second, and the next question
+must still be answered. It takes a few seconds.
 
 Run all five fixtures with
 [`addons/test-frontend-regressions.sh`](../../addons/test-frontend-regressions.sh), which needs
