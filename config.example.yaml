@@ -404,6 +404,8 @@ applications:
     dbname: "postgres"
     # disable | allow | prefer | require | verify-ca | verify-full. The verify modes
     # check the server against the system CAs or ~/.postgresql/root.crt.
+    # Whatever answers on host:port gets the password unless the certificate is
+    # verified: on this host prefer the Unix socket, across a network verify-full.
     sslmode: "disable"
 
   # MySQL / MariaDB monitoring

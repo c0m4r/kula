@@ -195,7 +195,8 @@ interval.
 `verify-full`). `verify-ca` and `verify-full` check the server certificate against the system
 CA certificates, or against `~/.postgresql/root.crt` (or `PGSSLROOTCERT`) for a private CA; a
 client certificate is read from `~/.postgresql/postgresql.crt` and `.key` (or `PGSSLCERT` and
-`PGSSLKEY`). The sandbox allows reading exactly those files.
+`PGSSLKEY`). The sandbox allows reading exactly those files. Over a network use `verify-full`:
+see [Securing the database connection](#securing-the-database-connection).
 
 **PgBouncer:** since 0.22.0, Kula sends its session limits (`statement_timeout`, `lock_timeout`,
 `idle_in_transaction_session_timeout`, `tcp_keepalives_idle`, `tcp_keepalives_interval`,
@@ -279,6 +280,30 @@ IO state, replicas connected).
 
 > **Caveat on `Seconds_Behind_Source`:** this is the SQL thread's view of how far behind it is
 > on what it currently sees, *not* the true lag from the primary.
+
+## Securing the database connection
+
+Kula logs in with the configured password, and over TCP it cannot tell the database from
+anything else that answers on `host:port` unless it verifies the server's certificate. Whatever
+answers gets the password: with `sslmode: disable`, PostgreSQL may ask for it in clear text, and
+MySQL's `caching_sha2_password` encrypts it to a key the server itself supplies. That can be a
+local user who binds the port while the database is down or not yet started, anyone on the
+network path to a remote database, or a compromised server. (A reply crafted to crash the
+driver only fails a poll, see below; the password is gone all the same.)
+
+- **Database on the same host: connect through its Unix socket.** The socket lives in a
+  directory only the database's own account can write (`/var/run/postgresql`,
+  `/var/run/mysqld`), so no other local user can put one of their own in its place; a socket in
+  a world-writable directory such as `/tmp` gives no such guarantee. PostgreSQL:
+  `host: "/var/run/postgresql"`, `port: 0`. MySQL: `host: "/var/run/mysqld/mysqld.sock"`,
+  `port: 0`.
+- **Database across a network: verify its certificate** with `sslmode: verify-full` (both
+  databases), and `host` set to the name in the certificate. For a private CA give its
+  certificate in `sslrootcert` (MySQL) or `~/.postgresql/root.crt` / `PGSSLROOTCERT`
+  (PostgreSQL). `require` only encrypts: it keeps out an eavesdropper, not whoever answers in
+  the server's place, who then reads the password. `verify-ca` accepts any certificate its CA
+  issued, so use it only with a CA that certifies nothing but your database servers.
+- Give the monitoring user only the read-only grants above, and a password used nowhere else.
 
 ## Database connections
 
