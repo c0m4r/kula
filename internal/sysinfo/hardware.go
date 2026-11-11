@@ -108,7 +108,7 @@ func usbIdentity(d Details, path string) {
 	}
 }
 
-func (p *Provider) sensors() []Sensor {
+func (p *Provider) readSensors() []Sensor {
 	result := []Sensor{}
 	for _, path := range matches(filepath.Join(p.sys, "class/hwmon/hwmon*")) {
 		device := read(filepath.Join(path, "name"))
@@ -149,7 +149,7 @@ func (p *Provider) sensors() []Sensor {
 	return result
 }
 
-func (p *Provider) power() []Details {
+func (p *Provider) readPower() []Details {
 	result := []Details{}
 	for _, path := range matches(filepath.Join(p.sys, "class/power_supply/*")) {
 		d := p.attributes(path, map[string]string{"status": "status", "capacity_percent": "capacity", "online": "online"})

@@ -31,6 +31,17 @@ func TestNewCadenceSchedule(t *testing.T) {
 	}
 }
 
+// ReadingIntervals reports the intervals the collector reads at, which the
+// System Info page must not read sensors and batteries more often than.
+func TestReadingIntervals(t *testing.T) {
+	c := New(config.GlobalConfig{}, config.CollectionConfig{Interval: 5 * time.Second, DiskTempInterval: 30 * time.Second}, config.ApplicationsConfig{}, t.TempDir())
+	t.Cleanup(c.Stop)
+	disk, power := c.ReadingIntervals()
+	if disk != 30*time.Second || power != config.DefaultReadingInterval {
+		t.Errorf("ReadingIntervals() = %v, %v; want 30s and the default %v", disk, power, config.DefaultReadingInterval)
+	}
+}
+
 // A reading due every 10 s is taken on every tenth tick, lands in the tick
 // that took it, and repeats on the ticks between, even with ticks arriving a
 // little early: no tick is skipped, none read twice.

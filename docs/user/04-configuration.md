@@ -93,7 +93,8 @@ collection:
   takes tens of milliseconds in its embedded controller. Set either to `interval` to read on
   every sample. A drive or battery that stops answering cannot delay the other metrics: it
   keeps its last reading for three of its intervals, then drops out of the sample until it
-  answers again, with a log line each way.
+  answers again, with a log line each way. The System Info page reads its sensors and power
+  supplies no more often than these intervals, and not at all while `show_system_details` is off.
 - The `devices`/`mountpoints`/`interfaces` lists let you pin exactly what is monitored,
   bypassing auto-discovery. Write a mount point as its real path (`"/mnt/my disk"`), not in
   the escaped form `/proc/mounts` shows (`/mnt/my\040disk`).

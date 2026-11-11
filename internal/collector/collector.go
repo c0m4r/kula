@@ -279,6 +279,13 @@ func (c *Collector) collectApps(elapsed float64) ApplicationsStats {
 	return apps
 }
 
+// ReadingIntervals returns how often disk temperatures and power supplies are
+// read: collection.disk_temp_interval and power_supply_interval, resolved.
+func (c *Collector) ReadingIntervals() (diskTemp, powerSupply time.Duration) {
+	return newCadenceSchedule(c.collCfg.DiskTempInterval, c.collCfg.Interval).every,
+		newCadenceSchedule(c.collCfg.PowerSupplyInterval, c.collCfg.Interval).every
+}
+
 // CustomConfig returns the custom metric configurations for use by the API layer.
 func (c *Collector) CustomConfig() map[string][]config.CustomMetricConfig {
 	return c.appCfg.Custom

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"kula/internal/collector"
+	"kula/internal/config"
 )
 
 func fixture(t *testing.T) (*Provider, func(string, string)) {
@@ -172,6 +173,72 @@ func TestDetailsToggle(t *testing.T) {
 			t.Fatalf("details-disabled %s serialized as %s, want []", name, sections[name])
 		}
 	}
+}
+
+// With details off nothing the response leaves out is read: the endpoint
+// answers without authentication when auth is off, and an NVMe temperature
+// or battery read costs the device. Turning details on discovers at once.
+func TestSummaryReadsNoDetails(t *testing.T) {
+	p, write := fixture(t)
+	write("proc/cpuinfo", "processor : 0\nmodel name : Fixture CPU\n")
+	write("proc/self/mountinfo", "24 1 253:0 / / rw - ext4 /dev/sda1 rw\n")
+	write("sys/class/net/eno1/operstate", "up")
+	write("sys/class/hwmon/hwmon0/name", "nvme")
+	write("sys/class/hwmon/hwmon0/temp1_input", "42000")
+	write("sys/class/power_supply/BAT0/capacity", "50")
+	write("sys/bus/usb/devices/1-1/idVendor", "1234")
+
+	summary := p.Current(nil, "os", "kernel", "amd64", "host", false)
+	if summary.CPU.ModelName != "Fixture CPU" {
+		t.Fatalf("summary lost the processor: %+v", summary.CPU)
+	}
+	if p.sensors != nil || p.power != nil {
+		t.Fatalf("a summary read sensors %+v and power supplies %+v", p.sensors, p.power)
+	}
+	if c := p.cached; len(c.Disks)+len(c.Filesystems)+len(c.Network)+len(c.PCI)+len(c.USB)+len(c.Sensors)+len(c.Power) != 0 {
+		t.Fatalf("a summary discovered detail sections: %+v", c)
+	}
+
+	full := p.Current(nil, "os", "kernel", "amd64", "host", true)
+	if len(full.Sensors) != 1 || len(full.Power) != 1 || len(full.Network) != 1 || len(full.Filesystems) != 1 || len(full.USB) != 1 {
+		t.Fatalf("details after a summary not discovered at once: %+v", full)
+	}
+}
+
+// Sensors and power supplies are read no more often than the collector reads
+// them (collection.disk_temp_interval, power_supply_interval), however often
+// the snapshot itself is refreshed; the snapshots in between repeat the last
+// readings.
+func TestSensorsAndPowerFollowTheirReadingIntervals(t *testing.T) {
+	if p := New(0, 0); p.sensorEvery != config.DefaultReadingInterval || p.powerEvery != config.DefaultReadingInterval {
+		t.Fatalf("New(0, 0) reads every %v and %v, want the default %v", p.sensorEvery, p.powerEvery, config.DefaultReadingInterval)
+	}
+	p, write := fixture(t)
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return clock }
+	p.sensorEvery, p.powerEvery = 10*time.Second, 30*time.Second
+	write("sys/class/hwmon/hwmon0/name", "nvme")
+	write("sys/class/hwmon/hwmon0/temp1_input", "42000")
+	write("sys/class/power_supply/BAT0/capacity", "50")
+
+	check := func(at time.Duration, temperature float64, capacity string) {
+		t.Helper()
+		clock = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(at)
+		// A summary in between reads nothing either.
+		p.Current(nil, "", "", "", "", false)
+		s := p.Current(nil, "", "", "", "", true)
+		if len(s.Sensors) != 1 || s.Sensors[0].Value != temperature || len(s.Power) != 1 || s.Power[0]["capacity_percent"] != capacity {
+			t.Fatalf("at %v: sensors %+v, power %+v; want %v °C and %s%%", at, s.Sensors, s.Power, temperature, capacity)
+		}
+	}
+	check(0, 42, "50")
+	write("sys/class/hwmon/hwmon0/temp1_input", "43000")
+	write("sys/class/power_supply/BAT0/capacity", "60")
+	check(RefreshInterval, 42, "50") // a new snapshot, the same readings
+	check(9*time.Second, 42, "50")
+	check(10*time.Second, 43, "50")
+	check(25*time.Second, 43, "50")
+	check(30*time.Second, 43, "60")
 }
 
 func TestMissingInventoryDoesNotFabricateLiveValues(t *testing.T) {

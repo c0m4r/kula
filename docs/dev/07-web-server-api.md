@@ -86,7 +86,12 @@ when unknown. The response is available before the first metric collection; `liv
 storage. Time-range parameters do not select historical data.
 
 `internal/sysinfo.Provider` serializes discovery and shares an immutable snapshot for five
-seconds across clients. It starts no background workers. Discovery is best effort: unreadable
+seconds across clients. It starts no background workers. The hwmon/thermal sensors and the power
+supplies are read no more often than the collector reads disk temperatures and power supplies
+(`Collector.ReadingIntervals`: `collection.disk_temp_interval` and `power_supply_interval`, 10 s
+by default), because an NVMe temperature read sends the drive a SMART command and a battery read
+is an embedded-controller round trip; the snapshots in between repeat the last readings.
+Discovery is best effort: unreadable
 attributes are omitted rather than reported as measured zeros, filesystem space totals are
 taken from the latest collector sample instead of re-statting mounts, and every disk,
 filesystem, and interface carries a `tracked` flag saying whether the regular collector stores
@@ -95,8 +100,10 @@ addresses are deliberately not collected. `Provider.Current` takes the `show_sys
 flag: with it off, `disks`, `filesystems`, `network`, `pci`, `usb`, `sensors`, `power` (and
 `live.hottest`, `live.gpu`) come back empty while `system`, `cpu`, and the remaining live
 metrics are unchanged. Hidden sections are empty JSON arrays, never `null`, so the response
-shape matches a full snapshot. The full discovery stays cached, so toggling the option never
-costs a refresh interval.
+shape matches a full snapshot. A discovery without details reads none of the hidden sections:
+the endpoint is unauthenticated while auth is off, and the sensor and battery reads cost the
+device. A snapshot with details also answers a request without them; a request with details
+after a summary-only snapshot discovers at once.
 
 Responses send `Cache-Control: no-store`. Disabled `global.show_system_info` returns 404;
 methods other than GET/HEAD return 405. Existing API authentication, base paths, and UI

@@ -95,7 +95,10 @@ API and WebSocket payloads.
   late; a reading stays current for `pollStale` of its interval; and a read outstanding for a
   whole interval with nothing current to show is logged, once each way. A disk swapped in
   under a known name is read at once, and only disks selected for monitoring are read.
-  `mountStats` is the same arrangement for `statfs`, which runs every tick.
+  `mountStats` is the same arrangement for `statfs`, which runs every tick. The System Info
+  page (`internal/sysinfo`) reads its sensors and power supplies no more often than these
+  intervals either (`Collector.ReadingIntervals`), and not at all while
+  `global.show_system_details` is off.
 - **Application polls run off the collection tick.** `poller.go`'s `poller[T]` runs one poll at
   a time in its own goroutine, and `Collect` reads `Latest()`, which is `nil` once a result is
   older than `pollStale` (three intervals, at least 3 s). nginx and Apache2 use it through

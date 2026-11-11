@@ -11,31 +11,60 @@ import (
 	"time"
 
 	"kula/internal/collector"
+	"kula/internal/config"
 )
 
 // RefreshInterval bounds discovery work across all clients.
 const RefreshInterval = 5 * time.Second
 
 type Provider struct {
-	mu     sync.Mutex
-	proc   string
-	sys    string
+	mu   sync.Mutex
+	proc string
+	sys  string
+	// now is the clock; nil means time.Now.
+	now func() time.Time
+	// sensorEvery and powerEvery bound how often the hwmon sensors and the
+	// power supplies are read, which a refresh may not do more often than the
+	// collector does: an NVMe temperature read sends the drive a SMART
+	// command, a battery read is a round trip to the embedded controller.
+	sensorEvery, powerEvery time.Duration
+
 	cached *Snapshot
+	// cachedDetails reports whether cached holds the detail sections: a
+	// discovery without details reads none of them.
+	cachedDetails bool
+	sensors       []Sensor
+	sensorsRead   time.Time
+	power         []Details
+	powerRead     time.Time
 }
 
-func New() *Provider { return &Provider{proc: "/proc", sys: "/sys"} }
+// New returns a Provider that reads the hardware sensors at most every
+// sensorEvery and the power supplies at most every powerEvery, the
+// collector's disk_temp_interval and power_supply_interval. Zero means
+// config.DefaultReadingInterval.
+func New(sensorEvery, powerEvery time.Duration) *Provider {
+	return &Provider{proc: "/proc", sys: "/sys",
+		sensorEvery: config.ReadingInterval(sensorEvery, 0), powerEvery: config.ReadingInterval(powerEvery, 0)}
+}
 
 // Current returns a read-only snapshot shared by concurrent requests. Host
 // labels are supplied by the server, which reads OS information before Landlock.
 // When details is false the storage, network, connected-device and sensor
-// inventory is filtered out of the returned snapshot; the full discovery is
-// still cached, so enabling the option takes effect immediately.
+// inventory is left out of the returned snapshot and, unless a request with
+// details cached it, not read at all: the endpoint answers without
+// authentication when auth is off, and some of those reads cost the device.
+// A request with details after one without discovers at once.
 func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostname string, details bool) *Snapshot {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
-	if p.cached == nil || now.Sub(p.cached.Timestamp) >= RefreshInterval {
-		p.cached = p.discover(sample, osName, kernel, arch, hostname, now)
+	if p.now != nil {
+		now = p.now()
+	}
+	if p.cached == nil || now.Sub(p.cached.Timestamp) >= RefreshInterval || (details && !p.cachedDetails) {
+		p.cached = p.discover(sample, osName, kernel, arch, hostname, now, details)
+		p.cachedDetails = details
 	}
 	if details {
 		return p.cached
@@ -43,10 +72,9 @@ func (p *Provider) Current(sample *collector.Sample, osName, kernel, arch, hostn
 	return p.cached.withoutDetails()
 }
 
-// withoutDetails copies the snapshot with every detail section emptied. The
-// cache keeps the full discovery, so a later request with details enabled is
-// answered without another sweep of /proc and /sys. Sections become empty
-// arrays rather than JSON null so the response shape stays stable for clients
+// withoutDetails copies the snapshot with every detail section emptied, so a
+// cached full discovery can answer a request without details too. Sections
+// become empty arrays rather than JSON null so the response shape stays stable for clients
 // that iterate them, and nothing discovered from the hardware survives — the
 // GPU names carried by the latest sample belong to the hidden connected-device
 // inventory too.
@@ -68,7 +96,7 @@ func (s *Snapshot) withoutDetails() *Snapshot {
 	return &summary
 }
 
-func (p *Provider) discover(sample *collector.Sample, osName, kernel, arch, hostname string, now time.Time) *Snapshot {
+func (p *Provider) discover(sample *collector.Sample, osName, kernel, arch, hostname string, now time.Time, details bool) *Snapshot {
 	s := &Snapshot{Timestamp: now}
 	s.System = p.attributes(filepath.Join(p.sys, "class/dmi/id"), map[string]string{
 		"manufacturer": "sys_vendor", "product": "product_name",
@@ -89,13 +117,15 @@ func (p *Provider) discover(sample *collector.Sample, osName, kernel, arch, host
 		s.System["hypervisor"] = hypervisor
 	}
 	s.CPU = p.cpu()
-	s.Filesystems = p.filesystems(sample)
-	s.Disks = p.disks(s.Filesystems)
-	s.Network = p.network()
-	s.PCI, s.USB = p.devices()
-	s.Sensors = p.sensors()
-	s.Power = p.power()
-	markTracked(s, sample)
+	if details {
+		s.Filesystems = p.filesystems(sample)
+		s.Disks = p.disks(s.Filesystems)
+		s.Network = p.network()
+		s.PCI, s.USB = p.devices()
+		s.Sensors = p.sensorReadings(now)
+		s.Power = p.powerReadings(now)
+		markTracked(s, sample)
+	}
 	if sample != nil {
 		ts := sample.Timestamp
 		s.MetricsTime = &ts
@@ -120,6 +150,24 @@ func (p *Provider) discover(sample *collector.Sample, osName, kernel, arch, host
 		}
 	}
 	return s
+}
+
+// sensorReadings returns the hwmon and thermal readings, read again only once
+// sensorEvery has passed since the last read; the snapshots in between share
+// the last ones, as the collector's samples repeat a disk temperature.
+func (p *Provider) sensorReadings(now time.Time) []Sensor {
+	if p.sensors == nil || now.Sub(p.sensorsRead) >= p.sensorEvery {
+		p.sensors, p.sensorsRead = p.readSensors(), now
+	}
+	return p.sensors
+}
+
+// powerReadings is sensorReadings for the power supplies, at powerEvery.
+func (p *Provider) powerReadings(now time.Time) []Details {
+	if p.power == nil || now.Sub(p.powerRead) >= p.powerEvery {
+		p.power, p.powerRead = p.readPower(), now
+	}
+	return p.power
 }
 
 // markTracked links inventory entries to the devices and mounts the regular

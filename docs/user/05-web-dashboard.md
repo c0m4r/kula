@@ -37,7 +37,9 @@ Back button to return to the charts.
 The page refreshes every five seconds while open and visible, including when charts are paused or
 viewing a historical range. Leaving it or hiding the browser tab stops requests. **Refresh now**
 retries immediately and **Copy summary** copies the visible inventory as Markdown; server
-discovery is shared across clients for up to five seconds. The `#system-info` URL fragment makes
+discovery is shared across clients for up to five seconds, and sensors and power supplies are read
+no more often than `collection.disk_temp_interval` and `collection.power_supply_interval` (10 s
+by default), so their values may lag the refresh. The `#system-info` URL fragment makes
 the page navigable with browser Back and Forward.
 
 The page is split into **System**, **Storage**, **Network**, **Connected devices**, and

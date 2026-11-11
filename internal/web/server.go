@@ -80,6 +80,12 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 		gameScoreURL = ""
 		gameScoreOrigin = ""
 	}
+	// System Info reads sensors and batteries no more often than the
+	// collector does (zero: the default reading interval).
+	var sensorEvery, powerEvery time.Duration
+	if c != nil {
+		sensorEvery, powerEvery = c.ReadingIntervals()
+	}
 
 	srv := &Server{
 		cfg:             cfg,
@@ -87,7 +93,7 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 		gameScoreURL:    gameScoreURL,
 		gameScoreOrigin: gameScoreOrigin,
 		collector:       c,
-		systemInfo:      sysinfo.New(),
+		systemInfo:      sysinfo.New(sensorEvery, powerEvery),
 		store:           s,
 		auth:            NewAuthManager(cfg.Auth, storageDir, cfg.TrustProxy, cfg.Security),
 		hub:             newWSHub(),
