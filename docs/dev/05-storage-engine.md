@@ -195,13 +195,16 @@ On startup the store:
    adopts its **seek index** from `tier_N.idx` or rebuilds it with one walk of the ring (see
    below).
 2. Reads tier 0's newest `4 × ratio1` records once: the last one restores the
-   **latest-sample cache** so `/api/current` works immediately, and those newer than tier 1's
-   newest rollup are replayed into the tier-1 windows, the one straddling that rollup's end
-   clipped to its unrolled part. Tier 1's newest `4 × ratio2` records restore tier 2 the same
-   way, first, so a window the replay finds complete — a crash between the raw write that
-   closed it and its rollup — is rolled up then and cascades as it would have. With the seek
-   index each of these reads only the end of its tier, so rollups resume after a restart
-   without double-counting or gaps.
+   **latest-sample cache** so `/api/current` works immediately, and those written after the
+   record tier 1's newest rollup ended on are replayed into the tier-1 windows, that record
+   clipped to its unrolled part when it straddles a window end. Tier 1's newest `4 × ratio2`
+   records restore tier 2 the same way, first, so a window the replay finds complete — a
+   crash between the raw write that closed it and its rollup — is rolled up then and cascades
+   as it would have. Pending records are told apart by write order, not time: after the clock
+   steps back, the tail holds records later than the newest rollup that were rolled up before
+   the step and pending ones earlier than it (`pendingRollup`). With the seek index each of
+   these reads only the end of its tier, so rollups resume after a restart without
+   double-counting or gaps.
 
 ## Seek index
 

@@ -248,6 +248,74 @@ func TestRollupsKeepWholeWindowsWhenCollectionStalls(t *testing.T) {
 	}
 }
 
+// TestRestartAfterAClockStepBackRollsUpEachSampleOnce: after the clock steps
+// back, the raw tail holds samples later than tier 1's newest rollup that were
+// rolled up before the step, and tier 1's tail a pending rollup earlier than
+// tier 2's newest. A restart must tell them apart by write order; picking them
+// by timestamp rolled the first up twice and dropped the second. In the last
+// case the step cuts tier 2's run mid-window and the collection after it
+// passes that cut before the restart, so a pending tier-1 record holds tier
+// 2's newest end without being the record it ended on.
+func TestRestartAfterAClockStepBackRollsUpEachSampleOnce(t *testing.T) {
+	base := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		until, back  time.Duration
+		restartAfter int
+	}{
+		{20*time.Minute + 30*time.Second, 5 * time.Minute, 30},
+		{20*time.Minute + 30*time.Second, 5 * time.Minute, 90},
+		{20*time.Minute + 30*time.Second, 5 * time.Minute, 200},
+		{20*time.Minute + 30*time.Second, 5 * time.Minute, 400},
+		{23*time.Minute + 2*time.Second, 90 * time.Second, 180},
+	} {
+		store := newMultiTierStore(t)
+		cfg, dir := store.configs, store.dir
+		samples := 0
+		write := func(ts time.Time) {
+			if err := store.WriteSample(makeSampleWithCPU(ts, 50)); err != nil {
+				t.Fatal(err)
+			}
+			samples++
+		}
+		for ts := base.Add(time.Second); !ts.After(base.Add(tc.until)); ts = ts.Add(time.Second) {
+			write(ts)
+		}
+		stepped := base.Add(tc.until - tc.back)
+		for i := 1; i <= tc.restartAfter; i++ {
+			write(stepped.Add(time.Duration(i) * time.Second))
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		store = reopenStore(t, dir, cfg)
+		for i := tc.restartAfter + 1; i <= tc.restartAfter+600; i++ {
+			write(stepped.Add(time.Duration(i) * time.Second))
+		}
+
+		sum := func(records []*AggregatedSample) (total time.Duration) {
+			for _, record := range records {
+				total += record.Duration
+			}
+			return total
+		}
+		held := func(tier int) time.Duration {
+			records, err := store.tiers[tier].ReadRange(base.Add(-time.Hour), base.Add(time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return sum(records)
+		}
+		raw := time.Duration(samples) * time.Second
+		tier1 := held(1) + sum(store.tier1Buf)
+		tier2 := held(2) + sum(store.tier2Buf) + sum(store.tier1Buf)
+		if tier1 != raw || tier2 != raw {
+			t.Errorf("%s back at %s, restart %d s later: tier 1 holds %s and tier 2 %s of %s collected",
+				tc.back, base.Add(tc.until).Format("15:04:05"), tc.restartAfter, tier1, tier2, raw)
+		}
+		_ = store.Close()
+	}
+}
+
 // TestWriteSampleDurationsTileWallClockTimestamps: a collector's timestamps
 // come from time.Now(), whose monotonic reading Sub would otherwise use.
 func TestWriteSampleDurationsTileWallClockTimestamps(t *testing.T) {

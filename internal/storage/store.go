@@ -153,11 +153,10 @@ func NewStore(cfg config.StorageConfig) (*Store, error) {
 // tail supplies both the latest-sample cache and the samples not yet rolled
 // into tier 1, and tier 1's tail the rollups not yet rolled into tier 2.
 //
-// Pending records are replayed through the same windowing as WriteSample,
-// clipped where a record already rolled up straddles the newest rollup's end.
-// Tier 2 is restored first, so a tier-1 window the replay finds complete (a
-// crash between the raw write that closed it and its rollup) cascades into
-// it as it would have.
+// Pending records, chosen by write order (see pendingRollup), are replayed
+// through the same windowing as WriteSample. Tier 2 is restored first, so a
+// tier-1 window the replay finds complete (a crash between the raw write that
+// closed it and its rollup) cascades into it as it would have.
 func (s *Store) restoreTailState() {
 	if len(s.tiers) == 0 {
 		return
@@ -178,34 +177,73 @@ func (s *Store) restoreTailState() {
 	}
 
 	if len(s.tiers) > 2 && s.ratio2 > 0 {
-		t2Newest := s.tiers[2].NewestTimestamp()
 		if t1Samples, err := s.tiers[1].ReadLatest(s.ratio2 * maxAggBufferFactor); err == nil {
-			for _, as := range t1Samples {
-				if as.Data != nil && as.Timestamp.After(t2Newest) {
-					s.restorePending(2, as, t2Newest)
-				}
+			for _, as := range s.pendingRollup(2, t1Samples, s.tiers[2].NewestTimestamp()) {
+				s.restorePending(2, as)
 			}
 		}
 	}
 
-	t1Newest := s.tiers[1].NewestTimestamp()
-	for _, as := range t0Samples {
-		if as.Data != nil && as.Timestamp.After(t1Newest) {
-			as.ExtremaProfile = "raw"
-			s.restorePending(1, as, t1Newest)
-		}
+	for _, as := range s.pendingRollup(1, t0Samples, s.tiers[1].NewestTimestamp()) {
+		as.ExtremaProfile = "raw"
+		s.restorePending(1, as)
 	}
 }
 
-// restorePending feeds one record read back from disk into tier's rollup
-// buffer, keeping only its part after rolledUp, the end of the newest record
-// already rolled into tier. A failed rollup write is reported and retried
-// with the next window, as in WriteSample.
-func (s *Store) restorePending(tier int, as *AggregatedSample, rolledUp time.Time) {
-	width := historySourceWidth(as, s.configs[tier-1].Resolution, tier == 1)
-	if start := as.Timestamp.Add(-width); !rolledUp.IsZero() && start.Before(rolledUp) {
-		as = rollupFragment(as, rolledUp, as.Timestamp, width)
+// pendingRollup returns the records of tail, the newest records of the tier
+// below tier in write order, not yet rolled into tier, whose newest record
+// ends at rolledUp: the records written after the one that rollup ended on,
+// and that one's part after rolledUp.
+//
+// Write order tells them apart, not timestamps. After the clock steps back,
+// the tail holds records later than rolledUp that were rolled up before the
+// step, and pending records earlier than it; filtering by time rolled the
+// first up twice and dropped the second. A rollup ends with its last source
+// record or, when that record straddles the window's end, on the window's
+// end, so only a window end may fall inside the record it ended on: a pending
+// record written after the step may hold a rolledUp that is not one. Without
+// that record in the tail (an empty tier, or rollup writes that kept
+// failing), the records ending after rolledUp are pending.
+func (s *Store) pendingRollup(tier int, tail []*AggregatedSample, rolledUp time.Time) []*AggregatedSample {
+	var pending []*AggregatedSample
+	keep := func(records []*AggregatedSample) []*AggregatedSample {
+		for _, as := range records {
+			if as.Data != nil {
+				pending = append(pending, as)
+			}
+		}
+		return pending
 	}
+	if !rolledUp.IsZero() {
+		windowEnd := rolledUp.UnixNano()%int64(s.configs[tier].Resolution) == 0
+		for i := len(tail) - 1; i >= 0; i-- {
+			as := tail[i]
+			if as.Data == nil {
+				continue
+			}
+			if as.Timestamp.Equal(rolledUp) {
+				return keep(tail[i+1:])
+			}
+			width := historySourceWidth(as, s.configs[tier-1].Resolution, tier == 1)
+			if windowEnd && as.Timestamp.After(rolledUp) && as.Timestamp.Add(-width).Before(rolledUp) {
+				pending = append(pending, rollupFragment(as, rolledUp, as.Timestamp, width))
+				return keep(tail[i+1:])
+			}
+		}
+	}
+	var after []*AggregatedSample
+	for _, as := range tail {
+		if as.Timestamp.After(rolledUp) {
+			after = append(after, as)
+		}
+	}
+	return keep(after)
+}
+
+// restorePending feeds one record read back from disk into tier's rollup
+// buffer. A failed rollup write is reported and retried with the next window,
+// as in WriteSample.
+func (s *Store) restorePending(tier int, as *AggregatedSample) {
 	if err := s.addToRollup(tier, as); err != nil {
 		fmt.Printf("Storage: restoring pending tier-%d rollups: %v\n", tier, err)
 	}
