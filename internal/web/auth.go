@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"kula/internal/config"
@@ -606,8 +608,7 @@ func (a *AuthManager) LoadSessions() error {
 		return nil
 	}
 
-	path := filepath.Join(a.storageDir, "sessions.json")
-	data, err := os.ReadFile(path)
+	data, err := readSessionsFile(a.storageDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // No sessions to load
@@ -683,8 +684,57 @@ func (a *AuthManager) SaveSessions() error {
 		return err
 	}
 
-	path := filepath.Join(a.storageDir, "sessions.json")
-	return os.WriteFile(path, data, 0600)
+	return writeSessionsFile(a.storageDir, data)
+}
+
+// maxSessionsFile bounds what LoadSessions reads; a saved session is a few
+// hundred bytes.
+const maxSessionsFile = 16 << 20
+
+// readSessionsFile reads dir/sessions.json, which Kula only ever writes as a
+// regular file of its own: a symbolic link there is not followed, and a FIFO
+// does not stop startup waiting for a writer.
+func readSessionsFile(dir string) ([]byte, error) {
+	path := filepath.Join(dir, "sessions.json")
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return io.ReadAll(io.LimitReader(f, maxSessionsFile))
+}
+
+// writeSessionsFile replaces dir/sessions.json with data: written to a new
+// 0600 file beside it, then renamed over it. A link planted at sessions.json
+// is replaced, never written through, the file never keeps an older, wider
+// mode, and a crash mid-write leaves the previous file whole.
+func writeSessionsFile(dir string, data []byte) error {
+	f, err := os.CreateTemp(dir, ".sessions-*.json")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp, filepath.Join(dir, "sessions.json"))
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 func generateToken() (string, error) {

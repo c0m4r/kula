@@ -230,7 +230,9 @@ Optional bearer token on `/metrics`, constant-time compared.
   place of one is refused, never followed or waited on. The storage directory itself may be a
   link. The terminal UI (often run as root) and `kula inspect` open tiers the same way, so a
   FIFO no longer blocks them before they draw anything. Backup files are created with
-  `O_EXCL|O_NOFOLLOW` in the run directory each backup makes afresh.
+  `O_EXCL|O_NOFOLLOW` in the run directory each backup makes afresh. `sessions.json` is written
+  to a new `0600` file beside it and renamed over it, so a link planted there is replaced, never
+  written through, and is read only as a regular file (`TestSessionsFileIsKulasOwn`).
 - Packages and the guided installer install `/etc/kula` as `root:kula 0750` and seed
   `config.yaml` as `root:kula 0640` (the snap: `0600` root), and set those modes again on
   upgrade: the secrets in it reach root and the `kula` group only, and the daemon cannot rewrite

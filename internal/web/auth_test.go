@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1068,5 +1069,79 @@ func TestPasswordHashConcurrencyBounded(t *testing.T) {
 	}
 	if got := len(am.hashSlots); got != 0 {
 		t.Errorf("slots still held after every release: %d", got)
+	}
+}
+
+// TestSessionsFileIsKulasOwn: sessions.json is replaced by a fresh 0600 file,
+// never written through a link planted in its place or left at an older
+// file's mode, and loading it neither follows a link nor waits on a FIFO.
+func TestSessionsFileIsKulasOwn(t *testing.T) {
+	params := config.Argon2Config{Time: 1, Memory: 8, Threads: 1}
+	cfg := config.AuthConfig{
+		Enabled: true, Username: "admin", PasswordHash: HashPassword("secret", "salt", params),
+		PasswordSalt: "salt", Argon2: params, SessionTimeout: time.Hour,
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	am := NewAuthManager(cfg, dir, false, config.SecurityConfig{OriginValidation: true})
+	if _, err := am.CreateSession("admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.WriteFile(target, []byte("untouched"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := am.SaveSessions(); err != nil {
+		t.Fatalf("SaveSessions over a link: %v", err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "untouched" {
+		t.Fatalf("SaveSessions wrote through the link: the target now holds %q", got)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("sessions.json after saving: %v, %v; want a regular 0600 file", info.Mode(), err)
+	}
+
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := am.SaveSessions(); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Fatalf("a 0644 sessions.json kept mode %v", info.Mode().Perm())
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("saving left %d files in the storage directory, want only sessions.json", len(entries))
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewAuthManager(cfg, dir, false, config.SecurityConfig{}).LoadSessions(); err == nil {
+		t.Error("LoadSessions followed a link")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- NewAuthManager(cfg, dir, false, config.SecurityConfig{}).LoadSessions() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("LoadSessions read a FIFO as a sessions file")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("LoadSessions blocked on a FIFO")
 	}
 }
