@@ -964,8 +964,18 @@ func normalizeOrigin(raw string) (string, error) {
 		return "", err
 	}
 	scheme := strings.ToLower(u.Scheme)
+	// Web pages send http(s) origins; app webviews and browser extensions
+	// send their own schemes (tauri://localhost, chrome-extension://<id>).
+	// No page is served from the rest of the URL standard's special schemes,
+	// and an entry without "//" is a host[:port] missing its scheme.
 	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("must be an http:// or https:// origin")
+		switch scheme {
+		case "ftp", "file", "ws", "wss":
+			return "", fmt.Errorf("no page has a %s:// origin; use http:// or https://", scheme)
+		}
+		if u.Host == "" {
+			return "", fmt.Errorf("must be an http:// or https:// origin, or an app or extension origin such as tauri://localhost")
+		}
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery || (u.Path != "" && u.Path != "/") {
 		return "", fmt.Errorf("must be scheme://host[:port] only, without a path, query or credentials")

@@ -260,9 +260,10 @@ Defaults preserve strict behavior. Relax these to embed Kula in an `<iframe>` or
 cross-origin browser access. When `allowed_origins` is non-empty, CORS headers are sent for
 matching origins, those origins pass `origin_validation`, and session cookies switch to
 `SameSite=None; Secure` (requires HTTPS or `trust_proxy` + `X-Forwarded-Proto: https`). Each
-entry is an origin as a browser sends it, `scheme://host[:port]`: case, a trailing slash and a
-default port are normalized at startup, and an entry with a path, a wildcard or no scheme stops
-it with an error. Keep `origin_validation` on alongside `allowed_origins`: with it off, those
+entry is an origin as a browser sends it, `scheme://host[:port]`: an `http`/`https` page, or an
+app webview or browser extension with its own scheme (`tauri://localhost`,
+`chrome-extension://<id>`). Case, a trailing slash and a default port are normalized at
+startup, and an entry with a path, a wildcard or no scheme stops it with an error. Keep `origin_validation` on alongside `allowed_origins`: with it off, those
 cross-site cookies reach a WebSocket that accepts any origin, so any page a signed-in user visits
 can read the live stream (Kula warns about this at startup). See
 [Security Model](../dev/08-security.md).
@@ -275,7 +276,7 @@ answers only `Host` names that no public DNS server can answer for:
 - IP addresses (`192.0.2.10`, shorthand such as `127.1`, `[::1]`), `localhost` and `*.localhost`;
 - single-label names (`myserver`);
 - names ending in `.local`, `.lan`, `.home`, `.corp`, `.localdomain`, `.internal` or `.home.arpa`;
-- this machine's hostname and [`global.hostname`](#global), the hosts in `allowed_origins`,
+- this machine's hostname and [`global.hostname`](#global), the hosts of `http`/`https` `allowed_origins`,
   and the names in `allowed_hosts`.
 
 Any other name gets `403 {"error": "host not allowed: …"}`, logged once per name; `/health`

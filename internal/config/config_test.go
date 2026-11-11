@@ -285,6 +285,10 @@ func TestNormalizeOrigin(t *testing.T) {
 		{"http://[::1]:8080", "http://[::1]:8080"},
 		{"http://[::1]:80", "http://[::1]"},
 		{"http://192.0.2.1", "http://192.0.2.1"},
+		// App webviews and extensions send their own schemes, as 0.21.0 accepted.
+		{"tauri://localhost", "tauri://localhost"},
+		{"Chrome-Extension://ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP/", "chrome-extension://abcdefghijklmnopabcdefghijklmnop"},
+		{"moz-extension://0b5c3a8e-6f3d-4e8a-9a51-2f6c1d7e8b90", "moz-extension://0b5c3a8e-6f3d-4e8a-9a51-2f6c1d7e8b90"},
 	} {
 		got, err := normalizeOrigin(tc.in)
 		if err != nil || got != tc.want {
@@ -295,6 +299,8 @@ func TestNormalizeOrigin(t *testing.T) {
 		"", "app.example.com", "*", "null", "https://*.example.com", "ftp://app.example.com",
 		"https://app.example.com/path", "https://app.example.com/?x=1", "https://app.example.com/#x",
 		"https://user@app.example.com", "https:app.example.com", "https://bücher.example",
+		"ws://app.example.com", "wss://app.example.com", "file:///srv/kula", "app.example.com:8443", "app://",
+		"tauri://localhost/index.html", "chrome-extension://*",
 	} {
 		if got, err := normalizeOrigin(in); err == nil {
 			t.Errorf("normalizeOrigin(%q) = %q, want an error", in, got)

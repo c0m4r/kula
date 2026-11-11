@@ -108,6 +108,21 @@ func TestHostCheckRefusesRebindingNames(t *testing.T) {
 	}
 }
 
+// TestHostCheckIgnoresAppOriginHosts: an http(s) origin in allowed_origins is
+// a server the browser may reach Kula by, but an app or extension origin
+// (app://dash.example.org) names none, so its host stays refused.
+func TestHostCheckIgnoresAppOriginHosts(t *testing.T) {
+	h := hostTestHandler(t, func(cfg *config.WebConfig) {
+		cfg.Security.AllowedOrigins = []string{"app://dash.example.org", "https://web.example.org"}
+	})
+	if rec := serveHost(h, "dash.example.org", "/api/current"); rec.Code != http.StatusForbidden {
+		t.Errorf("an app origin's host was answered (%d)", rec.Code)
+	}
+	if rec := serveHost(h, "web.example.org", "/api/current"); rec.Code == http.StatusForbidden {
+		t.Errorf("an https origin's host was refused: %s", rec.Body.String())
+	}
+}
+
 // TestHostCheckScope: signed-in access has no session to lend a rebinding
 // page, so with auth on only a /metrics without a bearer token, which auth
 // does not cover, is checked. A Unix socket has no browser connecting to it,

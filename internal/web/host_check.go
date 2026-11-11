@@ -79,8 +79,10 @@ func newHostPolicy(cfg config.WebConfig, machine ...string) *hostPolicy {
 }
 
 func originHost(origin string) string {
-	_, rest, ok := strings.Cut(origin, "://")
-	if !ok {
+	scheme, rest, ok := strings.Cut(origin, "://")
+	// An app or extension origin (tauri://localhost, chrome-extension://<id>)
+	// names no server the browser reaches Kula by.
+	if !ok || (!strings.EqualFold(scheme, "http") && !strings.EqualFold(scheme, "https")) {
 		return ""
 	}
 	if host, _, err := net.SplitHostPort(rest); err == nil {
