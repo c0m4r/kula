@@ -175,6 +175,10 @@ func main() {
 	}
 }
 
+// collectionStopTimeout bounds how long a shutdown waits for the collection
+// loop to finish the sample it is on.
+const collectionStopTimeout = 5 * time.Second
+
 func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuArch string) {
 	cfg.Web.Version = version
 	cfg.Web.OS = osName
@@ -239,7 +243,9 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 	coll.StartApplications()
 
 	// Collection loop
+	collectionDone := make(chan struct{})
 	go func() {
+		defer close(collectionDone)
 		ticker := time.NewTicker(cfg.Collection.Interval)
 		defer ticker.Stop()
 
@@ -271,6 +277,15 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 	<-ctx.Done()
 
 	log.Println("Shutting down...")
+	// The loop ends with the context, but may be in the middle of a sample.
+	// Wait for it, so the deferred store.Close() does not close the tiers
+	// under its write. Not forever: a collection stuck on the host (a hung
+	// mount) must not keep the process from stopping.
+	select {
+	case <-collectionDone:
+	case <-time.After(collectionStopTimeout):
+		log.Printf("Collection still running after %s, closing storage without it", collectionStopTimeout)
+	}
 	coll.Stop()
 
 	if server != nil {

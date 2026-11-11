@@ -53,7 +53,8 @@ the binary via `//go:embed`, so there are no runtime assets to ship.
 7. **Start application collectors** (`coll.StartApplications()`).
 8. Run the **collection loop**: tick every interval → `Collect()` → `WriteSample()` →
    `BroadcastSample()`.
-9. On signal: stop the collector, shut down the web server with a 5-second timeout.
+9. On signal: wait up to 5 seconds for the collection loop to finish the sample it is on,
+   stop the collector, shut down the web server with a 5-second timeout, then close the store.
 
 ## Subsystems
 
