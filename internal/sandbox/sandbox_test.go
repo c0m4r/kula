@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -160,6 +161,183 @@ func runHelperProcess() {
 	}
 
 	fmt.Printf("OK: sandbox assertions passed (ABI %d)\n", abi)
+	os.Exit(0)
+}
+
+// TestSandboxConfinesSocketsUDPAndSignals runs the real Enforce in a child
+// process and checks what the newer Landlock ABIs confine: a Unix socket
+// outside every grant, UDP (DNS only when a target needs it), and signals and
+// abstract Unix sockets reaching outside the sandbox. Each assertion is
+// skipped on a kernel whose ABI cannot enforce it.
+func TestSandboxConfinesSocketsUDPAndSignals(t *testing.T) {
+	if os.Getenv("KULA_SANDBOX_CONFINE_HELPER") == "1" {
+		runConfineHelper()
+		return
+	}
+
+	for _, dnsName := range []string{"", "kula-sandbox-test.invalid"} {
+		name := "IP targets only"
+		if dnsName != "" {
+			name = "a target named by a DNS name"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			storageDir := filepath.Join(dir, "storage")
+			configPath := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(configPath, []byte("{}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			// Listeners set up outside the sandbox: a container runtime
+			// socket in a directory of its own (granted), a socket next to
+			// it in another directory (not granted), a MySQL socket directly
+			// in the shared temporary directory (granted as that file) and
+			// a neighbour there (not granted), an abstract socket and a UDP
+			// port.
+			listen := func(path string) {
+				t.Helper()
+				ln, err := net.Listen("unix", path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = ln.Close() })
+			}
+			for _, sub := range []string{"docker", "other"} {
+				if err := os.Mkdir(filepath.Join(dir, sub), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dockerSock := filepath.Join(dir, "docker", "docker.sock")
+			otherSock := filepath.Join(dir, "other", "other.sock")
+			listen(dockerSock)
+			listen(otherSock)
+			sharedMysql, sharedOther := "", ""
+			if tmp := os.TempDir(); !dedicatedSocketDir(tmp) {
+				prefix := filepath.Join(tmp, fmt.Sprintf("kula-sandbox-test-%d-%s", os.Getpid(), filepath.Base(dir)))
+				sharedMysql, sharedOther = prefix+"-mysql.sock", prefix+"-other.sock"
+				listen(sharedMysql)
+				listen(sharedOther)
+			}
+			abstract := fmt.Sprintf("@kula-sandbox-test-%d-%s", os.Getpid(), filepath.Base(dir))
+			listen(abstract)
+			udp, err := net.ListenPacket("udp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = udp.Close() }()
+
+			cmd := exec.Command(os.Args[0], "-test.run=^TestSandboxConfinesSocketsUDPAndSignals$")
+			cmd.Env = append(os.Environ(), "KULA_SANDBOX_CONFINE_HELPER=1",
+				"TEST_CONFIG_PATH="+configPath,
+				"TEST_STORAGE_DIR="+storageDir,
+				"TEST_DOCKER_SOCK="+dockerSock,
+				"TEST_OTHER_SOCK="+otherSock,
+				"TEST_SHARED_MYSQL_SOCK="+sharedMysql,
+				"TEST_SHARED_OTHER_SOCK="+sharedOther,
+				"TEST_ABSTRACT_SOCK="+abstract,
+				"TEST_UDP_ADDR="+udp.LocalAddr().String(),
+				"TEST_DNS_NAME="+dnsName)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				var exitErr *exec.ExitError
+				if errors.As(err, &exitErr) && exitErr.ExitCode() == helperSkipCode {
+					t.Skipf("Landlock not enforceable in this environment:\n%s", output)
+				}
+				t.Fatalf("helper failed: %v\n%s", err, output)
+			}
+			t.Logf("helper output:\n%s", output)
+		})
+	}
+}
+
+func runConfineHelper() {
+	abi, abiErr := llsyscall.LandlockGetABIVersion()
+	if abiErr != nil || abi < 1 {
+		fmt.Printf("SKIP: Landlock unavailable (abi=%d, err=%v)\n", abi, abiErr)
+		os.Exit(helperSkipCode)
+	}
+	failed := false
+	fail := func(format string, args ...any) {
+		fmt.Printf("FAIL: "+format+"\n", args...)
+		failed = true
+	}
+	dial := func(network, addr string) error {
+		conn, err := net.DialTimeout(network, addr, 2*time.Second)
+		if err == nil {
+			_ = conn.Close()
+		}
+		return err
+	}
+	// mustDeny checks a denial the kernel's ABI enforces: EACCES for a
+	// Landlock access right, EPERM for a scope.
+	mustDeny := func(minABI int, what string, err, want error) {
+		switch {
+		case abi < minABI:
+			fmt.Printf("INFO: ABI %d < %d, not checking that %s is denied\n", abi, minABI, what)
+		case err == nil:
+			fail("%s succeeded under ABI %d", what, abi)
+		case !errors.Is(err, want):
+			fail("%s: %v, want %v", what, err, want)
+		}
+	}
+	mustAllow := func(what string, err error) {
+		if err != nil {
+			fail("%s: %v", what, err)
+		}
+	}
+
+	dnsName := os.Getenv("TEST_DNS_NAME")
+	apps := config.ApplicationsConfig{
+		Containers: config.ContainersConfig{Enabled: true, SocketPath: os.Getenv("TEST_DOCKER_SOCK")},
+	}
+	if dnsName != "" {
+		apps.Nginx = config.NginxConfig{Enabled: true, StatusURL: "http://" + dnsName + ":8080/status"}
+	}
+	sharedMysql, sharedOther := os.Getenv("TEST_SHARED_MYSQL_SOCK"), os.Getenv("TEST_SHARED_OTHER_SOCK")
+	if sharedMysql != "" {
+		apps.Mysql = config.MysqlConfig{Enabled: true, Host: sharedMysql}
+	}
+	webCfg := config.WebConfig{Enabled: true, Port: 27998}
+	if err := Enforce(os.Getenv("TEST_CONFIG_PATH"), os.Getenv("TEST_STORAGE_DIR"), webCfg, apps, config.OllamaConfig{}); err != nil {
+		fail("Enforce: %v", err)
+		os.Exit(1)
+	}
+
+	// Pathname Unix sockets (ABI 9+): the granted ones connect, the rest,
+	// the D-Bus system bus among them, do not.
+	mustAllow("connecting to the container runtime socket", dial("unix", os.Getenv("TEST_DOCKER_SOCK")))
+	mustDeny(9, "connecting to a Unix socket outside every grant", dial("unix", os.Getenv("TEST_OTHER_SOCK")), syscall.EACCES)
+	if sharedMysql != "" {
+		mustAllow("connecting to the MySQL socket in the shared temporary directory", dial("unix", sharedMysql))
+		mustDeny(9, "connecting to another socket in the shared temporary directory", dial("unix", sharedOther), syscall.EACCES)
+	}
+	if _, err := os.Stat("/run/dbus/system_bus_socket"); err == nil {
+		mustDeny(9, "connecting to the D-Bus system bus", dial("unix", "/run/dbus/system_bus_socket"), syscall.EACCES)
+	}
+
+	// UDP (ABI 10+): nothing but DNS, and DNS only for a target that needs
+	// it. Connecting a UDP socket sends nothing.
+	mustDeny(10, "sending UDP to an arbitrary port", dial("udp", os.Getenv("TEST_UDP_ADDR")), syscall.EACCES)
+	if dnsName == "" {
+		mustDeny(10, "sending UDP to port 53 with no target to resolve", dial("udp", "127.0.0.1:53"), syscall.EACCES)
+		mustDeny(4, "connecting to TCP port 53 with no target to resolve", dial("tcp", "127.0.0.1:53"), syscall.EACCES)
+	} else {
+		mustAllow("sending UDP to port 53 to resolve "+dnsName, dial("udp", "127.0.0.1:53"))
+		if err := dial("tcp", "127.0.0.1:53"); errors.Is(err, syscall.EACCES) {
+			fail("TCP to port 53 to resolve %s: %v", dnsName, err)
+		}
+	}
+
+	// Scopes (ABI 6+): no signal to, and no abstract socket of, a process
+	// outside the sandbox. The parent test process is one.
+	mustDeny(6, "signalling a process outside the sandbox", syscall.Kill(os.Getppid(), 0), syscall.EPERM)
+	mustDeny(6, "connecting to an abstract Unix socket outside the sandbox", dial("unix", os.Getenv("TEST_ABSTRACT_SOCK")), syscall.EPERM)
+	mustAllow("signalling itself", syscall.Kill(os.Getpid(), 0))
+
+	if failed {
+		os.Exit(1)
+	}
+	fmt.Printf("OK: sockets, UDP and scopes confined as ABI %d allows\n", abi)
 	os.Exit(0)
 }
 

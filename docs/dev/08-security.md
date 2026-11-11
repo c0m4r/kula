@@ -273,7 +273,9 @@ Security-critical paths have dedicated tests:
 - `websocket_test.go` — connection limits.
 - `ollama_test.go` — model validation, prompt sanitization, rate limiting, tool execution.
 - `prometheus_test.go` — bearer auth, label escaping.
-- `sandbox_test.go` — writes/exec/network outside the allowed set fail.
+- `sandbox_test.go` — writes, exec, TCP, Unix sockets, UDP (DNS only when a target needs it),
+  signals and abstract sockets outside the allowed set fail; `serve_sandbox_test.go` (cmd/kula)
+  runs every collector and listener under the real sandbox.
 - `host_check_test.go` — DNS rebinding: refused and answered `Host` names, when the check
   applies, bounded logging.
 - `config_test.go` — YAML parsing, env overrides, tier validation, `allowed_origins` and

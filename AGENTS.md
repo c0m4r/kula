@@ -90,8 +90,10 @@ per-application reducer branches.
 - For cumulative counters that reset on restart, guard the delta against rollback
   (`internal/collector/nginx.go`, `internal/collector/apache2.go`). A reset must not produce an
   absurd rate.
-- A new outbound connection needs a Landlock `ConnectTCP` rule in `internal/sandbox/sandbox.go`,
-  or the sandbox blocks it at runtime.
+- A new outbound connection needs a Landlock grant in `internal/sandbox/sandbox.go`
+  (`addURL`/`addTCPConnect` for TCP, `addHostName` for DNS, `addUnixSocket` for a Unix socket),
+  or the sandbox blocks it at runtime; `TestServeUnderTheSandbox` (cmd/kula) re-tests the
+  collectors under it.
 
 ### Embedded assets and i18n
 

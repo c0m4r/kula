@@ -54,24 +54,20 @@ disk temperatures and power supplies do.
 
 ## 5. Sandbox — `internal/sandbox/sandbox.go`
 
-If the collector makes outbound connections, add a `ConnectTCP` rule for its port:
+If the collector connects somewhere, grant it in `addApplications`, or the sandbox blocks it at
+runtime. For an HTTP status URL, `addURL` allows the TCP port the client dials (the URL's, or 80 /
+443) and, when the host is a name the hosts file does not answer, DNS:
 
 ```go
 if appCfg.Foo.Enabled && appCfg.Foo.StatusURL != "" {
-    if u, err := url.Parse(appCfg.Foo.StatusURL); err == nil {
-        port := 80
-        if u.Port() != "" {
-            if p, err := strconv.Atoi(u.Port()); err == nil && p > 0 && p <= 65535 {
-                port = p
-            }
-        } else if u.Scheme == "https" {
-            port = 443
-        }
-        netRules = append(netRules, landlock.ConnectTCP(uint16(port)))
-        appInfo = append(appInfo, fmt.Sprintf("foo:connect-tcp/%d", port))
-    }
+    rs.addURL("foo", appCfg.Foo.StatusURL)
 }
 ```
+
+Another TCP client uses `rs.addTCPConnect("foo", port)` and `rs.addHostName(host)`; a Unix socket
+`rs.addUnixSocket("applications.foo.socket", "foo", path, true)`; a file it reads at connect time
+(a CA certificate) `rs.addReadOnly("applications.foo.ca", path, false)`. Each grant is logged at
+startup (`foo:connect-tcp/9000`). See [Landlock Sandbox](09-sandbox.md).
 
 ## 6. Preamble flag — `internal/storage/codec.go`
 

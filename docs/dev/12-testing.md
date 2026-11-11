@@ -39,15 +39,17 @@ Notable suites:
 | Storage | `store_test.go`, `tier_test.go`, `codec_test.go`, `snapshot_test.go`, `migration_test.go`, `readonly_test.go` |
 | Web/security | `auth_test.go`, `server_test.go`, `websocket_test.go`, `ollama_test.go`, `prometheus_test.go`, `runtime_security_test.go` |
 | Config | `config_test.go` |
-| Sandbox | `sandbox_test.go` |
+| Sandbox | `sandbox_test.go`, `rules_test.go`, `serve_sandbox_test.go` (cmd/kula) |
 | Backup | `backup_test.go`, `cron_test.go` |
 | i18n | `i18n_test.go` |
 | TUI | `tui_test.go`, `chart_test.go`, `history_test.go` |
 
 Collectors are driven against synthetic `/proc` and `/sys` fixture trees under
 [`internal/collector/testdata/`](../../internal/collector/testdata/), so they run deterministically
-on any machine. The sandbox tests are *negative* tests — they assert that forbidden
-writes/exec/network actually fail once Landlock is enforced.
+on any machine. The sandbox tests are mostly *negative* tests — they assert that forbidden
+writes/exec/network actually fail once Landlock is enforced, as far as the kernel's Landlock ABI
+enforces it — and `TestServeUnderTheSandbox` checks that every collector and listener still
+reaches its target under it.
 
 When Node.js is available, `server_test.go` runs `history_frontend_test.mjs`. It checks request
 cancellation and stale responses, envelope preservation, formatter reuse, missing-data breaks,

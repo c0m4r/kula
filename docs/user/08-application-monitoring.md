@@ -4,9 +4,12 @@ Beyond system metrics, Kula can monitor several services. Each module appears un
 **Applications** section of the dashboard and is independently enabled. All live under the
 `applications:` block in `config.yaml`.
 
-> **Sandbox note.** Kula's Landlock sandbox only permits outbound connections to the ports of
-> the applications you enable. If you change an application's port, Kula automatically allows
-> it because the rule is derived from your config at startup.
+> **Sandbox note.** Kula's Landlock sandbox only permits outbound connections to the ports and
+> Unix sockets of the applications you enable, and DNS only when one of them is a host name
+> that `/etc/hosts` does not list. If you change an application's address, Kula automatically
+> allows it because the rule is derived from your config at startup. A Unix socket that does not
+> exist yet when Kula starts, or one directly in `/run` or `/tmp` that its server recreates, is
+> reachable only after Kula restarts; see [Landlock Sandbox](../dev/09-sandbox.md#unix-sockets).
 
 ---
 
