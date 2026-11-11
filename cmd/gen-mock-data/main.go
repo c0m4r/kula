@@ -18,27 +18,41 @@ import (
 const defaultSeed int64 = 0x4b554c41 // "KULA"
 
 func main() {
-	if err := run(os.Stdin, os.Stdout); err != nil {
+	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		log.Fatalf("gen-mock-data: %v", err)
 	}
 }
 
-func run(input io.Reader, output io.Writer) error {
-	days := flag.Int("days", 7, "number of days to generate")
-	duration := flag.Duration("duration", 0, "exact duration to generate (overrides -days, for example 6h or 30m)")
-	cfgPath := flag.String("config", "config.yaml", "path to configuration file")
-	seed := flag.Int64("seed", defaultSeed, "deterministic pseudo-random seed")
-	profileName := flag.String("profile", string(profileRealistic), "workload profile: realistic or steady")
-	startText := flag.String("start", "", "timestamp of the first sample in RFC3339 format (default: end near now)")
-	yes := flag.Bool("yes", false, "skip the interactive confirmation")
-	flag.Parse()
+func run(args []string, input io.Reader, output io.Writer) error {
+	flags := flag.NewFlagSet("gen-mock-data", flag.ContinueOnError)
+	days := flags.Int("days", 7, "number of days to generate")
+	duration := flags.Duration("duration", 0, "exact duration to generate (overrides -days, for example 6h or 30m)")
+	cfgPath := flags.String("config", "config.yaml", "path to configuration file")
+	seed := flags.Int64("seed", defaultSeed, "deterministic pseudo-random seed")
+	profileName := flags.String("profile", string(profileRealistic), "workload profile: realistic or steady")
+	startText := flags.String("start", "", "timestamp of the first sample in RFC3339 format (default: end near now)")
+	yes := flags.Bool("yes", false, "skip the interactive confirmation")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
 
 	profile, err := parseProfile(*profileName)
 	if err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(*cfgPath)
+	// An explicit -config must exist: the defaults would point the generator
+	// at the default storage directory, which may hold a real host's history.
+	load := config.Load
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			load = config.LoadRequired
+		}
+	})
+	cfg, err := load(*cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

@@ -126,7 +126,9 @@ they measure result cloning consistently. The older repeated `BenchmarkQueryRang
 
 [`cmd/gen-mock-data`](../../cmd/gen-mock-data/main.go) writes the complete metric schema into
 the configured tier store. It uses `collection.interval`, so generated timestamps and storage
-aggregation ratios remain consistent when testing a non-default collection rate.
+aggregation ratios remain consistent when testing a non-default collection rate. An explicit
+`-config` must exist: rather than fall back to the defaults, whose storage directory may hold a
+real host's history, the generator stops before it opens any storage.
 
 ```bash
 # Repeatable six-hour fixture in an isolated directory.
