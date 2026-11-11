@@ -1272,10 +1272,9 @@ def print_tier(filepath: str, buf: Any, file_size: int) -> None:
     header = parse_header(buf[:HEADER_SIZE])
     magic, _, codec_ver, max_data, write_off, count, oldest_nano, newest_nano, _ = header
     if magic != MAGIC:
-        print(
-            f"Error: Invalid magic: {magic.decode('utf-8', errors='replace')}",
-            file=sys.stderr,
-        )
+        # Escaped: the bytes come from the file, and raw they reach the
+        # terminal as control sequences.
+        print(f"Error: Invalid magic: {magic!r}", file=sys.stderr)
         sys.exit(1)
     try:
         check_geometry(header)

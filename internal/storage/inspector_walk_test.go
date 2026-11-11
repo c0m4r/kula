@@ -251,4 +251,14 @@ func TestInspectorCommandLine(t *testing.T) {
 	if out, err := run(path); err != nil || !strings.Contains(out, "Latest Record") {
 		t.Errorf("reading a tier file: %v\n%s", err, out)
 	}
+
+	// A file's bad magic is printed escaped: raw, it reached the terminal as
+	// a control sequence (here one setting the window title).
+	bad := t.TempDir() + "/tier_0.dat"
+	if err := os.WriteFile(bad, append([]byte("\x1b]0;"), make([]byte, headerSize)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(bad); err == nil || !strings.Contains(out, `Invalid magic: b'\x1b]0;'`) || strings.ContainsRune(out, 0x1b) {
+		t.Errorf("a bad magic: %v\n%q", err, out)
+	}
 }
