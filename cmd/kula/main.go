@@ -332,6 +332,14 @@ func runTUI(cfg *config.Config, osName, kernelVersion, cpuArch string) {
 	// socket a running `kula serve` owns.
 	apps := cfg.Applications
 	apps.Custom = nil
+
+	// The TUI, often run as root, runs the same collectors as `kula serve`:
+	// confine it as well, before it collects or opens storage, to their
+	// reads and connections and the storage directory read-only.
+	if err := sandbox.EnforceTUI(cfg.Storage.Directory, apps); err != nil {
+		log.Fatalf("Refusing to start the TUI without the Landlock sandbox: %v", err)
+	}
+
 	coll := collector.New(cfg.Global, cfg.Collection, apps, cfg.Storage.Directory)
 	defer coll.Stop()
 	coll.StartApplications()

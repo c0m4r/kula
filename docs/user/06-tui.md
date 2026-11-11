@@ -15,6 +15,13 @@ samples the system directly, so the live views work without `kula serve`. The **
 charts what `kula serve` has recorded. It opens the storage tier files **read-only**, never
 writes, migrates or resizes them, and keeps up with a service that is running at the same time.
 
+Like `kula serve`, the TUI confines itself with the [Landlock sandbox](../dev/09-sandbox.md)
+before it collects anything or opens storage. It can read `/proc`, `/sys` and its storage
+directory, and reach only the ports and sockets of the applications enabled in its config (plus
+DNS when one of them is a host name); it cannot write files, listen on a port or socket, run
+programs or signal other processes. On a kernel without Landlock it runs unconfined; on one with
+Landlock, a sandbox that cannot be applied stops it with a message naming the setting.
+
 ## Tabs
 
 The TUI presents eight views; navigate between them with the keyboard:
@@ -79,17 +86,23 @@ and GPU load. A chart with no data in the window (no swap, no GPU) is left out.
 
 The History view reads the directory set in `storage.directory`. It needs permission to read the
 tier files, which the packaged service creates as its own user with mode `0600`. Run the TUI as
-that user or as root with the service's configuration, for example:
+that user, with the service's configuration (readable by the `kula` group):
 
 ```bash
-sudo kula --config /etc/kula/config.yaml tui
+sudo -u kula kula --config /etc/kula/config.yaml tui
 ```
+
+Running it as root (`sudo kula --config /etc/kula/config.yaml tui`) works too, and the sandbox
+confines it the same way, but the service user needs no more than the service has. Container
+names then come from the runtime socket only if that user may open it (see
+[Application Monitoring](08-application-monitoring.md)).
 
 With the default `storage.directory` of `/var/lib/kula`, a user who cannot write there falls back
 to `~/.kula`, which holds only history recorded by a `kula serve` that user ran. The view says
 which directory it reads and why it is empty or unreadable. Storage it could not open is tried
 again every few seconds while the view is shown, so it starts charting once the files become
-readable, without a restart. The tier files do not record their resolutions, so the view takes
+readable, without a restart — provided the storage directory existed when the TUI started: the
+sandbox grants the directory as it was then, so one created later needs a restart of the TUI. The tier files do not record their resolutions, so the view takes
 them, and the tier it reads for a window, from the configuration it was started with. When the
 files' sizes or number differ from that configuration, it says so above the charts: pass the
 service's `--config`.

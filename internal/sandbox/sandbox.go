@@ -12,8 +12,10 @@
 //
 // Every other UDP datagram and Unix socket connect is denied, and signals and
 // abstract Unix sockets cannot reach processes outside the sandbox.
+// EnforceTUI gives `kula tui` a ruleset of its own: the same reads and
+// connections, the storage directory read-only, no writes and no listeners.
 //
-// It requests the newest Landlock ABI go-landlock knows and uses BestEffort
+// Both request the newest Landlock ABI go-landlock knows and use BestEffort
 // to degrade gracefully: an older kernel enforces the part of the ruleset it
 // supports, and a kernel without Landlock (pre-5.13, or disabled) leaves the
 // process unconfined with a log line. On a kernel with Landlock, a rule that
@@ -67,6 +69,9 @@ const (
 	accessSocketListener = landlock.AccessFSSet(llsyscall.AccessFSMakeSock | llsyscall.AccessFSRemoveFile)
 	// Reading files and listing directories, without executing anything.
 	accessRead = landlock.AccessFSSet(llsyscall.AccessFSReadFile | llsyscall.AccessFSReadDir)
+	// Bubble Tea opens the controlling terminal when standard input is not
+	// one, and puts it in raw mode with an ioctl.
+	accessTerminal = landlock.AccessFSSet(llsyscall.AccessFSReadFile | llsyscall.AccessFSIoctlDev)
 )
 
 // ruleset gathers the grants of one process, and what its log line and the
@@ -456,6 +461,9 @@ func (rs *ruleset) restrict(what, details string) error {
 	if err := rs.err(); err != nil {
 		return err
 	}
+	// The local time zone loads on first use, from /etc/localtime, which
+	// the sandbox does not grant: load it now, or log times turn UTC.
+	_, _ = time.Now().Zone()
 	if err := rs.config().Restrict(rs.rules...); err != nil {
 		return fmt.Errorf("sandbox: enforcing landlock: %w", err)
 	}
@@ -588,6 +596,42 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 
 	return rs.restrict("", fmt.Sprintf("paths: /proc[ro] /sys[ro] %s[ro] %s[rw]%s",
 		absConfigPath, absStorageDir, webStatus))
+}
+
+// EnforceTUI applies the `kula tui` Landlock restrictions to the current
+// process: the reads and connections of its collectors as under Enforce, the
+// storage directory read-only for the History view, and the controlling
+// terminal. It grants no writes, no listeners and no TCP bind. The TUI shows
+// no custom metrics, so appCfg.Custom is ignored.
+//
+// A storage directory that does not exist yet stays unreadable until the TUI
+// restarts. Semantics as for Enforce: without Landlock it logs and returns
+// nil; otherwise an error means the TUI must not start.
+func EnforceTUI(storageDir string, appCfg config.ApplicationsConfig) error {
+	rs := newRuleset()
+	if rs.unsupported(" for the TUI") {
+		return nil
+	}
+
+	absStorageDir, err := filepath.Abs(storageDir)
+	if err != nil {
+		return fmt.Errorf("sandbox: resolving storage dir: %w", err)
+	}
+
+	if _, err := os.Stat(absStorageDir); errors.Is(err, fs.ErrNotExist) {
+		log.Printf("Warning: sandbox: storage directory %s does not exist; the History view can read it only after the TUI restarts", absStorageDir)
+	}
+
+	rs.addSystemReads()
+	rs.add(
+		landlock.PathAccess(accessRead, absStorageDir).IgnoreIfMissing(),
+		landlock.PathAccess(accessTerminal, "/dev/tty").IgnoreIfMissing(),
+	)
+	rs.addApplications(appCfg)
+	rs.addDNS()
+	rs.loadSystemRoots(appCfg, config.OllamaConfig{})
+
+	return rs.restrict(" for the TUI", fmt.Sprintf("paths: /proc[ro] /sys[ro] %s[ro], net: no listener", absStorageDir))
 }
 
 // pickContainerSocket mirrors the container collector's choice: the first

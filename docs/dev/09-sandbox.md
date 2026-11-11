@@ -34,6 +34,18 @@ runs unconfined. On a kernel with Landlock, an error means the sandbox is not in
 applied (a PostgreSQL `host` that is a regular file, a `web.unix_socket` directory that does not
 exist, a `PGSSLCERT` path through a file) is named in the message, with its setting.
 
+## The TUI
+
+`runTUI` calls `sandbox.EnforceTUI(storageDir, appsCfg)` before it builds its collector or opens
+storage. `kula tui` is often run as root and runs the same application collectors, so it gets a
+ruleset of its own: the system reads, the connections and DNS of its enabled collectors as
+above (it has no custom-metrics socket and no Ollama proxy), the storage directory **read-only**
+(read files, list directories) for the History view, and `/dev/tty` (read, and the terminal
+ioctls), which Bubble Tea opens when standard input is not a terminal. It grants no write, no
+socket creation, no TCP bind and no execution. A storage directory that does not exist when the
+TUI starts is not granted, and stays unreadable until the TUI restarts. Errors are handled as
+for `kula serve`.
+
 ## Kernel requirements & graceful degradation
 
 Kula requests every access right of the newest Landlock ABI go-landlock knows (`landlock.V11`,
@@ -193,13 +205,16 @@ process and asserts, as far as the kernel's ABI enforces it:
 - With an `https://` target configured, the system CA roots are still available.
 
 `TestSandboxConfinesSocketsUDPAndSignals` fails if a change re-opens UDP or arbitrary Unix
-sockets. [`rules_test.go`](../../internal/sandbox/rules_test.go) pins the grants each PostgreSQL,
+sockets. `TestEnforceTUI` checks the TUI ruleset the same way: storage readable, but no write,
+socket, TCP listener or program. [`rules_test.go`](../../internal/sandbox/rules_test.go) pins the grants each PostgreSQL,
 MySQL, socket and DNS setting produces. `TestServeUnderTheSandbox` in
 [`cmd/kula`](../../cmd/kula/serve_sandbox_test.go) runs `kula serve` with every collector and
 listener pointed at fakes outside its sandbox — the container runtime socket, PostgreSQL and
 MySQL over TCP and a Unix socket, nginx and Apache2 by IP and by a hosts-file name, the
 custom-metrics socket, the web server on a Unix socket and on TCP, `/metrics`, the Ollama proxy
 at `localhost`, tier writes and the session file — and fails if one of them is not reached or
-anything logs a denial.
+anything logs a denial. `TestTUIUnderTheSandbox` runs `kula tui` on a pseudo-terminal, with
+standard input on the terminal and redirected: it must draw, reach its collectors' targets, chart
+stored history and quit.
 
 Next: [Frontend](10-frontend.md).

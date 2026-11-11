@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -338,6 +339,122 @@ func runConfineHelper() {
 		os.Exit(1)
 	}
 	fmt.Printf("OK: sockets, UDP and scopes confined as ABI %d allows\n", abi)
+	os.Exit(0)
+}
+
+// TestEnforceTUI runs the real EnforceTUI in a child process: storage stays
+// readable but nothing can be written, created or listened on, and the
+// collectors' socket still connects while others, UDP and outside signals
+// are denied, as far as the kernel's ABI enforces it.
+func TestEnforceTUI(t *testing.T) {
+	if os.Getenv("KULA_SANDBOX_TUI_HELPER") == "1" {
+		runTUIHelper()
+		return
+	}
+	dir := t.TempDir()
+	storageDir := filepath.Join(dir, "storage")
+	if err := os.Mkdir(storageDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storageDir, "tier_0.dat"), []byte("tier"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, sub := range []string{"docker", "other"} {
+		if err := os.Mkdir(filepath.Join(dir, sub), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		ln, err := net.Listen("unix", filepath.Join(dir, sub, sub+".sock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ln.Close() }()
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestEnforceTUI$")
+	cmd.Env = append(os.Environ(), "KULA_SANDBOX_TUI_HELPER=1",
+		"TEST_STORAGE_DIR="+storageDir,
+		"TEST_DOCKER_SOCK="+filepath.Join(dir, "docker", "docker.sock"),
+		"TEST_OTHER_SOCK="+filepath.Join(dir, "other", "other.sock"))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == helperSkipCode {
+			t.Skipf("Landlock not enforceable in this environment:\n%s", output)
+		}
+		t.Fatalf("helper failed: %v\n%s", err, output)
+	}
+	t.Logf("helper output:\n%s", output)
+}
+
+func runTUIHelper() {
+	abi, abiErr := llsyscall.LandlockGetABIVersion()
+	if abiErr != nil || abi < 1 {
+		fmt.Printf("SKIP: Landlock unavailable (abi=%d, err=%v)\n", abi, abiErr)
+		os.Exit(helperSkipCode)
+	}
+	failed := false
+	check := func(minABI int, what string, err error, wantDenied bool) {
+		switch {
+		case wantDenied && abi < minABI:
+			fmt.Printf("INFO: ABI %d < %d, not checking that %s is denied\n", abi, minABI, what)
+		case wantDenied && err == nil:
+			fmt.Printf("FAIL: %s succeeded under ABI %d\n", what, abi)
+			failed = true
+		case !wantDenied && err != nil:
+			fmt.Printf("FAIL: %s: %v\n", what, err)
+			failed = true
+		}
+	}
+	dial := func(network, addr string) error {
+		conn, err := net.DialTimeout(network, addr, 2*time.Second)
+		if err == nil {
+			_ = conn.Close()
+		}
+		return err
+	}
+
+	storageDir := os.Getenv("TEST_STORAGE_DIR")
+	apps := config.ApplicationsConfig{
+		Containers: config.ContainersConfig{Enabled: true, SocketPath: os.Getenv("TEST_DOCKER_SOCK")},
+	}
+	if err := EnforceTUI(storageDir, apps); err != nil {
+		fmt.Printf("FAIL: EnforceTUI: %v\n", err)
+		os.Exit(1)
+	}
+
+	_, err := os.ReadFile(filepath.Join(storageDir, "tier_0.dat"))
+	check(1, "reading a tier file", err, false)
+	_, err = os.ReadFile("/proc/self/stat")
+	check(1, "reading /proc", err, false)
+	f, err := os.OpenFile(filepath.Join(storageDir, "tier_0.dat"), os.O_WRONLY, 0)
+	if err == nil {
+		_ = f.Close()
+	}
+	check(1, "opening a tier file for writing", err, true)
+	check(1, "creating a file in the storage directory", os.WriteFile(filepath.Join(storageDir, "new"), nil, 0o600), true)
+	ln, err := net.Listen("unix", filepath.Join(storageDir, "kula.sock"))
+	if err == nil {
+		_ = ln.Close()
+	}
+	check(1, "listening on a Unix socket in the storage directory", err, true)
+	// Plain TCP: Landlock does not see Multipath TCP, net.Listen's default.
+	var lc net.ListenConfig
+	lc.SetMultipathTCP(false)
+	tcp, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err == nil {
+		_ = tcp.Close()
+	}
+	check(4, "listening on TCP", err, true)
+	check(1, "executing a program", exec.Command("/bin/true").Run(), true)
+	check(1, "connecting to the container runtime socket", dial("unix", os.Getenv("TEST_DOCKER_SOCK")), false)
+	check(9, "connecting to a Unix socket outside every grant", dial("unix", os.Getenv("TEST_OTHER_SOCK")), true)
+	check(10, "sending UDP", dial("udp", "127.0.0.1:53"), true)
+	check(6, "signalling a process outside the sandbox", syscall.Kill(os.Getppid(), 0), true)
+
+	if failed {
+		os.Exit(1)
+	}
+	fmt.Printf("OK: TUI sandbox assertions passed (ABI %d)\n", abi)
 	os.Exit(0)
 }
 

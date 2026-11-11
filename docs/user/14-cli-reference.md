@@ -34,7 +34,8 @@ drain, then storage is closed.
 ### `kula tui`
 
 Self-contained terminal dashboard. Does not require `serve` to be running. Its History view
-reads the storage tier files read-only and never modifies them. See [Terminal UI](06-tui.md).
+reads the storage tier files read-only and never modifies them, and it runs under a Landlock
+sandbox of its own. See [Terminal UI](06-tui.md).
 
 ```bash
 kula tui
