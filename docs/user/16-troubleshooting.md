@@ -56,7 +56,9 @@ is a hardening layer, not a requirement. To get full confinement, run on a newer
   [Application Monitoring](08-application-monitoring.md)). Replication metrics need extra
   grants and otherwise degrade silently to zero.
 - **Containers:** if you see metrics but no names, Kula is in `cgroups` fallback mode — give
-  it access to the Docker/Podman socket (`socket_path`) for name mapping.
+  it access to the Docker/Podman socket (`socket_path`) for name mapping. That access is root on
+  the host: see the warning in
+  [Application Monitoring](08-application-monitoring.md#containers-docker--podman) first.
 - Enable `web.logging.level: debug` to see collector auto-discovery details.
 
 ## GPU not detected (especially NVIDIA)

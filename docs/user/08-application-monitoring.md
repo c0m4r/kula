@@ -117,6 +117,14 @@ Kula collects only containers whose runtime reports a full container ID (64 hex 
 most 1,024 per sample: past that, the ones whose names sort first. A name longer than 255 bytes
 is shortened to its start, `…` and a short hash.
 
+> **A container runtime socket is root on the host.** Whoever can use the Docker socket, or
+> rootful Podman's, can start a privileged container that mounts the host's filesystem. Adding
+> the `kula` user to the `docker` group, or running Kula as root, to get container names
+> therefore makes Kula root-equivalent: anyone who takes over Kula takes over the host. The
+> packages do not do it for you. If you can do without names, leave Kula without the socket:
+> `cgroups` mode needs no privilege and gives the same per-container metrics. A rootless
+> Podman socket is worth only its own user's privileges.
+
 **Metrics:** per-container CPU%, memory used/limit/%, network RX/TX bytes/s, disk read/write
 bytes/s. Each metric type gets its own multi-series chart (CPU, memory, network RX, network TX,
 disk read, disk write) with one series per container, plus an **Applications** filter in the

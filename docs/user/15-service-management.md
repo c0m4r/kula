@@ -83,6 +83,11 @@ sudo rc-service kula start
 The script declares `need net` / `after firewall`, runs backgrounded as `kula:kula`, and
 ensures `/var/lib/kula` and `/run/kula` exist with the right ownership via `start_pre`.
 
+Unlike the systemd unit, the OpenRC script adds no confinement beyond the `kula` user: no
+read-only system, private `/tmp`, dropped capability bounding set or memory limit. Kula's own
+Landlock sandbox still applies, on a kernel that has Landlock enabled; without it, the user's
+permissions are all that bound Kula.
+
 ## runit
 
 ```bash
@@ -93,6 +98,9 @@ sudo ln -s /etc/sv/kula /var/service/
 The `run` script creates `/run/kula`, fixes ownership, and execs Kula as `kula:kula` with
 `chpst`. A logging service is provided under `addons/init/runit/kula/log/`; it writes to
 `/var/log/kula`, which it creates.
+
+Like OpenRC, runit adds no confinement beyond the `kula` user; only Kula's Landlock sandbox,
+where the kernel has it, goes further.
 
 ## Prerequisites (manual setup)
 

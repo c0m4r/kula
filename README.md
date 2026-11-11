@@ -190,6 +190,7 @@ sudo snap install kula
 ```
 
 The snap uses **strict sandbox** so by default Kula features will be limited to the basics, which can be extended with snap connect.
+Its daemon runs as root, bounded by that sandbox rather than an unprivileged user.
 
 See [Snap Wiki](https://github.com/c0m4r/kula/wiki/Snap) for the full guide.
 

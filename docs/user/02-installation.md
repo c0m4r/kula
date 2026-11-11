@@ -138,6 +138,12 @@ The snap uses a **strict sandbox**, so by default Kula's capabilities are limite
 basics. Extend them with `snap connect`. See the
 [Snap wiki page](https://github.com/c0m4r/kula/wiki/Snap) for the full connection guide.
 
+The snap's daemon runs as **root**. snapd's confinement and the interfaces you connect are what
+bound it, not an unprivileged user, and Kula's own Landlock sandbox does not apply inside a snap.
+Connecting `kula:docker` hands that root daemon the Docker socket, which controls the host (see
+[Application Monitoring](08-application-monitoring.md#containers-docker--podman)). The `.deb`,
+`.rpm` and AUR packages run Kula as the unprivileged `kula` user.
+
 ---
 
 ## Build from source
