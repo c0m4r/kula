@@ -174,6 +174,55 @@ func TestOllamaProxyDoesNotFollowRedirects(t *testing.T) {
 	}
 }
 
+// TestOllamaConnectsOnlyToLoopback: ollama.url is checked to name a loopback
+// host at config load, but a name is resolved when connecting. Whatever
+// address a connection would go to, it is refused unless it is loopback.
+func TestOllamaConnectsOnlyToLoopback(t *testing.T) {
+	for _, tc := range []struct {
+		address string
+		ok      bool
+	}{
+		{"127.0.0.1:11434", true},
+		{"127.0.1.1:11434", true},
+		{"[::1]:11434", true},
+		{"[::ffff:127.0.0.1]:11434", true},
+		{"192.0.2.1:11434", false},
+		{"10.0.0.1:11434", false},
+		{"[::ffff:192.0.2.1]:11434", false},
+		{"[2001:db8::1]:11434", false},
+		{"0.0.0.0:11434", false},
+		{"[::]:11434", false},
+		{"localhost:11434", false}, // the check sees resolved addresses only
+		{"127.0.0.1", false},
+	} {
+		if err := dialLoopbackOnly("tcp", tc.address, nil); (err == nil) != tc.ok {
+			t.Errorf("dialLoopbackOnly(%q) = %v, want allowed %v", tc.address, err, tc.ok)
+		}
+	}
+
+	// The proxy's requests go through it: a backend at an address that is
+	// not loopback (TEST-NET-1, which never answers) is refused before any
+	// packet leaves, for model listing and chat alike.
+	client := newOllamaClient(config.OllamaConfig{Enabled: true, URL: "http://192.0.2.1:11434", Model: "llama3", Timeout: "5s"})
+	if _, err := client.fetchModels(context.Background(), false); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Errorf("model list: %v, want the address refused", err)
+	}
+	rec := httptest.NewRecorder()
+	err := client.streamChat(context.Background(), "llama3", []ollamaMessage{{Role: "user", Content: "hi"}}, nil, nil, rec, rec, false)
+	if err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Errorf("chat: %v, want the address refused", err)
+	}
+	// Loopback still connects: name resolution included.
+	mock := mockOllamaServer(t, "")
+	defer mock.Close()
+	for _, url := range []string{mock.URL, strings.Replace(mock.URL, "127.0.0.1", "localhost", 1)} {
+		client := newOllamaClient(config.OllamaConfig{Enabled: true, URL: url, Model: "llama3", Timeout: "5s"})
+		if _, err := client.fetchModels(context.Background(), false); err != nil {
+			t.Errorf("model list from %s: %v", url, err)
+		}
+	}
+}
+
 // Ensure streamChat returns an error when Ollama is unreachable.
 func TestOllamaStreamChat_Unreachable(t *testing.T) {
 	cfg := config.OllamaConfig{Enabled: true, URL: "http://127.0.0.1:1", Model: "llama3", Timeout: "1s"}

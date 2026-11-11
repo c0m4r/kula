@@ -174,7 +174,11 @@ of its served bytes.
 
 ## Ollama / AI hardening
 
-- **SSRF prevention:** Ollama URL validated to loopback-only at config load.
+- **SSRF prevention:** the Ollama URL is validated at config load to name a loopback host
+  (`localhost`, `127.0.0.1`, `::1`), and checked again on every connection: the proxy's
+  dialer (`ollamaTransport`, `dialLoopbackOnly`) refuses any address a name resolves to that
+  is not loopback, so neither the resolver nor a rebinding can send the chat, metrics
+  included, to another host. No HTTP proxy is used and redirects are not followed.
 - **What the client sends to the model** (`handleOllamaChat`, `chatHistory`): the request body
   is capped at 32 KB. Of the conversation history only `user` and `assistant` turns are kept,
   as text: a `system` or `tool` turn, tool calls and tool-call IDs are dropped, since the

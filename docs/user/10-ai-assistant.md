@@ -23,8 +23,9 @@ ollama:
 ```
 
 > **Security:** the `url` is validated at config load time to allow only loopback addresses
-> (`localhost`, `127.0.0.1`, `::1`). This prevents the assistant from being abused to make
-> Kula issue requests to arbitrary internal hosts (SSRF).
+> (`localhost`, `127.0.0.1`, `::1`), and every connection is checked to go to a loopback
+> address, whatever `localhost` resolves to. This prevents the assistant from being abused to
+> make Kula issue requests to arbitrary internal hosts (SSRF).
 
 When enabled, a 🤖 button appears in the dashboard header.
 
@@ -57,7 +58,8 @@ Kula proxies to Ollama through a hardened endpoint (`/api/ollama/*`). The proxy:
 - **Caps bodies & responses** — chat request body max 32 KB (the panel leaves out the oldest
   turns of a long conversation to stay under it); Ollama response stream max 10 MB.
 - **Limits the tool loop** — at most 5 rounds of up to 8 `get_metrics` calls per chat turn.
-- **Stays on the configured address** — `ollama.url` must be loopback, and a redirect from it
+- **Stays on the configured address** — `ollama.url` must be loopback, a connection to an
+  address that is not loopback is refused even when the name resolves to one, and a redirect
   is not followed: the request fails, and the Kula log names the redirect target, so you can
   set `ollama.url` to that address instead.
 - **Keeps backend errors in the log** — when the backend is down or answers with an error, the

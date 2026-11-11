@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -888,16 +891,44 @@ func (oc *ollamaClient) logModelsError(err error) {
 	}
 }
 
-// newOllamaHTTPClient returns a client that does not follow redirects. The
-// configured URL is validated to be loopback; a redirect could lead the proxy
-// anywhere else, so it is reported instead (see redirectNotFollowed).
+// newOllamaHTTPClient returns a client that does not follow redirects and
+// connects only to loopback addresses. The configured URL is validated to be
+// loopback; a redirect could lead the proxy anywhere else, so it is reported
+// instead (see redirectNotFollowed).
 func newOllamaHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
+		Transport: ollamaTransport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+// ollamaTransport carries every request to the AI backend, through no proxy.
+// ollama.url is checked to name a loopback host at config load, but a name
+// ("localhost") is resolved when connecting: its dialer refuses any address
+// that is not loopback, so a resolver's answer cannot send the chat, with
+// the metrics in it, to another host.
+var ollamaTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.Proxy = nil
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: dialLoopbackOnly}
+	t.DialContext = dialer.DialContext
+	return t
+}()
+
+// dialLoopbackOnly is a net.Dialer Control: it runs for each address a name
+// resolved to, before connecting, and refuses one that is not loopback.
+func dialLoopbackOnly(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	if ip, err := netip.ParseAddr(host); err != nil || !ip.Unmap().IsLoopback() {
+		return fmt.Errorf("refused %s: the AI backend must be on a loopback address", address)
+	}
+	return nil
 }
 
 // redirectNotFollowed names the target of a refused redirect for an error

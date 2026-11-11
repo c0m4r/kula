@@ -483,7 +483,8 @@ ollama:
 ```
 
 The Ollama URL is validated to loopback addresses only (`localhost`, `127.0.0.1`, `::1`) at
-config load time to prevent server-side request forgery.
+config load time to prevent server-side request forgery, and each connection is refused unless
+it goes to a loopback address, whatever `localhost` resolves to.
 
 ---
 
