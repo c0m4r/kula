@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-sql-driver/mysql"
 )
@@ -204,7 +205,7 @@ func reapMysqlSession(ctx context.Context, conn *sql.Conn, ref dbSessionRef) (bo
 
 func (mc *mysqlCollector) debugf(format string, args ...any) {
 	if mc.debug && !mc.debugDone {
-		log.Printf(format, args...)
+		log.Print(logSafe(fmt.Sprintf(format, args...)))
 	}
 }
 
@@ -414,13 +415,23 @@ func (mc *mysqlCollector) replicaStatus(ctx context.Context, conn *sql.Conn, sta
 	}
 	// Slave_IO_State is the human-readable IO thread state. Cap at 200
 	// bytes so a hostile / unusually long value can't blow the codec's
-	// uint8-prefixed string limit (255 bytes).
+	// uint8-prefixed string limit (255 bytes), on a character boundary and
+	// as valid UTF-8: the state is the server's text, and is shown on the
+	// dashboard and exported as a Prometheus label.
 	if v, ok := getStr("Replica_IO_State", "Slave_IO_State"); ok {
-		if len(v) > 200 {
-			v = v[:200]
-		}
-		stats.IOState = v
+		stats.IOState = truncateUTF8(strings.ToValidUTF8(v, "\uFFFD"), 200)
 	}
+}
+
+// truncateUTF8 cuts s to at most n bytes without splitting a character.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // collectMysqlReplicaCount fills ReplicaCount from SHOW REPLICAS, falling back

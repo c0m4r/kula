@@ -156,6 +156,13 @@ API and WebSocket payloads.
   speaking the MySQL handshake and TLS.
 - **Debug logging** goes through the `debugf` helper, gated by `collection.DebugLog` (which is
   set when `web.logging.level == "debug"`).
+- **Text a monitored service chose is logged escaped.** A server's error message, a status
+  page or a name in its certificate can hold line breaks and terminal escapes, so `debugf`,
+  `pollLog` and `dbSession` pass every line through `logSafe` (control characters, invisible
+  formatting characters and invalid UTF-8 become Go escapes), and a status URL is logged
+  through `redactURL`/`redactURLError`, without its `user:password@`. MySQL's replica IO
+  state, which a sample stores, is kept valid UTF-8 and cut on a character boundary
+  (`truncateUTF8`). `untrusted_text_test.go` covers each.
 
 ## Containers
 

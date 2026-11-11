@@ -48,12 +48,12 @@ func (c *Collector) fetchNginx(elapsed float64) *NginxStats {
 
 	req, err := http.NewRequestWithContext(c.requestContext(), http.MethodGet, c.appCfg.Nginx.StatusURL, nil)
 	if err != nil {
-		c.nginxLog.failf("bad status URL: %v", err)
+		c.nginxLog.failf("bad status URL: %v", redactURLError(err))
 		return nil
 	}
 	resp, err := c.nginxClient.Do(req)
 	if err != nil {
-		c.nginxLog.failf("fetch error: %v", err)
+		c.nginxLog.failf("fetch error: %v", redactURLError(err))
 		return nil
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -69,7 +69,7 @@ func (c *Collector) fetchNginx(elapsed float64) *NginxStats {
 		return nil
 	}
 
-	c.debugf("[nginx] status body: %s", string(body))
+	c.debugf("[nginx] status body: %q", body)
 	return c.parseNginxStatus(string(body), elapsed)
 }
 

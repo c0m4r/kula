@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -144,13 +145,13 @@ func (c *Collector) StartApplications() {
 	if appCfg.Nginx.Enabled {
 		startStatusPoller(ctx, &c.nginxPoller, c.nginxLog.name, collCfg.Interval, c.collectNginx,
 			func() { c.prevNginx = nginxRaw{} })
-		log.Printf("[nginx] monitoring enabled at %s", appCfg.Nginx.StatusURL)
+		log.Printf("[nginx] monitoring enabled at %s", logSafe(redactURL(appCfg.Nginx.StatusURL)))
 	}
 
 	if appCfg.Apache2.Enabled {
 		startStatusPoller(ctx, &c.apachePoller, c.apacheLog.name, collCfg.Interval, c.collectApache2,
 			func() { c.prevApache = apache2Raw{} })
-		log.Printf("[apache2] monitoring enabled at %s", appCfg.Apache2.StatusURL)
+		log.Printf("[apache2] monitoring enabled at %s", logSafe(redactURL(appCfg.Apache2.StatusURL)))
 	}
 
 	// Initialize custom metrics collector if any groups are configured
@@ -171,9 +172,10 @@ func (c *Collector) StartApplications() {
 
 // debugf logs a formatted message only when web.logging.level = "debug" is set
 // AND only during the first collection cycle. Subsequent calls are no-ops.
+// What it logs can come from a monitored server, so it goes through logSafe.
 func (c *Collector) debugf(format string, args ...any) {
 	if c.collCfg.DebugLog && !c.debugDone.Load() {
-		log.Printf(format, args...)
+		log.Print(logSafe(fmt.Sprintf(format, args...)))
 	}
 }
 

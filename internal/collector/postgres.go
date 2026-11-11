@@ -216,7 +216,7 @@ func reapPostgresSession(ctx context.Context, conn *sql.Conn, ref dbSessionRef) 
 
 func (pc *postgresCollector) debugf(format string, args ...any) {
 	if pc.debug && !pc.debugDone {
-		log.Printf(format, args...)
+		log.Print(logSafe(fmt.Sprintf(format, args...)))
 	}
 }
 

@@ -2,14 +2,19 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // pollStale is how long a background poll's result stays current: a few
@@ -205,9 +210,82 @@ type pollLog struct {
 
 func (l *pollLog) failf(format string, args ...any) {
 	if msg := fmt.Sprintf(format, args...); msg != l.last {
-		log.Printf("%s %s", l.name, msg)
+		log.Printf("%s %s", l.name, logSafe(msg))
 		l.last = msg
 	}
+}
+
+// logSafe makes a log message safe to print when part of it was chosen by
+// someone else: a server's error message, a status page, a name in a
+// certificate. Control characters (line breaks among them), other characters
+// that do not print (such as bidirectional overrides) and invalid UTF-8 are
+// written as Go escapes (\n, \x1b, \u202e), so the text can neither forge a
+// log line nor drive the terminal that shows the log. Everything else, quotes
+// and backslashes included, is kept, so a %q-quoted part reads unchanged.
+func logSafe(s string) string {
+	clean := true
+	for _, r := range s {
+		if r == utf8.RuneError || !unicode.IsPrint(r) {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case unicode.IsPrint(r):
+			b.WriteString(s[i : i+size])
+		default:
+			q := strconv.QuoteRune(r)
+			b.WriteString(q[1 : len(q)-1])
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// redactURL is raw for a log line, its userinfo (user:password@) replaced by
+// "xxxxx@": a status URL may carry the credentials of a protected page. One
+// that does not parse loses everything between its scheme and its last '@'.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		at := strings.LastIndexByte(raw, '@')
+		if at < 0 {
+			return raw
+		}
+		start := 0
+		if i := strings.Index(raw, "://"); i >= 0 && i < at {
+			start = i + len("://")
+		}
+		return raw[:start] + "xxxxx" + raw[at:]
+	}
+	if u.User != nil {
+		u.User = url.User("xxxxx")
+	}
+	return u.String()
+}
+
+// redactURLError is err with the URL of its *url.Error redacted (redactURL).
+// The reason a URL with credentials does not parse is withheld too: the parser
+// quotes the part it stumbled on, which can be a piece of the password.
+func redactURLError(err error) error {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err
+	}
+	redacted := *urlErr
+	redacted.URL = redactURL(urlErr.URL)
+	if urlErr.Op == "parse" && strings.Contains(urlErr.URL, "@") {
+		redacted.Err = errors.New("malformed URL (details withheld: it carries credentials)")
+	}
+	return &redacted
 }
 
 func (l *pollLog) ok() {

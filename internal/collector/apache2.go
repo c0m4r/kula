@@ -52,12 +52,12 @@ func (c *Collector) fetchApache2(elapsed float64) *Apache2Stats {
 
 	req, err := http.NewRequestWithContext(c.requestContext(), http.MethodGet, c.appCfg.Apache2.StatusURL, nil)
 	if err != nil {
-		c.apacheLog.failf("bad status URL: %v", err)
+		c.apacheLog.failf("bad status URL: %v", redactURLError(err))
 		return nil
 	}
 	resp, err := c.apacheClient.Do(req)
 	if err != nil {
-		c.apacheLog.failf("fetch error: %v", err)
+		c.apacheLog.failf("fetch error: %v", redactURLError(err))
 		return nil
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -73,7 +73,7 @@ func (c *Collector) fetchApache2(elapsed float64) *Apache2Stats {
 		return nil
 	}
 
-	c.debugf("[apache2] status body: %s", string(body))
+	c.debugf("[apache2] status body: %q", body)
 	return c.parseApache2Status(string(body), elapsed)
 }
 

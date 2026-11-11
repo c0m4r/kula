@@ -165,12 +165,16 @@ func (s *dbSession) clock() time.Time {
 	return time.Now()
 }
 
+// printf logs a session event. Its errors can carry the server's own text (an
+// error message from the server, or from whatever answered on its port), so
+// the line goes through logSafe.
 func (s *dbSession) printf(format string, args ...any) {
+	msg := logSafe(fmt.Sprintf(format, args...))
 	if s.logf != nil {
-		s.logf(format, args...)
+		s.logf("%s", msg)
 		return
 	}
-	log.Printf(format, args...)
+	log.Print(msg)
 }
 
 // acquire returns the session's connection, connecting when needed and
