@@ -290,6 +290,33 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_, _ = w.Write(b)
 }
 
+// writeJSON answers with v encoded as JSON. encoding/json refuses some values
+// (a NaN or infinity in a sample) and then writes nothing, which used to go out
+// as an empty 200 the dashboard could not parse; such a failure is answered
+// with a JSON 500 instead. A failure once the body is under way (the client
+// went away) is only logged.
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	body := &startedWriter{Writer: w}
+	if err := json.NewEncoder(body).Encode(v); err != nil {
+		log.Printf("JSON encode error: %v", err)
+		if !body.started {
+			jsonError(w, "internal server error", http.StatusInternalServerError)
+		}
+	}
+}
+
+// startedWriter notes whether anything was written through it.
+type startedWriter struct {
+	io.Writer
+	started bool
+}
+
+func (w *startedWriter) Write(b []byte) (int, error) {
+	w.started = true
+	return w.Writer.Write(b)
+}
+
 type contextKey string
 
 const nonceKey contextKey = "csp_nonce"
@@ -749,10 +776,7 @@ func (s *Server) handleCurrent(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "no data yet", http.StatusServiceUnavailable)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(sample); err != nil {
-		log.Printf("JSON encode error: %v", err)
-	}
+	writeJSON(w, sample)
 }
 
 // maxHistoryRange bounds every history query, from the API or the AI tool.
@@ -852,10 +876,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		payload = selectHistorySections(result, sections, orderedSections)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		log.Printf("JSON encode error: %v", err)
-	}
+	writeJSON(w, payload)
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

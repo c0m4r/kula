@@ -196,6 +196,8 @@ Every error under `/api/` and `/ws` is a JSON object, `{"error":"<message>"}`, w
 middleware's `403`, `404` for an unknown `/api/` path, and a refused WebSocket handshake (`403`
 for a foreign Origin, `429` over a connection limit, `400` for a malformed upgrade).
 `jsonError` writes them with `json.Marshal` (not `fmt.Sprintf`) to prevent JSON injection.
+`/api/current` and `/api/history` answer through `writeJSON`, which turns a sample that cannot
+be encoded (a NaN or infinity) into a `500` instead of an empty `200`.
 `/metrics` and the static assets answer errors in plain text.
 `TestRuntimeErrorsAreJSON` drives each refusal through the production handler chain.
 

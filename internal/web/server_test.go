@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"html"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1234,5 +1235,28 @@ func TestAPIResponsesAreNotStored(t *testing.T) {
 		if got := resp.Header.Get("Cache-Control"); got != want {
 			t.Errorf("%s (HTTP %d): Cache-Control = %q, want %q", path, resp.StatusCode, got, want)
 		}
+	}
+}
+
+// A value encoding/json refuses (an infinity or NaN in a sample) used to leave
+// the handler with nothing written: an empty 200 the dashboard cannot parse.
+func TestWriteJSONAnswersAnEncodingFailure(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeJSON(rec, map[string]float64{"load": math.Inf(1)})
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	var failure map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &failure); err != nil || failure["error"] == "" {
+		t.Errorf("body %q is not a JSON error (%v)", rec.Body.String(), err)
+	}
+
+	rec = httptest.NewRecorder()
+	writeJSON(rec, map[string]float64{"load": 1.5})
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"load":1.5}` {
+		t.Errorf("answered %d %q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q", got)
 	}
 }
