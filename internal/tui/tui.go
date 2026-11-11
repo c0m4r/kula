@@ -176,6 +176,10 @@ type Options struct {
 
 // RunHeadless launches Kula's full-screen real-time terminal monitor.
 func RunHeadless(coll *collector.Collector, opts Options) error {
+	// Log lines would draw over the screen; they are printed once it closes.
+	release := holdLog()
+	defer release()
+
 	refreshRate := opts.RefreshRate
 	if refreshRate <= 0 {
 		refreshRate = time.Second

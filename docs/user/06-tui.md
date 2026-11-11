@@ -134,6 +134,11 @@ History view for anything older.
 Press `q`, `Q` or `Ctrl+C` to exit. Application monitoring (Postgres, MySQL, nginx, Apache2,
 containers) is started for the TUI session as well, so those collectors initialize on launch.
 
+Messages the collectors log while the TUI runs (a database that refuses the connection, a mount
+whose statistics cannot be read) would draw over the screen, so the TUI holds them and prints
+them when it exits, with control characters replaced by `�`. It keeps the latest 200 and says
+how many earlier ones it dropped.
+
 ## System info
 
 The header shows the hostname, and the Overview view closes with an

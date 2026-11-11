@@ -456,9 +456,12 @@ Package: [`internal/tui`](../../internal/tui/), built with **Bubble Tea** + **Li
 | [`chart.go`](../../internal/tui/chart.go) | Braille line charts with envelopes, axes and time ticks; block area charts for live trends |
 | [`styles.go`](../../internal/tui/styles.go) | Adaptive foreground palette (no painted background) shared by every view |
 | [`sanitize.go`](../../internal/tui/sanitize.go) | `cleanText`, which makes host-provided strings safe to write to the terminal |
+| [`logs.go`](../../internal/tui/logs.go) | `holdLog`: holds the standard logger's output while the TUI runs and prints it, cleaned, after |
 
 `tui.RunHeadless(collector, tui.Options{...})` drives it. The live views sample through the
-TUI's own collector. The History view queries a `tui.HistorySource`, which `cmd/kula` provides
+TUI's own collector. Collectors log failures through the standard logger, which writes to the
+terminal the TUI is drawing on, so `RunHeadless` points it at a buffer for the session (the
+newest 200 lines) and prints the lines through `cleanText` once the terminal is restored. The History view queries a `tui.HistorySource`, which `cmd/kula` provides
 by opening the configured storage with `storage.OpenReadOnly` (see
 [Storage Engine](05-storage-engine.md#read-only-access)).
 
