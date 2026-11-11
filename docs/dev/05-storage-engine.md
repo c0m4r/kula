@@ -232,7 +232,9 @@ On startup the store:
    than twice tier 0's resolution is replayed as covering one, as `WriteSample` writes a
    record after a gap (`rollupSource`): records written before 0.20.0 carry their whole gap,
    and a crafted file any duration. Taken at its word, one claiming a year was split into a
-   part per minute of that year, which allocated 8.9 GB and overwrote tier 1. With the seek
+   part per minute of that year, which allocated 8.9 GB and overwrote tier 1. History queries
+   bound such a record the same way (`historySourceWidth`), so it fills no bucket it did not
+   observe and is not split into a piece for every bucket of the window. With the seek
    index each of these reads only the end of its tier, so rollups resume after a restart
    without double-counting or gaps.
 

@@ -132,9 +132,18 @@ func historyMaxSourceWidth(sourceResolution time.Duration, raw bool) time.Durati
 // Raw Duration is the observed collection interval (with outages bounded by
 // WriteSample). Partial rollups must not reach back across an outage to fill
 // their native tier width. Legacy full-width records retain their old bounds.
+//
+// A raw record is taken at its word up to twice its resolution, the most
+// WriteSample writes and what historyMaxSourceWidth assumes. A longer one, a
+// pre-0.20.0 record carrying a whole collection gap or a crafted one, counts
+// as one resolution, as rollupSource rolls it up: taken whole, one record
+// claiming a year made a query split it into a piece per bucket of that year.
 func historySourceWidth(sample *AggregatedSample, sourceResolution time.Duration, raw bool) time.Duration {
 	if sample.Duration > 0 {
 		if raw {
+			if sourceResolution > 0 && sample.Duration > 2*sourceResolution {
+				return sourceResolution
+			}
 			return sample.Duration
 		}
 		return min(sample.Duration, sourceResolution)

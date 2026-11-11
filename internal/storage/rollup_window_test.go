@@ -551,3 +551,32 @@ func TestYoungStoreAcrossRestartsKeepsTheRawTier(t *testing.T) {
 			result.Tier, result.Resolution, result.Complete)
 	}
 }
+
+// TestQueriesBoundRawDurations: a raw record claiming more than twice tier 0's
+// resolution (written before 0.20.0 across a gap, or crafted) counts as one
+// resolution in a query too, as restart rolls it up. Taken whole, each such
+// record was split into a piece for every bucket of the window, and filled the
+// window with values it never observed.
+func TestQueriesBoundRawDurations(t *testing.T) {
+	store := newTestStore(t)
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 3 {
+		ts := base.Add(58*time.Minute + time.Duration(i)*time.Minute)
+		writeTierSample(t, store.tiers[0], ts, 30*24*time.Hour, 50)
+	}
+	result, err := store.QueryRangeFromTier(base, base.Add(time.Hour), 60, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Samples) != 3 {
+		t.Fatalf("an hour of one-minute buckets holds %d samples, want 3: records claiming 30 days spread over the window", len(result.Samples))
+	}
+	for _, sample := range result.Samples {
+		if width := sample.BucketEnd.Sub(sample.BucketStart); width > time.Minute {
+			t.Errorf("bucket %s–%s is wider than a minute", sample.BucketStart, sample.BucketEnd)
+		}
+		if sample.BucketEnd.Before(base.Add(58 * time.Minute)) {
+			t.Errorf("a bucket ending %s holds data no record observed", sample.BucketEnd.Format(time.RFC3339))
+		}
+	}
+}
