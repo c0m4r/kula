@@ -599,7 +599,11 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 	}
 	s.queryCacheMu.Unlock()
 
-	duration := to.Sub(from)
+	// A window reaching into the future is planned as ending now: nothing is
+	// stored past it. Planned as asked, no tier could cover it, and the
+	// partial ranking below would read the raw tier for all it retains of it.
+	end := s.planningEnd(to)
+	duration := end.Sub(from)
 	var fullCandidates, partialCandidates []queryTierCandidate
 
 	// Classify every overlapping tier before applying the source-density
@@ -618,7 +622,7 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 		// Candidate overlap uses interval starts, not only record endpoints.
 		// Raw widths are checked precisely after decoding the bounded lookahead.
 		oldestStart := oldest.Add(-historyMaxSourceWidth(resDur, tierIdx == 0))
-		if oldestStart.After(to) || newest.Before(from) {
+		if oldestStart.After(end) || newest.Before(from) {
 			continue
 		}
 
@@ -630,7 +634,7 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 		}
 		leftTolerance, rightTolerance := tierCoverageTolerances(resDur)
 		complete := !oldest.After(from.Add(leftTolerance)) &&
-			!coveredTo.Before(to.Add(-rightTolerance))
+			!coveredTo.Before(end.Add(-rightTolerance))
 		// The left tolerance assumes the oldest rollup spans its whole window.
 		// A store's first rollup holds only the part it ran for, and a fresh
 		// start would otherwise answer a 5-minute view with one partial 5m
@@ -656,7 +660,7 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 		if coveredFrom.After(overlapFrom) {
 			overlapFrom = coveredFrom
 		}
-		overlapTo := to
+		overlapTo := end
 		if coveredTo.Before(overlapTo) {
 			overlapTo = coveredTo
 		}
@@ -679,6 +683,7 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 	sort.SliceStable(partialCandidates, func(i, j int) bool {
 		return partialCandidates[i].overlap > partialCandidates[j].overlap
 	})
+	preferBudgetedPartial(partialCandidates)
 
 	// Source quality is independent of display density: requested point count
 	// must never unlock a finer tier. Skip a dense tier only at the fixed read
@@ -699,15 +704,75 @@ func (s *Store) planHistoryQuery(from, to time.Time, cacheKey queryCacheKey, tie
 	}
 	candidates = append(candidates, partialCandidates...)
 	// A hinted tier that retains part of the range is tried first, complete
-	// or not, as a full view of the longer window would have used it.
+	// or not, as a full view of the longer window would have used it. The
+	// hint comes with the request, so it is followed only within the read
+	// budget: the tail of a view is, a long window named onto the raw tier
+	// is not.
 	for i, candidate := range candidates {
-		if candidate.index == tierHint && i > 0 {
+		if candidate.index == tierHint && i > 0 && candidate.withinSourceBudget() {
 			copy(candidates[1:i+1], candidates[:i])
 			candidates[0] = candidate
 			break
 		}
 	}
 	return candidates, nil, generation
+}
+
+// planningEnd returns the end a window to `to` is planned with: to, or the
+// present when to is later. After the clock stepped back, records can be
+// ahead of it, and the newest of them stands for the present.
+func (s *Store) planningEnd(to time.Time) time.Time {
+	present := time.Now()
+	for _, tier := range s.tiers {
+		if newest := tier.NewestTimestamp(); newest.After(present) {
+			present = newest
+		}
+	}
+	if to.After(present) {
+		return present
+	}
+	return to
+}
+
+// withinSourceBudget reports whether reading the part of the window the tier
+// retains stays within the read budget.
+func (c queryTierCandidate) withinSourceBudget() bool {
+	return estimatedSourceRecords(c.overlap, c.resolution) <= maxHistorySourceRecords
+}
+
+// preferBudgetedPartial applies the read budget to tiers that cover only part
+// of the window. candidates are ordered by overlap and the first is read
+// first. While that one is past the budget, the finest coarser tier covering
+// as much of the window takes its place; "as much" allows for the coarser
+// tier's coverage tolerances, as its rollups trail the finer tier's records
+// at both ends. A dense tier that alone retains more of the window stays
+// first: the budget picks a source, it never hides data.
+func preferBudgetedPartial(candidates []queryTierCandidate) {
+	if len(candidates) < 2 {
+		return
+	}
+	chosen := 0
+	for !candidates[chosen].withinSourceBudget() {
+		coarser := -1
+		for i, other := range candidates {
+			if other.index <= candidates[chosen].index || (coarser >= 0 && other.index > candidates[coarser].index) {
+				continue
+			}
+			left, right := tierCoverageTolerances(other.resolution)
+			if other.overlap+left+right >= candidates[chosen].overlap {
+				coarser = i
+			}
+		}
+		if coarser < 0 {
+			break
+		}
+		chosen = coarser
+	}
+	if chosen > 0 {
+		first := candidates[chosen]
+		copy(candidates[1:chosen+1], candidates[:chosen])
+		candidates[0] = first
+	}
 }
 
 // cacheHistoryResult caches a copy of result for one tier-0 resolution, unless
@@ -752,7 +817,8 @@ func (s *Store) QueryRangeWithMeta(from, to time.Time, targetPoints int) (*Histo
 // select. The dashboard refreshes the newest buckets of a long rolling view
 // this way, so that a few minutes of a view built from tier 1 are answered
 // from tier 1 too, not from the raw tier that covers them. A negative or
-// unknown tier is no hint, and the result always names the tier it came from.
+// unknown tier is no hint, nor is one whose part of the window is past the
+// read budget, and the result always names the tier it came from.
 func (s *Store) QueryRangeFromTier(from, to time.Time, targetPoints, tier int) (*HistoryResult, error) {
 	// Tier handles and their configuration are immutable after construction.
 	if len(s.tiers) == 0 {

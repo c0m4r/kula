@@ -257,11 +257,23 @@ On 36 hours of mock history at the default tier sizes (223 MB tier 0), a clean r
    counts from where it really starts. A store's first rollups hold only the seconds it ran
    for, so on a fresh start a 5-minute view stays on raw data (partial) instead of becoming one
    5m point.
+   A window ending in the future is classified, and its read estimated, as ending now
+   (`planningEnd`; after a backwards clock step, at the newest record when that is ahead of
+   the clock). Nothing can cover the part that has not happened, so taken as asked every such
+   window would be partial on every tier.
 2. Prefer the finest fully covering tier whose estimated read fits the fixed **7,500 source
    record** target. This target is independent of `points`, so requesting a wider canvas cannot
    unexpectedly unlock a different tier. A denser tier is skipped only when another fully
    covering tier exists. If no tier covers the full window, return the tier with the greatest
-   overlap and mark the result `complete: false`.
+   overlap and mark the result `complete: false`. The target applies there too
+   (`preferBudgetedPartial`): the greatest overlap is usually the raw tier's, by the seconds
+   its rollups trail it, so a week asked of a two-day-old store would read every raw record.
+   A partial tier past the target yields to the finest coarser tier that covers as much of the
+   window, give or take that tier's edge tolerances. A dense tier that alone retains more of
+   the window is still read: the target picks a source, it never hides data.
+   A tier hint (`QueryRangeFromTier`) puts the named tier first only while the part of the
+   window it retains fits the target. The hint is a request parameter; the tail of a view
+   fits, a month named onto the raw tier does not and is planned as if unhinted.
 3. Read records in ring order (handling buffer wrap), starting each segment at its seek
    point for `from` and stopping at the first record past `to` unless a backwards clock step
    follows it (see the seek index above), in batches of at most 512 decoded records. Reduce batches into stable output buckets, preserving contributing counts,

@@ -114,10 +114,13 @@ and [DMTF SMBIOS specification, section 7.18](https://www.dmtf.org/sites/default
   of the window it is tried first, before the tier the window alone would select; a tier the
   store does not have is ignored, and `tier` in the response always names the tier used. The
   dashboard sends it when it refreshes the newest buckets of a view built from tier 1 or 2, so
-  those few minutes are answered from the same tier rather than from raw data.
+  those few minutes are answered from the same tier rather than from raw data. The hint is
+  followed only while what that tier retains of the window fits the 7,500-record target
+  below; past it (`tier=0` on a month) the window is answered as if unhinted.
 - `sections` — optional comma-separated top-level sample sections. Accepted values are
   `cpu,lavg,mem,swap,net,disk,sys,proc,self,gpu,psu,apps`. Unknown names return `400`.
-- Inverted ranges and all windows over 31 days return `400`.
+- Inverted ranges and all windows over 31 days return `400`. A window ending in the future is
+  accepted and keeps its bounds in the response; its source tier is chosen as if it ended now.
 - Returns `{ samples, tier, resolution, source_resolution, downsampled, requested_from, requested_to,
   actual_from, actual_to, complete, exact_complete, valid_aggregations }`. When `sections` is supplied, the same compatible envelope
   also includes the canonical ordered `sections` list, and each sample's Data/Min/Max tree

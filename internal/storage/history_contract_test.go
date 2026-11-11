@@ -273,6 +273,18 @@ func TestHistoryResponsesMatchDashboardContract(t *testing.T) {
 		base.Add(2*time.Hour+30*time.Minute+30*time.Second+500*time.Millisecond), 534,
 		historyContractExpect{Live: false, Aggregations: extrema},
 		func(r *HistoryResult) { metadata("aligned past", r, 1, "1m", true, extrema) })
+	// A week asked of that three-hour-old store. No tier retains the window,
+	// and the raw tier holds the most of it, by the seconds its rollups trail
+	// it; three hours of raw records are past the read budget, so tier 1,
+	// which covers as much, answers.
+	add("a week of a three-hour-old store", aligned, alignedEdge.Add(-7*24*time.Hour), alignedEdge, 534,
+		historyContractExpect{Live: false, Aggregations: extrema},
+		func(r *HistoryResult) {
+			metadata("young", r, 1, "30m", true, extrema)
+			if r.Complete {
+				t.Fatal("young: three hours answered as a complete week")
+			}
+		})
 
 	// Right after a restart that followed a downtime, a view past the raw
 	// tier's source budget stays on tier 1. Until the minute in progress is
