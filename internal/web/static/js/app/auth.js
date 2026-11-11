@@ -154,6 +154,9 @@ export function handleLogin(e) {
             if (data && data.csrf_token) {
                 state.csrfToken = data.csrf_token;
             }
+            // The overlay only hides: the password must not stay in the page.
+            const passField = document.getElementById('login-pass');
+            if (passField) passField.value = '';
             document.getElementById('login-overlay')?.classList.add('hidden');
             document.getElementById('dashboard').style.filter = '';
             document.getElementById('btn-logout')?.classList.remove('hidden');

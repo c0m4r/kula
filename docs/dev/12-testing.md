@@ -267,7 +267,8 @@ when the build still serves it, must start and toggle mute. The test builds kula
 toolchain unless `KULA_BINARY` names a binary, and takes about a minute.
 
 [`session_expiry_test.mjs`](../../internal/web/testdata/session_expiry_test.mjs) runs the real
-`kula serve` with authentication and signs in through the login form. It then restarts the
+`kula serve` with authentication and signs in through the login form, which must not keep the
+password once the overlay hides. It then restarts the
 server without its `sessions.json`, so the open page's session is gone and every reconnect is
 refused with 401, which a page sees only as a socket closing before it opens. The dashboard
 must show the login screen, stop reconnecting behind it, and stream again after signing in. It

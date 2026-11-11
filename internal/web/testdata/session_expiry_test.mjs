@@ -159,6 +159,9 @@ try {
         })()`);
         await waitFor(async () => !(await loginShown()) && sockets.accepted > accepted,
         'signing in did not open the live stream');
+        // The overlay only hides, so the password must be cleared from it.
+        assert.equal(await evaluate(`document.getElementById('login-pass').value`), '',
+            'the password stayed in the hidden login form after signing in');
     };
 
     await call('Page.navigate', { url: `${base}/` });
