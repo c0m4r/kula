@@ -80,9 +80,13 @@ type dockerContainer struct {
 }
 
 // defaultSocketPaths lists the runtime sockets auto-detection tries, in order:
-// Docker, rootful Podman, then rootless Podman — the running user's
-// ($XDG_RUNTIME_DIR, /run/user/<uid>) and, for a Kula running as root, the
-// first regular user's (/run/user/1000).
+// Docker, rootful Podman, then the running user's rootless Podman
+// ($XDG_RUNTIME_DIR, /run/user/<uid>).
+//
+// Another user's rootless socket is never tried: whoever runs it would choose
+// the containers, IDs and PIDs Kula reads, and a root Kula (the TUI, often run
+// with sudo) would follow them. Monitoring someone else's rootless Podman
+// takes an explicit applications.containers.socket_path.
 func defaultSocketPaths() []string {
 	paths := []string{
 		"/var/run/docker.sock",
@@ -99,7 +103,6 @@ func defaultSocketPaths() []string {
 		add(filepath.Join(dir, "podman", "podman.sock"))
 	}
 	add(rootlessPodmanSocket(os.Getuid()))
-	add(rootlessPodmanSocket(1000))
 	return paths
 }
 

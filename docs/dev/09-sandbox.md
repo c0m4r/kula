@@ -54,7 +54,7 @@ socket, and the backup writer function under confinement.
 
 The container socket is chosen from the collector's own candidate list
 (`collector.ContainerSocketPaths`: configured path, Docker, rootful Podman, rootless Podman of the
-running user, `/run/user/1000`), picking what the collector will pick — the first candidate that
+running user), picking what the collector will pick — the first candidate that
 accepts a connection — so the two cannot drift apart. Note that the filesystem rights Kula
 requests (Landlock ABI ≤ 5) do not mediate `connect(2)` on a pathname Unix socket; the socket
 grants (containers, PostgreSQL and MySQL socket modes) document intent and would apply to a

@@ -423,7 +423,8 @@ func TestCollectViaSocketShortContainerID(t *testing.T) {
 
 // TestContainerSocketPathsSharedOrder pins the one candidate list the
 // collector and the sandbox share: configured socket first, then Docker,
-// rootful Podman and the rootless Podman sockets of the running user.
+// rootful Podman and the rootless Podman sockets of the running user, and
+// never another user's.
 func TestContainerSocketPathsSharedOrder(t *testing.T) {
 	runtimeDir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
@@ -437,10 +438,15 @@ func TestContainerSocketPathsSharedOrder(t *testing.T) {
 		"/run/podman/podman.sock",
 		filepath.Join(runtimeDir, "podman", "podman.sock"),
 		rootlessPodmanSocket(os.Getuid()),
-		rootlessPodmanSocket(1000),
 	} {
 		if !slices.Contains(paths, want) {
 			t.Errorf("candidates lack %s: %v", want, paths)
+		}
+	}
+	for _, path := range paths {
+		var owner int
+		if _, err := fmt.Sscanf(path, "/run/user/%d/", &owner); err == nil && owner != os.Getuid() {
+			t.Errorf("candidates include another user's rootless socket %s", path)
 		}
 	}
 	seen := map[string]bool{}
