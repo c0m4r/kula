@@ -394,7 +394,7 @@ func TestHistoryStatesExplainThemselves(t *testing.T) {
 				m.history.openErr = permission
 				return m
 			},
-			wants: []string{"History unavailable", "permission denied", "sudo kula --config", "/var/lib/kula"},
+			wants: []string{"History unavailable", "permission denied", "sudo -u kula kula --config", "/var/lib/kula"},
 		},
 		{
 			name: "no history recorded",

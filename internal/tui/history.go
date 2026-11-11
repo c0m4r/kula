@@ -691,7 +691,7 @@ func historyHints(dir string, err error, width int) []string {
 		sMuted.Render(truncatePlain("History is recorded by `kula serve`; the TUI charts it read-only.", width)))
 	if errors.Is(err, fs.ErrPermission) {
 		lines = append(lines, sMuted.Render(truncatePlain(
-			"Run the TUI as the service user, e.g. sudo kula --config /etc/kula/config.yaml tui", width)))
+			"Run the TUI as the service user, e.g. sudo -u kula kula --config /etc/kula/config.yaml tui", width)))
 	} else {
 		lines = append(lines, sMuted.Render(truncatePlain(
 			"Start the service, or pass --config with the file it uses, to chart its data.", width)))
