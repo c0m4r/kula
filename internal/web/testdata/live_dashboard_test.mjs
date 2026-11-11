@@ -371,6 +371,19 @@ try {
         return layout.visible.length === 2 ? layout : null;
     }, 'Focus mode did not show the selection');
     check(cards.visible.join() === 'card-processes,card-cpu', 'Focus mode ignored the stored order', cards);
+    // Selecting a card with the mouse selects it, without pinning the
+    // crosshair of the chart it was clicked on: the pin outlived Focus mode.
+    // From the applied selection: leave Focus mode, then start selecting.
+    await evaluate(`document.getElementById('btn-focus').click(); document.getElementById('btn-focus').click()`);
+    const cpuChart = centre(await evaluate(`document.getElementById('chart-cpu').getBoundingClientRect().toJSON()`));
+    await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cpuChart.x, y: cpuChart.y });
+    await mouse('mousePressed', cpuChart.x, cpuChart.y);
+    await mouse('mouseReleased', cpuChart.x, cpuChart.y);
+    await delay(200);
+    const selection = await evaluate(`({ selected: document.getElementById('card-cpu').classList.contains('focus-selected'),
+        pinned: !document.getElementById('pinned-time').classList.contains('hidden') })`);
+    check(selection.selected && !selection.pinned, 'a Focus mode selection click did not select the card, or pinned its crosshair', selection);
+    await evaluate(`document.getElementById('btn-focus-cancel').click()`);
     await evaluate(`localStorage.removeItem('kula_focus_visible')`);
     await call('Page.navigate', { url: `${base}/?range=300` });
     await settle(s => s.lastAge <= 2.5, 'the dashboard did not reload before Reset');

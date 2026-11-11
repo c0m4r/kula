@@ -3130,6 +3130,13 @@ html:not(.tv-mode) .chart-header::before {
     position: relative;
 }
 
+/* While selecting, a card is only a toggle: a click must not also pin the
+   chart's crosshair (which stayed pinned after Focus mode) or press its
+   header buttons. Its children take no pointer input, so it reaches the card. */
+.focus-selecting .chart-card > * {
+    pointer-events: none;
+}
+
 .charts-grid.focus-selecting:not(.hidden),
 .charts-grid.focus-active:not(.hidden) {
     display: grid !important;
