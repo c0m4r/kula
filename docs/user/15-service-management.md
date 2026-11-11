@@ -38,6 +38,32 @@ sandbox**:
 - Address families limited to `AF_UNIX AF_INET AF_INET6 AF_NETLINK`.
 - `RuntimeDirectory=kula` creates/cleans `/run/kula` for the optional Unix socket.
 - `LimitNOFILE=65536`.
+- `MemoryMax=1G` (see below).
+
+### Memory limit
+
+`MemoryMax=1G` is a backstop, not a budget: should Kula's memory ever run away, the kernel
+kills Kula, and `Restart=on-failure` starts it again, instead of picking another process on
+the host. Kula answers at most two history requests at a time, so its memory no longer grows
+with the number of requests: with three days of history, a flood of requests for all of it at
+full width peaked at about 340 MB (10 at once) and 470 MB (30 at once) on a host with a few
+containers. Samples grow with every container, disk and interface, and the same flood peaked
+at about 1 GB with 40 containers.
+
+On a host with dozens of containers, disks or interfaces, raise the limit with a drop-in rather
+than by editing the unit, so a package upgrade keeps it:
+
+```bash
+sudo systemctl edit kula
+```
+
+```ini
+[Service]
+MemoryMax=2G
+```
+
+`MemoryMax=infinity` removes the limit. `systemctl status kula` shows Kula's memory use
+against it on the `Memory:` line.
 
 > Note: `/proc`-hiding (`ProtectProc`/`ProcSubset`) and syscall filtering are intentionally
 > **omitted** — a monitoring daemon must read system-wide `/proc`, `/sys/fs/cgroup`, and

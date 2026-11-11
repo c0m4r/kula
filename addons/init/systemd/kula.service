@@ -51,6 +51,16 @@ UMask=0077
 
 # Resource limits
 LimitNOFILE=65536
+# A backstop, not a budget: should Kula's memory ever run away, the kernel
+# kills Kula, and Restart= brings it back, rather than something else on the
+# host. Kula answers at most two history queries at once. Floods of three-day
+# history requests at full width peaked at about 470 MB on a host with a few
+# containers, and at about 1 GB with 40, whose samples are larger. On a host
+# with dozens of containers, disks or interfaces, raise it with a drop-in
+# (systemctl edit kula):
+#   [Service]
+#   MemoryMax=2G
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target
