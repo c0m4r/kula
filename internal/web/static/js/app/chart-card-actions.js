@@ -71,7 +71,8 @@ function restoreOriginalOrders(grid) {
 
 function resizeCardChart(card) {
     const chart = chartForCanvas(card.querySelector('canvas'));
-    if (chart) setTimeout(() => chart.resize(), 50);
+    // The card may be gone by then (joined or rebuilt), its chart destroyed.
+    if (chart) setTimeout(() => chart.canvas && chart.resize(), 50);
 }
 
 // ---- Hover Pause ----

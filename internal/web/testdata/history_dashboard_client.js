@@ -1397,6 +1397,16 @@ check(splitCard.classList.contains('chart-expanded') && splitExpand.getAttribute
 splitExpand.click();
 check(!splitCard.classList.contains('chart-expanded') && noCardOrders(),
     'Collapsing a split card left temporary CSS orders behind');
+// Joining from an expanded split card removes it; the cards it reordered must
+// return to their places.
+const beforeJoin = allCardIds();
+splitExpand.click();
+check(splitCard.classList.contains('chart-expanded') && !noCardOrders(), 'Fixture could not expand a split card');
+splitCard.querySelector('.btn-split-chart').click();
+check(!state.splitNet && !document.querySelector('.chart-expanded') && noCardOrders(),
+    'Joining an expanded split card left temporary CSS orders behind');
+document.getElementById('btn-split-network').click();
+check(state.splitNet && sameIds(allCardIds(), beforeJoin), 'Splitting again did not restore the layout');
 
 // Rearrange mode: keyboard moves on a card's grip, stored per browser.
 const storedOrder = () => JSON.parse(localStorage.getItem('kula_card_order') || 'null');

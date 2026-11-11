@@ -14,7 +14,7 @@ import { queueChartUpdate } from './chart-controller.js';
 import { appendEnvelopeGap, appendEnvelopePoint, clearEnvelopeData, ensureSensorDatasets, hasEnvelopeData } from './chart-envelope.js';
 import { setChartHidden } from './chart-ui.js';
 import { attachDynamicChartCardActions } from './chart-card-actions.js';
-import { placeCard } from './card-layout.js';
+import { arrangeCards, placeCard } from './card-layout.js';
 
 let _redrawFromBuffer = null;
 let _rebuilding = false;
@@ -483,6 +483,9 @@ function _enableSplit(type) {
 function _disableSplit(type) {
     _showOriginalCards(type);
     _destroySplitChartsForType(type);
+    // The removed cards may include an expanded one; re-arranging settles
+    // the temporary orders it left on the others.
+    arrangeCards();
     splitOptionsCache[type] = '';
     _triggerRedraw();
 }
