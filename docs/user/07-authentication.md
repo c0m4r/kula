@@ -150,8 +150,8 @@ A login that finds them all busy for 2 seconds is refused with `503 Service Unav
 checked no password, so it does not count against either limit.
 
 > **Reverse proxy caution.** Behind a proxy, configure `trust_proxy` correctly. Kula uses the
-> rightmost (most-trusted) IP in `X-Forwarded-For`. A misconfigured `trust_proxy` can let a
-> client spoof its IP to evade the login limiter — `kula-scan`'s `BYPASS-XFF` check tests for
+> rightmost (most-trusted) IP in `X-Forwarded-For`, which the proxy must set. A misconfigured
+> `trust_proxy` can let a client spoof its IP to evade the login limiter — `kula-scan`'s `BYPASS-XFF` check tests for
 > exactly this. See [Reverse Proxy & TLS](13-reverse-proxy.md).
 
 ## CSRF protection

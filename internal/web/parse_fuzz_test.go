@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -67,8 +68,8 @@ func FuzzValidateOrigin(f *testing.F) {
 
 // FuzzGetClientIP ensures the client-IP extractor never panics on hostile
 // RemoteAddr / X-Forwarded-For values and honors its documented contract: when
-// the proxy is trusted and an XFF header is present, the rightmost (trusted)
-// segment is returned, trimmed.
+// the proxy is trusted and the rightmost (trusted) XFF segment is an address,
+// that address is returned; otherwise the connection's.
 func FuzzGetClientIP(f *testing.F) {
 	f.Add("203.0.113.5:1234", "10.0.0.1, 192.168.1.1", true)
 	f.Add("[2001:db8::1]:443", "", false)
@@ -83,12 +84,19 @@ func FuzzGetClientIP(f *testing.F) {
 
 		ip := getClientIP(r, trustProxy) // must not panic
 
+		want, ok := "", false
 		if trustProxy && xff != "" {
 			parts := strings.Split(xff, ",")
-			want := strings.TrimSpace(parts[len(parts)-1])
-			if ip != want {
-				t.Fatalf("getClientIP XFF path = %q, want rightmost-trimmed %q (xff %q)", ip, want, xff)
+			want, ok = forwardedAddr(strings.TrimSpace(parts[len(parts)-1]))
+		}
+		if !ok {
+			want = remoteAddr
+			if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+				want = host
 			}
+		}
+		if ip != want {
+			t.Fatalf("getClientIP = %q, want %q (remote %q, xff %q, trusted %v)", ip, want, remoteAddr, xff, trustProxy)
 		}
 	})
 }

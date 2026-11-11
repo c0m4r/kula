@@ -143,7 +143,9 @@ web:
 
   # Trust a reverse proxy's X-Forwarded-Proto (Secure cookie flag, HSTS) and
   # X-Forwarded-For (rightmost address: the client IP for rate limits and logs).
-  # Enable only when every request reaches Kula through that proxy.
+  # Enable only when every request reaches Kula through that proxy, and have the
+  # proxy set X-Forwarded-For. Behind a unix_socket, without it every client
+  # shares one login rate limit.
   trust_proxy: false
 
   # HTTP security features. Defaults preserve the original strict behavior.

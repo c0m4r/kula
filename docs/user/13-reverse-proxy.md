@@ -15,12 +15,14 @@ web:
   trust_proxy: true   # honor X-Forwarded-Proto and X-Forwarded-For from the proxy
 ```
 
-Then have the proxy send `X-Forwarded-Proto: https`. Without `trust_proxy`, Kula ignores that
-header (so a client can't spoof it).
+Then have the proxy send `X-Forwarded-Proto: https` and `X-Forwarded-For`, as the nginx
+examples below do. Without `trust_proxy`, Kula ignores both headers (so a client can't spoof
+them).
 
-> **`X-Forwarded-For`:** Kula uses the **rightmost** (most-trusted) IP in the chain for rate
-> limiting and logging. Make sure your proxy appends the real client IP correctly. A
-> misconfigured `trust_proxy` can let clients spoof their IP to evade the login limiter.
+> **`X-Forwarded-For`:** Kula uses the **rightmost** (most-trusted) address in the chain, of the
+> header's last line, for rate limiting and logging; a value that is not an address counts as
+> the proxy's own. The proxy must set the header: one that passes the client's own through
+> lets clients pick their IP and evade the login limiter.
 
 ## The `Host` name, with auth disabled
 
@@ -60,6 +62,7 @@ location /kula/ {
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     # WebSocket upgrade
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -75,9 +78,12 @@ the same host:
 web:
   unix_socket: /run/kula/kula.sock
   unix_socket_mode: "0660"   # octal permissions on the socket file
+  trust_proxy: true          # a socket peer has no address: tell clients apart by X-Forwarded-For
 ```
 
-When `unix_socket` is set, the TCP listener is **not** opened. Point nginx at the socket:
+When `unix_socket` is set, the TCP listener is **not** opened. Without `trust_proxy` every
+client shares one login rate limit, so a few wrong passwords from anyone lock everyone out
+(Kula warns about this at startup). Point nginx at the socket:
 
 ```nginx
 upstream kula { server unix:/run/kula/kula.sock; }
@@ -87,6 +93,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
     }

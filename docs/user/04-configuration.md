@@ -235,9 +235,13 @@ Key points:
 - **`max_websocket_conns`** and **`max_websocket_conns_per_ip`** cap live dashboard
   connections; each must be at least 1 while the web server is enabled.
 - **`trust_proxy`** believes two headers from a reverse proxy: `X-Forwarded-Proto: https`
-  (sets the `Secure` cookie flag and HSTS) and the rightmost `X-Forwarded-For` address, which
-  becomes the client IP for the login, WebSocket and AI-chat limits and the access log. Enable it
-  only when every request reaches Kula through that proxy, or a client could choose its own IP.
+  (sets the `Secure` cookie flag and HSTS) and the rightmost `X-Forwarded-For` address (of the
+  header's last line), which becomes the client IP for the login, WebSocket and AI-chat limits
+  and the access log; a value that is not an address counts as the proxy's own. Enable it only
+  when every request reaches Kula through that proxy, and have the proxy set the header (nginx:
+  `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`), or a client could choose its
+  own IP. Behind a `unix_socket` it is what tells clients apart: without it they all share one
+  login limit.
 - **`minify_assets`** strips comments and whitespace from the dashboard's stylesheets and
   scripts once at startup, cutting their transfer size by about a third (a quarter on top of
   `enable_compression`). Set it to `false` to serve the readable sources, e.g. to debug the

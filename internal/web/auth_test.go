@@ -685,6 +685,7 @@ func TestGetClientIP(t *testing.T) {
 		name       string
 		remoteAddr string
 		xff        string
+		proxyLine  string
 		trustProxy bool
 		want       string
 	}{
@@ -723,6 +724,30 @@ func TestGetClientIP(t *testing.T) {
 			trustProxy: false,
 			want:       "not-an-ip",
 		},
+		{
+			// A proxy that adds its own line leaves the client's first.
+			name:       "Client line, then the proxy's, trusted",
+			remoteAddr: "1.2.3.4:1234",
+			xff:        "203.0.113.9",
+			proxyLine:  "198.51.100.7",
+			trustProxy: true,
+			want:       "198.51.100.7",
+		},
+		{
+			// Each made-up value would be a limiter key of its own.
+			name:       "Not an address, trusted",
+			remoteAddr: "1.2.3.4:1234",
+			xff:        "10.0.0.1, attempt-42",
+			trustProxy: true,
+			want:       "1.2.3.4",
+		},
+		{
+			name:       "Address with a port, trusted",
+			remoteAddr: "1.2.3.4:1234",
+			xff:        "[2001:DB8::1]:4711",
+			trustProxy: true,
+			want:       "2001:db8::1",
+		},
 	}
 
 	for _, tt := range tests {
@@ -731,6 +756,9 @@ func TestGetClientIP(t *testing.T) {
 			req.RemoteAddr = tt.remoteAddr
 			if tt.xff != "" {
 				req.Header.Set("X-Forwarded-For", tt.xff)
+			}
+			if tt.proxyLine != "" {
+				req.Header.Add("X-Forwarded-For", tt.proxyLine)
 			}
 
 			got := getClientIP(req, tt.trustProxy)

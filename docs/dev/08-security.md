@@ -161,7 +161,8 @@ Optional bearer token on `/metrics`, constant-time compared.
 
 `ReadTimeout 30s`, `WriteTimeout 60s`, `IdleTimeout 120s`, plus Go's default 1 MiB
 `MaxHeaderBytes` — mitigating slowloris and header-bomb DoS. The rightmost (most-trusted)
-`X-Forwarded-For` IP is used when `trust_proxy` is set.
+`X-Forwarded-For` address of the header's last line is used when `trust_proxy` is set; an entry
+that is not an address counts as the proxy's own, so made-up values share one limiter key.
 
 ## Governance & process
 

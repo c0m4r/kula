@@ -19,6 +19,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -584,6 +585,9 @@ func (s *Server) Start() error {
 	}
 	if s.cfg.TrustProxy {
 		log.Printf("Security Note: TrustProxy is enabled. Ensure Kula is behind a trusted reverse proxy that handles X-Forwarded-For.")
+	} else if s.cfg.UnixSocket != "" && s.cfg.Auth.Enabled {
+		// A Unix socket peer has no address: every client counts as one.
+		log.Printf("Security Warning: unix_socket without trust_proxy: every client shares one login rate limit, so a few wrong passwords from anyone lock everyone out. Set web.trust_proxy and have the proxy set X-Forwarded-For.")
 	}
 
 	if len(s.cfg.Security.AllowedOrigins) > 0 {
@@ -1347,14 +1351,19 @@ func (s *Server) readStatic(path string) ([]byte, error) {
 	return staticFS.ReadFile(path)
 }
 
-// getClientIP extracts the real client IP, considering proxies and stripping ephemeral ports.
+// getClientIP returns the client's address without its port. With trustProxy
+// it is the rightmost X-Forwarded-For entry, the one the trusted proxy
+// appended, of the header's last line: a proxy that adds a line of its own
+// leaves the client's line first. An entry that is not an address would give
+// every request a limiter key of its own, so it counts as the connection's
+// address, the proxy's.
 func getClientIP(r *http.Request, trustProxy bool) string {
 	if trustProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			// The rightmost IP is the one appended by our trusted proxy.
-			// Leftmost IPs are client-controlled and can be spoofed.
-			return strings.TrimSpace(parts[len(parts)-1])
+		if lines := r.Header.Values("X-Forwarded-For"); len(lines) > 0 {
+			last := lines[len(lines)-1]
+			if addr, ok := forwardedAddr(strings.TrimSpace(last[strings.LastIndexByte(last, ',')+1:])); ok {
+				return addr
+			}
 		}
 	}
 
@@ -1363,6 +1372,18 @@ func getClientIP(r *http.Request, trustProxy bool) string {
 		return r.RemoteAddr // fallback if it doesn't have a port for some reason
 	}
 	return host
+}
+
+// forwardedAddr parses an X-Forwarded-For entry: an address, or one with the
+// port some proxies append ("192.0.2.1:4711", "[2001:db8::1]:4711").
+func forwardedAddr(entry string) (string, bool) {
+	if addr, err := netip.ParseAddr(entry); err == nil {
+		return addr.String(), true
+	}
+	if addrPort, err := netip.ParseAddrPort(entry); err == nil {
+		return addrPort.Addr().String(), true
+	}
+	return "", false
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
