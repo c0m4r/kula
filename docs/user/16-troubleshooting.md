@@ -17,16 +17,26 @@ Check current storage health:
 kula inspect
 ```
 
-## "Landlock sandbox not enforced" warning
+## Landlock sandbox messages at startup
 
 ```
-Warning: Landlock sandbox not enforced: ...
+Landlock not supported or disabled by kernel (skipping sandbox enforcement): ...
 ```
 
 The Landlock LSM requires **kernel 5.13+** (and Landlock enabled in the kernel). On older
-kernels Kula degrades gracefully (best-effort) and keeps running **without** the sandbox — it
-is a hardening layer, not a requirement. To get full confinement, run on a newer kernel. See
+kernels Kula keeps running **without** the sandbox — it is a hardening layer, not a requirement.
+To get full confinement, run on a newer kernel: the `Landlock sandbox enforced (ABI vN confines
+…; not confined: …)` line says what the running kernel's ABI confines. See
 [Landlock Sandbox](../dev/09-sandbox.md).
+
+```
+Refusing to start without the Landlock sandbox: sandbox: applications.postgres.host: ...
+```
+
+On a kernel with Landlock, Kula does not start when its sandbox cannot be applied. The message
+names the setting whose grant failed, for example a PostgreSQL `host` that is a file rather than
+the socket directory, or a `web.unix_socket` whose directory does not exist. Fix the setting and
+start Kula again.
 
 ## Dashboard loads but shows no live data
 

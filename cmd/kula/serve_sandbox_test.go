@@ -334,15 +334,12 @@ ollama:
 			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 				t.Fatal(err)
 			}
-			done := make(chan error, 1)
-			go func() { done <- cmd.Wait() }()
-			select {
-			case err := <-done:
-				if err != nil {
-					t.Errorf("kula serve exited with %v", err)
-				}
-			case <-time.After(20 * time.Second):
+			switch code := waitExit(cmd, 20*time.Second); code {
+			case 0:
+			case -1:
 				t.Fatalf("kula serve did not stop\nlog:\n%s", readLog(t, logPath))
+			default:
+				t.Errorf("kula serve exited with status %d", code)
 			}
 
 			logText := readLog(t, logPath)
@@ -364,5 +361,74 @@ ollama:
 				t.Errorf("web socket not removed at shutdown: %v", err)
 			}
 		})
+	}
+}
+
+// waitExit waits up to timeout for cmd to exit and returns its exit status,
+// or -1 after killing it when it is still running.
+func waitExit(cmd *exec.Cmd, timeout time.Duration) int {
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		if err != nil {
+			return -2
+		}
+		return 0
+	case <-time.After(timeout):
+		_ = cmd.Process.Kill()
+		<-done
+		return -1
+	}
+}
+
+// TestServeRefusesToStartWithoutTheSandbox: on a kernel with Landlock, a grant
+// the config asks for that cannot be applied — a PostgreSQL socket directory
+// that is a regular file — stops Kula with a message naming the setting,
+// where it used to log a warning and serve without any sandbox.
+func TestServeRefusesToStartWithoutTheSandbox(t *testing.T) {
+	if os.Getenv("KULA_TEST_SERVE_ARGS") != "" {
+		runServeMain()
+	}
+	if abi, err := llsyscall.LandlockGetABIVersion(); err != nil || abi < 1 {
+		t.Skip("no Landlock in this kernel: Kula starts unconfined by design")
+	}
+
+	dir := t.TempDir()
+	notADir := filepath.Join(dir, "postgresql")
+	if err := os.WriteFile(notADir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "run"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "config.yaml")
+	cfg := fmt.Sprintf(`storage:
+  directory: %q
+web:
+  unix_socket: %q
+applications:
+  postgres:
+    enabled: true
+    host: %q
+    port: 0
+`, filepath.Join(dir, "storage"), filepath.Join(dir, "run", "kula.sock"), notADir)
+	if err := os.WriteFile(configPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, logPath := startKula(t, "TestServeRefusesToStartWithoutTheSandbox", dir, "-config", configPath, "serve")
+	code := waitExit(cmd, 15*time.Second)
+	logText := readLog(t, logPath)
+	if code == -1 {
+		t.Fatalf("kula serve kept running although its sandbox could not be applied:\n%s", logText)
+	}
+	if code == 0 || !strings.Contains(logText, "Refusing to start without the Landlock sandbox") ||
+		!strings.Contains(logText, "applications.postgres.host") {
+		t.Errorf("exit %d; want a refusal naming applications.postgres.host:\n%s", code, logText)
 	}
 }

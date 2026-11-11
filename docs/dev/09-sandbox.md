@@ -23,11 +23,15 @@ This is enforced **in-process**, independent of (and complementary to) the harde
 ```go
 if err := sandbox.Enforce(configPath, cfg.Storage.Directory, cfg.Web,
                           cfg.Applications, cfg.Ollama); err != nil {
-    log.Printf("Warning: Landlock sandbox not enforced: %v", err)
+    log.Fatalf("Refusing to start without the Landlock sandbox: %v", err)
 }
 ```
 
-It is **non-fatal**: on unsupported kernels the warning is logged and Kula runs unconfined.
+On a kernel without Landlock, `Enforce` logs that it skips the sandbox and returns `nil`, and Kula
+runs unconfined. On a kernel with Landlock, an error means the sandbox is not in force, so Kula
+**refuses to start** rather than serve without it: a grant the config asks for that cannot be
+applied (a PostgreSQL `host` that is a regular file, a `web.unix_socket` directory that does not
+exist, a `PGSSLCERT` path through a file) is named in the message, with its setting.
 
 ## Kernel requirements & graceful degradation
 

@@ -204,9 +204,11 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 	}
 
 	// Enforce Landlock sandbox: restrict filesystem and network access
-	// to only what Kula needs. Non-fatal on unsupported kernels.
+	// to only what Kula needs. A kernel without Landlock leaves Kula
+	// unconfined with a log line; on one with Landlock, an error means the
+	// sandbox is not in force, and Kula does not run without it.
 	if err := sandbox.Enforce(configPath, cfg.Storage.Directory, cfg.Web, cfg.Applications, cfg.Ollama); err != nil {
-		log.Printf("Warning: Landlock sandbox not enforced: %v", err)
+		log.Fatalf("Refusing to start without the Landlock sandbox: %v", err)
 	}
 
 	var server *web.Server
