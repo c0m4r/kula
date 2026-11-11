@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -509,6 +510,33 @@ func TestHandleOllamaChatCapsConcurrentChats(t *testing.T) {
 	if rr := chat(); rr.Code != http.StatusOK {
 		t.Errorf("chat after the others ended: %d %q", rr.Code, rr.Body.String())
 	}
+
+	// Clients still sending their requests hold no slot: a chat goes ahead
+	// while as many of them as the cap are stuck mid-body.
+	var stuck sync.WaitGroup
+	writers := make([]*io.PipeWriter, 0, ollamaMaxChats)
+	for i := 0; i < ollamaMaxChats; i++ {
+		body, writer := io.Pipe()
+		writers = append(writers, writer)
+		stuck.Go(func() {
+			srv.handleOllamaChat(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/ollama/chat", body))
+		})
+		_, _ = writer.Write([]byte(`{"prompt":"x`)) // returns once the handler reads it
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- chat() }()
+	select {
+	case rr := <-done:
+		if rr.Code != http.StatusOK {
+			t.Errorf("chat while others send their bodies: %d %q", rr.Code, rr.Body.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("a chat waited for clients still sending their bodies")
+	}
+	for _, writer := range writers {
+		_ = writer.CloseWithError(io.ErrUnexpectedEOF)
+	}
+	stuck.Wait()
 }
 
 func TestOllamaModelNameRe(t *testing.T) {

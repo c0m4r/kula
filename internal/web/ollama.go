@@ -368,20 +368,22 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
-	// A chat holds the backend for up to ollamaMaxToolRounds timeouts; the
-	// per-address limit alone would let a few addresses keep it busy.
-	if !s.ollama.startChat() {
-		jsonError(w, "too many AI chats in progress", http.StatusTooManyRequests)
-		return
-	}
-	defer s.ollama.endChat()
-
 	r.Body = http.MaxBytesReader(w, r.Body, ollamaMaxBody)
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+
+	// A chat holds the backend for up to ollamaMaxToolRounds timeouts; the
+	// per-address limit alone would let a few addresses keep it busy. The
+	// slot is taken once the request is read: a client sending its body
+	// slowly holds none.
+	if !s.ollama.startChat() {
+		jsonError(w, "too many AI chats in progress", http.StatusTooManyRequests)
+		return
+	}
+	defer s.ollama.endChat()
 
 	userPrompt := sanitisePrompt(req.Prompt)
 	if userPrompt == "" {

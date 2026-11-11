@@ -191,6 +191,8 @@ of its served bytes.
   results.
 - **Load:** 10 chat requests per address per minute, and at most 4 chats streaming at once
   server-wide (`ollamaMaxChats`); one more is answered `429` (see [Rate limiting](#rate-limiting)).
+  A chat counts from when its request has been read, so clients sending their bodies slowly
+  cannot hold the slots.
 - **Model restriction:** a chat runs on the configured model or on one the backend lists in
   its latest `/api/ollama/models` listing (fetched on demand if none has been); any other name
   falls back to the configured model. Names must also match `^[A-Za-z0-9._:/-]{1,200}$`.
