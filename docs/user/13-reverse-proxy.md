@@ -12,12 +12,19 @@ Kula's session cookies set the `Secure` flag and emit HSTS, tell it the upstream
 
 ```yaml
 web:
-  trust_proxy: true   # honor X-Forwarded-Proto and X-Forwarded-For from the proxy
+  listen: "127.0.0.1"  # only the proxy on this host can connect
+  trust_proxy: true    # honor X-Forwarded-Proto and X-Forwarded-For from the proxy
 ```
 
 Then have the proxy send `X-Forwarded-Proto: https` and `X-Forwarded-For`, as the nginx
 examples below do. Without `trust_proxy`, Kula ignores both headers (so a client can't spoof
 them).
+
+With `trust_proxy` on, a client that reaches Kula's port directly sends its own
+`X-Forwarded-For`: a new address on every request gives it a fresh login rate limit and puts the
+address it chose in the log. Keep the listener where only the proxy reaches it: `127.0.0.1`
+when the proxy runs on the same host (or a [Unix socket](#unix-socket-listener)), otherwise an
+address that a firewall opens to the proxy alone.
 
 > **`X-Forwarded-For`:** Kula uses the **rightmost** (most-trusted) address in the chain, of the
 > header's last line, for rate limiting and logging; a value that is not an address counts as
