@@ -24,6 +24,25 @@ import (
 const customConnIdleTimeout = 5 * time.Minute
 
 const (
+	// maxCustomConns caps the connections the socket serves at once. A
+	// producer pushes on one connection or connects once per push, so a few
+	// are ever open; a client past the cap is disconnected at once, instead
+	// of each holding a goroutine and a read buffer until the idle timeout.
+	maxCustomConns = 64
+	// A failed accept (at the descriptor limit, say) fails again at once, so
+	// the loop pauses before retrying: from customAcceptMinBackoff, doubling
+	// while accepts keep failing, up to customAcceptMaxBackoff.
+	customAcceptMinBackoff = 5 * time.Millisecond
+	customAcceptMaxBackoff = time.Second
+	// customRareLogEvery is the most often a refusal or accept failure is
+	// logged; the next line counts the ones held back.
+	customRareLogEvery = time.Minute
+	// customReadBuffer is a connection's initial read buffer; it grows up to
+	// the 64 KB line limit only for a longer line.
+	customReadBuffer = 4 << 10
+)
+
+const (
 	// defaultCustomStaleFloor is the minimum derived staleness window. It keeps
 	// sub-second collection intervals from flapping on socket/scheduling jitter.
 	defaultCustomStaleFloor = 5 * time.Second
@@ -62,8 +81,10 @@ type customCollector struct {
 	staleAfter  time.Duration                  // drop a group's values this long after its last update
 	sockPath    string
 	listener    net.Listener
-	debug       bool
-	debugDone   atomic.Bool
+	// conns holds a token per connection being served, at most maxCustomConns.
+	conns     chan struct{}
+	debug     bool
+	debugDone atomic.Bool
 }
 
 // customGroup is the latest accepted values for one chart group together with
@@ -133,6 +154,7 @@ func newCustomCollector(ctx context.Context, sockPath string, configs map[string
 		staleAfter:  staleAfter,
 		sockPath:    sockPath,
 		listener:    listener,
+		conns:       make(chan struct{}, maxCustomConns),
 		debug:       debug,
 	}
 
@@ -148,28 +170,70 @@ func (cc *customCollector) debugf(format string, args ...any) {
 	}
 }
 
-// acceptLoop handles incoming connections.
+// acceptLoop handles incoming connections, serving at most maxCustomConns at
+// once.
 func (cc *customCollector) acceptLoop(ctx context.Context) {
+	var backoff time.Duration
+	var acceptLog, refusalLog rareLog
 	for {
 		conn, err := cc.listener.Accept()
 		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return
+			}
+			// Retrying at once would spin, and log, for as long as the
+			// cause lasts; only the first failure of a run is logged.
+			if backoff == 0 {
+				backoff = customAcceptMinBackoff
+				acceptLog.printf(time.Now(), "[custom] accept error, retrying with backoff: %v", err)
+			} else {
+				backoff = min(2*backoff, customAcceptMaxBackoff)
+			}
+			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			default:
-				// Listener closed or transient error
-				if errors.Is(err, net.ErrClosed) {
-					return
-				}
-				log.Printf("[custom] accept error: %v", err)
-				continue
+			case <-timer.C:
 			}
+			continue
+		}
+		backoff = 0
+		select {
+		case cc.conns <- struct{}{}:
+		default:
+			_ = conn.Close()
+			refusalLog.printf(time.Now(), "[custom] %d connections already open: refusing new ones until one closes", maxCustomConns)
+			continue
 		}
 		if cc.debug && !cc.debugDone.Load() {
 			log.Printf("[custom] new connection from %v", conn.RemoteAddr())
 		}
-		go cc.handleConn(conn)
+		go func() {
+			defer func() { <-cc.conns }()
+			cc.handleConn(conn)
+		}()
 	}
+}
+
+// rareLog logs a recurring condition at most once per customRareLogEvery,
+// counting the lines held back in the next one.
+type rareLog struct {
+	last time.Time
+	held int
+}
+
+func (l *rareLog) printf(now time.Time, format string, args ...any) {
+	if !l.last.IsZero() && now.Sub(l.last) < customRareLogEvery {
+		l.held++
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	if l.held > 0 {
+		msg += fmt.Sprintf(" (%d more since the last such line)", l.held)
+	}
+	log.Print(msg)
+	l.last, l.held = now, 0
 }
 
 // handleConn reads a single JSON message from a connection.
@@ -177,7 +241,7 @@ func (cc *customCollector) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
 	scanner := bufio.NewScanner(conn)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024) // 64KB max message
+	scanner.Buffer(make([]byte, customReadBuffer), 64*1024) // 64KB max message
 
 	for {
 		// Reset the idle deadline before each read: a client pushing on the
@@ -193,13 +257,15 @@ func (cc *customCollector) handleConn(conn net.Conn) {
 			continue
 		}
 
+		// Both lines are quoted: the client's bytes, map keys in a decoding
+		// error included, may carry terminal control sequences.
 		var msg customMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			log.Printf("[custom] invalid JSON from %v: %v", conn.RemoteAddr(), err)
+			log.Printf("[custom] invalid JSON from %v: %q", conn.RemoteAddr(), err.Error())
 			continue
 		}
 
-		cc.debugf("[custom] received from %v: %s", conn.RemoteAddr(), string(line))
+		cc.debugf("[custom] received from %v: %q", conn.RemoteAddr(), line)
 
 		if msg.Custom == nil {
 			continue

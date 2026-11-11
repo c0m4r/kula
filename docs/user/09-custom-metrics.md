@@ -89,6 +89,10 @@ done
   metrics declared for a group in the config are stored; unknown names are ignored. The socket
   is created with `0660` permissions (owner + group), and connections that stay idle for five
   minutes are closed.
+- At most 64 connections are served at once. One more is closed as soon as it is accepted, and
+  the refusal is logged at most once a minute, so close a connection when its push is done, or
+  keep a single one open per producer. When a message is not valid JSON, the log line quotes the
+  decoder's error, so any control characters a client sent appear escaped.
 - Custom metrics are stored alongside everything else in the tiered ring-buffer, so they have
   history and appear in downsampled views too.
 - **Staleness.** A group stops reporting once its producer goes quiet, leaving a gap on the

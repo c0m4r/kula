@@ -3,6 +3,8 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -12,6 +14,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -829,6 +834,173 @@ func TestCustomCollectorStale(t *testing.T) {
 	time.Sleep(40 * time.Millisecond) // exceed the staleness window
 	if got := cc.Latest(); got != nil {
 		t.Errorf("stale value should be dropped, got %+v", got)
+	}
+}
+
+// failingListener fails every Accept the way a process at its descriptor
+// limit does, until it is closed.
+type failingListener struct {
+	accepts atomic.Int64
+	closed  chan struct{}
+}
+
+func (l *failingListener) Accept() (net.Conn, error) {
+	l.accepts.Add(1)
+	select {
+	case <-l.closed:
+		return nil, net.ErrClosed
+	default:
+		return nil, &net.OpError{Op: "accept", Net: "unix", Err: syscall.EMFILE}
+	}
+}
+
+func (l *failingListener) Close() error   { close(l.closed); return nil }
+func (l *failingListener) Addr() net.Addr { return &net.UnixAddr{Name: "kula.sock", Net: "unix"} }
+
+// captureLog sends the standard logger's output to a buffer for the test.
+func captureLog(t *testing.T) *syncBuffer {
+	t.Helper()
+	var logged syncBuffer
+	previous := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return &logged
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+// An accept that keeps failing (EMFILE at the descriptor limit) is retried
+// with a growing pause and logged once, not in a loop that spins a core and
+// writes hundreds of thousands of log lines a second.
+func TestCustomAcceptErrorsBackOff(t *testing.T) {
+	logged := captureLog(t)
+	ln := &failingListener{closed: make(chan struct{})}
+	cc := &customCollector{listener: ln, conns: make(chan struct{}, maxCustomConns)}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		cc.acceptLoop(ctx)
+		close(done)
+	}()
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	_ = ln.Close()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the accept loop did not stop after its context ended")
+	}
+	// 5+10+20+40+80+160 ms: about seven attempts fit in 300 ms.
+	if n := ln.accepts.Load(); n > 12 {
+		t.Errorf("%d accepts in 300 ms; a failing accept must back off", n)
+	}
+	if n := strings.Count(logged.String(), "accept error"); n != 1 {
+		t.Errorf("accept error logged %d times, want once:\n%s", n, logged.String())
+	}
+}
+
+// The socket serves at most maxCustomConns clients at once: one more is
+// disconnected straight away, and logged once, and a client is served again
+// as soon as a connection closes.
+func TestCustomCollectorCapsConnections(t *testing.T) {
+	logged := captureLog(t)
+	sockPath := filepath.Join(t.TempDir(), "kula.sock")
+	cc, err := newCustomCollector(context.Background(), sockPath, map[string][]config.CustomMetricConfig{"fans": {{Name: "fan1"}}}, time.Minute, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cc.Close()
+
+	held := make([]net.Conn, 0, maxCustomConns)
+	defer func() {
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	}()
+	for range maxCustomConns {
+		conn, err := net.Dial("unix", sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, conn)
+	}
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); !cond(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting until %s", what)
+			}
+		}
+	}
+	waitFor("every idle connection is served", func() bool { return len(cc.conns) == maxCustomConns })
+
+	refused := func() {
+		t.Helper()
+		conn, err := net.Dial("unix", sockPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = conn.Close() }()
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+			t.Fatalf("a connection past the cap was not closed at once: read error %v", err)
+		}
+	}
+	refused()
+	refused()
+	if n := strings.Count(logged.String(), "connections already open"); n != 1 {
+		t.Errorf("refusals logged %d times, want once:\n%s", n, logged.String())
+	}
+
+	_ = held[0].Close()
+	held = held[1:]
+	waitFor("a closed connection frees its slot", func() bool { return len(cc.conns) < maxCustomConns })
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = conn.Write([]byte(`{"custom":{"fans":[{"fan1":42}]}}` + "\n"))
+	_ = conn.Close()
+	waitFor("the freed slot serves a producer", func() bool { return len(cc.Latest()["fans"]) == 1 })
+}
+
+// A client's bytes are quoted in the log: a decoding error names the map
+// keys it failed on, control characters and all, and a valid line may carry a
+// raw carriage return between its tokens.
+func TestCustomLinesAreLoggedEscaped(t *testing.T) {
+	logged := captureLog(t)
+	cc := &customCollector{latest: make(map[string]customGroup), debug: true}
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		cc.handleConn(server)
+		close(done)
+	}()
+	_, _ = client.Write([]byte("{\"custom\":{\"\\u001b]0;owned\\u0007\":[{\"a\":\"s\"}]}}\n"))
+	_, _ = client.Write([]byte("{\"custom\":\r{\"g\":[{\"a\":1}]}}\n"))
+	_ = client.Close()
+	<-done
+	out := logged.String()
+	if strings.ContainsAny(out, "\x1b\a\r") {
+		t.Errorf("the log carries raw control characters: %q", out)
+	}
+	if !strings.Contains(out, `\x1b]0;owned\a`) || !strings.Contains(out, `\r{`) {
+		t.Errorf("the log does not show the escaped client bytes: %q", out)
 	}
 }
 
