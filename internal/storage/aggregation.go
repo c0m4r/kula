@@ -45,6 +45,20 @@ type meanAccumulator struct {
 	Weight float64
 }
 
+// meanWeightTolerance is the relative difference up to which a field's
+// contributing weight is its bucket's. The two are summed differently, float
+// seconds per input against the bucket's integer nanoseconds, so on real
+// collection intervals they differ in their last bits when every input
+// contributed. An input that did not contribute is orders of magnitude more:
+// one second missing from a month is 4e-7.
+const meanWeightTolerance = 1e-9
+
+// meanRoundingTolerance is the relative rounding a stored mean may carry
+// without an entry: what the codec's float32 loses of a float mean anyway.
+// The rounded integer mean of a large quantity (bytes of memory) is closer
+// than that; of a small count (connections, processes) it is not.
+const meanRoundingTolerance = 1.0 / (1 << 24)
+
 type meanReduction struct {
 	weight float64
 	stats  map[string]meanAccumulator
@@ -270,7 +284,9 @@ func numericMean(out reflect.Value, values []weightedValue, nonNegative bool, pa
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		out.SetUint(uint64(math.Round(mean)))
 	}
-	if weights != means.weight || numericAsFloat(out) != mean {
+	partial := math.Abs(weights-means.weight) > meanWeightTolerance*means.weight
+	rounded := math.Abs(numericAsFloat(out)-mean) > meanRoundingTolerance*math.Abs(mean)
+	if partial || rounded {
 		means.stats[path] = meanAccumulator{Sum: sum, Weight: weights}
 	}
 }

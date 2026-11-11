@@ -134,8 +134,8 @@ need no extension. Version 1 contains `version:u8`, `complete:u8`, `count:u32`, 
 entries: `path_length:u16`, UTF-8 path bytes, `sum:f64`, `weight_seconds:f64`, all little-endian.
 Paths include quoted dynamic identities; they are not positional member indices.
 
-The sparse map preserves weights for partially present metrics and sums for rounded integer
-means. `complete=0` means legacy inputs lacked their original contributing weights; those means
+The sparse map preserves weights for partially present metrics and sums for integer means
+rounded beyond float32 precision (see [Storage Engine](05-storage-engine.md)). `complete=0` means legacy inputs lacked their original contributing weights; those means
 remain approximate. `flagReducerV2` still describes extrema independently. Readers reject
 truncated entries, unknown versions, duplicate paths, invalid numeric statistics, and any byte
 after the extension: it must end the record. A later record-level extension therefore cannot

@@ -110,6 +110,16 @@ dynamic identities. Fully observed, unrounded fields use the bucket duration wit
 This preserves fractional integer means across rollups without changing the public metric types.
 Floating-point values remain subject to normal arithmetic and float32 codec precision.
 
+Both tests are tolerant, or the statistics stop being sparse. A field's weight is its
+bucket's when the two agree to a relative `1e-9` (`meanWeightTolerance`): the field's is a
+float sum of seconds per input, the bucket's comes from integer nanoseconds, and on real
+collection intervals the two differ in their last bits even when every input contributed.
+Compared exactly, most rollups of a real host carried an entry for every mean field and the
+trailer outweighed the metrics; mock data, spaced exactly one second apart, never showed it.
+A mean counts as rounded only beyond float32 precision (`meanRoundingTolerance`, 2⁻²⁴
+relative), the rounding every float mean takes in the codec anyway: the integer mean of a
+byte count needs no entry, that of a connection or process count does.
+
 A trailing `flagHasMeanStats` section persists these statistics after all Data/Min/Max blocks.
 `MeanWeightsComplete` is false for a rollup containing legacy buckets: their original missing
 weights cannot be recovered. Their stored means remain approximate; their independently trusted

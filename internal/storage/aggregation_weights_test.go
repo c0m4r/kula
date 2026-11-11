@@ -182,3 +182,73 @@ func TestAggregationConsumesPersistedMeanPaths(t *testing.T) {
 		t.Fatalf("fractional integer statistics = %+v, want sum=61 weight=4", got)
 	}
 }
+
+// TestMeanStatsStaySparseOnRealIntervals verifies which means of a rollup
+// carry sufficient statistics when its inputs have real collection intervals
+// rather than exact seconds. The float sum of such durations differs from the
+// window's own duration in its last bits, which used to read as a missing
+// contributor: nearly every mean field of every rollup got an entry, and the
+// trailer outweighed the metrics. Entries belong only to a field some input
+// did not contribute to, or whose stored mean was rounded by more than the
+// codec rounds a float.
+func TestMeanStatsStaySparseOnRealIntervals(t *testing.T) {
+	store := &Store{}
+	const container = `sample.apps.containers["Name=api"].cpu_pct`
+	raw := make([]*AggregatedSample, 120)
+	ts := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	var procTotal float64
+	for i := range raw {
+		// One second, give or take 2 ms, to the nanosecond.
+		dur := time.Second + time.Duration((i*1299709)%4_000_001-2_000_000)
+		ts = ts.Add(dur)
+		s := &collector.Sample{Timestamp: ts}
+		s.CPU.Total.Usage = 10 + float64(i%17)/3
+		s.Memory.Used = 8<<30 + uint64(i%13)*4096 + uint64(i)
+		s.Process.Total = 300 + i%2
+		procTotal += float64(s.Process.Total) * dur.Seconds()
+		if i%2 == 0 {
+			s.Apps.Containers = []collector.ContainerStats{{ID: "stable-id", Name: "api", CPUPct: float64(i % 7)}}
+		}
+		raw[i] = &AggregatedSample{Timestamp: ts, Duration: dur, Data: s, AggregationVersion: currentAggregationVersion}
+	}
+
+	first := store.aggregateAggregated(raw[:60], 0)
+	second := store.aggregateAggregated(raw[60:], 0)
+	for i, bucket := range []*AggregatedSample{first, second} {
+		var summed float64
+		for _, sample := range raw[i*60 : (i+1)*60] {
+			summed += sample.Duration.Seconds()
+		}
+		if summed == bucket.Duration.Seconds() {
+			t.Fatalf("bucket %d: the fixture's durations sum exactly; it no longer has real intervals", i)
+		}
+		for _, path := range []string{"sample.cpu.total.usage", "sample.mem.used"} {
+			if stat, ok := bucket.MeanStats[path]; ok {
+				t.Errorf("bucket %d: %s carries %+v, though every input contributed and its mean is stored to float precision", i, path, stat)
+			}
+		}
+		if _, ok := bucket.MeanStats["sample.proc.total"]; !ok {
+			t.Errorf("bucket %d: the rounded mean of a small count lost its statistics", i)
+		}
+		if stat := bucket.MeanStats[container]; math.Abs(stat.Weight-bucket.Duration.Seconds()/2) > 0.1 {
+			t.Errorf("bucket %d: a member present half the time has weight %v of %v", i, stat.Weight, bucket.Duration.Seconds())
+		}
+	}
+
+	direct := store.aggregateAggregated(raw, 0)
+	cascade := store.aggregateAggregated([]*AggregatedSample{roundTripMeanBucket(t, first), roundTripMeanBucket(t, second)}, 0)
+	if got, want := cascade.MeanStats["sample.proc.total"].Sum, procTotal; math.Abs(got-want) > 1e-9*want {
+		t.Errorf("small-count sum through the cascade = %v, want %v", got, want)
+	}
+	if d, c := direct.Data.Apps.Containers[0].CPUPct, cascade.Data.Apps.Containers[0].CPUPct; math.Abs(d-c) > 1e-9 {
+		t.Errorf("partly present member: direct %v != cascade %v", d, c)
+	}
+	// Without an entry a mean cascades from its stored value: an integer
+	// rounded to the unit, a float to float32.
+	if d, c := float64(direct.Data.Memory.Used), float64(cascade.Data.Memory.Used); math.Abs(d-c) > 1 {
+		t.Errorf("large integer mean: direct %v != cascade %v", d, c)
+	}
+	if d, c := direct.Data.CPU.Total.Usage, cascade.Data.CPU.Total.Usage; math.Abs(d-c) > 1e-6*d {
+		t.Errorf("float mean: direct %v != cascade %v", d, c)
+	}
+}
