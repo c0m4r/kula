@@ -926,6 +926,15 @@ func decodeFixed(data []byte) (*collector.Sample, int, error) {
 	return s, fixedBlockSize, nil
 }
 
+// decodeCap returns the capacity to pre-allocate for count elements of at
+// least minSize encoded bytes each, when remaining bytes of the payload are
+// left: no more than they can hold. A count is up to 65,535 and comes from the
+// file; taken as is, a crafted record of a few bytes made the decoder allocate
+// megabytes per block before it found the elements missing.
+func decodeCap(count, remaining, minSize int) int {
+	return max(0, min(count, remaining/minSize))
+}
+
 // decodeVariable decodes the variable-length sections into s.
 // hasApps indicates the variable block includes the application metrics section
 // (flagHasApps was set in the preamble). Old records without the flag must not
@@ -955,7 +964,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	}
 	numIfaces := int(binary.LittleEndian.Uint16(data[off:]))
 	off += 2
-	s.Network.Interfaces = make([]collector.NetInterface, 0, numIfaces)
+	s.Network.Interfaces = make([]collector.NetInterface, 0, decodeCap(numIfaces, len(data)-off, 1+4*4+8*8))
 	for i := 0; i < numIfaces; i++ {
 		var iface collector.NetInterface
 		name, n, err := getStr(data[off:])
@@ -1000,7 +1009,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	}
 	numSensors := int(binary.LittleEndian.Uint16(data[off:]))
 	off += 2
-	s.CPU.Sensors = make([]collector.CPUTempSensor, 0, numSensors)
+	s.CPU.Sensors = make([]collector.CPUTempSensor, 0, decodeCap(numSensors, len(data)-off, 1+4))
 	for i := 0; i < numSensors; i++ {
 		name, n, err := getStr(data[off:])
 		if err != nil {
@@ -1021,7 +1030,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	}
 	numDisks := int(binary.LittleEndian.Uint16(data[off:]))
 	off += 2
-	s.Disks.Devices = make([]collector.DiskDevice, 0, numDisks)
+	s.Disks.Devices = make([]collector.DiskDevice, 0, decodeCap(numDisks, len(data)-off, 1+6*4+2))
 	for i := 0; i < numDisks; i++ {
 		var dev collector.DiskDevice
 		name, n, err := getStr(data[off:])
@@ -1050,7 +1059,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 		}
 		numTS := int(binary.LittleEndian.Uint16(data[off:]))
 		off += 2
-		dev.Sensors = make([]collector.DiskTempSensor, 0, numTS)
+		dev.Sensors = make([]collector.DiskTempSensor, 0, decodeCap(numTS, len(data)-off, 1+4))
 		for j := 0; j < numTS; j++ {
 			tsName, tn, err := getStr(data[off:])
 			if err != nil {
@@ -1073,7 +1082,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	}
 	numFS := int(binary.LittleEndian.Uint16(data[off:]))
 	off += 2
-	s.Disks.FileSystems = make([]collector.FileSystemInfo, 0, numFS)
+	s.Disks.FileSystems = make([]collector.FileSystemInfo, 0, decodeCap(numFS, len(data)-off, 3+3*8+4))
 	for i := 0; i < numFS; i++ {
 		var fs collector.FileSystemInfo
 		dev, n, err := getStr(data[off:])
@@ -1129,7 +1138,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	}
 	numGPU := int(binary.LittleEndian.Uint16(data[off:]))
 	off += 2
-	s.GPU = make([]collector.GPUStats, 0, numGPU)
+	s.GPU = make([]collector.GPUStats, 0, decodeCap(numGPU, len(data)-off, 2+1+1+4+8+8+4+4+4))
 	for i := 0; i < numGPU; i++ {
 		var g collector.GPUStats
 		if err := need(2, "gpu index"); err != nil {
@@ -1218,7 +1227,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	numContainers := int(binary.LittleEndian.Uint16(data[off:]))
 	off += 2
 	if numContainers > 0 {
-		s.Apps.Containers = make([]collector.ContainerStats, 0, numContainers)
+		s.Apps.Containers = make([]collector.ContainerStats, 0, decodeCap(numContainers, len(data)-off, 1+1+4+8+8+4*5))
 	}
 	for i := 0; i < numContainers; i++ {
 		var ct collector.ContainerStats
@@ -1565,7 +1574,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 	numGroups := int(binary.LittleEndian.Uint16(data[off:]))
 	off += 2
 	if numGroups > 0 {
-		s.Apps.Custom = make(map[string][]collector.CustomMetricValue, numGroups)
+		s.Apps.Custom = make(map[string][]collector.CustomMetricValue, decodeCap(numGroups, len(data)-off, 1+2))
 	}
 	for i := 0; i < numGroups; i++ {
 		groupName, gn, err := getStr(data[off:])
@@ -1578,7 +1587,7 @@ func decodeVariable(data []byte, s *collector.Sample, hasApps, hasApache2, hasMy
 		}
 		mCount := int(binary.LittleEndian.Uint16(data[off:]))
 		off += 2
-		metrics := make([]collector.CustomMetricValue, 0, mCount)
+		metrics := make([]collector.CustomMetricValue, 0, decodeCap(mCount, len(data)-off, 1+4))
 		for j := 0; j < mCount; j++ {
 			mName, mn, err := getStr(data[off:])
 			if err != nil {

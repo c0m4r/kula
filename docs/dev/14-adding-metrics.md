@@ -155,6 +155,9 @@ if hasFoo {
 Guard every read with `need` first, the presence byte included: without it a truncated record
 indexes past the end of the slice and panics, which `FuzzDecodeSample` exists to catch. Refuse a
 version you do not know: reading it as another layout would misalign every section after it.
+A section with a count pre-allocates no more than the rest of the payload can hold,
+`make([]T, 0, decodeCap(count, len(data)-off, minEntryBytes))`, never `count` itself: the count
+comes from the file.
 
 Extract the flag in `decodeSample()` and thread it through `decodeVariable()`:
 

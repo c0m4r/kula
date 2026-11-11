@@ -218,6 +218,8 @@ belongs in its `Ring` class too.
   dispatch, old-record skip behavior.
 - [`codec_fuzz_test.go`](../../internal/storage/codec_fuzz_test.go) — `FuzzDecodeSample`, with a
   seed corpus under `testdata/fuzz/`. The decoder must never panic on malformed input.
+- [`codec_alloc_test.go`](../../internal/storage/codec_alloc_test.go) — a section's count
+  pre-allocates only what the rest of the payload can hold (`decodeCap`).
 - `migration_test.go` — v1 → v2 migration.
 
 ## Adding a metric type
