@@ -154,6 +154,11 @@ applications:
     sslmode: "disable"
 ```
 
+As with `psql`, settings the config leaves out are taken from the standard `PG*` environment
+variables of the Kula process (`PGSSLROOTCERT`, `PGPASSWORD`, `PGOPTIONS`, …), and a missing
+password from `~/.pgpass`. The sandbox lets Kula read the `PGSSL*` files and `~/.postgresql`,
+but not `~/.pgpass`: under it, set the password here or in `KULA_POSTGRES_PASSWORD`.
+
 **Metrics:** connections (active/idle/idle-in-transaction/waiting/max), transactions
 committed/rolled back per second, tuples (returned/fetched/inserted/updated/deleted),
 buffer cache hit %, blocks read/hit, checkpoint/backend buffers, deadlocks, dead/live tuples,
