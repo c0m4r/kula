@@ -56,6 +56,7 @@ SCAN_BUFFER = 1 << 20  # the scan's bufio size; resync verifies no larger record
 MIN_SANE_NS = int(datetime.datetime(2000, 1, 1).timestamp()) * 10**9
 MAX_AHEAD_NS = 3600 * 10**9
 OLD_RECORD_SEARCH = 16 << 20  # oldRecordSearch
+MAX_TIER_DATA = 1 << 62  # maxTierData: the largest ring a header may claim
 # resyncChecksumAllowance and resyncChecksumCredit: the checksum work one walk
 # may spend on resync candidates that fail it, and what each byte resync
 # passes adds to it.
@@ -1195,8 +1196,23 @@ def ring_layout(buf: Any, header: Tuple, file_size: int) -> Tuple[bool, int]:
     return True, candidate
 
 
+def check_geometry(header: Tuple) -> None:
+    """readHeader's checks on the ring size and write offset.
+
+    Raises ValueError for a header the Go reader refuses to open.
+    """
+    _, _, _, max_data, write_off, _, _, _, _ = header
+    if not 0 < max_data <= MAX_TIER_DATA:
+        raise ValueError(f"invalid header: ring size {max_data}")
+    if write_off > max_data:
+        raise ValueError(
+            f"invalid header: write offset {write_off} lies outside the {max_data}-byte ring"
+        )
+
+
 def open_ring(buf: Any, header: Tuple, file_size: int) -> Tuple[Ring, List[Tuple[int, int, bool]]]:
     """The walker and segments for a parsed header."""
+    check_geometry(header)
     _, _, codec_ver, max_data, write_off, _, _, newest_nano, _ = header
     wrapped, old_start = ring_layout(buf, header, file_size)
     ring = Ring(buf, max_data, codec_ver, newest_nano)
@@ -1260,6 +1276,11 @@ def print_tier(filepath: str, buf: Any, file_size: int) -> None:
             f"Error: Invalid magic: {magic.decode('utf-8', errors='replace')}",
             file=sys.stderr,
         )
+        sys.exit(1)
+    try:
+        check_geometry(header)
+    except ValueError as err:
+        print(f"Error: {err}", file=sys.stderr)
         sys.exit(1)
 
     wrapped, _ = ring_layout(buf, header, file_size)

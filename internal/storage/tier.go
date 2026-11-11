@@ -97,10 +97,18 @@ type Tier struct {
 	snapshotCopied func()
 }
 
+// maxTierData bounds a ring's data region. Far beyond any tier a filesystem
+// holds, it keeps every file offset into the ring, plus a record, within an
+// int64.
+const maxTierData = 1 << 62
+
 func OpenTier(path string, maxSize int64) (*Tier, error) {
 	maxData := maxSize - headerSize
 	if maxData < 1024 {
 		return nil, fmt.Errorf("max_size too small for tier: %d", maxSize)
+	}
+	if maxData > maxTierData {
+		return nil, fmt.Errorf("max_size too large for tier: %d", maxSize)
 	}
 
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
@@ -130,6 +138,14 @@ func OpenTier(path string, maxSize int64) (*Tier, error) {
 			_ = f.Close()
 			return nil, fmt.Errorf("tier %s: corrupt or unreadable header: %w; "+
 				"refusing to open so existing data is not destroyed — move the file aside to start fresh", path, err)
+		}
+		// A write offset past the end of the file counts records that never
+		// reached the disk: a crash wrote the header but not them. Readers
+		// clip the ring to the file, and writing resumes where its data ends
+		// instead of past a hole every scan would resync across, which a
+		// crafted offset could make exabytes long.
+		if dataEnd := info.Size() - headerSize; t.writeOff > dataEnd {
+			t.writeOff = dataEnd
 		}
 		// readHeader replaced maxData with the geometry the file was actually
 		// created with. Reconcile it with what the operator configured, so
@@ -178,11 +194,19 @@ func (t *Tier) readHeader() error {
 		v = 1
 	}
 	t.codecVer = v
+	// The ring size and write offset place every read and write in the file,
+	// so a corrupt or crafted header must not get past here with values the
+	// ring arithmetic cannot hold: a write offset near 2^63 once overflowed
+	// Write's wrap check, which then wrote at that offset, and the next scan
+	// walked the 9.2 EB sparse file that made, holding the tier lock.
 	t.maxData = int64(binary.LittleEndian.Uint64(buf[16:24]))
-	if t.maxData == 0 {
-		return fmt.Errorf("invalid header: maxData is zero")
+	if t.maxData <= 0 || t.maxData > maxTierData {
+		return fmt.Errorf("invalid header: ring size %d", uint64(t.maxData))
 	}
 	t.writeOff = int64(binary.LittleEndian.Uint64(buf[24:32]))
+	if t.writeOff < 0 || t.writeOff > t.maxData {
+		return fmt.Errorf("invalid header: write offset %d lies outside the %d-byte ring", uint64(t.writeOff), t.maxData)
+	}
 	t.count = binary.LittleEndian.Uint64(buf[32:40])
 
 	oldestNano := int64(binary.LittleEndian.Uint64(buf[40:48]))
@@ -370,11 +394,12 @@ func (t *Tier) writePayload(data []byte, ts time.Time) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Check if we need to wrap
-	if t.writeOff+int64(recordLen) > t.maxData {
+	// Check if we need to wrap. readHeader keeps writeOff within the ring, so
+	// the room left cannot overflow, as writeOff+recordLen could.
+	if room := t.maxData - t.writeOff; int64(recordLen) > room {
 		// Write a zero sentinel to mark end-of-segment so ReadRange
 		// knows there are no more records in this tail region.
-		if t.writeOff+4 <= t.maxData {
+		if room >= 4 {
 			var sentinel [4]byte // zero-value sentinel (dataLen == 0)
 			_, _ = t.file.WriteAt(sentinel[:], headerSize+t.writeOff)
 		}

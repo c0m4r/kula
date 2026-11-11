@@ -199,6 +199,15 @@ the header that makes a record visible is written after it. Readers handle the d
   the previous pass to its end, resuming after any record that is not one
   (`verifyOldSegment`). A zero length still ends the pass: it is the sentinel, or a hole no
   reader can tell from one.
+- **The header's geometry.** A ring size that is not positive or exceeds 2^62 bytes
+  (`maxTierData`), or a write offset outside the ring, is no header any build writes: the
+  owner refuses the file and asks for it to be moved aside, and a read-only view and
+  `inspect_tier.py` refuse it too. Such an offset near 2^63 once overflowed `Write`'s wrap
+  check, now made on the room left in the ring: the record went to that offset, and the next
+  scan walked the 9.2 EB sparse file it made, holding the tier lock. A write offset past the
+  end of the file is what a crash leaves when the header reached the disk and the records it
+  counts did not: readers clip the ring to the file, and the owner resumes writing where the
+  data ends instead of past a hole as long as the offset claims.
 
 The check runs only on records a query decodes. It costs about 5 % of a record's decode time
 where Go's `hash/crc32` uses CPU instructions (amd64, arm64) and about 25 % with its portable
@@ -432,11 +441,12 @@ and skipped. The reverse does not hold; an older binary may misread a newer reco
   (`InspectLatestTierSample`).
 - [`addons/inspect_tier.py`](../../addons/inspect_tier.py) is a standalone Python decoder of the
   same format — useful for offline analysis and as a cross-check on the Go codec. It walks the
-  ring as the Go reader does: the same wrap state and tail validation, segments clipped to the
-  file, the 64 MiB record cap, and resync past holes in the active pass with the same checksum
-  budget, so after an unclean shutdown it reports the same latest record as
+  ring as the Go reader does: the same header checks, wrap state and tail validation, segments
+  clipped to the file, the 64 MiB record cap, and resync past holes in the active pass with the
+  same checksum budget, so after an unclean shutdown it reports the same latest record as
   `kula inspect --verbose`.
-  `TestInspectorWalksTheRingLikeTheReader` compares the records both visit on damaged tiers.
+  `TestInspectorWalksTheRingLikeTheReader` compares the records both visit on damaged tiers, and
+  `TestOpenTierRefusesOffsetsOutsideTheRing` the headers both refuse.
 
 ## Mock data
 
@@ -448,7 +458,8 @@ incident windows; see [Testing & QA](12-testing.md#realistic-mock-history) for u
 ## Tests & benchmarks
 
 `store_test.go`, `aggregation_test.go`, `tier_test.go`, `codec_test.go`, `snapshot_test.go`,
-`migration_test.go`, plus `codec_fuzz_test.go` and the benchmark suite
+`migration_test.go`, `tier_header_test.go`, plus `codec_fuzz_test.go`, `FuzzOpenTier` (every
+path that opens a tier file, on crafted files) and the benchmark suite
 (`./addons/benchmark.sh`). See [Testing](12-testing.md).
 
 Next: [Binary Codec](06-storage-codec.md).
