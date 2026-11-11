@@ -131,6 +131,8 @@ func newPostgresCollector(host string, port int, user, password, dbname, sslmode
 			reap:     reapPostgresSession,
 			describe: func(ref dbSessionRef) string { return fmt.Sprintf("pid %d", ref.id) },
 			abort:    dialer.abort,
+			shut:     dialer.shut,
+			reopen:   dialer.reopen,
 		},
 	}
 	if connector, err := pq.NewConnector(pc.dsn); err == nil {

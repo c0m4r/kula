@@ -60,9 +60,12 @@ type dbDialect struct {
 	describe func(ref dbSessionRef) string
 	// abort, when set, closes every network connection the collector holds.
 	// It is the last resort for a driver that keeps reading after its context
-	// ends (lib/pq), see dbSession.bound, and for a connection a driver panic
-	// left behind, see dbSession.discard.
+	// ends (lib/pq), see dbSession.bound.
 	abort func()
+	// shut and reopen, when set, end what a driver panic left behind (see
+	// dbSession.discard): shut closes every network connection like abort and
+	// refuses new ones until reopen, which the next connection attempt calls.
+	shut, reopen func()
 }
 
 // dbTimeouts derives every session bound from the collection interval.
@@ -200,6 +203,9 @@ func (s *dbSession) acquire(ctx context.Context) (*sql.Conn, error) {
 // they exist, so a driver panic while connecting leaves them where discard
 // finds them.
 func (s *dbSession) open(ctx context.Context) error {
+	if s.dialect.reopen != nil {
+		s.dialect.reopen()
+	}
 	s.db = sql.OpenDB(s.connector)
 	s.db.SetMaxOpenConns(1)
 	s.db.SetMaxIdleConns(1)
@@ -287,10 +293,7 @@ func (s *dbSession) fail(ctx context.Context, err error) {
 		return
 	}
 	if s.conn != nil {
-		pingCtx, cancel := s.bound(ctx, min(s.timeouts.poll, 5*time.Second))
-		pingErr := s.conn.PingContext(pingCtx)
-		cancel()
-		if pingErr == nil && ctx.Err() == nil {
+		if s.ping(ctx) == nil && ctx.Err() == nil {
 			s.logOnce(fmt.Sprintf("%s poll of %q failed: %v", s.name, s.label, err))
 			return
 		}
@@ -305,6 +308,15 @@ func (s *dbSession) fail(ctx context.Context, err error) {
 	}
 	s.release()
 	s.backoff()
+}
+
+// ping checks that the connection still answers. Its bound is disarmed by a
+// deferred cancel, so a driver panic cannot leave the abort timer armed to cut
+// the next session's connection.
+func (s *dbSession) ping(ctx context.Context) error {
+	pingCtx, cancel := s.bound(ctx, min(s.timeouts.poll, 5*time.Second))
+	defer cancel()
+	return s.conn.PingContext(pingCtx)
 }
 
 // backoff schedules the next attempt: one interval after the first failure,
@@ -344,14 +356,21 @@ func (s *dbSession) abandon() {
 // discard drops a session a driver panic left in an unknown state, without
 // waiting on database/sql: it releases a connection's lock only when the
 // statement on it returns, so after a panic mid-statement closing the
-// connection the usual way would block forever. Instead the dialect's abort
-// closes the network connections, which ends the session on the server, the
-// driver connection is closed directly (ending the driver's own goroutines),
-// and the pool is closed. Like a session given up on, it is remembered for
-// reaping, and the collector backs off: a server whose replies crash the
-// driver is not retried every interval.
+// connection the usual way would block forever. Instead the dialect's shut
+// closes the network connections, which ends the session on the server, and
+// refuses new ones until the next attempt: lib/pq answers the end of the
+// interrupted query's context by dialing the server from a goroutine of its
+// own to cancel the query, and whoever sent the malformed reply could hold
+// that connection, and the goroutine, open forever. The driver connection is
+// closed directly (ending the driver's own goroutines), and the pool is
+// closed. Like a session given up on, it is remembered for reaping, and the
+// collector backs off: a server whose replies crash the driver is not retried
+// every interval.
 func (s *dbSession) discard() {
-	if s.dialect.abort != nil {
+	switch {
+	case s.dialect.shut != nil:
+		s.dialect.shut()
+	case s.dialect.abort != nil:
 		s.dialect.abort()
 	}
 	if s.conn != nil {
@@ -393,13 +412,18 @@ func (s *dbSession) logOnce(msg string) {
 // closes every open connection: dbSession.bound calls it for work stuck past
 // its deadline (lib/pq does not close a socket when a query's context ends;
 // it sends a cancel request and keeps reading, and keepalives cannot help a
-// socket with a read in flight to a frozen server), and dbSession.discard for
-// a connection a driver panic left behind.
+// socket with a read in flight to a frozen server). shut does the same and
+// refuses new connections until reopen: dbSession.discard calls it for what a
+// driver panic left behind.
 type dbDialer struct {
 	d     net.Dialer
 	mu    sync.Mutex
 	conns map[*dbDialerConn]struct{}
+	// refusing is set by shut and cleared by reopen.
+	refusing bool
 }
+
+var errDBDialerShut = errors.New("connection refused: the session was discarded after a driver panic")
 
 // dbDialerConn removes itself from its dialer's open set when closed.
 type dbDialerConn struct {
@@ -432,8 +456,15 @@ func (d *dbDialer) track(conn net.Conn, err error) (net.Conn, error) {
 	}
 	c := &dbDialerConn{Conn: conn, owner: d}
 	d.mu.Lock()
-	d.conns[c] = struct{}{}
+	refused := d.refusing
+	if !refused {
+		d.conns[c] = struct{}{}
+	}
 	d.mu.Unlock()
+	if refused {
+		_ = conn.Close()
+		return nil, errDBDialerShut
+	}
 	return c, nil
 }
 
@@ -463,4 +494,20 @@ func (d *dbDialer) abort() {
 	for _, c := range open {
 		_ = c.Close()
 	}
+}
+
+// shut closes every open connection, like abort, and fails every connection
+// dialed after it, until reopen.
+func (d *dbDialer) shut() {
+	d.mu.Lock()
+	d.refusing = true
+	d.mu.Unlock()
+	d.abort()
+}
+
+// reopen lets connections be dialed again after shut.
+func (d *dbDialer) reopen() {
+	d.mu.Lock()
+	d.refusing = false
+	d.mu.Unlock()
 }

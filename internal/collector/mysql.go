@@ -93,6 +93,8 @@ func newMysqlCollector(host string, port int, user, password, dbname string, deb
 			reap:     reapMysqlSession,
 			describe: func(ref dbSessionRef) string { return fmt.Sprintf("connection %d", ref.id) },
 			abort:    dialer.abort,
+			shut:     dialer.shut,
+			reopen:   dialer.reopen,
 		},
 	}
 	if connector, err := mysql.NewConnector(mc.config); err == nil {

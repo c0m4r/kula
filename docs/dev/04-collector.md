@@ -113,11 +113,17 @@ API and WebSocket payloads.
   what the poll was in the middle of — a status page's rate baseline, or a database session
   (`dbSession.discard`). database/sql releases a connection's lock only when its statement
   returns, so after a panic mid-statement `Conn.Close` would block forever; `discard` instead
-  closes the network connections through the dialer, closes the driver connection through
-  `Conn.Raw`, closes the pool, remembers the session for reaping and backs off. `cleanup` runs
+  shuts the dialer (`dbDialer.shut`: closes its connections and refuses new ones until the
+  next attempt's `reopen`, because lib/pq answers the end of the interrupted query's context by
+  dialing the server to cancel it, from a goroutine that reads that connection until the
+  server closes it), closes the driver connection through `Conn.Raw`, closes the pool,
+  remembers the session for reaping and backs off. Every `bound` is disarmed by a deferred
+  cancel, so a panic leaves no abort timer armed against the next session. `cleanup` runs
   under the same guard. `poll_panic_test.go` drives both real drivers against the malformed
-  replies; one leftover is go-sql-driver/mysql's per-connection watcher goroutine, which a
-  panic during its handshake leaves parked (one per attempt, under the backoff).
+  replies and checks that nothing stays open. One leftover cannot be reached from outside
+  the driver: a panic during go-sql-driver/mysql's connection phase leaves that connection's
+  watcher goroutine parked, about 13 KB each, one per attempt under the backoff (at most 288
+  a day once it reaches 5 minutes).
 - **Database collectors own exactly one session.** `postgres.go` and `mysql.go` poll through
   `dbsession.go`: a pinned `sql.Conn` from a pool capped at one; polls in their own goroutine,
   one at a time (`poller`, read by `Collect` through `Latest()`), with a hard timeout of
