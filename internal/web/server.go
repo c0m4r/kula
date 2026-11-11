@@ -65,6 +65,10 @@ type Server struct {
 	// broadcastFailing is set while samples cannot be encoded for the
 	// WebSocket clients, so BroadcastSample logs the change, not every tick.
 	broadcastFailing atomic.Bool
+
+	// historySlots holds a token for each history query in progress; see
+	// maxConcurrentHistory.
+	historySlots chan struct{}
 }
 
 func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Collector, s *storage.Store, storageDir string, ollamaCfg config.OllamaConfig) *Server {
@@ -93,6 +97,7 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 		ollamaLimiter:   newChatRateLimiter(),
 		ollamaMetaLim:   newMetaRateLimiter(),
 		hosts:           newHostPolicy(cfg, machineHostname(), global.Hostname),
+		historySlots:    make(chan struct{}, maxConcurrentHistory),
 		// Created here, not in Start: Shutdown runs on another goroutine and
 		// may come first, and must then stop the server Start goes on to run.
 		httpSrv: &http.Server{
@@ -875,6 +880,15 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		tierHint = v
 	}
 
+	// A slot is held until the response is sent: the result stays in memory
+	// until then.
+	if !s.acquireHistorySlot(r.Context()) {
+		w.Header().Set("Retry-After", "2")
+		jsonError(w, "too many history requests in progress", http.StatusServiceUnavailable)
+		return
+	}
+	defer s.releaseHistorySlot()
+
 	startLoad := time.Now()
 	result, err := s.store.QueryRangeFromTier(from, to, points, tierHint)
 	if err != nil {
@@ -895,7 +909,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		payload = selectHistorySections(result, sections, orderedSections)
 	}
 
-	writeJSON(w, payload)
+	writeHistoryJSON(w, payload)
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

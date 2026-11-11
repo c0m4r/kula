@@ -68,6 +68,14 @@ type Store struct {
 // below this; the cap only matters if writes stall while reads keep arriving.
 const maxQueryCacheEntries = 256
 
+// maxQueryCacheSamples bounds the samples held across all query-cache entries.
+// A result is up to several thousand buckets of whole Data, Min and Max
+// samples, tens of megabytes on a large host, and every distinct request
+// makes an entry of its own, so the entry cap alone bounds nothing: a client
+// varying the end of a long window would otherwise keep one cached per
+// request for a whole resolution. A result that does not fit is not cached.
+const maxQueryCacheSamples = 2000
+
 // maxAggBufferFactor bounds the in-memory aggregation buffers at this multiple
 // of their tier ratio. A buffer holds one contiguous run of one window, about
 // ratio records, so this never trips in healthy operation, nor when collection
@@ -821,10 +829,14 @@ func preferBudgetedPartial(candidates []queryTierCandidate) {
 
 // cacheHistoryResult caches a copy of result for one tier-0 resolution, unless
 // a write since the query was planned (generation) has already invalidated
-// what it was read from. The cap is a safety bound: when it is reached,
-// expired entries are swept first and, failing that, nothing is cached rather
-// than letting the map grow without limit.
+// what it was read from. The caps are safety bounds: when the entries or their
+// samples (maxQueryCacheSamples) would exceed them, expired entries are swept
+// first and, failing that, nothing is cached rather than letting the cache
+// grow without limit.
 func (s *Store) cacheHistoryResult(key queryCacheKey, generation uint64, result *HistoryResult) {
+	if len(result.Samples) > maxQueryCacheSamples {
+		return
+	}
 	cached := cloneHistoryResult(result)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -833,10 +845,20 @@ func (s *Store) cacheHistoryResult(key queryCacheKey, generation uint64, result 
 	}
 	s.queryCacheMu.Lock()
 	defer s.queryCacheMu.Unlock()
-	if len(s.queryCache) >= maxQueryCacheEntries {
+	fits := func() bool {
+		if len(s.queryCache) >= maxQueryCacheEntries {
+			return false
+		}
+		samples := len(cached.Samples)
+		for _, entry := range s.queryCache {
+			samples += len(entry.result.Samples)
+		}
+		return samples <= maxQueryCacheSamples
+	}
+	if !fits() {
 		s.sweepQueryCacheLocked(time.Now(), 0)
 	}
-	if len(s.queryCache) < maxQueryCacheEntries {
+	if fits() {
 		s.queryCache[key] = queryCacheEntry{
 			result:    cached,
 			expiresAt: time.Now().Add(s.queryCacheTTL),
