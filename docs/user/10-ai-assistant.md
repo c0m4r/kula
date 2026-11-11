@@ -52,7 +52,7 @@ Kula proxies to Ollama through a hardened endpoint (`/api/ollama/*`). The proxy:
 - **Runs only offered models** — a chat uses the configured `model` or one the backend lists
   in the model selector; any other name falls back to the configured model.
 - **Rate-limits** — 10 chat requests per IP per minute; 60 metadata (model list/context)
-  requests per IP per minute.
+  requests per IP per minute; at most 4 chats answered at once, from all clients together.
 - **Caps bodies & responses** — chat request body max 32 KB; Ollama response stream max 10 MB.
 - **Limits the tool loop** — at most 5 rounds of up to 8 `get_metrics` calls per chat turn.
 - **Stays on the configured address** — `ollama.url` must be loopback, and a redirect from it

@@ -416,6 +416,49 @@ func TestHandleOllamaChatRunsOnlyListedModels(t *testing.T) {
 	}
 }
 
+// TestHandleOllamaChatCapsConcurrentChats: at most ollamaMaxChats chats
+// stream at once, server-wide; one more is answered 429 until a chat ends.
+func TestHandleOllamaChatCapsConcurrentChats(t *testing.T) {
+	arrived, release := make(chan struct{}, 2*ollamaMaxChats), make(chan struct{})
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived <- struct{}{}
+		<-release
+		_, _ = fmt.Fprintln(w, `{"message":{"content":"ok"},"done":true}`)
+	}))
+	defer mock.Close()
+	srv := &Server{ollama: newOllamaClient(config.OllamaConfig{Enabled: true, URL: mock.URL, Model: "llama3", Timeout: "10s"})}
+	chat := func() *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		srv.handleOllamaChat(rr, httptest.NewRequest(http.MethodPost, "/api/ollama/chat", strings.NewReader(`{"prompt":"x"}`)))
+		return rr
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < ollamaMaxChats; i++ {
+		wg.Go(func() {
+			if rr := chat(); !strings.Contains(rr.Body.String(), "ok") {
+				t.Errorf("a chat within the cap got %d %q", rr.Code, rr.Body.String())
+			}
+		})
+		<-arrived
+	}
+	extra := make(chan *httptest.ResponseRecorder, 1)
+	go func() { extra <- chat() }()
+	select {
+	case rr := <-extra:
+		if rr.Code != http.StatusTooManyRequests {
+			t.Errorf("chat %d while %d stream: %d %q, want 429", ollamaMaxChats+1, ollamaMaxChats, rr.Code, rr.Body.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Errorf("chat %d reached the backend while %d streamed", ollamaMaxChats+1, ollamaMaxChats)
+	}
+	close(release)
+	wg.Wait()
+	if rr := chat(); rr.Code != http.StatusOK {
+		t.Errorf("chat after the others ended: %d %q", rr.Code, rr.Body.String())
+	}
+}
+
 func TestOllamaModelNameRe(t *testing.T) {
 	good := []string{
 		"llama3",

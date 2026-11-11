@@ -48,6 +48,8 @@ const (
 	ollamaMaxResponse = 10 * 1024 * 1024 // 10 MB
 	// ollamaChatRateLimit is the max chat requests per IP per minute.
 	ollamaChatRateLimit = 10
+	// ollamaMaxChats is the max chats streaming at once, server-wide.
+	ollamaMaxChats = 4
 	// ollamaMetaRateLimit is the max /models + /context requests per IP per minute.
 	ollamaMetaRateLimit = 60
 	// ollamaMaxToolRounds is the maximum number of tool-call iterations.
@@ -134,7 +136,21 @@ type ollamaClient struct {
 	mu          sync.RWMutex
 	detectedAPI string          // "ollama" or "openai"; empty until first successful probe
 	models      map[string]bool // the backend's last model listing; nil until one succeeds
+	chats       chan struct{}   // one token per chat in progress, ollamaMaxChats at most
 }
+
+// startChat takes a chat slot, or reports that all ollamaMaxChats are in use.
+// A taken slot is returned with endChat.
+func (oc *ollamaClient) startChat() bool {
+	select {
+	case oc.chats <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (oc *ollamaClient) endChat() { <-oc.chats }
 
 // effectiveAPIType returns the detected API flavour, defaulting to "ollama" before detection.
 func (oc *ollamaClient) effectiveAPIType() string {
@@ -159,7 +175,7 @@ func newOllamaClient(cfg config.OllamaConfig) *ollamaClient {
 		d = ollamaDefaultTimeout
 	}
 	log.Printf("[Ollama] client ready: url=%s model=%s timeout=%s (API auto-detect)", cfg.URL, cfg.Model, d)
-	return &ollamaClient{cfg: cfg, timeout: d}
+	return &ollamaClient{cfg: cfg, timeout: d, chats: make(chan struct{}, ollamaMaxChats)}
 }
 
 // ---- Ollama API types --------------------------------------------------------
@@ -344,6 +360,13 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
+	// A chat holds the backend for up to ollamaMaxToolRounds timeouts; the
+	// per-address limit alone would let a few addresses keep it busy.
+	if !s.ollama.startChat() {
+		jsonError(w, "too many AI chats in progress", http.StatusTooManyRequests)
+		return
+	}
+	defer s.ollama.endChat()
 
 	r.Body = http.MaxBytesReader(w, r.Body, ollamaMaxBody)
 	var req chatRequest
