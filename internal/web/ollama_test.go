@@ -406,6 +406,71 @@ func TestOllamaStreamChat_ToolLoop(t *testing.T) {
 	}
 }
 
+// openAICompatServer answers /v1/chat/completions with the given SSE frames,
+// each sent as one "data:" line, then [DONE].
+func openAICompatServer(t *testing.T, frames ...string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range frames {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", f)
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+}
+
+// newOpenAICompatClient returns a client already detected as OpenAI-compatible.
+func newOpenAICompatClient(url string) *ollamaClient {
+	oc := newOllamaClient(config.OllamaConfig{Enabled: true, URL: url, Model: "m1", Timeout: "5s"})
+	oc.detectedAPI = "openai"
+	return oc
+}
+
+// TestOpenAIToolCallIndices: a tool-call fragment's index only groups the
+// fragments of one call. A negative index names no call (it used to panic the
+// handler), and sparse indices give that many calls in order, none empty.
+func TestOpenAIToolCallIndices(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		calls string
+		want  []string
+	}{
+		{"negative", `[{"index":-1,"id":"x","function":{"name":"get_metrics","arguments":"{}"}}]`, nil},
+		{"negative beside a valid one", `[{"index":-1,"id":"x","function":{"name":"bogus","arguments":"{}"}},
+			{"index":0,"id":"a","function":{"name":"get_metrics","arguments":"{}"}}]`, []string{"a"}},
+		{"sparse", `[{"index":5,"id":"b","function":{"name":"get_metrics","arguments":"{}"}},
+			{"index":0,"id":"a","function":{"name":"get_metrics","arguments":"{}"}}]`, []string{"a", "b"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			frame := `{"choices":[{"delta":{"tool_calls":` + strings.ReplaceAll(tt.calls, "\n", "") +
+				`},"finish_reason":"tool_calls"}]}`
+			mock := openAICompatServer(t, frame)
+			defer mock.Close()
+			oc := newOpenAICompatClient(mock.URL)
+			rec := httptest.NewRecorder()
+			calls, err := oc.doStreamRound(context.Background(), "m1", []ollamaMessage{{Role: "user", Content: "hi"}},
+				[]ollamaToolDef{metricsToolDef()}, rec, rec, false)
+			if err != nil {
+				t.Fatalf("doStreamRound: %v", err)
+			}
+			var ids []string
+			for _, c := range calls {
+				if c.Function.Name != "get_metrics" {
+					t.Errorf("call %+v has the wrong name", c)
+				}
+				ids = append(ids, c.ID)
+			}
+			if fmt.Sprint(ids) != fmt.Sprint(tt.want) {
+				t.Errorf("tool calls %v, want %v", ids, tt.want)
+			}
+		})
+	}
+}
+
 // ---- Tool data formatting -------------------------------------------------
 
 func mkSample(cpuUsage float64) *storage.AggregatedSample {

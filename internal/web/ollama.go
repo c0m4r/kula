@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -618,10 +619,16 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 			finishReason = *choice.FinishReason
 		}
 		for _, tc := range choice.Delta.ToolCalls {
-			if _, ok := accumMap[tc.Index]; !ok {
-				accumMap[tc.Index] = &toolCallAccum{}
+			// The index names the call a fragment belongs to; a negative one
+			// names none.
+			if tc.Index < 0 {
+				continue
 			}
-			a := accumMap[tc.Index]
+			a, ok := accumMap[tc.Index]
+			if !ok {
+				a = &toolCallAccum{}
+				accumMap[tc.Index] = a
+			}
 			if tc.ID != "" {
 				a.id = tc.ID
 			}
@@ -648,17 +655,23 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 		return nil, scanner.Err()
 	}
 
-	toolCalls := make([]ollamaToolCall, len(accumMap))
-	for i, a := range accumMap {
-		if i < len(toolCalls) {
-			toolCalls[i] = ollamaToolCall{
-				ID: a.id,
-				Function: ollamaCallFunc{
-					Name:      a.name,
-					Arguments: json.RawMessage(a.args.String()),
-				},
-			}
-		}
+	// Calls in index order. The indices need not be dense: the backend's
+	// numbering only groups fragments.
+	indices := make([]int, 0, len(accumMap))
+	for i := range accumMap {
+		indices = append(indices, i)
+	}
+	sort.Ints(indices)
+	toolCalls := make([]ollamaToolCall, 0, len(indices))
+	for _, i := range indices {
+		a := accumMap[i]
+		toolCalls = append(toolCalls, ollamaToolCall{
+			ID: a.id,
+			Function: ollamaCallFunc{
+				Name:      a.name,
+				Arguments: json.RawMessage(a.args.String()),
+			},
+		})
 	}
 	if debugLog {
 		log.Printf("[DEBUG] [Ollama/OpenAI] %d tool call(s) requested", len(toolCalls))
