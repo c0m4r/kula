@@ -1,0 +1,32 @@
+# Build context of addons/docker/Dockerfile, which addons/docker/build.sh and
+# the push scripts send from the repository root. The image needs the Go module
+# and its sources, VERSION and config.example.yaml; keep out history, local
+# data, configs, builds and everything else that is not part of the build.
+.git
+.github
+.claude
+.scratch
+.idea
+.vscode
+reviews
+landing
+dist
+data
+/config.yaml
+/kula
+/kula-*
+/gen-mock-data
+*.snap
+build_appimage
+build_deb
+build_rpm
+parts
+stage
+prime
+addons/ansible/hosts
+addons/ansible/roles/kula/files/kula*
+**/node_modules
+**/__pycache__
+**/.mypy_cache
+**/.~lock*
+*.bak

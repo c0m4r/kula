@@ -68,6 +68,11 @@ The image is a two-stage build ([`addons/docker/Dockerfile`](../../addons/docker
   owns `/app`, the binary and `/app/config.yaml` (`root:kula 0640`), so Kula cannot replace
   them; only `/app/data` (`kula:kula 0750`) is Kula's.
 
+The build context is the repository root (`build.sh` and the push scripts send `.`), and
+[`.dockerignore`](../../.dockerignore) keeps out what the build does not need: `.git`,
+`.claude`, `.scratch`, `dist`, `reviews`, `landing`, `node_modules`, local data, configs and
+binaries. The image needs only the Go module, `VERSION` and `config.example.yaml`.
+
 ```bash
 ./addons/docker/build.sh
 docker compose -f addons/docker/docker-compose.yml up -d

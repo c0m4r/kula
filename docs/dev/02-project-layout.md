@@ -66,6 +66,7 @@ kula/
 ├── AGENTS.md               # Instructions for AI agents (commands + invariants)
 ├── SECURITY.md             # Security policy
 ├── LICENSE                 # GNU AGPLv3
+├── .dockerignore           # Keeps history and local files out of the Docker build context
 └── .github/                # CI workflows, issue/PR templates, governance
 ```
 
