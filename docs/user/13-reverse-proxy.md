@@ -88,7 +88,9 @@ web:
   trust_proxy: true          # a socket peer has no address: tell clients apart by X-Forwarded-For
 ```
 
-When `unix_socket` is set, the TCP listener is **not** opened. Without `trust_proxy` every
+When `unix_socket` is set, the TCP listener is **not** opened. If `unix_socket_mode` cannot be
+applied to the socket, Kula removes it and refuses to start rather than serve a socket with
+other permissions. Without `trust_proxy` every
 client shares one login rate limit, so a few wrong passwords from anyone lock everyone out
 (Kula warns about this at startup). Point nginx at the socket:
 

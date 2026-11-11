@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"html"
 	"log"
 	"math"
@@ -123,6 +124,32 @@ func TestCreateUnixListener(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm != 0660 {
 		t.Fatalf("expected mode 0660, got %#o", perm)
+	}
+}
+
+// A socket whose mode cannot be set is not served: it may admit clients
+// unix_socket_mode was meant to keep out.
+func TestCreateUnixListenerFailsWhenModeCannotBeSet(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "kula.sock")
+	chmodErr := errors.New("chmod refused")
+	original := chmodUnixSocket
+	chmodUnixSocket = func(string, os.FileMode) error { return chmodErr }
+	t.Cleanup(func() { chmodUnixSocket = original })
+
+	ln, err := createUnixListener(sock, "0660")
+	if err == nil {
+		_ = ln.Close()
+		t.Fatal("createUnixListener served a socket whose mode could not be set")
+	}
+	if !errors.Is(err, chmodErr) {
+		t.Errorf("error %v does not carry the chmod failure", err)
+	}
+	if _, err := os.Stat(sock); !os.IsNotExist(err) {
+		t.Errorf("socket file left behind after the chmod failure, stat err=%v", err)
+	}
+	if conn, err := net.DialTimeout("unix", sock, time.Second); err == nil {
+		_ = conn.Close()
+		t.Error("the socket still accepts connections")
 	}
 }
 

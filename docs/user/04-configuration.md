@@ -234,7 +234,8 @@ Key points:
 - **`base_path`** serves *every* route (UI, API, WebSocket, `/metrics`, `/health`) under a
   prefix — for reverse proxies that forward the prefix intact. See
   [Reverse Proxy & TLS](13-reverse-proxy.md).
-- **`unix_socket`** replaces the TCP listener — ideal behind a local nginx.
+- **`unix_socket`** replaces the TCP listener — ideal behind a local nginx. If the socket's
+  permissions cannot be set to `unix_socket_mode`, Kula removes it and does not start.
 - **`max_websocket_conns`** and **`max_websocket_conns_per_ip`** cap live dashboard
   connections; each must be at least 1 while the web server is enabled.
 - **`trust_proxy`** believes two headers from a reverse proxy: `X-Forwarded-Proto: https`

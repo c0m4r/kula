@@ -25,7 +25,8 @@ a shared middleware chain.
 - **Dual-stack TCP** (IPv4 + IPv6) on `web.listen:web.port`, or
 - a **Unix domain socket** at `web.unix_socket` (with `unix_socket_mode`), in which case the TCP
   listener is not opened. Stale sockets are safely removed first (after confirming nothing is
-  listening).
+  listening). A socket whose mode cannot be set is closed (which removes it) and `Start` fails:
+  left at the umask's mode it could admit clients `unix_socket_mode` keeps out.
 
 `Server.Shutdown(ctx)` saves sessions to disk and gracefully stops the HTTP server (called with
 a 5-second timeout on `SIGINT`/`SIGTERM`).

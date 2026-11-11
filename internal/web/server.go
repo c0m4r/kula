@@ -761,12 +761,19 @@ func createUnixListener(path, mode string) (net.Listener, error) {
 		_ = ln.Close()
 		return nil, fmt.Errorf("invalid unix_socket_mode %q (expected octal like \"0660\"): %w", mode, err)
 	}
-	if err := os.Chmod(path, os.FileMode(m)); err != nil {
-		log.Printf("Warning: chmod %s to %#o: %v", path, m, err)
+	// Fail closed: a socket left at the mode the umask gave it may admit
+	// clients unix_socket_mode was set to keep out. Closing the listener
+	// removes the socket file.
+	if err := chmodUnixSocket(path, os.FileMode(m)); err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("setting unix_socket_mode %#o on %s: %w", m, path, err)
 	}
 
 	return ln, nil
 }
+
+// chmodUnixSocket sets the socket file's mode; tests replace it to fail.
+var chmodUnixSocket = os.Chmod
 
 // removeStaleUnixSocket removes a leftover socket file from a previous run.
 // It refuses to remove the file if another process is actively listening on
