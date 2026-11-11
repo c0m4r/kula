@@ -36,7 +36,7 @@ Lifecycle:
 | [`gpu_nvidia.go`](../../internal/collector/gpu_nvidia.go) | `nvidia.log` (CSV, atomic read) | NVIDIA temp/load/power/VRAM |
 | [`gpu_sysfs.go`](../../internal/collector/gpu_sysfs.go) | sysfs | AMD/Intel temp/power/VRAM/load |
 | [`psu.go`](../../internal/collector/psu.go) | `/sys/class/power_supply` ([`cadence.go`](../../internal/collector/cadence.go)) | battery/PSU status every `power_supply_interval` |
-| [`containers.go`](../../internal/collector/containers.go) | Docker/Podman socket + cgroups v2 | per-container CPU/mem/net/disk; a container is inspected for its PID once, kept while `/proc/<pid>/cgroup` still names it, and its state dropped when it leaves the list; the list is stream-decoded up to 64 MiB (about 25,000 containers), and a failure to read it is logged when it changes |
+| [`containers.go`](../../internal/collector/containers.go) | Docker/Podman socket + cgroups v2 | per-container CPU/mem/net/disk; a container is inspected for its PID once, kept while `/proc/<pid>/cgroup` still names it, and its state dropped when it leaves the list; the list is stream-decoded up to 64 MiB (about 25,000 containers), and a failure to read it is logged when it changes. See [Containers](#containers) |
 | [`nginx.go`](../../internal/collector/nginx.go) | stub_status | connections, accepts/handled/requests rates |
 | [`apache2.go`](../../internal/collector/apache2.go) | mod_status | workers, scoreboard, rates |
 | [`postgres.go`](../../internal/collector/postgres.go) | `lib/pq`, `pg_stat_*` | connections, txns, tuples, I/O, locks, size, replication; table health and size once a minute |
@@ -125,6 +125,32 @@ API and WebSocket payloads.
   `postgres_test.go` counts the queries of two minutes of polls against a fake server.
 - **Debug logging** goes through the `debugf` helper, gated by `collection.DebugLog` (which is
   set when `web.logging.level == "debug"`).
+
+## Containers
+
+A container runtime, and in cgroups mode whoever can create a cgroup, chooses what this
+collector reads, and the TUI often runs it as root. So:
+
+- **Every ID is a full container ID**, 64 lowercase hex digits (`isContainerID`), whether the
+  runtime listed it or a cgroup directory is named after it. IDs become part of the inspect URL
+  and of cgroup paths, so none can carry a path, control characters or markup, and two
+  containers cannot share a 12-character short ID. Running containers listed with another ID
+  are skipped, and their number is logged when it changes.
+- **Auto-detection tries only Kula's own rootless socket.** Another user's rootless Podman
+  would choose the containers, IDs and PIDs a root Kula reads; it takes an explicit
+  `socket_path`. `ContainerSocketPaths` is the one list the collector and the sandbox share.
+- **Cgroups mode counts only cgroups a runtime made.** systemd delegates
+  `user.slice/user-<uid>.slice/user@<uid>.service` to each logged-in user (and a service's
+  subtree to its user with `Delegate=yes`), who can create any directory there. A directory
+  counts only when it is named after a full ID, is a directory rather than a link, and is owned
+  by root or by Kula's own user (`runtimeOwned`); the rootful Quadlet patterns skip
+  `user.slice`, and the rootless one searches Kula's own user manager only. The socket-mode
+  fallback (`findCgroupDir`) applies the same rule.
+- **At most `maxContainers` (1,024) per sample.** Each adds about 66 bytes to every stored
+  record. Past the cap, the containers whose names (IDs in cgroups mode) sort first are kept, so
+  the set stays stable, and the cut is logged when it changes.
+- **Files are read bounded** (`readBoundedFile`): at most 1 MiB, without following a final
+  symbolic link or waiting on a FIFO, and only from a regular file.
 
 ## Auto-discovery overrides
 

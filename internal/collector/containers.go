@@ -2,6 +2,7 @@ package collector
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -47,6 +49,31 @@ type containerCollector struct {
 	debugDone bool   // set after first collection cycle
 	lastCount int    // previous container count; log only on change
 	listErr   string // last container-list failure logged, "" when listing works
+	badIDs    int    // containers last skipped for an ID that is not one; logged on change
+	overCap   int    // containers last left out past maxContainers; logged on change
+}
+
+// maxContainers bounds the containers one sample carries. Each adds about 66
+// bytes to every stored record, so a few thousand would shrink the history the
+// tiers hold from days to minutes. Past it, the containers whose names sort
+// first are kept, so the same ones stay from sample to sample. A variable so
+// tests can lower it.
+var maxContainers = 1024
+
+// isContainerID reports whether id is a full Docker or Podman container ID:
+// 64 lowercase hex digits. Every ID Kula collects is one, whether a runtime
+// reported it or a cgroup directory is named after it, so none can carry a
+// path, control characters or markup, and two containers cannot share one.
+func isContainerID(id string) bool {
+	if len(id) != 64 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		if c := id[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ContainersCollectorConfig is the internal config needed by the container collector.
@@ -391,49 +418,135 @@ func (cc *containerCollector) collectViaSocket(elapsed float64) []ContainerStats
 		cc.lastCount = len(containers)
 	}
 
-	var stats []ContainerStats
+	type target struct{ id, name string }
+	var targets []target
+	badIDs := 0
 	for _, c := range containers {
 		if c.State != "running" {
 			continue
 		}
-
-		// The socket may be a proxy or shim rather than a real daemon, so the
-		// ID length is not guaranteed to be the usual 64 hex characters.
-		if c.ID == "" {
+		// The ID becomes part of the inspect URL and of cgroup paths, and the
+		// socket may be a proxy, a shim or another user's daemon.
+		if !isContainerID(c.ID) {
+			badIDs++
 			continue
 		}
-		name := c.ID
-		if len(name) > 12 {
-			name = name[:12]
-		}
+		name := c.ID[:12]
 		if len(c.Names) > 0 {
-			name = strings.TrimPrefix(c.Names[0], "/")
+			name = BoundString(strings.TrimPrefix(c.Names[0], "/"))
 		}
-
 		if !cc.matchFilter(c.ID, name) {
 			continue
 		}
+		targets = append(targets, target{id: c.ID, name: name})
+	}
+	cc.reportBadIDs(badIDs)
+	targets = capContainers(cc, targets, func(t target) string { return t.name })
 
-		s := cc.collectContainerMetrics(c.ID, name, elapsed)
-		stats = append(stats, s)
+	var stats []ContainerStats
+	for _, t := range targets {
+		stats = append(stats, cc.collectContainerMetrics(t.id, t.name, elapsed))
 	}
 	return stats
 }
 
+// reportBadIDs logs, when the number changes, how many running containers the
+// runtime listed with an ID Kula does not accept (see isContainerID).
+func (cc *containerCollector) reportBadIDs(n int) {
+	if n == cc.badIDs {
+		return
+	}
+	if n > 0 {
+		log.Printf("[containers] skipping %d running containers whose IDs are not 64 hex digits", n)
+	}
+	cc.badIDs = n
+}
+
+// capContainers returns at most maxContainers of found, those whose key sorts
+// first, and logs when the number left out changes.
+func capContainers[T any](cc *containerCollector, found []T, key func(T) string) []T {
+	over := max(len(found)-maxContainers, 0)
+	if over != cc.overCap {
+		if over > 0 {
+			log.Printf("[containers] %d containers found; monitoring %d, the first by name", len(found), maxContainers)
+		} else {
+			log.Printf("[containers] %d containers found; monitoring all of them again", len(found))
+		}
+		cc.overCap = over
+	}
+	if over == 0 {
+		return found
+	}
+	slices.SortFunc(found, func(a, b T) int { return strings.Compare(key(a), key(b)) })
+	return found[:maxContainers]
+}
+
 // quadletCgroupPatterns returns the common rootful, custom-slice, and rootless
 // systemd layouts used by Podman containers running with cgroups=split.
+//
+// systemd delegates user.slice/user-<uid>.slice/user@<uid>.service to each
+// logged-in user, who can create any directory there, so the rootless layout
+// is searched for Kula's own user only, and the rootful ones never descend
+// into user.slice.
 func quadletCgroupPatterns(idPattern string) []string {
 	payload := "libpod-payload-" + idPattern
-	return []string{
-		// Rootful/default: system.slice/<unit>.service/libpod-payload-<id>
-		filepath.Join(cgroupRoot, "*.slice", "*.service", payload),
-		// Rootful service placed in a nested custom slice.
-		filepath.Join(cgroupRoot, "*.slice", "*.slice", "*.service", payload),
-		// Rootless/default: user.slice/user-<uid>.slice/user@<uid>.service/
-		// app.slice/<unit>.service/libpod-payload-<id>. The *.slice component
-		// also permits a custom user slice.
-		filepath.Join(cgroupRoot, "user.slice", "user-*.slice", "user@*.service", "*.slice", "*.service", payload),
+	var patterns []string
+	for _, slice := range systemSlices() {
+		patterns = append(patterns,
+			// Rootful/default: system.slice/<unit>.service/libpod-payload-<id>
+			filepath.Join(slice, "*.service", payload),
+			// Rootful service placed in a nested custom slice.
+			filepath.Join(slice, "*.slice", "*.service", payload),
+		)
 	}
+	// Rootless/default: user.slice/user-<uid>.slice/user@<uid>.service/
+	// app.slice/<unit>.service/libpod-payload-<id>. The *.slice component
+	// also permits a custom user slice.
+	uid := strconv.Itoa(os.Geteuid())
+	return append(patterns,
+		filepath.Join(cgroupRoot, "user.slice", "user-"+uid+".slice", "user@"+uid+".service", "*.slice", "*.service", payload))
+}
+
+// systemSlices lists the top-level slices except user.slice, whose subtrees
+// belong to the users logged in.
+func systemSlices() []string {
+	entries, err := os.ReadDir(cgroupRoot)
+	if err != nil {
+		return nil
+	}
+	var slices []string
+	for _, entry := range entries {
+		if name := entry.Name(); entry.IsDir() && strings.HasSuffix(name, ".slice") && name != "user.slice" {
+			slices = append(slices, filepath.Join(cgroupRoot, name))
+		}
+	}
+	return slices
+}
+
+// runtimeOwned reports whether dir is a directory, not a link, owned by root
+// or by Kula's own user. The runtimes Kula monitors create their cgroups as
+// one of those; a cgroup another user owns sits in a subtree delegated to
+// them (a user manager, a service with Delegate=yes), where they can create
+// any directory they like.
+func runtimeOwned(dir string) bool {
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && (stat.Uid == 0 || int(stat.Uid) == os.Geteuid())
+}
+
+// containerIDFromCgroup returns what a cgroup directory name says the
+// container ID is: docker-<id>.scope, libpod-<id>.scope or
+// libpod-payload-<id>. The caller checks that it is one (isContainerID).
+func containerIDFromCgroup(base string) string {
+	for _, prefix := range []string{"docker-", "libpod-payload-", "libpod-"} {
+		if id, ok := strings.CutPrefix(base, prefix); ok {
+			return strings.TrimSuffix(id, ".scope")
+		}
+	}
+	return base
 }
 
 // collectViaCgroups enumerates container cgroup directories without API socket.
@@ -446,7 +559,8 @@ func (cc *containerCollector) collectViaCgroups(elapsed float64) []ContainerStat
 	}
 	patterns = append(patterns, quadletCgroupPatterns("*")...)
 
-	var stats []ContainerStats
+	type found struct{ dir, id string }
+	var containers []found
 	seen := make(map[string]bool)
 
 	for _, pattern := range patterns {
@@ -455,32 +569,27 @@ func (cc *containerCollector) collectViaCgroups(elapsed float64) []ContainerStat
 			continue
 		}
 		for _, dir := range matches {
-			base := filepath.Base(dir)
-			// Extract the container ID from Docker/Podman scope names and
-			// Podman's split-payload cgroup name.
-			id := base
-			for _, prefix := range []string{"docker-", "libpod-payload-", "libpod-"} {
-				if strings.HasPrefix(id, prefix) {
-					id = strings.TrimPrefix(id, prefix)
-					id = strings.TrimSuffix(id, ".scope")
-					break
-				}
-			}
-			if seen[id] {
+			// The directory is named after the container's ID. Anything else
+			// matching a pattern (Podman's libpod-conmon-<id>.scope, a
+			// directory a delegated user made) is not a container.
+			id := containerIDFromCgroup(filepath.Base(dir))
+			if !isContainerID(id) || seen[id] || !runtimeOwned(dir) {
 				continue
 			}
 			seen[id] = true
+			cc.debugf("[containers] found cgroup: %s (id: %s)", filepath.Base(dir), id)
 
-			shortID := id[:minInt(12, len(id))]
-			cc.debugf("[containers] found cgroup: %s (id: %s)", base, id)
-
-			if !cc.matchFilter(id, shortID) {
+			if !cc.matchFilter(id, id[:12]) {
 				continue
 			}
-
-			s := cc.collectContainerMetricsCgroup(dir, id, shortID, elapsed)
-			stats = append(stats, s)
+			containers = append(containers, found{dir: dir, id: id})
 		}
+	}
+	containers = capContainers(cc, containers, func(f found) string { return f.id })
+
+	var stats []ContainerStats
+	for _, f := range containers {
+		stats = append(stats, cc.collectContainerMetricsCgroup(f.dir, f.id, f.id[:12], elapsed))
 	}
 	return stats
 }
@@ -556,7 +665,7 @@ func cgroupDirFromPid(pid int, id string) string {
 		return ""
 	}
 
-	data, err := os.ReadFile(filepath.Join(procPath, strconv.Itoa(pid), "cgroup"))
+	data, err := readBoundedFile(filepath.Join(procPath, strconv.Itoa(pid), "cgroup"))
 	if err != nil {
 		return ""
 	}
@@ -712,7 +821,7 @@ func (cc *containerCollector) findCgroupDir(id string) string {
 		filepath.Join(cgroupRoot, "libpod-"+id),
 	}
 	for _, path := range candidates {
-		if info, err := os.Stat(path); err == nil && info.IsDir() {
+		if runtimeOwned(path) {
 			return path
 		}
 	}
@@ -723,7 +832,7 @@ func (cc *containerCollector) findCgroupDir(id string) string {
 			continue
 		}
 		for _, path := range matches {
-			if info, err := os.Stat(path); err == nil && info.IsDir() {
+			if runtimeOwned(path) {
 				return path
 			}
 		}
@@ -733,7 +842,7 @@ func (cc *containerCollector) findCgroupDir(id string) string {
 
 // readCPUUsage reads cpu.stat and computes CPU usage percentage.
 func (cc *containerCollector) readCPUUsage(cgroupDir, id string, elapsed float64) float64 {
-	data, err := os.ReadFile(filepath.Join(cgroupDir, "cpu.stat"))
+	data, err := readBoundedFile(filepath.Join(cgroupDir, "cpu.stat"))
 	if err != nil {
 		delete(cc.prevCPU, id) // no baseline across a failed read
 		return 0
@@ -759,16 +868,14 @@ func (cc *containerCollector) readCPUUsage(cgroupDir, id string, elapsed float64
 
 // readNetIO reads network I/O for a container from /proc/<pid>/net/dev.
 func (cc *containerCollector) readNetIO(pid int, id string, elapsed float64) (rxBPS, txBPS float64) {
-	netDevPath := filepath.Join(procPath, strconv.Itoa(pid), "net/dev")
-	f, err := os.Open(netDevPath)
+	data, err := readBoundedFile(filepath.Join(procPath, strconv.Itoa(pid), "net/dev"))
 	if err != nil {
 		delete(cc.prevNet, id) // no baseline across a failed read
 		return
 	}
-	defer func() { _ = f.Close() }()
 
 	var totalRx, totalTx uint64
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
@@ -809,7 +916,7 @@ func (cc *containerCollector) readNetIO(pid int, id string, elapsed float64) (rx
 
 // readDiskIO reads io.stat from the container's cgroup.
 func (cc *containerCollector) readDiskIO(cgroupDir, id string, elapsed float64) (rBPS, wBPS float64) {
-	data, err := os.ReadFile(filepath.Join(cgroupDir, "io.stat"))
+	data, err := readBoundedFile(filepath.Join(cgroupDir, "io.stat"))
 	if err != nil {
 		delete(cc.prevDisk, id) // no baseline across a failed read
 		return
@@ -867,7 +974,7 @@ func readContainerMemory(cgroupDir string) (used, limit uint64) {
 
 // readMemStatField reads a single numeric field from a cgroup memory.stat file.
 func readMemStatField(path, field string) uint64 {
-	data, err := os.ReadFile(path)
+	data, err := readBoundedFile(path)
 	if err != nil {
 		return 0
 	}
@@ -883,7 +990,7 @@ func readMemStatField(path, field string) uint64 {
 
 // readUint64File reads a file and parses its content as uint64.
 func readUint64File(path string) uint64 {
-	data, err := os.ReadFile(path)
+	data, err := readBoundedFile(path)
 	if err != nil {
 		return 0
 	}
@@ -893,6 +1000,31 @@ func readUint64File(path string) uint64 {
 	}
 	v, _ := strconv.ParseUint(s, 10, 64)
 	return v
+}
+
+// maxContainerFileBytes bounds one read of a container's cgroup or /proc file.
+// The largest, io.stat, holds a line per block device.
+const maxContainerFileBytes = 1 << 20
+
+// readBoundedFile reads at most maxContainerFileBytes of the regular file at
+// path, without following a final symbolic link or waiting on a FIFO. The
+// paths come from what a runtime reports about its containers, and the TUI
+// reads them as root: none may make Kula hang, follow a link out of cgroupfs
+// or /proc, or read without end.
+func readBoundedFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return io.ReadAll(io.LimitReader(f, maxContainerFileBytes))
 }
 
 func minInt(a, b int) int {

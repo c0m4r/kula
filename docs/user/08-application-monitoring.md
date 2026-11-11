@@ -97,7 +97,11 @@ applications:
   **names**, and handles plain Docker/Podman scopes as well as Podman Quadlet units, rootless
   services and custom slices.
 - **`cgroups`** — fallback when no socket is reachable; metrics only, no name mapping. Scans
-  Docker, Podman and Podman Quadlet cgroup layouts.
+  Docker, Podman and Podman Quadlet cgroup layouts. A cgroup counts as a container only when it
+  is named after a full container ID (64 hex digits) and owned by root or by the user Kula runs
+  as: systemd gives every logged-in user a cgroup subtree of their own, where they can create
+  any directory, so another user's rootless containers are not counted, and no user can make
+  up containers to fill your history.
 - **`none`** — neither a runtime socket nor a cgroups v2 tree was found; container monitoring
   stays disabled.
 
@@ -108,6 +112,10 @@ rootless socket is never picked automatically, even for a Kula running as root: 
 Podman would decide which containers and processes Kula reads. To monitor it, run Kula as that
 user, or, as root, set `socket_path` to it explicitly. Set it explicitly for any other location
 too. Leave the `containers` filter empty to monitor all running containers.
+
+Kula collects only containers whose runtime reports a full container ID (64 hex digits), and at
+most 1,024 per sample: past that, the ones whose names sort first. A name longer than 255 bytes
+is shortened to its start, `…` and a short hash.
 
 **Metrics:** per-container CPU%, memory used/limit/%, network RX/TX bytes/s, disk read/write
 bytes/s. Each metric type gets its own multi-series chart (CPU, memory, network RX, network TX,

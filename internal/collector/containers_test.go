@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -24,7 +25,7 @@ func TestContainerCollector(t *testing.T) {
 	cgroupRoot, procPath = t.TempDir(), t.TempDir()
 	defer func() { cgroupRoot, procPath = origRoot, origProc }()
 
-	const id = "c1234567890abcdef"
+	id := strings.Repeat("c1", 32)
 	cgroupRel := filepath.Join("system.slice", "test.service", "libpod-payload-"+id)
 	cgroupDir := filepath.Join(cgroupRoot, cgroupRel)
 	if err := os.MkdirAll(cgroupDir, 0o755); err != nil {
@@ -342,10 +343,11 @@ func TestCollectViaCgroupsDiscoversQuadlets(t *testing.T) {
 	rootfulID := strings.Repeat("a", 64)
 	rootlessID := strings.Repeat("b", 64)
 	scopeID := strings.Repeat("c", 64)
+	uid := strconv.Itoa(os.Geteuid())
 	for _, dir := range []string{
 		filepath.Join(cgroupRoot, "system.slice", "rootful.service", "libpod-payload-"+rootfulID),
 		filepath.Join(
-			cgroupRoot, "user.slice", "user-1000.slice", "user@1000.service",
+			cgroupRoot, "user.slice", "user-"+uid+".slice", "user@"+uid+".service",
 			"app.slice", "rootless.service", "libpod-payload-"+rootlessID,
 		),
 		filepath.Join(cgroupRoot, "system.slice", "libpod-"+scopeID+".scope"),
@@ -375,10 +377,17 @@ func TestCollectViaCgroupsDiscoversQuadlets(t *testing.T) {
 	}
 }
 
-// A socket proxy or shim can return IDs that are not the usual 64 hex
-// characters; short or empty ones must not panic the collector goroutine.
-func TestCollectViaSocketShortContainerID(t *testing.T) {
+// The runtime's container IDs become part of the inspect URL and of cgroup
+// paths, and the socket may be a proxy, a shim or another user's daemon. Only
+// full 64-hex IDs are collected; short, empty and path-like ones are skipped
+// without panicking the collector goroutine.
+func TestCollectViaSocketSkipsInvalidContainerIDs(t *testing.T) {
+	origRoot := cgroupRoot
+	cgroupRoot = t.TempDir()
+	defer func() { cgroupRoot = origRoot }()
+
 	sockPath := filepath.Join(t.TempDir(), "short_id.sock")
+	valid := strings.Repeat("9", 64)
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -392,7 +401,10 @@ func TestCollectViaSocketShortContainerID(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, `[`+
 				`{"Id":"abc","Names":[],"State":"running"},`+
-				`{"Id":"","Names":[],"State":"running"}`+
+				`{"Id":"","Names":[],"State":"running"},`+
+				`{"Id":"../../../../home/u/x","Names":["/traversal"],"State":"running"},`+
+				`{"Id":"`+strings.Repeat("A", 64)+`","Names":["/upper"],"State":"running"},`+
+				`{"Id":"`+valid+`","Names":[],"State":"running"}`+
 				`]`)
 		})
 		server := http.Server{Handler: mux}
@@ -414,10 +426,13 @@ func TestCollectViaSocketShortContainerID(t *testing.T) {
 	}
 
 	if len(stats) != 1 {
-		t.Fatalf("got %d stats, want 1 (the empty ID must be skipped)", len(stats))
+		t.Fatalf("got %d stats, want only the container with a 64-hex ID: %+v", len(stats), stats)
 	}
-	if stats[0].Name != "abc" {
-		t.Errorf("Name = %q, want %q", stats[0].Name, "abc")
+	if stats[0].ID != valid[:12] || stats[0].Name != valid[:12] {
+		t.Errorf("collected %+v, want ID and name %q", stats[0], valid[:12])
+	}
+	if cc.badIDs != 4 {
+		t.Errorf("badIDs = %d, want the 4 invalid IDs counted", cc.badIDs)
 	}
 }
 
@@ -599,5 +614,197 @@ func TestDecodeContainerListPastTheOldCap(t *testing.T) {
 	maxContainerListBytes = int64(len(exact))
 	if got, err := decodeContainerList(strings.NewReader(exact)); err != nil || len(got) != 1 {
 		t.Fatalf("list exactly at the cap: %v, %v", got, err)
+	}
+}
+
+// Cgroups mode treats a directory as a container only when it is named after
+// a full container ID, is a real directory, and is owned by root or Kula's own
+// user. systemd delegates each user manager's subtree (and any service's with
+// Delegate=yes) to its user, who could otherwise plant any number of
+// "containers" with chosen names and erase the history their bytes displace.
+func TestCgroupDiscoveryIgnoresPlantedDirectories(t *testing.T) {
+	origRoot := cgroupRoot
+	cgroupRoot = t.TempDir()
+	defer func() { cgroupRoot = origRoot }()
+
+	real := strings.Repeat("a", 64)
+	other := strconv.Itoa(os.Geteuid() + 1)
+	otherManager := filepath.Join(cgroupRoot, "user.slice", "user-"+other+".slice", "user@"+other+".service")
+	for _, dir := range []string{
+		filepath.Join(cgroupRoot, "system.slice", "docker-"+real+".scope"),
+		// Another user's manager: the rootless layout, and a payload straight
+		// under the manager, which the rootful nested-slice pattern once matched.
+		filepath.Join(otherManager, "app.slice", "x.service", "libpod-payload-"+strings.Repeat("b", 64)),
+		filepath.Join(otherManager, "libpod-payload-"+strings.Repeat("c", 64)),
+		// Not a container ID.
+		filepath.Join(cgroupRoot, "system.slice", "x.service", "libpod-payload-\x1b]0;owned\a<img onerror=1>"),
+		filepath.Join(cgroupRoot, "system.slice", "docker-abc.scope"),
+		filepath.Join(cgroupRoot, "system.slice", "docker-"+strings.Repeat("D", 64)+".scope"),
+		filepath.Join(cgroupRoot, "machine.slice", "libpod-conmon-"+strings.Repeat("e", 64)+".scope"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A link where a scope would be.
+	if err := os.Symlink(t.TempDir(), filepath.Join(cgroupRoot, "system.slice", "docker-"+strings.Repeat("f", 64)+".scope")); err != nil {
+		t.Fatal(err)
+	}
+
+	cc := &containerCollector{
+		prevCPU:  make(map[string]containerCPURaw),
+		prevDisk: make(map[string]containerDiskRaw),
+	}
+	stats := cc.collectViaCgroups(1)
+	if len(stats) != 1 || stats[0].ID != real[:12] {
+		t.Fatalf("discovered %+v, want only the root- or self-owned scope %s", stats, real[:12])
+	}
+
+	// The same rule holds when socket mode falls back to searching for a
+	// container's cgroup by ID.
+	for _, id := range []string{strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("f", 64)} {
+		if dir := cc.findCgroupDir(id); dir != "" {
+			t.Errorf("findCgroupDir(%s…) = %q, want nothing", id[:4], dir)
+		}
+	}
+	if dir := cc.findCgroupDir(real); dir == "" {
+		t.Error("findCgroupDir lost the real scope")
+	}
+}
+
+// Past maxContainers, the containers whose names sort first are kept, so the
+// same ones stay from sample to sample, and the cut is logged when it changes.
+func TestContainersPerSampleAreCapped(t *testing.T) {
+	origRoot, origMax := cgroupRoot, maxContainers
+	cgroupRoot, maxContainers = t.TempDir(), 3
+	defer func() { cgroupRoot, maxContainers = origRoot, origMax }()
+
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	defer log.SetOutput(os.Stderr)
+
+	var ids []string
+	for _, digit := range []string{"5", "1", "4", "2", "3"} {
+		id := strings.Repeat(digit, 64)
+		ids = append(ids, id)
+		if err := os.MkdirAll(filepath.Join(cgroupRoot, "system.slice", "docker-"+id+".scope"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cc := &containerCollector{
+		prevCPU:  make(map[string]containerCPURaw),
+		prevDisk: make(map[string]containerDiskRaw),
+	}
+	stats := cc.collectViaCgroups(1)
+	var got []string
+	for _, s := range stats {
+		got = append(got, s.ID[:1])
+	}
+	if strings.Join(got, "") != "123" {
+		t.Fatalf("kept %v, want the three IDs that sort first", got)
+	}
+	if !strings.Contains(logged.String(), "5 containers found; monitoring 3") {
+		t.Errorf("the cut was not logged: %q", logged.String())
+	}
+
+	for _, id := range ids[:2] {
+		if err := os.Remove(filepath.Join(cgroupRoot, "system.slice", "docker-"+id+".scope")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logged.Reset()
+	if stats := cc.collectViaCgroups(1); len(stats) != 3 {
+		t.Fatalf("3 containers under the cap: kept %d", len(stats))
+	}
+	if !strings.Contains(logged.String(), "monitoring all of them again") {
+		t.Errorf("the end of the cut was not logged: %q", logged.String())
+	}
+}
+
+// A container name from the runtime is bounded to what storage keeps, and the
+// cap keeps the names that sort first.
+func TestSocketContainerNamesAreBounded(t *testing.T) {
+	origRoot, origMax := cgroupRoot, maxContainers
+	cgroupRoot, maxContainers = t.TempDir(), 2
+	defer func() { cgroupRoot, maxContainers = origRoot, origMax }()
+
+	long := "/" + strings.Repeat("n", 32<<10)
+	sockPath := filepath.Join(t.TempDir(), "docker.sock")
+	listener, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/containers/json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, `[{"Id":%q,"Names":["/web"],"State":"running"},`+
+			`{"Id":%q,"Names":[%q],"State":"running"},`+
+			`{"Id":%q,"Names":["/zz"],"State":"running"}]`,
+			strings.Repeat("1", 64), strings.Repeat("2", 64), long, strings.Repeat("3", 64))
+	})
+	server := http.Server{Handler: mux}
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
+
+	cc := newContainerCollector(ContainersCollectorConfig{Enabled: true, SocketPath: sockPath})
+	cc.socket = sockPath
+	cc.mode = containerModeSocket
+	cc.collect()
+	stats := cc.Latest()
+	if len(stats) != 2 {
+		t.Fatalf("kept %d containers, want 2: %+v", len(stats), stats)
+	}
+	if want := BoundString(long[1:]); stats[0].Name != want || len(stats[0].Name) > MaxStoredString {
+		t.Errorf("long name kept as %d bytes, want it bounded to %d", len(stats[0].Name), len(want))
+	}
+	if stats[1].Name != "web" {
+		t.Errorf("second container %q, want web (names sort first)", stats[1].Name)
+	}
+}
+
+// Container files are read bounded, without following a final link or
+// waiting for a FIFO's writer: the TUI often runs as root, and the paths
+// derive from what a runtime reports.
+func TestReadBoundedFile(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "cpu.stat")
+	if err := os.WriteFile(plain, []byte("usage_usec 42\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := readBoundedFile(plain); err != nil || string(data) != "usage_usec 42\n" {
+		t.Fatalf("regular file: %q, %v", data, err)
+	}
+
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(plain, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readBoundedFile(link); err == nil {
+		t.Error("a symbolic link was followed")
+	}
+
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := readBoundedFile(fifo)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a FIFO was read as a file")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading a FIFO blocked")
+	}
+
+	big := filepath.Join(dir, "io.stat")
+	if err := os.WriteFile(big, make([]byte, maxContainerFileBytes+4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := readBoundedFile(big); err != nil || len(data) != maxContainerFileBytes {
+		t.Errorf("large file: read %d bytes, %v; want %d", len(data), err, maxContainerFileBytes)
 	}
 }
