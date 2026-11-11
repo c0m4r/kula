@@ -33,7 +33,7 @@ Lifecycle:
 | [`process.go`](../../internal/collector/process.go) | `/proc/<pid>/stat` | running/sleeping/blocked/zombie counts, threads |
 | [`self.go`](../../internal/collector/self.go) | `/proc/self/*` | Kula's own CPU%, RSS, open FDs |
 | [`gpu.go`](../../internal/collector/gpu.go) | `/sys/class/drm` discovery | GPU enumeration (NVIDIA/AMD/Intel); GPUs found are kept, a host without one looks again once a minute |
-| [`gpu_nvidia.go`](../../internal/collector/gpu_nvidia.go) | `nvidia.log` (CSV, atomic read) | NVIDIA temp/load/power/VRAM |
+| [`gpu_nvidia.go`](../../internal/collector/gpu_nvidia.go) | `nvidia.log` (CSV, atomic read; only a regular file, not a link or FIFO, up to 1 MiB) | NVIDIA temp/load/power/VRAM |
 | [`gpu_sysfs.go`](../../internal/collector/gpu_sysfs.go) | sysfs | AMD/Intel temp/power/VRAM/load |
 | [`psu.go`](../../internal/collector/psu.go) | `/sys/class/power_supply` ([`cadence.go`](../../internal/collector/cadence.go)) | battery/PSU status every `power_supply_interval` |
 | [`containers.go`](../../internal/collector/containers.go) | Docker/Podman socket + cgroups v2 | per-container CPU/mem/net/disk; a container is inspected for its PID once, kept while `/proc/<pid>/cgroup` still names it, and its state dropped when it leaves the list; the list is stream-decoded up to 64 MiB (about 25,000 containers), and a failure to read it is logged when it changes. See [Containers](#containers) |

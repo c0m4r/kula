@@ -5,16 +5,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
+
+// maxNvidiaLogBytes bounds a read of nvidia.log: nvidia-exporter.sh writes a
+// line of about a hundred bytes per GPU.
+const maxNvidiaLogBytes = 1 << 20
 
 // parseNvidiaLog reads the entire nvidia.log once and returns stats mapped by PCI ID.
 // This is more efficient for multi-GPU setups than reading the file per-GPU.
 func (c *Collector) parseNvidiaLog() map[string]GPUStats {
 	statsMap := make(map[string]GPUStats)
 
+	// nvidia-exporter.sh renames a regular file into place. A link or a FIFO
+	// put there instead is not read: the link is not followed, and the open
+	// and the type check keep a FIFO from blocking GPU collection.
 	logPath := filepath.Join(c.storageDir, "nvidia.log")
-	f, err := os.Open(logPath)
+	f, err := os.OpenFile(logPath, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		c.debugf("gpu: failed to open nvidia.log: %v", err)
 		return statsMap
@@ -23,6 +31,10 @@ func (c *Collector) parseNvidiaLog() map[string]GPUStats {
 
 	info, err := f.Stat()
 	if err != nil {
+		return statsMap
+	}
+	if !info.Mode().IsRegular() {
+		c.debugf("gpu: nvidia.log is not a regular file (%v)", info.Mode().Type())
 		return statsMap
 	}
 
@@ -41,7 +53,7 @@ func (c *Collector) parseNvidiaLog() map[string]GPUStats {
 		return statsMap
 	}
 
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(io.LimitReader(f, maxNvidiaLogBytes))
 	if err != nil {
 		c.debugf("gpu: failed to read nvidia.log: %v", err)
 		return statsMap
