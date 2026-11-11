@@ -461,8 +461,9 @@ Package: [`internal/tui`](../../internal/tui/), built with **Bubble Tea** + **Li
 `tui.RunHeadless(collector, tui.Options{...})` drives it. The live views sample through the
 TUI's own collector. Collectors log failures through the standard logger, which writes to the
 terminal the TUI is drawing on, so `RunHeadless` points it at a buffer for the session (the
-newest 200 lines) and prints the lines through `cleanText` once the terminal is restored. The History view queries a `tui.HistorySource`, which `cmd/kula` provides
-by opening the configured storage with `storage.OpenReadOnly` (see
+newest 200 lines) and prints the lines through `cleanText` once the terminal is restored. The
+History view queries a `tui.HistorySource`, which `cmd/kula` provides by opening the configured
+storage with `storage.OpenReadOnly` (see
 [Storage Engine](05-storage-engine.md#read-only-access)).
 
 History loads run as Bubble Tea commands, so a slow read never blocks input. At most one load
