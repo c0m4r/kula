@@ -172,17 +172,17 @@ func newContainerCollector(cfg ContainersCollectorConfig) *containerCollector {
 func (cc *containerCollector) resolveSocket() {
 	if cc.cfg.SocketPath != "" {
 		// User-configured socket
-		if _, err := os.Stat(cc.cfg.SocketPath); err == nil {
-			if err := probeSocket(cc.cfg.SocketPath); err != nil {
-				logSocketAccessError(cc.cfg.SocketPath, err)
-			} else {
-				cc.socket = cc.cfg.SocketPath
-				cc.mode = containerModeSocket
-				log.Printf("[containers] using configured socket: %s", cc.socket)
-				return
-			}
+		if _, err := os.Stat(cc.cfg.SocketPath); err != nil {
+			log.Printf("[containers] configured socket %s not found (%v), falling back to auto-detect", cc.cfg.SocketPath, err)
+		} else if err := probeSocket(cc.cfg.SocketPath); err != nil {
+			logSocketAccessError(cc.cfg.SocketPath, err)
+			log.Printf("[containers] configured socket %s cannot be used, falling back to auto-detect", cc.cfg.SocketPath)
+		} else {
+			cc.socket = cc.cfg.SocketPath
+			cc.mode = containerModeSocket
+			log.Printf("[containers] using configured socket: %s", cc.socket)
+			return
 		}
-		log.Printf("[containers] configured socket %s not found, falling back to auto-detect", cc.cfg.SocketPath)
 	}
 
 	// Auto-detect
@@ -230,7 +230,9 @@ func logSocketAccessError(path string, err error) {
 			// private runtime directory.
 			log.Printf("[containers] socket %s belongs to another user's rootless Podman — run Kula as that user, or set applications.containers.socket_path to a socket it can open", path)
 		} else {
-			log.Printf("[containers] socket %s found but permission denied — add the current user to the docker/podman group or run as root", path)
+			// Under the sandbox, a socket that appeared after startup is
+			// denied the same way: it is granted only once Kula restarts.
+			log.Printf("[containers] socket %s found but permission denied — container names need the docker/podman group or root, which is root-equivalent on the host (cgroups mode needs neither); a socket created after Kula started needs a restart", path)
 		}
 	} else {
 		log.Printf("[containers] socket %s found but not accessible: %v", path, err)
