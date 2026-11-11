@@ -780,6 +780,10 @@ func TestLoginClientKey(t *testing.T) {
 		"::1":                  "::/64",
 		"fe80::1%eth0":         "fe80::/64",
 		"::ffff:203.0.113.7":   "203.0.113.7",
+		// IPv4 clients through a NAT64 translator, each by its own address.
+		"64:ff9b::203.0.113.7": "203.0.113.7",
+		"64:ff9b::c633:6408":   "198.51.100.8",
+		"64:ff9b:0:0:1::1":     "64:ff9b::/64", // outside the /96
 		// Not an address: counted as given.
 		"not-an-ip":      "not-an-ip",
 		"203.0.113.7:80": "203.0.113.7:80",

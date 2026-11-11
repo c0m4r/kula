@@ -237,20 +237,29 @@ func (rl *RateLimiter) purge(cutoff time.Time) {
 	}
 }
 
+// nat64WellKnownPrefix holds IPv4 addresses translated into IPv6 (RFC 6052).
+var nat64WellKnownPrefix = netip.MustParsePrefix("64:ff9b::/96")
+
 // loginClientKey returns what the login limiters count the client at ip as:
 // an IPv4 address itself, an IPv6 address by its /64. A single host is
 // routinely given a whole /64, so counted per address it had a fresh budget
 // from every one of them, past both limiters, and could fill the fail-closed
 // IP limiter's key table with requests that cost no hashing, until every new
-// address was refused. An IPv4-mapped address counts as the IPv4 address it
-// carries. Anything that is not an address is kept as it is: with
-// trust_proxy the value is what the proxy appended to X-Forwarded-For.
+// address was refused. An IPv4-mapped address, and an address in the NAT64
+// well-known prefix (an IPv6-only host behind a translator sees every IPv4
+// client there, all in one /64), counts as the IPv4 address it carries.
+// Anything that is not an address is kept as it is: with trust_proxy the
+// value is what the proxy appended to X-Forwarded-For.
 func loginClientKey(ip string) string {
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return ip
 	}
 	addr = addr.Unmap()
+	if nat64WellKnownPrefix.Contains(addr) {
+		embedded := addr.As16()
+		addr = netip.AddrFrom4([4]byte(embedded[12:]))
+	}
 	if addr.Is4() {
 		return addr.String()
 	}

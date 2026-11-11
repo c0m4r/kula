@@ -55,7 +55,9 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
   An IPv6 client is counted by its /64 (`loginClientKey`): one host routinely has the whole
   /64, and counted per address it had a fresh budget from each, and could fill the IP
   limiter's 16,384-key table (which refuses new addresses when full) with malformed requests
-  that never reach the password hash.
+  that never reach the password hash. An address in the NAT64 well-known prefix `64:ff9b::/96`
+  counts as the IPv4 address it carries, or every IPv4 client of a translator would share one
+  /64.
 - **Password hashing:** a process-wide semaphore (`hashSlots`) bounds concurrent Argon2id
   computations to a quarter of `GOMAXPROCS`, between 1 and 4, and to as many as fit in 128 MiB
   of `argon2.memory` (at least one). Every attempt hashes, unknown
