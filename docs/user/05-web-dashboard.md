@@ -388,4 +388,8 @@ The headline endpoints:
 | `GET /metrics` | Prometheus exposition (if enabled) |
 | `GET /health`, `GET /status` | Liveness |
 
+Kula answers at most two history requests at a time and holds the rest for up to 10 seconds. A
+script that sends many at once may get `503` with a `Retry-After` header: wait that many seconds
+and try again.
+
 Next: [Terminal UI](06-tui.md).

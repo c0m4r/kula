@@ -159,7 +159,11 @@ of its served bytes.
 
 - Error responses use `json.Marshal` (not `fmt.Sprintf`) → no JSON injection.
 - Body size caps: login body 4096 bytes; Ollama chat 32 KB.
-- History caps: ≤5000 output points and ≤31 days for every requested interval.
+- History caps: ≤5000 output points and ≤31 days for every requested interval; at most two
+  history queries at once, each further request waiting up to 10 s for a slot before a `503`
+  with `Retry-After: 2`; the response is streamed rather than built whole; the query cache holds
+  at most 2000 samples across its entries. Peak memory under a flood of long-window requests no
+  longer grows with the number in flight.
 - Storage path resolved with `filepath.Abs` → directory-traversal resistance.
 - Static handler resists byte-level path-traversal payloads (encoded, dot-dot, backslash) and
   serves no directory listings.

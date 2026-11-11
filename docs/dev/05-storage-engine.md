@@ -315,7 +315,11 @@ On 36 hours of mock history at the default tier sizes (223 MB tier 0), a clean r
    boundaries; an entry lives one tier-0 resolution, and every raw write drops entries whose
    range reaches the live edge. In practice it serves concurrent identical requests and repeats
    of a past window. Dashboard refreshes end at the current time, so each has its own key and
-   almost never hits.
+   almost never hits. The cache holds at most 256 entries and 2000 samples across them
+   (`maxQueryCacheSamples`): a result of more samples is not cached, and when an entry would
+   exceed either bound, expired entries are swept first and, failing that, it is not cached.
+   Every distinct request makes its own entry, so the entry cap alone would let a client
+   varying the end of a long window keep one multi-megabyte result per request.
    Results own their complete sample graphs, including nested maps, slices, and application
    pointers. Copy plans are compiled once from the schema. Input samples and `QueryLatest`
    results use the same ownership isolation.

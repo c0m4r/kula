@@ -12,6 +12,7 @@ a shared middleware chain.
 |------|------|
 | [`server.go`](../../internal/web/server.go) | HTTP server, listeners, routing, middleware, templates, SRI, config endpoint |
 | [`history_sections.go`](../../internal/web/history_sections.go) | Optional history response section filtering |
+| [`history_response.go`](../../internal/web/history_response.go) | History query slots and the streamed history response |
 | [`system_info.go`](../../internal/web/system_info.go) | `/api/system-info` handler and hardware inventory response |
 | [`auth.go`](../../internal/web/auth.go) | Argon2id hashing, sessions, rate limiting, CSRF, Origin validation |
 | [`websocket.go`](../../internal/web/websocket.go) | WebSocket upgrade, broadcast, pause/resume, connection limits |
@@ -129,6 +130,17 @@ and [DMTF SMBIOS specification, section 7.18](https://www.dmtf.org/sites/default
   `cpu,lavg,mem,swap,net,disk,sys,proc,self,gpu,psu,apps`. Unknown names return `400`.
 - Inverted ranges and all windows over 31 days return `400`. A window ending in the future is
   accepted and keeps its bounds in the response; its source tier is chosen as if it ended now.
+- At most two history queries run at once (`maxConcurrentHistory` in
+  [`history_response.go`](../../internal/web/history_response.go)): each holds its whole result
+  in memory until it is sent, up to 5000 buckets of Data, Min and Max samples, around 100 MB for
+  a long window on a large host. A further request waits for a slot for up to 10 seconds
+  (`historySlotWait`), or until its client goes away, and is then answered `503` with
+  `Retry-After: 2`. Requests answered from the query cache wait like the others. The dashboard
+  keeps one history request in flight at a time.
+- The response is streamed: the samples are encoded one at a time and sent in pieces of about
+  1 MiB (`writeHistoryJSON`), never built whole, because the JSON of a long window at full width
+  is tens of megabytes, more than its decoded samples. The bytes are the ones `writeJSON` would
+  send for the whole payload.
 - Returns `{ samples, tier, resolution, source_resolution, downsampled, requested_from, requested_to,
   actual_from, actual_to, complete, exact_complete, valid_aggregations }`. When `sections` is supplied, the same compatible envelope
   also includes the canonical ordered `sections` list, and each sample's Data/Min/Max tree
@@ -207,8 +219,10 @@ Every error under `/api/` and `/ws` is a JSON object, `{"error":"<message>"}`, w
 middleware's `403`, `404` for an unknown `/api/` path, and a refused WebSocket handshake (`403`
 for a foreign Origin, `429` over a connection limit, `400` for a malformed upgrade).
 `jsonError` writes them with `json.Marshal` (not `fmt.Sprintf`) to prevent JSON injection.
-`/api/current` and `/api/history` answer through `writeJSON`, which turns a sample that cannot
-be encoded (a NaN or infinity) into a `500` instead of an empty `200`.
+`/api/current` answers through `writeJSON`, which turns a sample that cannot be encoded (a NaN
+or infinity) into a `500` instead of an empty `200`. `/api/history` streams its samples
+(`writeHistoryJSON`): such a sample is a `500` while nothing has been sent yet, within the first
+MiB of the body; after that the response can only be cut short, and the failure is logged.
 `/metrics` and the static assets answer errors in plain text.
 `TestRuntimeErrorsAreJSON` drives each refusal through the production handler chain.
 
