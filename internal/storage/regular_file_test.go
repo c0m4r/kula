@@ -160,3 +160,81 @@ func TestOwnerOpensOnlyRegularFiles(t *testing.T) {
 		}
 	})
 }
+
+// TestReadOnlyViewsOpenOnlyRegularFiles: the terminal UI (often run as root)
+// and `kula inspect` open tier files another process owns. A FIFO planted in
+// place of one blocked them for good, the TUI before it drew anything, and a
+// link had them read whatever it points to.
+func TestReadOnlyViewsOpenOnlyRegularFiles(t *testing.T) {
+	base := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	tierAt := func(t *testing.T, dir string) string {
+		t.Helper()
+		path := filepath.Join(dir, "tier_0.dat")
+		tier, err := OpenTier(path, 1<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tier.Write(varSample(base, 2)); err != nil {
+			t.Fatal(err)
+		}
+		if err := tier.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	views := func(t *testing.T, dir string) {
+		t.Helper()
+		path := filepath.Join(dir, "tier_0.dat")
+		within(t, "opening the views", func() {
+			if store, err := OpenReadOnly(readOnlyTestConfig(dir, 1<<20)); err == nil {
+				_ = store.Close()
+				t.Error("OpenReadOnly opened the tier")
+			}
+			if _, err := InspectTierFile(path); err == nil {
+				t.Error("InspectTierFile read the tier")
+			}
+			if _, err := InspectLatestTierSample(path); err == nil {
+				t.Error("InspectLatestTierSample read the tier")
+			}
+		})
+	}
+
+	t.Run("FIFO", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := syscall.Mkfifo(filepath.Join(dir, "tier_0.dat"), 0o600); err != nil {
+			t.Skipf("mkfifo: %v", err)
+		}
+		views(t, dir)
+	})
+
+	t.Run("link", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Symlink(tierAt(t, t.TempDir()), filepath.Join(dir, "tier_0.dat")); err != nil {
+			t.Fatal(err)
+		}
+		views(t, dir)
+	})
+
+	t.Run("FIFO swapped in under an open view", func(t *testing.T) {
+		dir := t.TempDir()
+		path := tierAt(t, dir)
+		store, err := OpenReadOnly(readOnlyTestConfig(dir, 1<<20))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Skipf("mkfifo: %v", err)
+		}
+		// A blocked Refresh holds the tier lock, so Close only after it
+		// returned.
+		within(t, "Refresh", func() {
+			if err := store.Refresh(); err == nil {
+				t.Error("Refresh opened a FIFO as the tier")
+			}
+		})
+		_ = store.Close()
+	})
+}

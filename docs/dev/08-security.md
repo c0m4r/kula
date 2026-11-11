@@ -223,7 +223,8 @@ Optional bearer token on `/metrics`, constant-time compared.
 - Tier files, their seek-index sidecars and a migration's temporary copy are opened with
   `O_NOFOLLOW` and must be regular files (`openRegular`): a symbolic link or FIFO planted in
   place of one is refused, never followed or waited on. The storage directory itself may be a
-  link.
+  link. The terminal UI (often run as root) and `kula inspect` open tiers the same way, so a
+  FIFO no longer blocks them before they draw anything.
 - Packages and the guided installer install `/etc/kula` as `root:kula 0750` and seed
   `config.yaml` as `root:kula 0640` (the snap: `0600` root), and set those modes again on
   upgrade: the secrets in it reach root and the `kula` group only, and the daemon cannot rewrite

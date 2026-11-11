@@ -1435,7 +1435,7 @@ type TierInfo struct {
 
 // InspectTierFile reads only the header of a tier file and returns metadata.
 func InspectTierFile(path string) (*TierInfo, error) {
-	f, err := os.Open(path)
+	f, err := openRegular(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -1488,7 +1488,7 @@ func InspectTierFile(path string) (*TierInfo, error) {
 // boundaries in the data region and is therefore only called for verbose
 // inspection.
 func InspectLatestTierSample(path string) (*AggregatedSample, error) {
-	f, err := os.Open(path)
+	f, err := openRegular(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}

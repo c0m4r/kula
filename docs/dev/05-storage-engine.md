@@ -377,9 +377,10 @@ increasing the batch size or selection target.
 `OpenReadOnly(cfg)` opens the configured tier files for queries without owning them. The TUI's
 History view uses it to chart what a separately running `kula serve` writes.
 
-- Files are opened `O_RDONLY`. Nothing is created, migrated, resized or rewritten, and a missing
-  directory or tier reads as empty. `WriteSample`, `Tier.Write` and `Tier.Flush` return
-  `ErrReadOnly`, and `Close` only releases descriptors.
+- Files are opened `O_RDONLY`, and only as regular files: a symbolic link or a FIFO in place of
+  a tier is an error, not followed or waited on (`openRegular`). Nothing is created, migrated,
+  resized or rewritten, and a missing directory or tier reads as empty. `WriteSample`,
+  `Tier.Write` and `Tier.Flush` return `ErrReadOnly`, and `Close` only releases descriptors.
 - The owner rewrites each tier header after every record. `Refresh()` re-reads those headers,
   clears the query cache, and reopens a tier whose file was replaced, for example moved aside
   before a restart. It is a no-op on an owning store.

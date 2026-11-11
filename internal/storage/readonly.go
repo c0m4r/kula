@@ -18,8 +18,9 @@ var ErrReadOnly = errors.New("storage is opened read-only")
 // OpenReadOnly opens the configured tier files for history queries without
 // taking ownership of them, so a second process (the terminal UI) can chart
 // what a running `kula serve` records. Nothing is created, migrated, resized
-// or rewritten: files are opened O_RDONLY, a missing directory or tier file
-// reads as empty until it appears, and Close only releases descriptors.
+// or rewritten: files are opened O_RDONLY, and only as regular files (see
+// openRegular), a missing directory or tier file reads as empty until it
+// appears, and Close only releases descriptors.
 //
 // The owning process rewrites each tier header after every record, so Refresh
 // adopts its current ring geometry before a query. Its tier locks do not reach
@@ -103,8 +104,11 @@ func (t *Tier) reloadReadOnly() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Stat and open errors are *PathError values that already name the file.
-	info, err := os.Stat(t.path)
+	// Stat and open errors already name the file. A tier is never a symbolic
+	// link or a FIFO (see openRegular): the view, often run as root, opens
+	// neither, nor blocks on a FIFO an unprivileged writer of the directory
+	// planted.
+	info, err := os.Lstat(t.path)
 	if err != nil {
 		t.resetReadOnlyLocked()
 		if errors.Is(err, fs.ErrNotExist) {
@@ -121,7 +125,7 @@ func (t *Tier) reloadReadOnly() error {
 		}
 	}
 	if t.file == nil {
-		file, openErr := os.Open(t.path)
+		file, openErr := openRegular(t.path, os.O_RDONLY, 0)
 		if openErr != nil {
 			return openErr
 		}
