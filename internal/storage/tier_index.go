@@ -502,15 +502,19 @@ var errSeekSidecarStale = errors.New("seek index sidecar does not describe this 
 // loadSeekIndex adopts the sidecar when it describes exactly the tier on disk.
 // Caller holds t.mu exclusively.
 func (t *Tier) loadSeekIndex() error {
-	path := seekSidecarPath(t.path)
-	info, err := os.Stat(path)
+	f, err := openRegular(seekSidecarPath(t.path), os.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
 	if err != nil {
 		return err
 	}
 	if info.Size() > seekSidecarMaxLen {
 		return fmt.Errorf("seek index sidecar is %d bytes", info.Size())
 	}
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(io.LimitReader(f, seekSidecarMaxLen+1))
 	if err != nil {
 		return err
 	}

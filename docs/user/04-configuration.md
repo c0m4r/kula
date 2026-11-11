@@ -178,6 +178,10 @@ only when it matches the tier file exactly, and otherwise rebuilds it from the t
 read of the file (after a crash, a restore or a `max_size` change). Deleting it is always safe,
 and the one of a tier you remove from `tiers` is left for you to delete.
 
+Tier files must be regular files: Kula refuses to open one that is a symbolic link or a FIFO,
+and rebuilds a seek index that is one, so restore a tier by copying it into place, not by
+linking to it. The storage directory itself may be a link.
+
 Every record carries a checksum. A power loss or kernel crash can leave the last records
 before it only partly written; such a record fails its checksum and is skipped instead of
 showing, or being rolled up, with wrong values. Records written before 0.22.0 have no checksum

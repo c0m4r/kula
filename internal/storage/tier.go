@@ -111,7 +111,7 @@ func OpenTier(path string, maxSize int64) (*Tier, error) {
 		return nil, fmt.Errorf("max_size too large for tier: %d", maxSize)
 	}
 
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
+	f, err := openRegular(path, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("opening tier file: %w", err)
 	}
@@ -1245,7 +1245,7 @@ func (t *Tier) migrateToBinary() error {
 	defer func() { _ = os.Remove(tmpPath) }()
 
 	// Open original for reading (already open in t.file) and tmp for writing.
-	tmpFile, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	tmpFile, err := openRegular(tmpPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
@@ -1340,7 +1340,7 @@ func (t *Tier) migrateToBinary() error {
 	}
 
 	// 2. Open the NEW file FIRST before closing the old one to avoid nil state
-	newFile, err := os.OpenFile(t.path, os.O_RDWR, 0600)
+	newFile, err := openRegular(t.path, os.O_RDWR, 0600)
 	if err != nil {
 		return fmt.Errorf("opening migrated file: %w", err)
 	}
