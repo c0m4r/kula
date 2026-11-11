@@ -305,6 +305,67 @@ func TestLoggedInUsersOmittedWhileUnknown(t *testing.T) {
 	}
 }
 
+// TestMetricFamiliesAreGrouped: each family has one HELP and one TYPE line,
+// followed by all of its samples. Per-container metrics are produced container
+// by container; written as they came, every family repeated its HELP and TYPE
+// for each container, which strict parsers such as promtool reject.
+func TestMetricFamiliesAreGrouped(t *testing.T) {
+	store := newTestStoreWithSample(t)
+	defer func() { _ = store.Close() }()
+	srv := newTestServer(t, store)
+	sample := &collector.Sample{
+		Timestamp: time.Now(),
+		System:    collector.SystemStats{Hostname: "host"},
+		CPU:       collector.CPUStats{Sensors: []collector.CPUTempSensor{{Name: "core0", Value: 40}, {Name: "core1", Value: 41}}},
+		Apps: collector.ApplicationsStats{Containers: []collector.ContainerStats{
+			{ID: "aaaaaaaaaaaa", Name: "web", CPUPct: 1},
+			{ID: "bbbbbbbbbbbb", Name: "db", CPUPct: 2},
+		}},
+	}
+	if err := store.WriteSample(sample); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	srv.handleMetrics(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	headers := map[string]int{}
+	current := ""
+	done := map[string]bool{}
+	for line := range strings.SplitSeq(strings.TrimSuffix(w.Body.String(), "\n"), "\n") {
+		if rest, ok := strings.CutPrefix(line, "# HELP "); ok {
+			name, _, _ := strings.Cut(rest, " ")
+			headers[name+" HELP"]++
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "# TYPE "); ok {
+			name, _, _ := strings.Cut(rest, " ")
+			headers[name+" TYPE"]++
+			if current != "" {
+				done[current] = true
+			}
+			current = name
+			continue
+		}
+		name := line[:strings.IndexAny(line, "{ ")]
+		if name != current || done[name] {
+			t.Fatalf("sample %q is not in its family's group (current family %q)", line, current)
+		}
+	}
+	for header, n := range headers {
+		if n != 1 {
+			t.Errorf("%s appears %d times", header, n)
+		}
+	}
+	for _, want := range []string{
+		`kula_container_cpu_percent{host="host",id="aaaaaaaaaaaa",name="web"} 1`,
+		`kula_container_cpu_percent{host="host",id="bbbbbbbbbbbb",name="db"} 2`,
+	} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+}
+
 // TestHandleMetricsMethodNotAllowed verifies that POST /metrics returns 405.
 func TestHandleMetricsMethodNotAllowed(t *testing.T) {
 	store := newTestStoreWithSample(t)
@@ -403,6 +464,9 @@ func TestEscapeLabel(t *testing.T) {
 		{`quo"te`, `quo\"te`},
 		{"new\nline", `new\nline`},
 		{`mix\and"and` + "\n", `mix\\and\"and\n`},
+		// Not UTF-8: the format requires it, and one such label would fail
+		// the whole scrape.
+		{"web\xff\xfe", "web\uFFFD"},
 	}
 	for _, tc := range cases {
 		got := escapeLabel(tc.input)

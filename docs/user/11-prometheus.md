@@ -135,7 +135,11 @@ neither, and in a container that does not mount them, see
   [Custom Metrics](09-custom-metrics.md)).
 
 Per-device metrics (network interfaces, disks, filesystems, GPUs, containers, sensors) carry
-appropriate labels.
+appropriate labels. Each metric family has one `# HELP` and one `# TYPE` line followed by all of
+its series, so strict parsers such as `promtool check metrics` accept the output. Label values
+are valid UTF-8 (bytes that are not become `�`), and names longer than 255 bytes are shortened
+as in history (see [Containers](08-application-monitoring.md#containers-docker--podman)). The
+container series are bounded by the collector's cap of 1,024 containers.
 
 Disk temperatures and power-supply metrics change every `collection.disk_temp_interval` and
 `collection.power_supply_interval` (10 s by default), PostgreSQL's dead/live tuples,

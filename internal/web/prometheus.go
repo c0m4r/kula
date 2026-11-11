@@ -46,26 +46,31 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		hostname = s.global.Hostname
 	}
 
-	var b strings.Builder
-	b.Grow(4096)
-
-	// Helper closures
-	gauge := func(name, help, labels string, value float64) {
-		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s gauge\n", name, help, name)
-		if labels != "" {
-			fmt.Fprintf(&b, "%s{%s} %s\n", name, labels, formatPrometheusValue(value))
-		} else {
-			fmt.Fprintf(&b, "%s %s\n", name, formatPrometheusValue(value))
-		}
+	// The text format allows one HELP and one TYPE line per metric family,
+	// with all of its samples in one group. Per-container metrics are produced
+	// container by container, so samples are gathered by family and written,
+	// family by family, in the order each first appeared.
+	type family struct {
+		name, help, kind string
+		samples          []string
 	}
-	counter := func(name, help, labels string, value float64) {
-		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s counter\n", name, help, name)
-		if labels != "" {
-			fmt.Fprintf(&b, "%s{%s} %s\n", name, labels, formatPrometheusValue(value))
-		} else {
-			fmt.Fprintf(&b, "%s %s\n", name, formatPrometheusValue(value))
+	var families []*family
+	byName := make(map[string]*family)
+	add := func(kind, name, help, labels string, value float64) {
+		f := byName[name]
+		if f == nil {
+			f = &family{name: name, help: help, kind: kind}
+			byName[name] = f
+			families = append(families, f)
 		}
+		sample := name
+		if labels != "" {
+			sample += "{" + labels + "}"
+		}
+		f.samples = append(f.samples, sample+" "+formatPrometheusValue(value))
 	}
+	gauge := func(name, help, labels string, value float64) { add("gauge", name, help, labels, value) }
+	counter := func(name, help, labels string, value float64) { add("counter", name, help, labels, value) }
 
 	lbl := func(k, v string) string { return k + "=\"" + escapeLabel(v) + "\"" }
 	host := lbl("host", hostname)
@@ -688,6 +693,16 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		"Number of open file descriptors in the Kula process.",
 		host, float64(d.Self.FDs))
 
+	var b strings.Builder
+	b.Grow(4096)
+	for _, f := range families {
+		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s %s\n", f.name, f.help, f.name, f.kind)
+		for _, sample := range f.samples {
+			b.WriteString(sample)
+			b.WriteByte('\n')
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	// Serves Prometheus text/plain metrics (label values are escaped via escapeLabel); not text/html, so the XSS rule doesn't apply.
@@ -729,8 +744,12 @@ func formatPrometheusValue(value float64) string {
 	return formatted
 }
 
-// escapeLabel escapes backslashes, double-quotes, and newlines in Prometheus label values.
+// escapeLabel escapes backslashes, double-quotes, and newlines in Prometheus
+// label values, and replaces bytes that are not UTF-8: the format requires it,
+// and one such label (a container named by whoever ran it) would fail the
+// whole scrape.
 func escapeLabel(v string) string {
+	v = strings.ToValidUTF8(v, "\uFFFD")
 	v = strings.ReplaceAll(v, `\`, `\\`)
 	v = strings.ReplaceAll(v, `"`, `\"`)
 	v = strings.ReplaceAll(v, "\n", `\n`)
