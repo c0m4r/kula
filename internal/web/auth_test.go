@@ -740,6 +740,29 @@ func TestGetClientIP(t *testing.T) {
 		})
 	}
 }
+
+// TestLoginClientKey verifies what the login limiters count as one client: an
+// IPv4 address, or the /64 of an IPv6 address.
+func TestLoginClientKey(t *testing.T) {
+	for ip, want := range map[string]string{
+		"203.0.113.7":          "203.0.113.7",
+		"2001:db8:1:2:3:4:5:6": "2001:db8:1:2::/64",
+		"2001:db8:1:2::1":      "2001:db8:1:2::/64",
+		"2001:db8:1:3::1":      "2001:db8:1:3::/64",
+		"::1":                  "::/64",
+		"fe80::1%eth0":         "fe80::/64",
+		"::ffff:203.0.113.7":   "203.0.113.7",
+		// Not an address: counted as given.
+		"not-an-ip":      "not-an-ip",
+		"203.0.113.7:80": "203.0.113.7:80",
+		"":               "",
+	} {
+		if got := loginClientKey(ip); got != want {
+			t.Errorf("loginClientKey(%q) = %q, want %q", ip, got, want)
+		}
+	}
+}
+
 func TestValidateOrigin(t *testing.T) {
 	am := NewAuthManager(config.AuthConfig{}, "", false, config.SecurityConfig{OriginValidation: true})
 

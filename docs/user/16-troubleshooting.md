@@ -41,7 +41,8 @@ is a hardening layer, not a requirement. To get full confinement, run on a newer
 ## Can't log in / locked out
 
 - Login is rate-limited over a **5-minute window**: **5 attempts per username *and* IP**,
-  and **15 attempts per IP** overall. Wait ~5 minutes after repeated failures.
+  and **15 attempts per IP** overall. Wait ~5 minutes after repeated failures. Over IPv6 the
+  limits count a whole /64 network, so machines sharing one share them.
 - Regenerate the hash with `./kula hash-password` if you're unsure of the password, and make
   sure both `password_hash` **and** `password_salt` are pasted.
 - Make sure the `web.auth.argon2` parameters at hash-generation time match those in the

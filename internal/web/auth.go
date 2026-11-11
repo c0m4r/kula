@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -236,6 +237,31 @@ func (rl *RateLimiter) purge(cutoff time.Time) {
 	}
 }
 
+// loginClientKey returns what the login limiters count the client at ip as:
+// an IPv4 address itself, an IPv6 address by its /64. A single host is
+// routinely given a whole /64, so counted per address it had a fresh budget
+// from every one of them, past both limiters, and could fill the fail-closed
+// IP limiter's key table with requests that cost no hashing, until every new
+// address was refused. An IPv4-mapped address counts as the IPv4 address it
+// carries. Anything that is not an address is kept as it is: with
+// trust_proxy the value is what the proxy appended to X-Forwarded-For.
+func loginClientKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	// Prefix drops the zone: every link-local client shares fe80::/64.
+	network, err := addr.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return network.String()
+}
+
 // maxLimiterUsernameLen bounds how much of a submitted username goes into a
 // per-user rate limiter key. Usernames are attacker-chosen and bounded only by the
 // request body limit, so the key is truncated to keep per-entry memory predictable.
@@ -244,7 +270,7 @@ func (rl *RateLimiter) purge(cutoff time.Time) {
 const maxLimiterUsernameLen = 64
 
 // userLimiterKey builds the per-user login limiter key from the submitted username
-// and the client address.
+// and the client address (as loginClientKey counts it).
 //
 // The key deliberately includes the IP. A username-only key identifies the *victim*,
 // not the caller: anyone who knows an account name could spend five bad passwords

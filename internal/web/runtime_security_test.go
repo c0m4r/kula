@@ -748,6 +748,57 @@ func TestLoginLimitersBothReachable(t *testing.T) {
 	}
 }
 
+// TestLoginLimitsCountAnIPv6Network verifies that both login limiters count an
+// IPv6 client by its /64. A host with a routed /64 has 2^64 source addresses:
+// counted one by one, each had its own budget against an account, and a
+// request too malformed to reach the password hash still claimed a slot in the
+// IP limiter's bounded key table.
+func TestLoginLimitsCountAnIPv6Network(t *testing.T) {
+	s, _ := newSecuredTestServer(t, nil)
+	host := 0
+	attempt := func(network, body string) int {
+		t.Helper()
+		host++
+		req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+		req.RemoteAddr = fmt.Sprintf("[2001:db8:0:%s::%x]:40000", network, host)
+		rec := httptest.NewRecorder()
+		s.handleLogin(rec, req)
+		return rec.Code
+	}
+	wrong := fmt.Sprintf(`{"username":%q,"password":"wrong"}`, secUser)
+
+	// Every attempt below comes from another address of the same /64.
+	for i := 0; i < loginUserAttemptLimit; i++ {
+		if code := attempt("a", wrong); code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d on %q: status = %d, want 401", i+1, secUser, code)
+		}
+	}
+	if code := attempt("a", wrong); code != http.StatusTooManyRequests {
+		t.Fatalf("attempt past the per-account limit from a new address of the /64: status = %d, want 429", code)
+	}
+	if code := attempt("b", wrong); code != http.StatusUnauthorized {
+		t.Fatalf("same account from another /64: status = %d, want 401", code)
+	}
+
+	// Malformed bodies are refused before any hashing but spend the /64's
+	// budget all the same.
+	for i := loginUserAttemptLimit + 1; i < loginIPAttemptLimit; i++ {
+		if code := attempt("a", "{"); code != http.StatusBadRequest {
+			t.Fatalf("malformed attempt %d: status = %d, want 400", i+1, code)
+		}
+	}
+	if code := attempt("a", "{"); code != http.StatusTooManyRequests {
+		t.Fatalf("attempt past the IP limit from a new address of the /64: status = %d, want 429", code)
+	}
+
+	s.auth.Limiter.mu.Lock()
+	tracked := len(s.auth.Limiter.attempts)
+	s.auth.Limiter.mu.Unlock()
+	if tracked != 2 {
+		t.Errorf("IP limiter tracks %d keys for %d addresses in two /64s, want 2", tracked, host)
+	}
+}
+
 // TestRuntimeLoginBusyWhenHashSlotsExhausted verifies that a login arriving
 // while every Argon2id slot is taken is refused as busy (503 + Retry-After)
 // after the bounded wait, instead of starting yet another hash.

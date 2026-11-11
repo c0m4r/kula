@@ -52,6 +52,10 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
 
 - **Login:** 15 attempts per 5 minutes per IP, and 5 per IP+username pair (the per-account
   counter is keyed on the pair, so one attacker cannot lock out an account for everyone).
+  An IPv6 client is counted by its /64 (`loginClientKey`): one host routinely has the whole
+  /64, and counted per address it had a fresh budget from each, and could fill the IP
+  limiter's 16,384-key table (which refuses new addresses when full) with malformed requests
+  that never reach the password hash.
 - **Password hashing:** a process-wide semaphore (`hashSlots`) bounds concurrent Argon2id
   computations to a quarter of `GOMAXPROCS`, between 1 and 4, and to as many as fit in 128 MiB
   of `argon2.memory` (at least one). Every attempt hashes, unknown

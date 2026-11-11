@@ -139,7 +139,8 @@ Login is rate-limited over a **5-minute window** by two counters: **5 attempts p
 username *and* source IP**, and **15 attempts per source IP** overall. The per-account
 counter includes the IP precisely so that a flood of bad passwords aimed at one account
 throttles only the caller — it cannot lock that account out for everyone else. Exceeding
-either limit temporarily refuses further attempts.
+either limit temporarily refuses further attempts. An IPv6 source counts as its /64 network
+rather than a single address, since one host usually has the whole /64 to send from.
 
 Each attempt costs one Argon2id hash (`argon2.memory`, 32 MiB by default), so Kula also caps
 how many hashes run at once across all clients: a quarter of the CPUs, between 1 and 4, and no
