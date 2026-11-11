@@ -150,11 +150,15 @@ func extractNonce(csp string) string {
 var protectedRoutes = []string{"/api/current", "/api/history", "/api/config", "/api/i18n?lang=en"}
 
 func authChecks() []check {
-	return []check{{
-		id:       "AUTH",
-		category: "auth",
-		run:      runAuthChecks,
-	}}
+	return []check{
+		{id: "AUTH", category: "auth", run: runAuthChecks},
+		// A wrong password for the supplied account counts against that
+		// account's login limit (five per address in five minutes), so three
+		// default runs would lock it out.
+		{id: "AUTH-006", category: "auth", aggressive: true, run: func(s *Scanner) []Finding {
+			return []Finding{enumerationFinding(s)}
+		}},
+	}
 }
 
 func runAuthChecks(s *Scanner) []Finding {
@@ -236,9 +240,6 @@ func runAuthChecks(s *Scanner) []Finding {
 		out = append(out, cookieAttributeFindings(s)...)
 	}
 
-	// AUTH-006: username enumeration resistance (needs a real username).
-	out = append(out, enumerationFinding(s))
-
 	return out
 }
 
@@ -279,7 +280,8 @@ func cookieAttributeFindings(s *Scanner) []Finding {
 }
 
 // enumerationFinding probes the login timing/enumeration fix: a wrong password
-// for a real username and for a random username must be indistinguishable.
+// for a real username and for a random username must be indistinguishable. It
+// runs only with -aggressive (AUTH-006 in authChecks).
 func enumerationFinding(s *Scanner) Finding {
 	if s.username == "" {
 		return finding("AUTH-006", "auth", "Username enumeration resistance", SevInfo, StatusSkip,

@@ -92,7 +92,7 @@ the build if a safeguard regressed.
 | Category | What it probes | Maps to |
 |----------|----------------|---------|
 | `headers` | `X-Content-Type-Options`, `X-Frame-Options`, CSP (`default-src 'self'`, nonce, `frame-ancestors`), **per-request nonce freshness**, `Referrer-Policy`, `Permissions-Policy`, HSTS over TLS, banner disclosure | `securityMiddleware` |
-| `auth` | Protected routes return 401 anonymously; forged cookies & bearer tokens rejected; login is POST-only; session cookie `HttpOnly`/`SameSite`/`Secure`; **username-enumeration resistance** | `AuthMiddleware`, `ValidateCredentials` |
+| `auth` | Protected routes return 401 anonymously; forged cookies & bearer tokens rejected; login is POST-only; session cookie `HttpOnly`/`SameSite`/`Secure`; **username-enumeration resistance** *(aggressive)* | `AuthMiddleware`, `ValidateCredentials` |
 | `csrf` | Origin/Referer required on state change; cross-origin POST blocked; CSRF synchronizer token enforced on authenticated sessions | `CSRFMiddleware` |
 | `cors` | An arbitrary Origin is **not** reflected; never `ACAO: *` + credentials; `Vary: Origin` present | `corsMiddleware` |
 | `traversal` | Byte-level path-traversal payloads (encoded, dot-dot, backslash) over a raw socket leak no files; no directory listing | `handleStatic` |
@@ -108,12 +108,19 @@ the build if a safeguard regressed.
 
 ## Safety / `-aggressive`
 
-The default scan is **non-destructive and idempotent**: it reads headers, sends a handful
-of single-shot probes, and logs in at most a few times when credentials are supplied.
+The default scan is **non-destructive**: it reads headers and sends a handful of
+single-shot probes. With credentials it logs in once and logs out at the end, and it never
+sends a wrong password for the account you supply. Kula counts every login, successful or
+not, against a limit of five per account and address in five minutes: a sixth authenticated
+scan within five minutes is throttled (`AUTH-005` warns), and so is that account's login from
+the same address until the window passes.
 
 `-aggressive` adds checks that have **real side effects on the live target** and only run
 with the flag (a warning is printed first):
 
+- **`AUTH-006`** — a wrong password for the supplied username next to one for an unknown
+  name, to confirm the responses match (no username enumeration). It spends one more of that
+  account's five login attempts.
 - **`RATE-LOGIN`** — a burst of failed logins to confirm throttling. This **locks out
   login from your IP for ~5 minutes**.
 - **`WS-FLOOD`** — opens more than the per-IP WebSocket limit to confirm the cap fires.

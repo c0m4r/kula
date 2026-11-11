@@ -663,5 +663,21 @@ func (s *Scanner) Run(only map[string]bool) []Finding {
 		}
 		findings = append(findings, c.run(s)...)
 	}
+	s.logout()
 	return findings
+}
+
+// logout ends the session ensureSession opened, so a run leaves no session
+// behind on the target. It is best effort: a check that probed the logout
+// endpoint may have ended the session already.
+func (s *Scanner) logout() {
+	if !s.loggedIn {
+		return
+	}
+	headers := s.authedHeaders(true)
+	headers["Origin"] = s.base.Scheme + "://" + s.base.Host
+	s.do(http.MethodPost, "/api/logout", headers, "")
+	s.loggedIn = false
+	s.session = ""
+	s.csrf = ""
 }

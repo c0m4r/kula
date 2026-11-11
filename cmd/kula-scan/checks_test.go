@@ -331,8 +331,9 @@ func TestSecureTargetPasses(t *testing.T) {
 	wantStatus(t, auth, "AUTH-002", StatusPass)
 	wantStatus(t, auth, "AUTH-003", StatusPass)
 	wantStatus(t, auth, "AUTH-005", StatusPass)
-	wantStatus(t, auth, "AUTH-006", StatusPass) // enumeration resistance
 	wantStatus(t, auth, "AUTH-007", StatusPass) // HttpOnly
+	// Enumeration resistance, an aggressive check.
+	wantStatus(t, []Finding{enumerationFinding(s)}, "AUTH-006", StatusPass)
 
 	csrf := runCSRFChecks(s)
 	wantStatus(t, csrf, "CSRF-001", StatusPass)

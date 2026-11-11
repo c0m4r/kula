@@ -64,7 +64,7 @@ possibly intentional, e.g. auth off) · `SKIP` (not applicable) · `ERROR` (prob
 | Category | Probes | Maps to |
 |----------|--------|---------|
 | `headers` | `X-Content-Type-Options`, `X-Frame-Options`, CSP + per-request nonce freshness, `Referrer-Policy`, `Permissions-Policy`, HSTS over TLS, banner disclosure | `securityMiddleware` |
-| `auth` | Protected routes 401 anonymously; forged cookies/bearer rejected; login POST-only; cookie flags; username-enumeration resistance | `AuthMiddleware`, `ValidateCredentials` |
+| `auth` | Protected routes 401 anonymously; forged cookies/bearer rejected; login POST-only; cookie flags; username-enumeration resistance (aggressive) | `AuthMiddleware`, `ValidateCredentials` |
 | `csrf` | Origin/Referer required; cross-origin POST blocked; synchronizer token enforced | `CSRFMiddleware` |
 | `cors` | Arbitrary Origin not reflected; never `ACAO:*`+credentials; `Vary: Origin` | `corsMiddleware` |
 | `traversal` | Byte-level path-traversal over a raw socket leaks nothing; no directory listing | `handleStatic` |
@@ -80,9 +80,16 @@ possibly intentional, e.g. auth off) · `SKIP` (not applicable) · `ERROR` (prob
 
 ## Safety
 
-The default scan is **non-destructive and idempotent**. `-aggressive` adds checks with **real
-side effects** (each warned first):
+The default scan is **non-destructive**. With credentials it logs in once and logs out at the
+end, and it never sends a wrong password for the supplied account. Kula counts every login,
+successful or not, against five per account and address in five minutes, so a sixth
+authenticated run within five minutes is throttled (`AUTH-005` warns), and so is that account's
+login from the same address until the window passes.
 
+`-aggressive` adds checks with **real side effects** (each warned first):
+
+- `AUTH-006` — a wrong password for the supplied username, to compare with an unknown one
+  (username enumeration). It spends one more of that account's five attempts.
 - `RATE-LOGIN` / `BYPASS-XFF` — burst failed logins; **locks out your IP for ~5 minutes**.
 - `WS-FLOOD` / `WS-MSGBOMB` — exceed the per-IP WS cap / send an oversized frame.
 - `INPUT-AGG` — oversized login body.
