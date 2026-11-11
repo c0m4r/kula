@@ -1,4 +1,5 @@
-# CI for kula — vet, vuln-scan, test, lint, build, and smoke-test the binary.
+# CI for kula — vet, vuln-scan, test, lint, build, and smoke-test the binary;
+# and check that the vendored Chart.js bundle is what its lockfile builds.
 #
 # ─── Security model (this is the "sandboxed" shape we want) ────────────────
 #   * permissions: contents: read
@@ -16,6 +17,10 @@
 #   * Dev tools (govulncheck, golangci-lint) are installed from pinned
 #       versions via the Go toolchain. Within the read-only sandbox above
 #       they have no path to the remote repo regardless of what they do.
+#   * The chartjs-bundle job installs the npm packages locked in
+#       addons/chartjs/package-lock.json, with install scripts off, only
+#       after verify-lock.js has matched each to the registry's own tarball
+#       and integrity, then runs esbuild from them in the same sandbox.
 #   * runs-on: ubuntu-latest — a GitHub-hosted, ephemeral VM destroyed
 #       after the job. We don't care what happens inside it.
 # ───────────────────────────────────────────────────────────────────────────
@@ -120,3 +125,49 @@ jobs:
 
       - name: Smoke test
         run: ./kula --version
+
+  chartjs-bundle:
+    # The committed chartjs-bundle.min.js must be byte for byte what
+    # addons/chartjs/package-lock.json builds, so a change to its minified
+    # bytes cannot pass review unseen.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Assert no credentials persisted in the checkout
+        run: |
+          git config --local --unset-all http.https://github.com/.extraheader 2>/dev/null || true
+          git config --local --unset-all credential.helper                    2>/dev/null || true
+          rm -f "$HOME/.git-credentials"
+          if git config --local --list | grep -iE 'extraheader|authorization|x-access-token' >/dev/null 2>&1; then
+            echo "::error::Credential material present in .git/config" >&2
+            exit 1
+          fi
+          echo "OK: no credentials persisted in the local checkout."
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+
+      - name: verify-lock.js tests
+        # Offline: a stand-in registry and crafted lockfiles.
+        run: node addons/chartjs/verify-lock.test.js
+
+      - name: Rebuild the bundle from the lockfile
+        # verify-lock.js checks the committed lockfile against the registry
+        # before npm ci installs anything.
+        run: ./addons/build-chartjs.sh
+
+      - name: Committed bundle matches the rebuild
+        run: |
+          bundle=internal/web/static/js/chartjs/chartjs-bundle.min.js
+          if ! git diff --exit-code --stat -- "$bundle"; then
+            echo "::error::$bundle is not what addons/chartjs/package-lock.json builds; rebuild it with ./addons/build-chartjs.sh" >&2
+            exit 1
+          fi
+          echo "OK: $bundle matches the rebuild."

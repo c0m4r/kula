@@ -125,9 +125,12 @@ platforms:
 registry and crafted lockfiles. Run npm by hand in `addons/chartjs/` only; its `.npmrc` applies
 the same guards.
 
-Rebuilding from the lockfile reproduces `chartjs-bundle.min.js` byte for byte. After an update,
-run the browser regressions: the dashboard relies on a private Chart.js method (see
-[Frontend](10-frontend.md)).
+Rebuilding from the lockfile reproduces `chartjs-bundle.min.js` byte for byte, and CI holds it
+to that: the `chartjs-bundle` job of `ci.yml` runs the `verify-lock.js` tests, rebuilds the
+bundle with `./addons/build-chartjs.sh` and fails when the committed file differs, so a change
+to its minified bytes cannot pass unseen. `./addons/ci-local.sh run ci chartjs-bundle` runs the
+same job locally. After an update, run the browser regressions: the dashboard relies on a
+private Chart.js method (see [Frontend](10-frontend.md)).
 
 ## Go formatting & lint
 

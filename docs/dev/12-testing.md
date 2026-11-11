@@ -330,4 +330,9 @@ other than the registry's, aliases, links, git, `file:` and plain-http sources, 
 node addons/chartjs/verify-lock.test.js
 ```
 
+The `chartjs-bundle` job of `ci.yml` runs it, then rebuilds the bundle with
+`./addons/build-chartjs.sh` (which checks the committed lockfile against the real registry first)
+and fails when `chartjs-bundle.min.js` differs from the rebuild. Locally:
+`./addons/ci-local.sh run ci chartjs-bundle`.
+
 Next: [kula-scan](13-kula-scan.md).

@@ -128,7 +128,8 @@ per-application reducer branches.
   fixtures require Node.js 22+, Chromium/Chrome and Go. The separate Frontend workflow
   (`.github/workflows/frontend.yml`) runs each with its own timeout; `./addons/check.sh` does not.
 - `js/chartjs/chartjs-bundle.min.js` is generated from `addons/chartjs/` by
-  `./addons/build-chartjs.sh`; never hand-edit it. It registers only the line controller,
+  `./addons/build-chartjs.sh`; never hand-edit it. CI's `chartjs-bundle` job rebuilds it from the
+  lockfile and fails when the committed file differs. It registers only the line controller,
   line/point elements, linear/time scales, Legend, Tooltip and zoom, with a native-`Date` time
   adapter. Any other chart type, scale or plugin (e.g. Filler for `fill`) must be added to
   `addons/chartjs/entry.js` and rebuilt. `TestChartBundle` pins the registered set. A distro

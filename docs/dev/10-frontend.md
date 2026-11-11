@@ -32,7 +32,8 @@ static/
 ### Chart.js bundle
 
 `js/chartjs/chartjs-bundle.min.js` is built from [`addons/chartjs/`](../../addons/chartjs/) by
-`./addons/build-chartjs.sh` and committed, so building Kula needs no Node.js. It registers only
+`./addons/build-chartjs.sh` and committed, so building Kula needs no Node.js. CI rebuilds it from
+the lockfile and fails when the committed file differs. It registers only
 what the dashboard uses: the line controller, line and point elements, linear and time scales,
 Legend, Tooltip and chartjs-plugin-zoom. Hammer.js is left out because pan and pinch use Pointer
 Events. Anything else, such as another chart type or the Filler plugin behind `fill`, stays
