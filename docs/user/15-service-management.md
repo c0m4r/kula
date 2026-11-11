@@ -38,7 +38,14 @@ sandbox**:
 - Address families limited to `AF_UNIX AF_INET AF_INET6 AF_NETLINK`.
 - `RuntimeDirectory=kula` creates/cleans `/run/kula` for the optional Unix socket.
 - `LimitNOFILE=65536`.
-- `MemoryMax=1G` (see below).
+- `MemoryMax=1G` (see [Memory limit](#memory-limit)).
+
+> Note: `/proc`-hiding (`ProtectProc`/`ProcSubset`) and syscall filtering are intentionally
+> **omitted** — a monitoring daemon must read system-wide `/proc`, `/sys/fs/cgroup`, and
+> runtime sockets, so over-restricting them would break collection. `ProtectClock` is omitted
+> as well: its seccomp filter also denies the read-only `adjtimex()` call Kula uses to detect
+> clock synchronization, which would report every clock as unsynchronized. Clock writes remain
+> impossible because `CAP_SYS_TIME` is dropped.
 
 ### Memory limit
 
@@ -64,13 +71,6 @@ MemoryMax=2G
 
 `MemoryMax=infinity` removes the limit. `systemctl status kula` shows Kula's memory use
 against it on the `Memory:` line.
-
-> Note: `/proc`-hiding (`ProtectProc`/`ProcSubset`) and syscall filtering are intentionally
-> **omitted** — a monitoring daemon must read system-wide `/proc`, `/sys/fs/cgroup`, and
-> runtime sockets, so over-restricting them would break collection. `ProtectClock` is omitted
-> as well: its seccomp filter also denies the read-only `adjtimex()` call Kula uses to detect
-> clock synchronization, which would report every clock as unsynchronized. Clock writes remain
-> impossible because `CAP_SYS_TIME` is dropped.
 
 ## OpenRC
 
