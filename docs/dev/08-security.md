@@ -164,7 +164,10 @@ of its served bytes.
   with `Retry-After: 2`; the response is streamed rather than built whole; the query cache holds
   at most 2000 samples across its entries. Peak memory under a flood of long-window requests no
   longer grows with the number in flight.
-- Storage path resolved with `filepath.Abs` → directory-traversal resistance.
+- The storage directory comes only from the config file, which the operator controls, and is
+  made absolute once at startup (`filepath.Abs`) so the store and the Landlock rules name the
+  same directory. Kula builds every file name inside it itself (`tier_N.dat`, `sessions.json`,
+  `backup/…`); no request parameter reaches a filesystem path.
 - Static handler resists byte-level path-traversal payloads (encoded, dot-dot, backslash) and
   serves no directory listings.
 
