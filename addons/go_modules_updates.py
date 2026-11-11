@@ -1,12 +1,44 @@
 #!/usr/bin/env python3
 """
-Check for Go module updates using `go list -m -u all`.
+Check for Go module updates using `go list -m -u -json all`.
+
+Go has no release-age window like npm's min-release-age, so each update is
+listed with its release date, and one younger than MIN_RELEASE_AGE_DAYS is
+marked to wait: a hijacked release is usually caught within days.
 """
 
 import subprocess
 import os
 import sys
 import json
+from datetime import datetime, timezone
+
+MIN_RELEASE_AGE_DAYS = 14
+
+
+def release_age_days(stamp: str) -> float | None:
+    """Days since an RFC 3339 module time, or None when it cannot be read."""
+    try:
+        released = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+    if released.tzinfo is None:
+        return None
+    return (datetime.now(timezone.utc) - released).total_seconds() / 86400
+
+
+def module_objects(stream: str) -> list[dict]:
+    """The JSON objects `go list -json` prints one after another."""
+    decoder = json.JSONDecoder()
+    objects = []
+    index = 0
+    while True:
+        while index < len(stream) and stream[index].isspace():
+            index += 1
+        if index >= len(stream):
+            return objects
+        value, index = decoder.raw_decode(stream, index)
+        objects.append(value)
 
 
 def check_go_updates() -> None:
@@ -46,47 +78,49 @@ def check_go_updates() -> None:
         tracked_modules = {req["Path"] for req in mod_data.get("Require", [])}
 
         result = subprocess.run(
-            ["go", "list", "-m", "-u", "all"],
+            ["go", "list", "-m", "-u", "-json", "all"],
             cwd=project_root,
             capture_output=True,
             text=True,
             check=True,
         )
 
-        updates_found = False
+        ready = []
+        waiting = 0
 
-        # Parse the output
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if not line:
+        for module in module_objects(result.stdout):
+            update = module.get("Update")
+            module_name = module.get("Path")
+            if not update or module_name not in tracked_modules:
                 continue
 
-            parts = line.split()
-            # Format usually is: module current_version [latest_version]
-            # e.g., github.com/gin-gonic/gin v1.8.1 [v1.9.1]
-            if (
-                len(parts) >= 3
-                and parts[-1].startswith("[")
-                and parts[-1].endswith("]")
-            ):
-                module_name = parts[0]
-                if module_name not in tracked_modules:
-                    continue
+            current_version = module.get("Version", "?")
+            latest_version = update.get("Version", "?")
+            age = release_age_days(update.get("Time", ""))
+            if age is None:
+                released = "release date unknown"
+            else:
+                released = f"released {update['Time'][:10]}, {int(age)} days ago"
+            line = f"Update available: {module_name} ({current_version} -> {latest_version}, {released})"
+            if age is None or age < MIN_RELEASE_AGE_DAYS:
+                line += f" - wait until it is {MIN_RELEASE_AGE_DAYS} days old"
+                waiting += 1
+            else:
+                ready.append(f"{module_name}@{latest_version}")
+            print(line)
 
-                current_version = parts[1]
-                latest_version = parts[-1][1:-1]  # strip brackets
-
-                print(
-                    f"Update available: {module_name} ({current_version} -> {latest_version})"
-                )
-                updates_found = True
-
-        if not updates_found:
+        if not ready and not waiting:
             print("All Go modules are up-to-date!")
+        elif not ready:
+            print(f"\nNo update is {MIN_RELEASE_AGE_DAYS} days old yet.")
         else:
-            print("\nTo update modules, run:")
-            print("  go get -u all")
+            print(
+                f"\nTo update the modules released at least {MIN_RELEASE_AGE_DAYS} days ago, run:"
+            )
+            print(f"  go get {' '.join(ready)}")
             print("  go mod tidy")
+            print("Check the versions they pull in (git diff go.mod); avoid go get -u, which")
+            print("takes the newest release of every dependency, however recent.")
     except subprocess.CalledProcessError as e:
         print(f"Error checking for updates: {e}", file=sys.stderr)
         if e.stderr:

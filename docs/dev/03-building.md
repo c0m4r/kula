@@ -79,10 +79,19 @@ See [Testing & QA](12-testing.md) for what's covered.
 ## Updating dependencies
 
 ```bash
-./addons/go_modules_updates.py   # report outdated used modules (check-only)
-go get -u ./...
+./addons/go_modules_updates.py           # report outdated used modules and their release dates (check-only)
+go get example.com/module@v1.2.3         # the versions it lists as at least 14 days old
 go mod tidy
 ```
+
+Go has no release-age window like npm's `min-release-age` (below): `go get -u` takes the newest
+release of every dependency, however recent, and a hijacked release is usually caught within
+days. Update to named versions at least 14 days old, the window the npm side enforces;
+`go_modules_updates.py` prints each update's release date, marks the younger ones to wait, and
+prints the `go get` line for the rest. Check what they pull in with `git diff go.mod`. A fix
+`govulncheck` reports for Kula is the exception: take it when it is out. `go.sum` and the
+checksum database keep a version from changing once fetched; they cannot tell a malicious
+release from a good one.
 
 There are companion scripts: [`addons/chartjs-updates.py`](../../addons/chartjs-updates.py)
 (report newer Chart.js/plugin releases than the bundled ones), and
