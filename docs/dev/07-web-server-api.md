@@ -269,6 +269,8 @@ requires: one invalid byte would fail the whole scrape. See
 
 - `handleOllamaChat` — streams a chat completion as SSE, running an agentic tool-calling loop
   where the model can call `get_metrics` (≤5 rounds, ≤8 calls each), backed by `Collector.FormatForAI()`.
+  Every `data:` payload is a JSON string (`writeSSE`), so no character of the model's output can
+  end a line: unnamed events carry text, `tool_call` and `done` an empty string, `error` a message.
 - `handleOllamaModels` — lists locally available models.
 - `handleOllamaContext` — bootstraps a per-chart analysis session with recent data as CSV.
 

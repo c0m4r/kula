@@ -7,6 +7,7 @@
 import { state, escapeHTML } from './state.js';
 import { i18n } from './i18n.js';
 import { apiUrl } from './api.js';
+import { createSSEReader } from './ai-stream.js';
 
 // ---- Conversation history (max 20 turns kept per session in memory) ----
 const MAX_HISTORY = 20;
@@ -661,27 +662,18 @@ async function streamChatResponse({ prompt, messages, context, assistantBody }) 
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
+    const sse = createSSEReader();
     let fullContent = '';
-    let lastEvent = '';
 
     try { // [M1] ensure reader is always released
-        while (true) {
+        read: while (true) {
             const { value, done } = await reader.read();
             if (done) break;
-            buffer += decoder.decode(value, { stream: true });
 
-            const lines = buffer.split('\n');
-            buffer = lines.pop(); // keep incomplete last line
-
-            for (const line of lines) {
-                if (line.startsWith('event: ')) {
-                    lastEvent = line.slice(7).trim();
-                    continue;
-                }
-                if (!line.startsWith('data: ')) continue;
-
-                if (lastEvent === 'tool_call') {
+            for (const { event, data } of sse.push(decoder.decode(value, { stream: true }))) {
+                if (event === 'done') break read;
+                if (event === 'error') throw new Error(typeof data === 'string' && data ? data : 'stream error');
+                if (event === 'tool_call') {
                     // Show a temporary indicator while the tool executes.
                     if (assistantBody) {
                         assistantBody.innerHTML = renderMarkdownLite(fullContent) +
@@ -689,23 +681,11 @@ async function streamChatResponse({ prompt, messages, context, assistantBody }) 
                         const msgs = document.getElementById('ai-messages');
                         if (msgs) scrollToBottom(msgs);
                     }
-                    lastEvent = '';
                     continue;
                 }
-                if (lastEvent === 'done') {
-                    lastEvent = '';
-                    break;
-                }
-                if (lastEvent === 'error') {
-                    const msg = line.slice(6) || 'stream error';
-                    lastEvent = '';
-                    throw new Error(msg);
-                }
-                lastEvent = '';
+                if (event !== 'message' || typeof data !== 'string') continue;
 
-                const chunk = line.slice(6);
-                const decoded = chunk.replace(/\\n/g, '\n');
-                fullContent += decoded;
+                fullContent += data;
                 if (assistantBody) {
                     assistantBody.innerHTML = renderMarkdownLite(fullContent);
                     const msgs = document.getElementById('ai-messages');

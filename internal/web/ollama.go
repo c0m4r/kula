@@ -445,15 +445,29 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 		// If headers already sent, we can only log the error.
 		log.Printf("[Ollama] stream error: %v", err)
 		// Signal the client that an error occurred mid-stream.
-		// Writes an SSE text/event-stream frame (not text/html); the XSS rule doesn't apply.
-		// nosemgrep: no-fprintf-to-responsewriter
-		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+		writeSSE(w, "error", err.Error())
 		flusher.Flush()
 	}
 
 	// Signal end of stream.
-	_, _ = fmt.Fprintf(w, "event: done\ndata: \n\n")
+	writeSSE(w, "done", "")
 	flusher.Flush()
+}
+
+// writeSSE writes one text/event-stream event (not text/html) whose data is
+// payload as a JSON string. Model output and backend errors may hold any
+// character, and a raw CR or LF would end the data line and let the rest
+// pass for fields of its own; JSON escapes both.
+func writeSSE(w io.Writer, event, payload string) {
+	var frame bytes.Buffer
+	if event != "" {
+		frame.WriteString("event: " + event + "\n")
+	}
+	data, _ := json.Marshal(payload) // a string always encodes
+	frame.WriteString("data: ")
+	frame.Write(data)
+	frame.WriteString("\n\n")
+	_, _ = w.Write(frame.Bytes())
 }
 
 // streamChat runs the agentic tool-calling loop: it calls doStreamRound up to
@@ -479,7 +493,7 @@ func (oc *ollamaClient) streamChat(
 		}
 
 		// Notify the client that tool execution is in progress.
-		_, _ = fmt.Fprintf(w, "event: tool_call\ndata: \n\n")
+		writeSSE(w, "tool_call", "")
 		flusher.Flush()
 
 		// Append the assistant's tool-call turn (no text content).
@@ -597,10 +611,7 @@ func (oc *ollamaClient) doStreamRound(
 			if debugLog {
 				fullResponse.WriteString(chunk.Message.Content)
 			}
-
-			// Replace actual newlines with literal '\n' for SSE protocol
-			s := strings.ReplaceAll(chunk.Message.Content, "\n", "\\n")
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", s)
+			writeSSE(w, "", chunk.Message.Content)
 			flusher.Flush()
 		}
 		if chunk.Done {
@@ -740,8 +751,7 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 			if debugLog {
 				fullResponse.WriteString(choice.Delta.Content)
 			}
-			s := strings.ReplaceAll(choice.Delta.Content, "\n", "\\n")
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", s)
+			writeSSE(w, "", choice.Delta.Content)
 			flusher.Flush()
 		}
 	}

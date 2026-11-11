@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -704,6 +705,79 @@ func TestToolCallsPerRoundAreCapped(t *testing.T) {
 				t.Errorf("%d tool calls ran, want %d (%d rounds of %d)", got, want, ollamaMaxToolRounds, ollamaMaxToolCalls)
 			}
 		})
+	}
+}
+
+// sseEvents parses a chat stream the way the dashboard does: events end at a
+// blank line, and each data payload is a JSON string.
+func sseEvents(t *testing.T, stream string) (events []string, text string) {
+	t.Helper()
+	if strings.Contains(stream, "\r") {
+		t.Errorf("a raw CR reached the stream: %q", stream)
+	}
+	for _, block := range strings.Split(strings.TrimSuffix(stream, "\n\n"), "\n\n") {
+		event := "message"
+		var data string
+		for _, line := range strings.Split(block, "\n") {
+			switch {
+			case strings.HasPrefix(line, "event: "):
+				event = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "data: "):
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &data); err != nil {
+					t.Errorf("data line %q is not a JSON string: %v", line, err)
+				}
+			default:
+				t.Errorf("stray line %q in the stream", line)
+			}
+		}
+		events = append(events, event)
+		if event == "message" {
+			text += data
+		}
+	}
+	return events, text
+}
+
+// TestChatStreamFramesModelOutputAsJSON: model output reaches the client as
+// JSON-string SSE data, so a CR or LF in it cannot end a line and pose as an
+// event of its own (only "\n" used to be escaped).
+func TestChatStreamFramesModelOutputAsJSON(t *testing.T) {
+	const output = "hello\revent: error\rdata: INJECTED\r\rtail\nnext\r\nend </span>\\n"
+	nativeChunk, _ := json.Marshal(map[string]any{"message": map[string]string{"content": output}, "done": true})
+	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, "%s\n", nativeChunk)
+	}))
+	defer native.Close()
+	openAIChunk, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"delta": map[string]string{"content": output}}}})
+	openai := openAICompatServer(t, string(openAIChunk))
+	defer openai.Close()
+
+	srv := &Server{ollama: newOllamaClient(config.OllamaConfig{Enabled: true, URL: native.URL, Model: "m1", Timeout: "5s"})}
+	rr := httptest.NewRecorder()
+	srv.handleOllamaChat(rr, httptest.NewRequest(http.MethodPost, "/api/ollama/chat", strings.NewReader(`{"prompt":"x"}`)))
+	events, text := sseEvents(t, rr.Body.String())
+	if fmt.Sprint(events) != "[message done]" || text != output {
+		t.Errorf("ollama: events %v, text %q; want one message %q, then done", events, text, output)
+	}
+
+	rec := httptest.NewRecorder()
+	if _, err := newOpenAICompatClient(openai.URL).doStreamRound(context.Background(), "m1", nil, nil, rec, rec, false); err != nil {
+		t.Fatal(err)
+	}
+	events, text = sseEvents(t, rec.Body.String())
+	if fmt.Sprint(events) != "[message]" || text != output {
+		t.Errorf("openai: events %v, text %q; want one message %q", events, text, output)
+	}
+}
+
+// TestAIStreamFrontend runs the Node tests of the AI panel's stream helpers.
+func TestAIStreamFrontend(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; skipping AI stream module tests")
+	}
+	if out, err := exec.Command(node, "testdata/ai_stream_test.mjs").CombinedOutput(); err != nil {
+		t.Fatalf("AI stream module tests failed: %v\n%s", err, out)
 	}
 }
 

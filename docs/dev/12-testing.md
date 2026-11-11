@@ -55,6 +55,8 @@ viewport batching and culling, gestures, keyboard exploration and complete formu
 It also runs `chart_bundle_test.mjs`. That test checks that the vendored Chart.js bundle registers
 only the dashboard's components and keeps time-axis ticks on local hours across a DST switch. It
 also covers the calendar math of the native `Date` adapter.
+`ollama_test.go` runs [`ai_stream_test.mjs`](../../internal/web/testdata/ai_stream_test.mjs), which
+feeds the AI panel's stream reader the chat's Server-Sent Events byte by byte.
 `TestHistoryResponsesMatchDashboardContract` (storage) checks the `/api/history` contract from
 both sides. It queries real stores the way the dashboard does (unaligned millisecond bounds and
 its point budget): raw and 2s-bucketed five-minute views, a right-edge clip, an outage, an empty
