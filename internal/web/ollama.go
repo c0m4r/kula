@@ -25,6 +25,10 @@ import (
 // "llama3:latest", "library/llama3.1", or "hf.co/user/model:Q4_K_M".
 var ollamaModelNameRe = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,200}$`)
 
+// ollamaChatFailed is all a client learns of a failed chat; the server log
+// has the detail.
+const ollamaChatFailed = "AI backend request failed; the server log has the details"
+
 // ollamaLangRe matches the language tags the dashboard sends ("en", "pt-BR").
 var ollamaLangRe = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$`)
 
@@ -136,6 +140,7 @@ type ollamaClient struct {
 	mu          sync.RWMutex
 	detectedAPI string          // "ollama" or "openai"; empty until first successful probe
 	models      map[string]bool // the backend's last model listing; nil until one succeeds
+	modelsErr   string          // why the last listing failed, as logged; "" after a success
 	chats       chan struct{}   // one token per chat in progress, ollamaMaxChats at most
 }
 
@@ -442,10 +447,10 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 
 	err := s.ollama.streamChat(r.Context(), model, messages, tools, toolExecutor, w, flusher, debugLog)
 	if err != nil {
-		// If headers already sent, we can only log the error.
-		log.Printf("[Ollama] stream error: %v", err)
-		// Signal the client that an error occurred mid-stream.
-		writeSSE(w, "error", err.Error())
+		// The detail (the backend's address, its answer) is for the operator;
+		// the client, who may be anyone with auth off, learns only that it failed.
+		log.Printf("[Ollama] stream error: %q", err.Error())
+		writeSSE(w, "error", ollamaChatFailed)
 		flusher.Flush()
 	}
 
@@ -805,10 +810,8 @@ func (s *Server) handleOllamaModels(w http.ResponseWriter, r *http.Request) {
 	debugLog := s.cfg.Logging.Enabled && s.cfg.Logging.Level == "debug"
 	models, err := s.ollama.fetchModels(r.Context(), debugLog)
 	if err != nil {
-		if debugLog {
-			log.Printf("[DEBUG] [Ollama] fetchModels failed: %v", err)
-		}
-		jsonError(w, fmt.Sprintf("ollama unavailable: %v", err), http.StatusBadGateway)
+		s.ollama.logModelsError(err)
+		jsonError(w, "AI backend unavailable", http.StatusBadGateway)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -867,6 +870,21 @@ func (oc *ollamaClient) setModelsLocked(names []string) {
 	oc.models = make(map[string]bool, len(names))
 	for _, name := range names {
 		oc.models[name] = true
+	}
+	oc.modelsErr = ""
+}
+
+// logModelsError logs why the model list is unavailable, escaped, once until
+// the reason changes or a listing succeeds: an open AI panel retries every
+// few seconds.
+func (oc *ollamaClient) logModelsError(err error) {
+	msg := err.Error()
+	oc.mu.Lock()
+	repeated := msg == oc.modelsErr
+	oc.modelsErr = msg
+	oc.mu.Unlock()
+	if !repeated {
+		log.Printf("[Ollama] model list unavailable: %q", msg)
 	}
 }
 

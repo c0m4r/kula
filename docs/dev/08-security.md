@@ -186,6 +186,9 @@ of its served bytes.
 - **Model restriction:** a chat runs on the configured model or on one the backend lists in
   its latest `/api/ollama/models` listing (fetched on demand if none has been); any other name
   falls back to the configured model. Names must also match `^[A-Za-z0-9._:/-]{1,200}$`.
+- **Backend errors:** a failed model listing answers `502 AI backend unavailable` and a failed
+  chat streams a fixed `error` event; the detail (the backend's address, its answer) is logged,
+  `%q`-escaped, the model-list failure once until its reason changes.
 - **SSE framing:** every `data:` payload of the chat stream is a JSON string, so a CR or LF
   in the model's output or a backend error cannot end a line and pose as an event.
 - **Response cap:** 10 MB; **tool loop cap:** 5 rounds of at most 8 tool calls each (one per

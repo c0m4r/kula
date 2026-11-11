@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -767,6 +768,50 @@ func TestChatStreamFramesModelOutputAsJSON(t *testing.T) {
 	events, text = sseEvents(t, rec.Body.String())
 	if fmt.Sprint(events) != "[message]" || text != output {
 		t.Errorf("openai: events %v, text %q; want one message %q", events, text, output)
+	}
+}
+
+// TestOllamaBackendErrorsStayInTheLog: a failing backend's detail (its
+// loopback address and port, its answer) goes to the server log, escaped and
+// once per reason for the model list; the client gets a generic error.
+func TestOllamaBackendErrorsStayInTheLog(t *testing.T) {
+	var logged bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(orig)
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal\r\nX-Injected: detail", http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+	down := httptest.NewServer(http.NotFoundHandler())
+	down.Close()
+	port := func(u string) string { return u[strings.LastIndex(u, ":")+1:] }
+
+	srv := &Server{ollama: newOllamaClient(config.OllamaConfig{Enabled: true, URL: down.URL, Model: "llama3", Timeout: "5s"})}
+	for i := 0; i < 3; i++ {
+		rr := httptest.NewRecorder()
+		srv.handleOllamaModels(rr, httptest.NewRequest(http.MethodGet, "/api/ollama/models", nil))
+		if rr.Code != http.StatusBadGateway || strings.Contains(rr.Body.String(), port(down.URL)) || strings.Contains(rr.Body.String(), "127.0.0.1") {
+			t.Errorf("model list from a backend that is down: %d %q", rr.Code, rr.Body.String())
+		}
+	}
+	if n := strings.Count(logged.String(), "model list unavailable"); n != 1 {
+		t.Errorf("the failed listing was logged %d times, want once:\n%s", n, logged.String())
+	}
+	if !strings.Contains(logged.String(), port(down.URL)) {
+		t.Errorf("the log does not name the backend:\n%s", logged.String())
+	}
+
+	srv = &Server{ollama: newOllamaClient(config.OllamaConfig{Enabled: true, URL: failing.URL, Model: "llama3", Timeout: "5s"})}
+	rr := httptest.NewRecorder()
+	srv.handleOllamaChat(rr, httptest.NewRequest(http.MethodPost, "/api/ollama/chat", strings.NewReader(`{"prompt":"x"}`)))
+	body := rr.Body.String()
+	if !strings.Contains(body, "event: error\ndata: \""+ollamaChatFailed) || strings.Contains(body, "Injected") || strings.Contains(body, port(failing.URL)) {
+		t.Errorf("chat with a failing backend streamed %q", body)
+	}
+	if !strings.Contains(logged.String(), `internal\r\nX-Injected: detail`) || strings.Contains(logged.String(), "\nX-Injected") {
+		t.Errorf("the backend's answer is not in the log, escaped:\n%s", logged.String())
 	}
 }
 
