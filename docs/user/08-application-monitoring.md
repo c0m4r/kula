@@ -170,7 +170,9 @@ receiver is streaming; without it, Kula only sees that a receiver is running.
 
 Dead/live tuples, autovacuum count and database size are read once a minute and repeated in
 between: both walk every table of the database, which costs the server tens of milliseconds
-per poll once it holds thousands of tables. Everything else is read every collection interval.
+per poll once it holds thousands of tables. A read that fails repeats the previous values for
+another minute, and two failures in a row show zero. Everything else is read every collection
+interval.
 
 > Prefer the `KULA_POSTGRES_PASSWORD` environment variable over putting the password in the
 > file. Kula escapes it safely for the libpq connection string.

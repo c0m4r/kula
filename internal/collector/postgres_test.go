@@ -13,10 +13,12 @@ import (
 )
 
 // pgFakeServer answers the queries of a PostgreSQL poll with fixed rows and
-// counts how often each one runs.
+// counts how often each one runs. fail, when set, makes the call-th run of a
+// query fail.
 type pgFakeServer struct {
 	mu      sync.Mutex
 	queries map[string]int
+	fail    func(name string, call int) bool
 }
 
 // pgFakeAnswers maps a fragment of each query, checked in order, to the name
@@ -60,7 +62,11 @@ func (c *pgFakeConn) QueryContext(_ context.Context, query string, _ []driver.Na
 		if strings.Contains(query, a.fragment) {
 			c.srv.mu.Lock()
 			c.srv.queries[a.name]++
+			call, fail := c.srv.queries[a.name], c.srv.fail
 			c.srv.mu.Unlock()
+			if fail != nil && fail(a.name, call) {
+				return nil, errors.New("canceling statement due to statement timeout")
+			}
 			return &pgFakeRows{row: a.row}, nil
 		}
 	}
@@ -113,6 +119,40 @@ func TestPostgresRelationStatsOncePerInterval(t *testing.T) {
 		if got := srv.count(name); got != want {
 			t.Errorf("%s queried %d times in %d polls, want %d", name, got, polls, want)
 		}
+	}
+}
+
+// A relation statistics read that fails, as one slower than the statement
+// timeout does, keeps the previous read's values until the next read instead
+// of reporting zeros for a minute. A second failure in a row clears them.
+func TestPostgresRelationStatsSurviveAFailedRead(t *testing.T) {
+	failing := map[int]bool{2: true, 4: true, 5: true} // the reads at 60, 180 and 240 s
+	srv := &pgFakeServer{queries: map[string]int{}, fail: func(name string, call int) bool {
+		return (name == "user_tables" || name == "database_size") && failing[call]
+	}}
+	clock := time.Unix(1_700_000_000, 0)
+	pc := newPostgresCollector("localhost", 5432, "kula", "", "app", "disable", false, time.Second)
+	pc.session.connector = srv
+	pc.session.now = func() time.Time { return clock }
+	pc.session.logf = sessionLog(t)
+	defer pc.session.release()
+
+	for poll := 0; poll <= 240; poll++ {
+		stats := pc.poll(context.Background())
+		if stats == nil {
+			t.Fatalf("poll %d failed", poll)
+		}
+		want := [4]int64{7, 700, 3, 8_000_000}
+		if poll == 240 {
+			want = [4]int64{}
+		}
+		if got := [4]int64{stats.DeadTuples, stats.LiveTuples, stats.AutovacuumCount, stats.DBSizeBytes}; got != want {
+			t.Fatalf("poll %d: dead, live, autovacuums, size = %v, want %v", poll, got, want)
+		}
+		clock = clock.Add(time.Second - time.Millisecond)
+	}
+	if got := srv.count("user_tables"); got != 5 {
+		t.Fatalf("relation statistics read %d times in 241 polls, want 5", got)
 	}
 }
 

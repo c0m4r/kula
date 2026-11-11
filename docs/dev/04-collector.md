@@ -112,6 +112,8 @@ API and WebSocket payloads.
   30 and 60 ms of server time at 10 000 tables), so `postgres.go` reads them every
   `pgRelationStatsInterval` and repeats them in the polls between. Every attempt counts,
   failed or not, so statistics slower than the statement timeout are not retried each poll.
+  A failed query keeps the previous read's values until the next read; a second failure in a
+  row reports zeros.
   `postgres_test.go` counts the queries of two minutes of polls against a fake server.
 - **Debug logging** goes through the `debugf` helper, gated by `collection.DebugLog` (which is
   set when `web.logging.level == "debug"`).

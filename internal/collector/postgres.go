@@ -43,10 +43,12 @@ type pgRaw struct {
 // for numbers that change over minutes.
 const pgRelationStatsInterval = time.Minute
 
-// pgRelationStats is what one read of the relation statistics found; a query
-// that failed leaves its fields zero.
+// pgRelationStats is what the reads of the relation statistics found. A query
+// that fails keeps the previous read's values, so one slow read is not shown
+// as zeros until the next; a second failure in a row clears them.
 type pgRelationStats struct {
 	deadTuples, liveTuples, autovacuumCount, dbSizeBytes int64
+	tablesFailed, sizeFailed                             bool
 }
 
 // postgresCollector polls one PostgreSQL database through a single session
@@ -453,7 +455,7 @@ func (pc *postgresCollector) query(ctx context.Context, conn *sql.Conn) (*Postgr
 	// fails counts too, so statistics too slow for the statement timeout are
 	// not retried every poll.
 	if pc.relationStatsDue(readAt) {
-		pc.rel = pc.queryRelationStats(ctx, conn)
+		pc.rel = pc.queryRelationStats(ctx, conn, pc.rel)
 		pc.relAt = readAt
 	}
 	stats.DeadTuples = pc.rel.deadTuples
@@ -540,9 +542,10 @@ func (pc *postgresCollector) relationStatsDue(at time.Time) bool {
 
 // queryRelationStats reads table health across all user tables (dead and
 // live tuples, autovacuum runs) and the database size. Both are non-fatal: a
-// query that fails leaves its fields zero.
-func (pc *postgresCollector) queryRelationStats(ctx context.Context, conn *sql.Conn) pgRelationStats {
-	var rel pgRelationStats
+// query that fails keeps its fields from prev, or zeroes them when it failed
+// in prev too.
+func (pc *postgresCollector) queryRelationStats(ctx context.Context, conn *sql.Conn, prev pgRelationStats) pgRelationStats {
+	rel := prev
 	var deadTup, liveTup, vacCount sql.NullInt64
 	if err := conn.QueryRowContext(ctx, `
 		SELECT
@@ -552,8 +555,13 @@ func (pc *postgresCollector) queryRelationStats(ctx context.Context, conn *sql.C
 		FROM pg_stat_user_tables
 	`).Scan(&deadTup, &liveTup, &vacCount); err == nil {
 		rel.deadTuples, rel.liveTuples, rel.autovacuumCount = deadTup.Int64, liveTup.Int64, vacCount.Int64
+		rel.tablesFailed = false
 	} else {
 		pc.debugf("[postgres] pg_stat_user_tables query error: %v", err)
+		if prev.tablesFailed {
+			rel.deadTuples, rel.liveTuples, rel.autovacuumCount = 0, 0, 0
+		}
+		rel.tablesFailed = true
 	}
 
 	var dbSize sql.NullInt64
@@ -561,8 +569,13 @@ func (pc *postgresCollector) queryRelationStats(ctx context.Context, conn *sql.C
 		"SELECT pg_database_size($1)", pc.dbName,
 	).Scan(&dbSize); err == nil {
 		rel.dbSizeBytes = dbSize.Int64
+		rel.sizeFailed = false
 	} else {
 		pc.debugf("[postgres] pg_database_size error: %v", err)
+		if prev.sizeFailed {
+			rel.dbSizeBytes = 0
+		}
+		rel.sizeFailed = true
 	}
 	return rel
 }
