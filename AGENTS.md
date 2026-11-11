@@ -138,9 +138,11 @@ per-application reducer branches.
 - npm is used only through `addons/build-chartjs.sh` (or by hand in `addons/chartjs/`, whose
   `.npmrc` applies the same guards): `ignore-scripts=true`, `min-release-age=14`, exact pins.
   `verify-lock.js` rejects a lockfile older than v2 (no `packages` map), a direct dependency
-  of any kind that is not an exact pin or not locked, and any locked package that is
-  off-registry, lacks sha512 integrity or is under 14 days old; do not bypass it or add npm
-  dependencies elsewhere.
+  of any kind that is not an exact pin or not locked, and any locked package whose `resolved`
+  and sha512 `integrity` are not exactly the registry's `dist.tarball` and `dist.integrity`
+  for its name and version, or that is under 14 days old. `addons/chartjs/verify-lock.test.js`
+  checks it offline against crafted lockfiles. Do not bypass it or add npm dependencies
+  elsewhere.
 - Dashboard modules keep preferences through `js/app/prefs.js`, never `localStorage` directly:
   blocked site data makes every access throw, which would stop the dashboard.
   `TestDashboardStorageGoesThroughPrefs` enforces it; only the import-free `tv-mode.js` guards

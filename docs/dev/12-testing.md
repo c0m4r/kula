@@ -316,4 +316,18 @@ run in `ci.yml`:
 python3 -m unittest discover -s addons/ci-local -v
 ```
 
+## Chart.js bundle inputs
+
+[`addons/chartjs/verify-lock.test.js`](../../addons/chartjs/verify-lock.test.js) runs
+`verify-lock.js` (see [Building](03-building.md#updating-dependencies)) with `fetch` replaced by
+a stand-in registry that agrees with the committed lockfile. The committed lockfile must pass;
+crafted ones must be refused for the expected reason: a `resolved` URL with dot segments, `%2e`,
+backslashes, a query or a fragment, a version field that differs from the tarball, an integrity
+other than the registry's, aliases, links, git, `file:` and plain-http sources, releases under
+14 days old and loose direct pins. It needs only Node.js and no network:
+
+```bash
+node addons/chartjs/verify-lock.test.js
+```
+
 Next: [kula-scan](13-kula-scan.md).

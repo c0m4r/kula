@@ -104,15 +104,26 @@ line so `npm_config_*` environment variables cannot weaken them:
 - Exact pins: `package.json` pins each direct dependency (`save-exact=true`), and the lockfile
   pins every transitive one with a sha512 integrity hash.
 
-`npm ci` installs locked versions without applying `min-release-age`. Before anything is
-installed, `addons/chartjs/verify-lock.js` therefore checks every locked package, including the
-optional esbuild binaries for other platforms. Each must come from `registry.npmjs.org` with
-sha512 integrity and be published at least 14 days ago. Every direct dependency, in any of
-`dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies`, must be an
-exact pin with a locked entry. A lockfile older than v2 has no `packages` map to check and is
-rejected outright rather than passing with nothing checked. A lockfile changed any other way
-fails the build. Run npm by hand in `addons/chartjs/` only; its `.npmrc`
-applies the same guards.
+`npm ci` installs locked versions without applying `min-release-age`, and it fetches whatever
+tarball an entry's `resolved` URL names, accepting it when it matches the entry's `integrity`.
+Before anything is installed, `addons/chartjs/verify-lock.js` therefore checks every locked
+package against `registry.npmjs.org`, including the optional esbuild binaries for other
+platforms:
+
+- Its `resolved` URL and sha512 `integrity` must be exactly the `dist.tarball` and
+  `dist.integrity` the registry lists for the entry's name and version, so npm can fetch and
+  accept that release and no other. A `resolved` URL that `new URL()` would rewrite (dot
+  segments, `%2e`, backslashes) or that carries a query or a fragment is refused, as are npm
+  aliases, links and lockfile paths that are not a `node_modules/` chain of package names.
+- That release must have been published at least 14 days ago.
+- Every direct dependency, in any of `dependencies`, `devDependencies`,
+  `optionalDependencies` and `peerDependencies`, must be an exact pin with a locked entry.
+- A lockfile older than v2 has no `packages` map to check and is rejected outright rather than
+  passing with nothing checked.
+
+`node addons/chartjs/verify-lock.test.js` runs these checks offline, against a stand-in
+registry and crafted lockfiles. Run npm by hand in `addons/chartjs/` only; its `.npmrc` applies
+the same guards.
 
 Rebuilding from the lockfile reproduces `chartjs-bundle.min.js` byte for byte. After an update,
 run the browser regressions: the dashboard relies on a private Chart.js method (see
