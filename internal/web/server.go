@@ -93,6 +93,13 @@ func NewServer(cfg config.WebConfig, global config.GlobalConfig, c *collector.Co
 		ollamaLimiter:   newChatRateLimiter(),
 		ollamaMetaLim:   newMetaRateLimiter(),
 		hosts:           newHostPolicy(cfg, machineHostname(), global.Hostname),
+		// Created here, not in Start: Shutdown runs on another goroutine and
+		// may come first, and must then stop the server Start goes on to run.
+		httpSrv: &http.Server{
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 60 * time.Second, // allow longer for /api/history large payloads
+			IdleTimeout:  120 * time.Second,
+		},
 	}
 	if cfg.UI && cfg.MinifyAssets {
 		srv.assets = minifiedStatic()
@@ -626,14 +633,7 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	handler := s.buildHandler()
-
-	s.httpSrv = &http.Server{
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second, // allow longer for /api/history large payloads
-		IdleTimeout:  120 * time.Second,
-	}
+	s.httpSrv.Handler = s.buildHandler()
 
 	listeners, err := s.createListeners()
 	if err != nil {

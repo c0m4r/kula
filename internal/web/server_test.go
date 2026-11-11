@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"html"
 	"log"
@@ -1258,5 +1259,25 @@ func TestWriteJSONAnswersAnEncodingFailure(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q", got)
+	}
+}
+
+// TestShutdownRacingStart: kula serve runs Start on a goroutine of its own and
+// Shutdown when a signal comes, possibly before Start has begun serving. The
+// server must stop either way, and the two must not race on it.
+func TestShutdownRacingStart(t *testing.T) {
+	srv := hostTestServer(t, func(cfg *config.WebConfig) { cfg.Listen = "127.0.0.1" })
+	done := make(chan error, 1)
+	go func() { done <- srv.Start() }()
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the server kept serving after Shutdown")
 	}
 }
