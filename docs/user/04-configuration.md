@@ -4,7 +4,10 @@ All settings live in `config.yaml`. Kula looks for it via the `-config` flag (de
 `config.yaml` in the working directory). A fully-commented template is shipped as
 [`config.example.yaml`](../../config.example.yaml); copy it and edit.
 
-Every section is optional — omitted settings fall back to built-in defaults.
+Every section is optional — omitted settings fall back to built-in defaults. A setting Kula
+does not know, such as a misspelled key, stops it from starting, with an error naming the line
+(`line 5: unknown setting "enable"`): ignored, `web.auth.enable: true` would have left
+authentication off without a word.
 
 If you start Kula with an explicit `-config <path>` that doesn't exist yet, Kula seeds that
 path from the packaged example config (the same `config.example.yaml`, embedded in the binary

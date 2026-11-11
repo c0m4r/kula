@@ -226,6 +226,42 @@ func TestLoadRejectsBrokenWebLimits(t *testing.T) {
 	}
 }
 
+// TestLoadRefusesUnknownSettings: a key the schema lacks stops startup with
+// its line, instead of being ignored. Ignored, a misspelled setting fails open:
+// `web.auth.enable: true` started Kula with authentication off.
+func TestLoadRefusesUnknownSettings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	typo := fmt.Sprintf("storage:\n  directory: %s\nweb:\n  auth:\n    enable: true\n", dir)
+	if err := os.WriteFile(path, []byte(typo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), `line 5: unknown setting "enable"`) {
+		t.Fatalf("Load() of a misspelled setting returned %v, want a refusal naming it and its line", err)
+	}
+
+	// An empty file is no config at all: every setting at its default.
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load() of an empty file: %v", err)
+	}
+}
+
+// The example Kula ships, and seeds a missing -config from, must load as it
+// is: every key in it is one the schema knows.
+func TestExampleConfigLoadsStrictly(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "config.example.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := decodeStrict(data, DefaultConfig()); err != nil {
+		t.Fatalf("config.example.yaml: %v", err)
+	}
+}
+
 // Disk temperatures and power supplies are read every 10 s when the config
 // does not say, or every sample when the collection interval is longer; any
 // other value must be a multiple of the collection interval.

@@ -1,12 +1,16 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -522,6 +526,29 @@ func Load(path string) (*Config, error) {
 	return load(path, false)
 }
 
+// unknownSetting matches yaml.v3's message for a key the schema lacks.
+var unknownSetting = regexp.MustCompile(`field (\S+) not found in type \S+`)
+
+// decodeStrict decodes a config file into cfg, refusing any key the schema
+// does not have. An ignored key fails open: a misspelled `web.auth.enable:
+// true` would start Kula with authentication off. Every config.example.yaml
+// Kula has shipped decodes this way.
+func decodeStrict(data []byte, cfg *Config) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	err := dec.Decode(cfg)
+	if errors.Is(err, io.EOF) {
+		return nil // an empty file: every setting at its default
+	}
+	var typeErr *yaml.TypeError
+	if errors.As(err, &typeErr) {
+		for i, msg := range typeErr.Errors {
+			typeErr.Errors[i] = unknownSetting.ReplaceAllString(msg, `unknown setting "$1"`)
+		}
+	}
+	return err
+}
+
 // LoadRequired behaves like Load but fails if the config file is missing or
 // unreadable, so an explicitly specified -config path can't be silently
 // ignored.
@@ -534,8 +561,8 @@ func load(path string, mustExist bool) (*Config, error) {
 
 	data, err := os.ReadFile(path)
 	if err == nil {
-		if err := yaml.Unmarshal(data, cfg); err != nil {
-			return nil, fmt.Errorf("parsing config: %w", err)
+		if err := decodeStrict(data, cfg); err != nil {
+			return nil, fmt.Errorf("parsing config %q: %w", path, err)
 		}
 	} else if mustExist {
 		return nil, fmt.Errorf("reading config %q: %w", path, err)
