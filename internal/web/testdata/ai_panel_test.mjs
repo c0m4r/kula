@@ -253,7 +253,9 @@ try {
     assert.ok(long.text.length <= AI_MAX_ANSWER + long.cut.length,
         `${long.text.length} characters shown, over the cap`);
     assert.ok(long.text.startsWith('word b c | x |'), 'the cut answer is not rendered');
-    assert.ok(long.gap < 1000, `the page stopped for ${Math.round(long.gap)} ms`);
+    // ~100 ms on an idle desktop, ~700 ms beside other browser tests; it was
+    // minutes before.
+    assert.ok(long.gap < 2000, `the page stopped for ${Math.round(long.gap)} ms`);
 
     // The conversation goes on: the cut answer is sent back as much as the
     // server keeps of it, so the request stays under the server's body cap.

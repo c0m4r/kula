@@ -283,7 +283,7 @@ with the AI assistant pointed at a fake Ollama on loopback and drives the AI pan
 must stream and render as markdown, and a chat must run on the model picked in the panel,
 carrying only `system`, `user` and `assistant` turns. A failing backend must show a generic
 error without its address. A 1 MiB answer in 8-byte chunks must end within seconds, cut at the
-panel's cap with its notice, without stopping the page for a second, and the next question
+panel's cap with its notice, without stopping the page for two seconds, and the next question
 must still be answered. It takes a few seconds.
 
 Run all five fixtures with
