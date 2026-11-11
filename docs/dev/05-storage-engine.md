@@ -219,9 +219,13 @@ On startup the store:
    crash between the raw write that closed it and its rollup — is rolled up then and cascades
    as it would have. Pending records are told apart by write order, not time: after the clock
    steps back, the tail holds records later than the newest rollup that were rolled up before
-   the step and pending ones earlier than it (`pendingRollup`). With the seek index each of
-   these reads only the end of its tier, so rollups resume after a restart without
-   double-counting or gaps.
+   the step and pending ones earlier than it (`pendingRollup`). A raw record that claims more
+   than twice tier 0's resolution is replayed as covering one, as `WriteSample` writes a
+   record after a gap (`rollupSource`): records written before 0.20.0 carry their whole gap,
+   and a crafted file any duration. Taken at its word, one claiming a year was split into a
+   part per minute of that year, which allocated 8.9 GB and overwrote tier 1. With the seek
+   index each of these reads only the end of its tier, so rollups resume after a restart
+   without double-counting or gaps.
 
 ## Seek index
 

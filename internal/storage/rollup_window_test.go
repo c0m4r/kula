@@ -164,6 +164,76 @@ func TestRestartRollsUpAWindowACrashLeftOpen(t *testing.T) {
 	}
 }
 
+// TestRestartBoundsRawDurations replays raw records whose duration claims a
+// day, as records written before 0.20.0 carried a whole collection gap and a
+// crafted tier file can claim anything. A raw record claiming a year was split
+// into one part per minute of that year at startup, allocating 8.9 GB and
+// overwriting tier 1. It must roll up as the one-resolution record
+// WriteSample writes after a gap.
+func TestRestartBoundsRawDurations(t *testing.T) {
+	base := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	writeRaw := func(t *testing.T, store *Store, ts time.Time, duration time.Duration, usage float64) {
+		t.Helper()
+		if err := store.tiers[0].Write(&AggregatedSample{
+			Timestamp: ts, Duration: duration, Data: makeSampleWithCPU(ts, usage),
+			AggregationVersion: currentAggregationVersion, ExtremaProfile: "raw",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restart := func(t *testing.T, store *Store) *Store {
+		t.Helper()
+		cfg, dir := store.configs, store.dir
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return reopenStore(t, dir, cfg)
+	}
+
+	t.Run("before the first rollup", func(t *testing.T) {
+		store := newMultiTierStore(t)
+		writeRaw(t, store, base.Add(300*time.Millisecond), time.Second, 7)
+		writeRaw(t, store, base.Add(1300*time.Millisecond), 24*time.Hour, 100)
+		store = restart(t, store)
+		defer func() { _ = store.Close() }()
+		// The first record's part before 00:00 closes that minute; the rest
+		// stays buffered.
+		if got := store.tiers[1].Count(); got != 1 {
+			t.Fatalf("tier 1 holds %d records after the restart, want 1: the day-long record was split per minute", got)
+		}
+		if oldest := store.tiers[1].OldestTimestamp(); !oldest.Equal(base) {
+			t.Fatalf("tier 1 starts at %s, want %s", oldest.Format(time.RFC3339), base.Format(time.RFC3339))
+		}
+	})
+
+	t.Run("straddling the last rollup", func(t *testing.T) {
+		// As TestRestartRollsUpAWindowACrashLeftOpen, but the record that
+		// closes the minute claims a day, reaching back past the newest
+		// rollup: it must not stand in for the minute's other samples.
+		store := newMultiTierStore(t)
+		writeOffsetSamples(t, store, base, 0, 59, 300*time.Millisecond, func(int) float64 { return 7 })
+		before := store.tiers[1].Count()
+		writeRaw(t, store, base.Add(60*time.Second+300*time.Millisecond), 24*time.Hour, 100)
+		store = restart(t, store)
+		defer func() { _ = store.Close() }()
+		if got := store.tiers[1].Count(); got != before+1 {
+			t.Fatalf("tier 1 holds %d records after the restart, want %d", got, before+1)
+		}
+		records, err := store.tiers[1].ReadRange(base, base.Add(2*time.Minute))
+		if err != nil || len(records) == 0 {
+			t.Fatalf("tier 1: %d records, err %v", len(records), err)
+		}
+		last := records[len(records)-1]
+		if !last.Timestamp.Equal(base.Add(time.Minute)) || last.Duration != time.Minute {
+			t.Fatalf("recovered rollup ends %s and covers %s, want 00:01:00 and 1m", last.Timestamp.Format(time.RFC3339Nano), last.Duration)
+		}
+		// 59.3 s at 7 % and the last 0.7 s at 100 %.
+		if usage := last.Data.CPU.Total.Usage; math.Abs(usage-(59.3*7+0.7*100)/60) > 0.01 {
+			t.Fatalf("recovered minute averages %.2f %% CPU, want %.2f %%", usage, (59.3*7+0.7*100)/60)
+		}
+	})
+}
+
 // TestRollupsTolerateClockReadingJitter covers durations that miss the
 // wall-clock spacing of their timestamps by nanoseconds, as every raw record
 // written before 0.22.0 does (they were monotonic-clock deltas): a restart

@@ -225,7 +225,7 @@ func (s *Store) pendingRollup(tier int, tail []*AggregatedSample, rolledUp time.
 	if !rolledUp.IsZero() {
 		windowEnd := rolledUp.UnixNano()%int64(s.configs[tier].Resolution) == 0
 		for i := len(tail) - 1; i >= 0; i-- {
-			as := tail[i]
+			as := s.rollupSource(tier, tail[i])
 			if as.Data == nil {
 				continue
 			}
@@ -414,9 +414,29 @@ func (s *Store) rollupWindowEnd(tier int, window int64) time.Time {
 	return time.Unix(0, (window+1)*int64(s.configs[tier].Resolution))
 }
 
+// rollupSource returns as the way tier rolls it up. A raw record covers at
+// most twice tier 0's resolution: WriteSample gives a longer gap one
+// resolution, since a collection gap is missing coverage. Records written
+// before 0.20.0 carry their whole gap, though, and a crafted tier file any
+// duration, and restart replays them: a raw record claiming a year was split
+// into one part per tier-1 window of that year, half a million records that
+// allocated 8.9 GB at startup and overwrote tier 1. Such a record is rolled up
+// as WriteSample would write it now. Tier-1 sources need no bound: their width
+// is capped at tier 1's resolution (historySourceWidth).
+func (s *Store) rollupSource(tier int, as *AggregatedSample) *AggregatedSample {
+	resolution := s.configs[0].Resolution
+	if tier != 1 || resolution <= 0 || as.Duration <= 2*resolution {
+		return as
+	}
+	clamped := *as
+	clamped.Duration = resolution
+	return &clamped
+}
+
 // rollupParts splits a source record at the window boundaries of tier inside
 // its interval. Most records lie within one window and are returned as is.
 func (s *Store) rollupParts(tier int, as *AggregatedSample) []*AggregatedSample {
+	as = s.rollupSource(tier, as)
 	step := s.configs[tier].Resolution
 	width := historySourceWidth(as, s.configs[tier-1].Resolution, tier == 1)
 	if step <= 0 || width <= 0 {
