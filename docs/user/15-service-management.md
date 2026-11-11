@@ -65,7 +65,8 @@ sudo ln -s /etc/sv/kula /var/service/
 ```
 
 The `run` script creates `/run/kula`, fixes ownership, and execs Kula as `kula:kula` with
-`chpst`. A logging service is provided under `addons/init/runit/kula/log/`.
+`chpst`. A logging service is provided under `addons/init/runit/kula/log/`; it writes to
+`/var/log/kula`, which it creates.
 
 ## Prerequisites (manual setup)
 

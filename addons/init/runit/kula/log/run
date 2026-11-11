@@ -1,4 +1,8 @@
 #!/bin/sh
 # Kula - runit log service
 
+# svlogd exits when its directory is missing, and Kula would then block on
+# its next log write once the pipe between them fills.
+mkdir -p -m 0750 /var/log/kula
+
 exec svlogd -tt /var/log/kula
