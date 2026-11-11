@@ -29,7 +29,7 @@ global:
   # Show the Space Invaders easter egg button in the web UI (default: true)
   easter_egg: true
   # Optional http(s) URL that receives the Space Invaders final score as
-  # {"score": <n>}. Its origin is added to the CSP connect-src directive.
+  # {"score": <n>}. Its origin is added to the game page's CSP connect-src.
   # Must not include credentials or a fragment (default: disabled)
   game_score_url: ""
 

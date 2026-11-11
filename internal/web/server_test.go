@@ -581,6 +581,32 @@ func TestInvalidGameScoreURLIsNotRendered(t *testing.T) {
 	}
 }
 
+// The policy denies plugins and keeps <base> and form targets on the page's
+// origin, under a base path too, whose <base> it must still admit. The game
+// score origin is for the game's page alone: no other response may connect
+// there.
+func TestContentSecurityPolicyDirectives(t *testing.T) {
+	s := NewServer(config.WebConfig{UI: true, BasePath: "/kula", Security: config.SecurityConfig{Headers: true, FrameProtection: true}},
+		config.GlobalConfig{EasterEgg: true, GameScoreURL: "https://scores.example.com/submit"}, nil, nil, t.TempDir(), config.OllamaConfig{})
+	handler := s.buildHandler()
+	for _, path := range []string{"/kula/", "/kula/index.html", "/kula/api/auth/status", "/kula/js/app/main.js", "/kula/missing"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil))
+		csp := rec.Header().Get("Content-Security-Policy")
+		for _, want := range []string{"default-src 'self';", "object-src 'none';", "base-uri 'self';", "form-action 'self';", "frame-ancestors 'none';"} {
+			if !strings.Contains(csp, want) {
+				t.Errorf("%s: CSP %q lacks %q", path, csp, want)
+			}
+		}
+		if strings.Contains(csp, "connect-src") || strings.Contains(csp, "scores.example.com") {
+			t.Errorf("%s: CSP %q lets the page connect to the game score origin", path, csp)
+		}
+		if path == "/kula/" && !strings.Contains(rec.Body.String(), `<base href="/kula/">`) {
+			t.Errorf("the dashboard under a base path has no same-origin <base>")
+		}
+	}
+}
+
 func TestGameScoreSubmissionRequestPolicy(t *testing.T) {
 	gameJS, err := staticFS.ReadFile("static/game.js")
 	if err != nil {

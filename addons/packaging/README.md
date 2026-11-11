@@ -18,8 +18,8 @@ dashboard falls back to system-provided fonts.
 
 Disables and removes the embedded easter-egg game from the dashboard: the game page and assets,
 the header button, the routes and handler, the game-only tests and the game's Press Start 2P
-font. The `easter_egg` option still parses but does nothing. `game_score_url` also still parses
-and, if set, still adds its origin to the CSP `connect-src`, so leave it empty.
+font. The `easter_egg` and `game_score_url` options still parse but do nothing: only the game's
+page added the score origin to its CSP `connect-src`.
 
 ## replace_chartjs.sh | status: testing
 

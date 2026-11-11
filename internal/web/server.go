@@ -364,18 +364,7 @@ func (s *Server) securityMiddleware(next http.Handler) http.Handler {
 			if s.cfg.Security.FrameProtection {
 				w.Header().Set("X-Frame-Options", "DENY")
 			}
-			// No 'unsafe-inline' for styles: the pages carry no style
-			// attributes or <style> elements, and scripts style elements
-			// through the CSSOM (element.style), which the policy allows.
-			// The Chromium fixtures fail on any violation.
-			csp := fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self';", nonce)
-			if s.cfg.Security.FrameProtection {
-				csp += " frame-ancestors 'none';"
-			}
-			if s.gameScoreOrigin != "" {
-				csp += fmt.Sprintf(" connect-src 'self' %s;", s.gameScoreOrigin)
-			}
-			w.Header().Set("Content-Security-Policy", csp)
+			w.Header().Set("Content-Security-Policy", s.contentSecurityPolicy(nonce, ""))
 			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 			w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 			if r.TLS != nil || (s.cfg.TrustProxy && r.Header.Get("X-Forwarded-Proto") == "https") {
@@ -384,6 +373,28 @@ func (s *Server) securityMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// contentSecurityPolicy returns the policy for a response whose inline
+// scripts carry nonce. connect, when set, is one more origin the page may
+// connect to; only the game page, which posts its score, passes one.
+func (s *Server) contentSecurityPolicy(nonce, connect string) string {
+	// No 'unsafe-inline' for styles: the pages carry no style attributes or
+	// <style> elements, and scripts style elements through the CSSOM
+	// (element.style), which the policy allows. The Chromium fixtures fail on
+	// any violation. base-uri and form-action do not fall back to
+	// default-src: without them an injected <base> could move the nonce'd
+	// scripts' relative URLs to another origin (a nonce admits a script from
+	// any URL), and an injected form could submit off-site. The base_path
+	// <base> is same-origin.
+	csp := fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';", nonce)
+	if s.cfg.Security.FrameProtection {
+		csp += " frame-ancestors 'none';"
+	}
+	if connect != "" {
+		csp += fmt.Sprintf(" connect-src 'self' %s;", connect)
+	}
+	return csp
 }
 
 // isAllowedOrigin reports whether origin (an exact "scheme://host[:port]"
@@ -1415,6 +1426,10 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGame(w http.ResponseWriter, r *http.Request) {
+	// Only the game posts to game_score_url, so only its page may connect there.
+	if nonce, ok := r.Context().Value(nonceKey).(string); ok && s.cfg.Security.Headers && s.gameScoreOrigin != "" {
+		w.Header().Set("Content-Security-Policy", s.contentSecurityPolicy(nonce, s.gameScoreOrigin))
+	}
 	s.renderTemplate(w, r, "game.html")
 }
 

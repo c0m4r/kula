@@ -111,9 +111,14 @@ When `web.security.headers` is on (default), responses carry:
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY` (when `frame_protection`)
 - `Content-Security-Policy` with a **fresh random nonce per request**:
-  `default-src 'self'; script-src 'self' 'nonce-<rand>'; style-src 'self';`
-  plus `frame-ancestors 'none'` when `frame_protection` and `connect-src 'self' <url>` when
-  `game_score_url` is configured. Styles come only from the served stylesheets: no inline
+  `default-src 'self'; script-src 'self' 'nonce-<rand>'; style-src 'self'; object-src 'none';
+  base-uri 'self'; form-action 'self';`
+  plus `frame-ancestors 'none'` when `frame_protection`, and on the game page alone
+  `connect-src 'self' <origin>` when `game_score_url` is configured (`handleGame` replaces the
+  policy; `contentSecurityPolicy` builds both). `base-uri` and `form-action` do not fall back to
+  `default-src`: an injected `<base>` could otherwise move the nonce'd scripts' relative URLs
+  to another origin, and the `web.base_path` `<base>` is same-origin. Styles come only from the
+  served stylesheets: no inline
   `style` attribute, `<style>` element or `setAttribute('style', …)` works, so the frontend
   sets styles through the CSSOM (`element.style.x = …`), which the policy allows. The Chromium
   fixtures (`watchCSPViolations` in `chromium_test_helper.mjs`) fail on any violation.

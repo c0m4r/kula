@@ -59,8 +59,8 @@ collected, regardless of this option.
 
 When `game_score_url` is set, the Space Invaders easter egg POSTs the final score as
 `{"score": <n>}` to that URL when a game ends (a run abandoned with Restart is not sent), and its
-origin is added to the `connect-src` CSP directive. The
-URL must use http or https and must not carry credentials or a fragment.
+origin is added to the `connect-src` CSP directive of the game page only. The URL must use http
+or https and must not carry credentials or a fragment.
 
 ---
 
