@@ -1081,8 +1081,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "server busy", http.StatusServiceUnavailable)
 		return
 	}
-	valid := s.auth.ValidateCredentials(creds.Username, creds.Password)
-	release()
+	// Deferred, so a panic while hashing (recovered by net/http) cannot keep
+	// the slot: a few of them would refuse every login as busy until restart.
+	valid := func() bool {
+		defer release()
+		return s.auth.ValidateCredentials(creds.Username, creds.Password)
+	}()
 	if !valid {
 		jsonError(w, "invalid credentials", http.StatusUnauthorized)
 		return

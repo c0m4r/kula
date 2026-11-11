@@ -995,6 +995,29 @@ func TestUserLimiterKeyBoundsUsername(t *testing.T) {
 	}
 }
 
+// A login whose hashing panics (net/http recovers the handler) must still
+// give its Argon2id slot back, or a few such requests would leave every later
+// login refused as busy. Argon2 time 0 makes argon2.IDKey panic.
+func TestLoginReleasesHashSlotOnPanic(t *testing.T) {
+	s := NewServer(config.WebConfig{Auth: config.AuthConfig{Enabled: true, Username: "admin",
+		Argon2: config.Argon2Config{Time: 0, Memory: 1024, Threads: 1}}}, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
+	for i := 0; i <= cap(s.auth.hashSlots); i++ {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("hashing with argon2 time 0 did not panic; the test no longer exercises a panic")
+				}
+			}()
+			req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"admin","password":"x"}`))
+			req.RemoteAddr = "192.0.2." + strconv.Itoa(i+1) + ":1234"
+			s.handleLogin(httptest.NewRecorder(), req)
+		}()
+		if held := len(s.auth.hashSlots); held != 0 {
+			t.Fatalf("after panicking login %d, %d hash slot(s) still held", i+1, held)
+		}
+	}
+}
+
 // TestPasswordHashConcurrencyBounded pins the global Argon2id bound: the
 // per-address limiters alone let many sources keep hundreds of 32 MiB hashes
 // in flight at once.

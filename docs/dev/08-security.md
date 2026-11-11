@@ -64,7 +64,8 @@ and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
   usernames included, so the per-IP limits alone would let many addresses keep hundreds of
   `argon2.memory`-sized hashes in flight. A login that finds no free slot within 2 s gets
   `503` with `Retry-After: 1`, and its attempt is refunded to both login limiters
-  (`RateLimiter.Refund`): no password was checked.
+  (`RateLimiter.Refund`): no password was checked. The slot is released by a deferred call, so
+  a hash that panics cannot keep it (`TestLoginReleasesHashSlotOnPanic`).
 - **Ollama:** 10 chat requests/IP/minute; 60 metadata requests/IP/minute.
 
 ## CSRF protection
