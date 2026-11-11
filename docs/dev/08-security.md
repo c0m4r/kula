@@ -186,7 +186,11 @@ of its served bytes.
   clamped to 2000 runes, each assistant turn to 8000. The session context (metrics snapshot
   or chart CSV), which goes into the system prompt, is clamped to 16,000 runes, and `lang`
   reaches it only as a language tag (`en`, `pt-BR`). Null bytes are stripped and whitespace
-  trimmed throughout.
+  trimmed throughout. Beyond the client's part, the model sees only what the server writes:
+  its fixed system prompt, the latest sample when the client sends no context, and tool
+  results.
+- **Load:** 10 chat requests per address per minute, and at most 4 chats streaming at once
+  server-wide (`ollamaMaxChats`); one more is answered `429` (see [Rate limiting](#rate-limiting)).
 - **Model restriction:** a chat runs on the configured model or on one the backend lists in
   its latest `/api/ollama/models` listing (fetched on demand if none has been); any other name
   falls back to the configured model. Names must also match `^[A-Za-z0-9._:/-]{1,200}$`.

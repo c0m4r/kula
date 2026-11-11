@@ -51,7 +51,7 @@ Routes are registered on an inner mux, then wrapped so everything is served unde
 | GET | `/api/i18n?lang=` | locale strings | yes¹ |
 | POST | `/api/ollama/chat` | AI chat (SSE stream) | yes¹ |
 | GET | `/api/ollama/models` | list local Ollama models | yes¹ |
-| GET/POST | `/api/ollama/context` | per-chart context bootstrap | yes¹ |
+| GET/POST | `/api/ollama/context` | metrics snapshot a new AI session pins as its context | yes¹ |
 | GET | `/ws` | WebSocket live stream | yes¹ |
 | GET | `/metrics` | Prometheus exposition | bearer (optional) |
 | GET | `/health`, `/status` | liveness (`200 kula is healthy`) | public |
@@ -272,11 +272,14 @@ requires: one invalid byte would fail the whole scrape. See
   Every `data:` payload is a JSON string (`writeSSE`), so no character of the model's output can
   end a line: unnamed events carry text, `tool_call` and `done` an empty string, `error` a message.
 - `handleOllamaModels` — lists locally available models.
-- `handleOllamaContext` — bootstraps a per-chart analysis session with recent data as CSV.
+- `handleOllamaContext` — returns the latest sample formatted for the model (`FormatForAI()`),
+  which the dashboard pins as a new session's context; a chart session sends the chart's CSV
+  instead.
 
 All three apply per-IP rate limiting and response-size caps; the chat path additionally caps the
 request body, forwards only clamped user and assistant turns, and runs only a model the backend
-lists (or the configured one). See
+lists (or the configured one). Every request to the backend goes through `ollamaTransport`,
+which connects only to loopback addresses, and follows no redirect. See
 [AI Assistant](../user/10-ai-assistant.md) and [Security Model](08-security.md).
 
 ## Templates, SRI & embedding

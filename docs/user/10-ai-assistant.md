@@ -41,7 +41,7 @@ When enabled, a 🤖 button appears in the dashboard header.
 - **Model selector** — switch between any locally-available Ollama model mid-session.
 - **Draggable & resizable panel** — drag by the header, resize from the bottom-right grip.
 - **Streaming responses** with markdown rendering. The panel shows up to 32,768 characters of
-  an answer; a longer one is cut there with a notice, and the rest is not fetched.
+  an answer; a longer one is cut there with a notice, and its stream is stopped.
 
 ## How requests are protected
 
