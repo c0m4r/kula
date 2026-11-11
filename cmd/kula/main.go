@@ -179,15 +179,32 @@ func main() {
 // loop to finish the sample it is on.
 const collectionStopTimeout = 5 * time.Second
 
+// The sandbox and the store `kula serve` starts with; variables so a test
+// can check that the store opens under the sandbox.
+var (
+	enforceSandbox = sandbox.Enforce
+	openStore      = storage.NewStore
+)
+
 func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuArch string) {
 	cfg.Web.Version = version
 	cfg.Web.OS = osName
 	cfg.Web.Kernel = kernelVersion
 	cfg.Web.Arch = cpuArch
 	cfg.Collection.DebugLog = cfg.Web.Logging.Enabled && cfg.Web.Logging.Level == "debug"
+
+	// Enforce Landlock sandbox: restrict filesystem and network access
+	// to only what Kula needs, before opening storage files or anything
+	// else. A kernel without Landlock leaves Kula unconfined with a log
+	// line; on one with Landlock, an error means the sandbox is not in
+	// force, and Kula does not run without it.
+	if err := enforceSandbox(configPath, cfg.Storage.Directory, cfg.Web, cfg.Applications, cfg.Ollama); err != nil {
+		log.Fatalf("Refusing to start without the Landlock sandbox: %v", err)
+	}
+
 	coll := collector.New(cfg.Global, cfg.Collection, cfg.Applications, cfg.Storage.Directory)
 
-	store, err := storage.NewStore(cfg.Storage)
+	store, err := openStore(cfg.Storage)
 	if err != nil {
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
@@ -201,14 +218,6 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 		if err != nil {
 			log.Fatalf("Failed to initialize backup scheduler: %v", err)
 		}
-	}
-
-	// Enforce Landlock sandbox: restrict filesystem and network access
-	// to only what Kula needs. A kernel without Landlock leaves Kula
-	// unconfined with a log line; on one with Landlock, an error means the
-	// sandbox is not in force, and Kula does not run without it.
-	if err := sandbox.Enforce(configPath, cfg.Storage.Directory, cfg.Web, cfg.Applications, cfg.Ollama); err != nil {
-		log.Fatalf("Refusing to start without the Landlock sandbox: %v", err)
 	}
 
 	var server *web.Server

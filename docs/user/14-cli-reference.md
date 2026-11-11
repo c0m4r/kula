@@ -19,9 +19,9 @@ kula [flags] [command]
 
 ### `kula serve`
 
-The default. Starts the collector, storage engine, Landlock sandbox, web server, and
-collection loop. Writes one sample per second (or per `collection.interval`) and broadcasts to
-WebSocket clients.
+The default. Applies the Landlock sandbox, then starts the collector, storage engine, web
+server, and collection loop. Writes one sample per second (or per `collection.interval`) and
+broadcasts to WebSocket clients.
 
 ```bash
 kula              # same as: kula serve

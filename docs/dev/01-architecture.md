@@ -45,9 +45,11 @@ the binary via `//go:embed`, so there are no runtime assets to ship.
 `runServe` ([cmd/kula/main.go](../../cmd/kula/main.go)) wires the pieces together:
 
 1. **Load config** (`internal/config`), apply env overrides, validate tiers.
-2. **Build the collector** (`internal/collector`) and **storage store** (`internal/storage`).
-3. **Build the backup scheduler** (`internal/backup`) early so a bad cron fails fast.
-4. **Enforce the Landlock sandbox** (`internal/sandbox`) — restrict FS and network.
+2. **Enforce the Landlock sandbox** (`internal/sandbox`) — restrict FS and network before any
+   storage file is opened; on a kernel with Landlock, a sandbox that cannot be applied stops
+   startup.
+3. **Build the collector** (`internal/collector`) and **storage store** (`internal/storage`).
+4. **Build the backup scheduler** (`internal/backup`) early so a bad cron fails fast.
 5. **Start the web server** (`internal/web`) in a goroutine (unless `web.enabled: false`).
 6. Install **`signal.NotifyContext`** for `SIGINT`/`SIGTERM` and start the backup scheduler.
 7. **Start application collectors** (`coll.StartApplications()`).

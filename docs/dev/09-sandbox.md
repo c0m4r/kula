@@ -17,8 +17,9 @@ This is enforced **in-process**, independent of (and complementary to) the harde
 
 ## When it's applied
 
-`runServe` calls `sandbox.Enforce(configPath, storageDir, webCfg, appsCfg, ollamaCfg)` early,
-*before* the collection loop starts:
+`runServe` calls `sandbox.Enforce(configPath, storageDir, webCfg, appsCfg, ollamaCfg)` right
+after loading the config — *before* storage is opened (`Enforce` creates the storage directory
+first, since a grant needs it to exist), before the web server and collectors start:
 
 ```go
 if err := sandbox.Enforce(configPath, cfg.Storage.Directory, cfg.Web,

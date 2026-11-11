@@ -18,6 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"kula/internal/config"
+	"kula/internal/storage"
+
 	llsyscall "github.com/landlock-lsm/go-landlock/landlock/syscall"
 )
 
@@ -383,6 +386,45 @@ func waitExit(cmd *exec.Cmd, timeout time.Duration) int {
 		_ = cmd.Process.Kill()
 		<-done
 		return -1
+	}
+}
+
+// TestServeOpensStorageUnderTheSandbox: `kula serve` applies its sandbox
+// before it opens storage, so whatever opening the tier files does —
+// parsing headers, migrating, rebuilding seek indexes — already runs
+// confined. The child records the order of the two steps.
+func TestServeOpensStorageUnderTheSandbox(t *testing.T) {
+	if os.Getenv("KULA_TEST_SERVE_ARGS") != "" {
+		enforced := false
+		enforce := enforceSandbox
+		enforceSandbox = func(configPath, storageDir string, webCfg config.WebConfig, appCfg config.ApplicationsConfig, ollamaCfg config.OllamaConfig) error {
+			err := enforce(configPath, storageDir, webCfg, appCfg, ollamaCfg)
+			enforced = err == nil
+			return err
+		}
+		openStore = func(config.StorageConfig) (*storage.Store, error) {
+			fmt.Printf("storage opened, sandbox enforced before: %v\n", enforced)
+			os.Exit(0)
+			return nil, nil
+		}
+		runServeMain()
+	}
+
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "run"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "config.yaml")
+	cfg := fmt.Sprintf("storage:\n  directory: %q\nweb:\n  unix_socket: %q\napplications:\n  containers:\n    enabled: false\n",
+		filepath.Join(dir, "storage"), filepath.Join(dir, "run", "kula.sock"))
+	if err := os.WriteFile(configPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, logPath := startKula(t, "TestServeOpensStorageUnderTheSandbox", dir, "-config", configPath, "serve")
+	code := waitExit(cmd, 10*time.Second)
+	if logText := readLog(t, logPath); code != 0 || !strings.Contains(logText, "storage opened, sandbox enforced before: true") {
+		t.Errorf("exit %d; want storage opened only once the sandbox is enforced:\n%s", code, logText)
 	}
 }
 
