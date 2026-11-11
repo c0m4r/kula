@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +73,39 @@ func TestDefaultRunLogsInOnceAndOut(t *testing.T) {
 	if last.Get("Cookie") != "kula_session="+mockToken || last.Get("X-CSRF-Token") != "csrftok" || last.Get("Origin") == "" {
 		t.Errorf("the closing logout carries Cookie %q, X-CSRF-Token %q, Origin %q; want the session, its token and the origin",
 			last.Get("Cookie"), last.Get("X-CSRF-Token"), last.Get("Origin"))
+	}
+}
+
+func TestPasswordComesFromTheEnvironment(t *testing.T) {
+	ledger := &loginLedger{attempts: map[string][]string{}}
+	ts := httptest.NewServer(ledger.wrap(secureMock()))
+	defer ts.Close()
+	t.Setenv(passwordEnv, mockPass)
+
+	// run prints the report to standard output.
+	stdout := os.Stdout
+	output, err := os.CreateTemp(t.TempDir(), "report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = output
+	code := run([]string{"-username", mockUser, "-only", "auth", "-json", ts.URL})
+	os.Stdout = stdout
+	_ = output.Close()
+
+	if code != 0 {
+		t.Fatalf("run exited %d", code)
+	}
+	if got := ledger.attempts[mockUser]; len(got) != 1 || got[0] != mockPass {
+		t.Fatalf("logged in with %q, want the password from %s", got, passwordEnv)
+	}
+
+	if got := resolvePassword("from-flag"); got != "from-flag" {
+		t.Errorf("an explicit -password gave way to the environment: %q", got)
+	}
+	t.Setenv(passwordEnv, "")
+	if got := resolvePassword(""); got != "" {
+		t.Errorf("no flag and no variable gave the password %q", got)
 	}
 }
 

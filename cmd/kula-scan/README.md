@@ -30,7 +30,7 @@ kula-scan [flags] <target-url>
 | Flag | Meaning |
 |------|---------|
 | `-target` | Target base URL, as an alternative to the positional `<target-url>` argument. |
-| `-username`, `-password` | Credentials to unlock authenticated checks (login, CSRF token, WebSocket auth). Optional. |
+| `-username`, `-password` | Credentials to unlock authenticated checks (login, CSRF token, WebSocket auth). Optional. Without `-password`, the password is read from the `KULA_SCAN_PASSWORD` environment variable, which keeps it out of the process list and your shell history. |
 | `-base-path` | Base path if Kula is mounted under one (e.g. `/kula`). Auto-detected from a path in the target URL. |
 | `-timeout` | Per-request timeout (default `10s`). |
 | `-insecure` | Skip TLS certificate verification (self-signed test instances). |
@@ -51,17 +51,18 @@ kula-scan [flags] <target-url>
 # Quick non-destructive scan
 kula-scan http://localhost:27960
 
-# Full authenticated scan over TLS
-kula-scan -username admin -password 'hunter2' https://mon.example.com
+# Full authenticated scan over TLS; read the password without echoing it
+read -rs KULA_SCAN_PASSWORD && export KULA_SCAN_PASSWORD
+kula-scan -username admin https://mon.example.com
 
 # Only header / traversal / CORS checks
 kula-scan -only headers,traversal,cors http://10.0.0.5:27960
 
 # Include disruptive checks (rate-limit + connection floods)
-kula-scan -aggressive -username admin -password 'hunter2' http://localhost:27960
+kula-scan -aggressive -username admin http://localhost:27960
 
 # Blind fault-injection fuzzing (reproducible with -seed)
-kula-scan -fuzz -fuzz-iter 500 -username admin -password 'hunter2' http://localhost:27960
+kula-scan -fuzz -fuzz-iter 500 -username admin http://localhost:27960
 kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960   # replay a finding
 
 # Machine-readable output for CI

@@ -37,7 +37,7 @@ func run(args []string) int {
 	var (
 		target     = fs.String("target", "", "target base URL, e.g. http://localhost:27960 (or pass as positional arg)")
 		username   = fs.String("username", "", "username for authenticated checks (optional)")
-		password   = fs.String("password", "", "password for authenticated checks (optional)")
+		password   = fs.String("password", "", "password for authenticated checks (optional; prefer the "+passwordEnv+" environment variable)")
 		basePath   = fs.String("base-path", "", "base path if kula is mounted under one, e.g. /kula")
 		timeout    = fs.Duration("timeout", 10*time.Second, "per-request timeout")
 		dosWait    = fs.Duration("dos-wait", 35*time.Second, "how long DoS probes wait for the server to reap a slow/idle connection (raise if the target uses long read timeouts)")
@@ -82,7 +82,7 @@ func run(args []string) int {
 		Target:     tgt,
 		BasePath:   *basePath,
 		Username:   *username,
-		Password:   *password,
+		Password:   resolvePassword(*password),
 		Timeout:    *timeout,
 		DoSWait:    *dosWait,
 		Insecure:   *insecure,
@@ -125,6 +125,20 @@ func run(args []string) int {
 	}
 
 	return report.exitCode(failSev)
+}
+
+// passwordEnv names the environment variable that can carry the password
+// instead of -password, whose value any local user can read in the process
+// list and which the shell keeps in its history.
+const passwordEnv = "KULA_SCAN_PASSWORD"
+
+// resolvePassword returns the -password value, or the passwordEnv variable
+// when the flag is empty.
+func resolvePassword(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return os.Getenv(passwordEnv)
 }
 
 // parseOnly turns a comma list into a set; empty input means "all categories".
@@ -170,17 +184,19 @@ Usage:
 
 Examples:
   kula-scan http://localhost:27960
-  kula-scan -username admin -password secret https://mon.example.com
+  read -rs KULA_SCAN_PASSWORD && export KULA_SCAN_PASSWORD
+  kula-scan -username admin https://mon.example.com
   kula-scan -only headers,traversal,cors http://10.0.0.5:27960
-  kula-scan -aggressive -username admin -password secret http://localhost:27960
-  kula-scan -fuzz -fuzz-iter 500 -username admin -password secret http://localhost:27960
+  kula-scan -aggressive -username admin http://localhost:27960
+  kula-scan -fuzz -fuzz-iter 500 -username admin http://localhost:27960
   kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960
   kula-scan -json http://localhost:27960 > report.json
 
 Flags:
   -target string      target base URL (or pass as positional arg)
   -username string    username for authenticated checks
-  -password string    password for authenticated checks
+  -password string    password for authenticated checks; KULA_SCAN_PASSWORD in the
+                      environment keeps it out of the process list and shell history
   -base-path string   base path if kula is mounted under one (e.g. /kula)
   -timeout duration   per-request timeout (default 10s)
   -dos-wait duration  how long DoS probes wait for a slow/idle connection to be reaped (default 35s)

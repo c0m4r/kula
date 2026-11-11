@@ -30,7 +30,7 @@ kula-scan [flags] <target-url>
 | Flag | Meaning |
 |------|---------|
 | `-target` | Target base URL as an alternative to the positional `<target-url>` argument |
-| `-username`, `-password` | Credentials to unlock authenticated checks (login, CSRF token, WS auth) |
+| `-username`, `-password` | Credentials to unlock authenticated checks (login, CSRF token, WS auth). Without `-password` the password comes from `KULA_SCAN_PASSWORD`, which keeps it out of the process list and shell history |
 | `-base-path` | Base path if Kula is mounted under one (auto-detected from the URL path) |
 | `-timeout` | Per-request timeout (default `10s`) |
 | `-dos-wait` | How long DoS probes wait for a slow/idle connection to be reaped (default `35s`) |
