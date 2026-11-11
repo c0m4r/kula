@@ -399,6 +399,33 @@ try {
         check(!focus.mode && focus.cpu, `the Focus selection ${stored} was not ignored`, focus);
     }
     await evaluate(`localStorage.removeItem('kula_focus_visible')`);
+
+    // A browser clock two minutes behind the server's: the live edge shows the
+    // newest samples, and the view loaded before the skew was noticed is
+    // loaded again up to the server's time, leaving no hole before them.
+    await resize(1920, 1080);
+    const skewed = await call('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+        const RealDate = Date;
+        globalThis.__realNow = () => RealDate.now();
+        globalThis.Date = class extends RealDate {
+            constructor(...args) { if (args.length) super(...args); else super(RealDate.now() - 120000); }
+            static now() { return RealDate.now() - 120000; }
+        };
+    })()` });
+    await call('Page.navigate', { url: `${base}/?range=300` });
+    await waitFor(async () => {
+        const view = await evaluate(`(() => {
+            if (typeof Chart === 'undefined' || typeof __realNow !== 'function') return null;
+            const chart = Chart.getChart(document.getElementById('chart-cpu'));
+            const xs = (chart?.data?.datasets?.[4]?.data ?? []).filter(p => p.y != null).map(p => p.x);
+            if (xs.length < 30) return null;
+            let widest = 0;
+            for (let i = 1; i < xs.length; i++) widest = Math.max(widest, xs[i] - xs[i - 1]);
+            return { age: (__realNow() - xs.at(-1)) / 1000, edge: (chart.scales.x.max - xs.at(-1)) / 1000, widest: widest / 1000 };
+        })()`);
+        return view && view.age <= 2.5 && Math.abs(view.edge) <= 2.5 && view.widest <= 2.5 ? view : null;
+    }, 'with the browser two minutes behind, the live edge lagged or the view kept a hole');
+    await call('Page.removeScriptToEvaluateOnNewDocument', { identifier: skewed.identifier });
     await resize(1920, 1080);
 
     // Blocked site data makes every localStorage access throw, as it does from

@@ -5,6 +5,7 @@
    ============================================================ */
 'use strict';
 import { state } from './state.js';
+import { noteServerTime } from './server-clock.js';
 import { pushLiveSample, fetchHistory, fetchCustomHistory } from './charts-data.js';
 import { apiUrl, wsUrl } from './api.js';
 import { normalizeHistoryItem } from './history-data.js';
@@ -14,6 +15,9 @@ import { i18n } from './i18n.js';
 // Bumped by every new connection and by disconnectWS, so a session check
 // still in flight for an older socket cannot act after a login or logout.
 let connectGeneration = 0;
+// A server clock offset noticed while history was loading: that load still
+// asked up to the browser's now, so the view is loaded again after it.
+let skewRefetchPending = false;
 
 export function connectWS() {
     if (state.ws && (state.ws.readyState === WebSocket.CONNECTING || state.ws.readyState === WebSocket.OPEN)) {
@@ -67,13 +71,20 @@ export function connectWS() {
             console.error('WebSocket message too large');
             return;
         }
+        let sample;
+        try {
+            sample = JSON.parse(evt.data);
+        } catch (e) {
+            console.error('Parse error:', e);
+            return;
+        }
+        if (noteServerTime(Date.parse(sample?.ts))) skewRefetchPending = true;
         if (state.loadingHistory && state.queueLiveDuringHistory) {
             // Foreground loads replace the current view, so buffer samples
             // until that replacement settles. Background snapshot refreshes
             // still pass through pushLiveSample to keep gauges and alerts live.
             try {
-                const item = normalizeHistoryItem(JSON.parse(evt.data));
-                state.liveQueue.push(item);
+                state.liveQueue.push(normalizeHistoryItem(sample));
                 const interval = state.liveSampleIntervalMs || 1000;
                 const queueLimit = Math.min(state.maxBufferSize, Math.max(120, Math.ceil(120000 / interval)));
                 if (state.liveQueue.length > queueLimit) state.liveQueue.shift();
@@ -81,10 +92,15 @@ export function connectWS() {
             return;
         }
         try {
-            const sample = JSON.parse(evt.data);
             pushLiveSample(sample);
         } catch (e) {
-            console.error('Parse error:', e);
+            console.error('Live sample error:', e);
+        }
+        // The view was loaded up to the browser's now: load it again up to
+        // the server's, filling the hole between it and the live samples.
+        if (skewRefetchPending && !state.loadingHistory) {
+            skewRefetchPending = false;
+            if (state.timeRange !== null) fetchHistory(state.timeRange, { background: true });
         }
     };
 

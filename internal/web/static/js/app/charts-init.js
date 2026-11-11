@@ -4,6 +4,7 @@
    ============================================================ */
 'use strict';
 import { state, colors, getChartMaxBound } from './state.js';
+import { serverNow } from './server-clock.js';
 import {
     formatBytesShort,
     formatChartTick,
@@ -456,7 +457,7 @@ export function initCharts() {
 
 // ---- Set x-axis bounds for full time window ----
 export function setChartTimeRange() {
-    const now = state.historyViewEnd ?? Date.now();
+    const now = state.historyViewEnd ?? serverNow();
     let xMin, xMax;
 
     if (state.timeRange !== null) {

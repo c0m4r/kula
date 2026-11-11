@@ -88,6 +88,8 @@ const {
     chartUpdates,
     setSharedCrosshair,
 } = await importSource('../static/js/app/chart-controller.js');
+const { noteServerTime, resetServerClock, serverClockOffset, serverNow } =
+    await importSource('../static/js/app/server-clock.js');
 const { attachCrosshairEvents, CrosshairState, panTimeRange, zoomTimeRange } =
     await importSource('../static/js/app/chart-interactions.js');
 const {
@@ -871,6 +873,31 @@ test('chart updates are animation-frame batched and off-screen work is deferred'
     frames.shift()();
     assert.equal(hidden.updates, 1, 'dirty chart catches up when it enters the viewport');
     delete globalThis.window;
+});
+
+test("the server clock follows a skewed browser clock and ignores delivery delay", () => {
+    resetServerClock();
+    const received = 1_800_000_000_000;
+    // Synced clocks: samples arrive a little after their time.
+    for (let i = 0; i < 5; i++) assert.equal(noteServerTime(received + i * 1000 - 300, received + i * 1000), false);
+    assert.equal(serverClockOffset(), 0);
+
+    // The browser runs two minutes behind: the offset is the largest
+    // sample-minus-arrival of the recent ones, the least delayed delivery.
+    resetServerClock();
+    assert.equal(noteServerTime(received + 120_000 - 400, received), true);
+    assert.equal(noteServerTime(received + 121_000 - 100, received + 1000), false, 'a refinement within the dead zone is no change');
+    assert.equal(serverClockOffset(), 119_600);
+    assert.ok(Math.abs(serverNow() - (Date.now() + 119_600)) < 50);
+
+    // Drift within the dead zone does not move it; a server clock step does,
+    // once the window holds no sample from before the step.
+    assert.equal(noteServerTime(received + 2000 + 119_000, received + 2000), false);
+    let moved = false;
+    for (let i = 3; i < 15; i++) moved = noteServerTime(received + i * 1000 - 300, received + i * 1000) || moved;
+    assert.equal(moved, true);
+    assert.equal(serverClockOffset(), 0, 'back within the dead zone after the step');
+    resetServerClock();
 });
 
 test('a background tab drains chart mutation records on a timer and draws on its return', () => {

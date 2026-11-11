@@ -4,6 +4,7 @@
    ============================================================ */
 'use strict';
 import { state, colors } from './state.js';
+import { serverNow } from './server-clock.js';
 import { writePref } from './prefs.js';
 import { diskKey, diskMember, diskLabel, diskTitle, migrateDiskSelection } from './disk-identity.js';
 import { formatBytesShort, formatMetricNumber, formatRangeTimestamp } from './format.js';
@@ -1105,7 +1106,7 @@ export function redrawChartsFromBuffer(chartKeys = null) {
 }
 
 export function trimChartsToTimeRange() {
-    const viewEnd = state.historyViewEnd ?? Date.now();
+    const viewEnd = state.historyViewEnd ?? serverNow();
     const cutoffMs = state.timeRange === null ? null : viewEnd - state.timeRange * 1000;
 
     const trimChart = (chart) => {
@@ -1492,11 +1493,11 @@ export function syncZoom(detail) {
     const requestedMin = Number(xOptions?.min ?? sourceChart?.scales?.x?.min);
     const requestedMax = Number(xOptions?.max ?? sourceChart?.scales?.x?.max);
     const minSpan = minimumZoomSpan(state.currentSourceResolution, state.collectionIntervalMs);
-    let bounded = clampHistoryInterval(requestedMin, requestedMax, Date.now(), undefined, minSpan);
+    let bounded = clampHistoryInterval(requestedMin, requestedMax, serverNow(), undefined, minSpan);
     if (!bounded) return;
     const previousMin = state.timeRange === null ? +state.customFrom
-        : (state.historyViewEnd ?? Date.now()) - state.timeRange * 1000;
-    const previousMax = state.timeRange === null ? +state.customTo : (state.historyViewEnd ?? Date.now());
+        : (state.historyViewEnd ?? serverNow()) - state.timeRange * 1000;
+    const previousMax = state.timeRange === null ? +state.customTo : (state.historyViewEnd ?? serverNow());
     if (requestedMax - requestedMin < previousMax - previousMin &&
         requestedMin >= previousMin && requestedMax <= previousMax) {
         // Count retained observations, not gap markers or nominal intervals.
@@ -2009,7 +2010,7 @@ function rollingRefreshInterval(rangeSeconds, points) {
 }
 
 function refreshRollingHistory(interval) {
-    const now = Date.now();
+    const now = serverNow();
     if (state.historyViewEnd === null) {
         const end = Date.parse(state.historyCoverage?.requestedTo);
         state.historyViewEnd = Number.isFinite(end) ? end : now;
@@ -2108,7 +2109,7 @@ function fetchRollingTail(rangeSeconds, points, fromDate, toDate, plan) {
 }
 
 export function fetchHistory(rangeSeconds, { background = false, tail = false } = {}) {
-    const toDate = new Date();
+    const toDate = new Date(serverNow());
     const fromDate = new Date(toDate.getTime() - rangeSeconds * 1000);
     const points = historyPointBudget();
     state.historyRefreshAttempt = toDate.getTime();

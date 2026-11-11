@@ -73,6 +73,7 @@ those charts the same way (`applySpanGaps()`).
 | `state.js` | Shared app state, color palette, global Chart.js config (**load first**) |
 | `prefs.js` | Import-free preference storage that survives blocked or full `localStorage` |
 | `history-navigation.js` | Shareable URL state, bounded Back/Forward stack, and deterministic interval clamping |
+| `server-clock.js` | The server's clock (`serverNow()`), offset from the browser's as live samples show it |
 | `main.js` | Entry point; wires event listeners and static chart-card actions, starts auth + WebSocket (**load last**) |
 | `api.js` | URL helpers that prepend `window.KULA_BASE_PATH` (base-path support) |
 | `auth.js` | Auth status check, config fetch, login/logout |
@@ -196,6 +197,13 @@ refresh.
 The live cadence estimate uses a bounded median of observed live timestamp differences, so
 supported slower collectors are not permanently treated as one-second sources. Reconnects
 reset that estimate; historical responses never supply its timestamp baseline.
+
+Live view edges, history request ends and the custom range's "now" use `serverNow()`
+(`server-clock.js`), not the browser's clock: each live sample's time minus its arrival is the
+offset less its delivery delay, so the largest of the last ten estimates it. Offsets under 2 s
+count as none. When the applied offset changes, a preset view loaded up to the old "now" is
+fetched again (after a load in progress), filling the hole a browser clock behind the server's
+left between it and the live samples.
 
 `chart-controller.js` batches updates in animation frames and uses IntersectionObserver to
 defer layout and drawing for off-screen charts. It reads all visibility rectangles before

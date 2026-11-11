@@ -4,6 +4,7 @@
    ============================================================ */
 'use strict';
 import { state } from './state.js';
+import { serverNow } from './server-clock.js';
 import { writePref } from './prefs.js';
 import { apiUrl } from './api.js';
 import { i18n } from './i18n.js';
@@ -194,7 +195,7 @@ function retainedRanges() {
     const quantum = subSecondPicker() ? 1 : 1000;
     return (state.retainedRanges || []).map(range => ({
         from: Math.ceil(Date.parse(range.from) / quantum) * quantum,
-        to: Math.floor(Math.min(Date.parse(range.to), Date.now()) / quantum) * quantum,
+        to: Math.floor(Math.min(Date.parse(range.to), serverNow()) / quantum) * quantum,
     })).filter(range => Number.isFinite(range.from) && Number.isFinite(range.to) && range.from <= range.to);
 }
 
@@ -353,12 +354,12 @@ function setPickerDates(from, to) {
 // leaving the rest of the chart empty.
 function defaultTime(which, day) {
     if (which === 'start') return '00:00:00';
-    const now = pickerDate(new Date());
+    const now = pickerDate(new Date(serverNow()));
     return now.slice(0, 10) === day ? now.slice(11) : endOfDay();
 }
 
 function customPresetRange(preset) {
-    const now = new Date();
+    const now = new Date(serverNow());
     if (PRESET_SECONDS[preset]) return { from: new Date(now.getTime() - PRESET_SECONDS[preset] * 1000), to: now };
     const today = pickerDate(now).slice(0, 10);
     if (preset === 'today') return { from: parseDateTimeInput(`${today}T00:00`, state.timeZone), to: now };
@@ -479,7 +480,7 @@ export function initCustomTimePicker() {
         }),
         translate: key => i18n.t(key),
         locale: () => i18n.currentLang,
-        today: () => pickerDate(new Date()).slice(0, 10),
+        today: () => pickerDate(new Date(serverNow())).slice(0, 10),
         isDayAvailable: day => !pickerBoundsLoading && !pickerBoundsError && retainedDay(day),
         dataBounds: () => pickerBoundsLoading || pickerBoundsError ? null : retainedDayBounds(),
         onSelect: (startDay, endDay, changed) => {
@@ -510,7 +511,7 @@ export function initCustomTimePicker() {
         onShortcut: shortcut => {
             const which = clockEndpoint;
             if (shortcut === 'now') {
-                const now = pickerDate(new Date());
+                const now = pickerDate(new Date(serverNow()));
                 setEndpoint(which, now.slice(0, 10), now.slice(11));
                 rangeCalendar.sync();
             } else {
@@ -602,7 +603,7 @@ export function toggleCustomTimePicker() {
         customEl.classList.remove('hidden');
         document.getElementById('btn-custom-range').classList.add('active');
         document.getElementById('btn-custom-range').setAttribute('aria-expanded', 'true');
-        const to = state.customTo || new Date(state.historyViewEnd ?? Date.now());
+        const to = state.customTo || new Date(state.historyViewEnd ?? serverNow());
         const from = state.customFrom || new Date(to.getTime() - (state.timeRange || 3600) * 1000);
         customEl.querySelectorAll('[data-custom-preset]').forEach(button => button.classList.remove('active'));
         showPane(null);
@@ -670,7 +671,7 @@ export function goLive() {
 
 export function zoomOutViewport() {
     if (!state.customFrom || !state.customTo) return;
-    const interval = zoomOutInterval(state.customFrom, state.customTo);
+    const interval = zoomOutInterval(state.customFrom, state.customTo, 2, new Date(serverNow()));
     if (interval) setCustomRange(interval.from, interval.to);
 }
 
