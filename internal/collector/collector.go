@@ -211,6 +211,7 @@ func (c *Collector) Collect() *Sample {
 	s.GPU = c.collectGPUs(elapsed)
 	s.PSU = c.powerSupplies()
 	s.Apps = c.collectApps(elapsed)
+	boundSampleStrings(s)
 
 	c.mu.Lock()
 	c.latest = s

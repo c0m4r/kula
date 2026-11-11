@@ -66,6 +66,14 @@ API and WebSocket payloads.
   failed sub-query drops that counter's), so the next delta is never two intervals of growth
   divided by one (`nginx.go`, `apache2.go`, `postgres.go`, `mysql.go`). A counter missing from a
   poll (Apache2 without `ExtendedStatus`) is no baseline either.
+- **Names fit in storage.** `Collect()` bounds every name and label in the sample to the 255
+  bytes the codec keeps (`BoundString`, [`bound.go`](../../internal/collector/bound.go)): a
+  longer one keeps its start, cut on a rune boundary, and ends in `…` and eight hex digits of a
+  hash of the whole string, so names that share a prefix stay distinct identities. Storage,
+  the live views, `/metrics` and the TUI all see the bounded name. A slice a subsystem hands to
+  several samples is copied before anything in it changes. One over-long name (a long mount
+  path, a container named by whoever ran it) used to fail the whole record and stop history
+  recording.
 - **Lazy-allocate clients.** HTTP/DB clients are created on first use.
 - **`statfs` runs off the collection tick.** On a hard NFS mount whose server is gone (or a
   stalled FUSE daemon) it blocks in the kernel, beyond any timeout. `mount_stats.go` keeps at

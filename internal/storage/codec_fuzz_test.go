@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,13 +152,15 @@ func FuzzExtractTimestamp(f *testing.F) {
 
 // FuzzEncodeDecodeRoundTrip builds a deterministic, map-free sample from typed
 // fuzz inputs, then asserts encode→decode→encode is stable and that the
-// length-prefixed interface name survives intact. This exercises the encoder
-// and the string/scalar codecs with adversarial values (control bytes, long
-// names, NaN/Inf-producing bit patterns) that the unit tests don't cover.
+// length-prefixed interface name survives, bounded as the collector bounds it.
+// This exercises the encoder and the string/scalar codecs with adversarial
+// values (control bytes, long names, NaN/Inf-producing bit patterns) that the
+// unit tests don't cover.
 func FuzzEncodeDecodeRoundTrip(f *testing.F) {
 	f.Add("eth0", uint64(16<<30), float64(1.5), uint16(8), 42)
 	f.Add("", uint64(0), float64(0), uint16(0), 0)
 	f.Add("a name with spaces & \x00 control", uint64(1), float64(-1), uint16(1), 1)
+	f.Add(strings.Repeat("ł", 200), uint64(1), float64(2), uint16(4), 3) // 400 bytes
 
 	f.Fuzz(func(t *testing.T, ifname string, memTotal uint64, rxMbps float64, numCores uint16, currEstab int) {
 		orig := &AggregatedSample{
@@ -173,14 +176,10 @@ func FuzzEncodeDecodeRoundTrip(f *testing.F) {
 			},
 		}
 
+		// No name, however long, may fail the record.
 		enc1, err := encodeSample(orig)
 		if err != nil {
-			// The only documented encode error is a string exceeding the
-			// 255-byte on-disk limit; anything else is a bug.
-			if len(ifname) <= 255 {
-				t.Fatalf("encode failed for representable sample (ifname %d bytes): %v", len(ifname), err)
-			}
-			return
+			t.Fatalf("encode failed (ifname %d bytes): %v", len(ifname), err)
 		}
 
 		dec, err := decodeSample(enc1)
@@ -198,12 +197,12 @@ func FuzzEncodeDecodeRoundTrip(f *testing.F) {
 			t.Fatalf("round-trip not stable: %d vs %d bytes", len(enc1), len(enc2))
 		}
 
-		// Spot-check that the length-prefixed interface name survived exactly.
+		// Spot-check that the length-prefixed interface name survived.
 		if dec.Data == nil || len(dec.Data.Network.Interfaces) != 1 {
 			t.Fatalf("interface list not preserved: %+v", dec.Data)
 		}
-		if got := dec.Data.Network.Interfaces[0].Name; got != ifname {
-			t.Fatalf("iface name = %q, want %q", got, ifname)
+		if got, want := dec.Data.Network.Interfaces[0].Name, collector.BoundString(ifname); got != want {
+			t.Fatalf("iface name = %q, want %q", got, want)
 		}
 		if dec.Data.CPU.NumCores != int(numCores) {
 			t.Fatalf("num cores = %d, want %d", dec.Data.CPU.NumCores, numCores)

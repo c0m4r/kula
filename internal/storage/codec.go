@@ -56,6 +56,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"kula/internal/collector"
 )
@@ -182,16 +183,15 @@ func finiteF64(v float64) float64 {
 
 // ---- Length-prefixed string helpers -----------------------------------------
 
-// appendStr appends a uint8-length-prefixed UTF-8 string. Returns an error if
-// the string exceeds the 255-byte on-disk limit; callers must not truncate
-// silently, as that would misrepresent stored data.
-func appendStr(buf []byte, s string) ([]byte, error) {
-	n := len(s)
-	if n > 255 {
-		return buf, fmt.Errorf("string exceeds 255-byte storage limit (%d bytes)", n)
-	}
-	buf = append(buf, byte(n))
-	return append(buf, s[:n]...), nil
+// appendStr appends a uint8-length-prefixed string. The collector bounds every
+// name it reports to what the prefix can describe (collector.BoundString), so
+// the live views show what history keeps; a longer string arriving here anyway
+// is bounded the same way. One over-long name used to fail the whole record,
+// and with it all history recording.
+func appendStr(buf []byte, s string) []byte {
+	s = collector.BoundString(s)
+	buf = append(buf, byte(len(s)))
+	return append(buf, s...)
 }
 
 // getStr reads a uint8-length-prefixed string. Returns the string, bytes consumed, and an error
@@ -463,9 +463,7 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	// Network interfaces
 	buf = appendUint16(buf, uint16(len(s.Network.Interfaces)))
 	for _, iface := range s.Network.Interfaces {
-		if buf, err = appendStr(buf, iface.Name); err != nil {
-			return buf, fmt.Errorf("iface name: %w", err)
-		}
+		buf = appendStr(buf, iface.Name)
 		buf = appendF32(buf, iface.RxMbps)
 		buf = appendF32(buf, iface.TxMbps)
 		buf = appendF32(buf, iface.RxPPS)
@@ -483,18 +481,14 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	// CPU temperature sensors
 	buf = appendUint16(buf, uint16(len(s.CPU.Sensors)))
 	for _, sensor := range s.CPU.Sensors {
-		if buf, err = appendStr(buf, sensor.Name); err != nil {
-			return buf, fmt.Errorf("cpu sensor name: %w", err)
-		}
+		buf = appendStr(buf, sensor.Name)
 		buf = appendF32(buf, sensor.Value)
 	}
 
 	// Disk devices
 	buf = appendUint16(buf, uint16(len(s.Disks.Devices)))
 	for _, dev := range s.Disks.Devices {
-		if buf, err = appendStr(buf, dev.Name); err != nil {
-			return buf, fmt.Errorf("disk name: %w", err)
-		}
+		buf = appendStr(buf, dev.Name)
 		buf = appendF32(buf, dev.ReadsPerSec)
 		buf = appendF32(buf, dev.WritesPerSec)
 		buf = appendF32(buf, dev.ReadBytesPS)
@@ -503,9 +497,7 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 		buf = appendF32(buf, dev.Temperature)
 		buf = appendUint16(buf, uint16(len(dev.Sensors)))
 		for _, ts := range dev.Sensors {
-			if buf, err = appendStr(buf, ts.Name); err != nil {
-				return buf, fmt.Errorf("disk sensor name: %w", err)
-			}
+			buf = appendStr(buf, ts.Name)
 			buf = appendF32(buf, ts.Value)
 		}
 	}
@@ -513,15 +505,9 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	// Filesystems
 	buf = appendUint16(buf, uint16(len(s.Disks.FileSystems)))
 	for _, fs := range s.Disks.FileSystems {
-		if buf, err = appendStr(buf, fs.Device); err != nil {
-			return buf, fmt.Errorf("fs device: %w", err)
-		}
-		if buf, err = appendStr(buf, fs.MountPoint); err != nil {
-			return buf, fmt.Errorf("fs mountpoint: %w", err)
-		}
-		if buf, err = appendStr(buf, fs.FSType); err != nil {
-			return buf, fmt.Errorf("fs type: %w", err)
-		}
+		buf = appendStr(buf, fs.Device)
+		buf = appendStr(buf, fs.MountPoint)
+		buf = appendStr(buf, fs.FSType)
 		buf = appendUint64(buf, fs.Total)
 		buf = appendUint64(buf, fs.Used)
 		buf = appendUint64(buf, fs.Available)
@@ -529,12 +515,8 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	}
 
 	// System strings
-	if buf, err = appendStr(buf, s.System.Hostname); err != nil {
-		return buf, fmt.Errorf("hostname: %w", err)
-	}
-	if buf, err = appendStr(buf, s.System.ClockSource); err != nil {
-		return buf, fmt.Errorf("clock source: %w", err)
-	}
+	buf = appendStr(buf, s.System.Hostname)
+	buf = appendStr(buf, s.System.ClockSource)
 
 	// GPU entries — count is uint16-encoded; cap to avoid silent truncation.
 	gpuCount := len(s.GPU)
@@ -544,12 +526,8 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	buf = appendUint16(buf, uint16(gpuCount))
 	for _, g := range s.GPU[:gpuCount] {
 		buf = appendUint16(buf, uint16(g.Index))
-		if buf, err = appendStr(buf, g.Name); err != nil {
-			return buf, fmt.Errorf("gpu name: %w", err)
-		}
-		if buf, err = appendStr(buf, g.Driver); err != nil {
-			return buf, fmt.Errorf("gpu driver: %w", err)
-		}
+		buf = appendStr(buf, g.Name)
+		buf = appendStr(buf, g.Driver)
 		buf = appendF32(buf, g.Temperature)
 		buf = appendUint64(buf, g.VRAMUsed)
 		buf = appendUint64(buf, g.VRAMTotal)
@@ -587,12 +565,8 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	}
 	buf = appendUint16(buf, uint16(ctCount))
 	for _, ct := range s.Apps.Containers[:ctCount] {
-		if buf, err = appendStr(buf, ct.ID); err != nil {
-			return buf, fmt.Errorf("container id: %w", err)
-		}
-		if buf, err = appendStr(buf, ct.Name); err != nil {
-			return buf, fmt.Errorf("container name: %w", err)
-		}
+		buf = appendStr(buf, ct.ID)
+		buf = appendStr(buf, ct.Name)
 		buf = appendF32(buf, ct.CPUPct)
 		buf = appendUint64(buf, ct.MemUsed)
 		buf = appendUint64(buf, ct.MemLimit)
@@ -699,11 +673,13 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 		buf = append(buf, mb[:]...)
 		ioState := my.IOState
 		if len(ioState) > 200 {
-			ioState = ioState[:200]
+			cut := 200
+			for cut > 0 && !utf8.RuneStart(ioState[cut]) {
+				cut--
+			}
+			ioState = ioState[:cut]
 		}
-		if buf, err = appendStr(buf, ioState); err != nil {
-			return buf, fmt.Errorf("mysql io_state: %w", err)
-		}
+		buf = appendStr(buf, ioState)
 	} else {
 		buf = append(buf, 0)
 	}
@@ -752,18 +728,14 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	buf = appendUint16(buf, uint16(len(customKeys)))
 	for _, group := range customKeys {
 		metrics := s.Apps.Custom[group]
-		if buf, err = appendStr(buf, group); err != nil {
-			return buf, fmt.Errorf("custom group name: %w", err)
-		}
+		buf = appendStr(buf, group)
 		mCount := len(metrics)
 		if mCount > 65535 {
 			mCount = 65535
 		}
 		buf = appendUint16(buf, uint16(mCount))
 		for _, m := range metrics[:mCount] {
-			if buf, err = appendStr(buf, m.Name); err != nil {
-				return buf, fmt.Errorf("custom metric name: %w", err)
-			}
+			buf = appendStr(buf, m.Name)
 			buf = appendF32(buf, m.Value)
 		}
 	}
@@ -784,15 +756,9 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	}
 	buf = appendUint16(buf, uint16(psuCount))
 	for _, ps := range s.PSU[:psuCount] {
-		if buf, err = appendStr(buf, ps.Name); err != nil {
-			return buf, fmt.Errorf("psu name: %w", err)
-		}
-		if buf, err = appendStr(buf, ps.Type); err != nil {
-			return buf, fmt.Errorf("psu type: %w", err)
-		}
-		if buf, err = appendStr(buf, ps.Status); err != nil {
-			return buf, fmt.Errorf("psu status: %w", err)
-		}
+		buf = appendStr(buf, ps.Name)
+		buf = appendStr(buf, ps.Type)
+		buf = appendStr(buf, ps.Status)
 		// Capacity is a percentage. Clamp it so a quirky driver (or a value
 		// round-tripped from a corrupt record) cannot wrap the byte cast.
 		capacity := ps.Capacity

@@ -68,6 +68,12 @@ The fixed block's `user_count` byte holds `0–254`; `255` means unknown (the co
 for hosts with neither utmp nor systemd-logind sessions) and decodes as `-1`. The byte was an
 unclamped `uint8` before, so `255` only ever held a count that had wrapped.
 
+Names and labels (interfaces, sensors, disks, mounts, containers, GPUs, power supplies, custom
+groups and metrics, hostname, clock source) carry a one-byte length, so at most 255 bytes. The
+collector bounds each before anyone sees it (see [Collector](04-collector.md)), and `appendStr`
+applies the same `collector.BoundString` as a backstop instead of failing: one over-long name
+used to fail the whole record and stop history recording.
+
 Floats are stored finite. `putF32` saturates a value beyond float32's range at ±3.4028235e38
 and stores NaN as `0`; `getF32` reads an infinity or NaN left by an older version the same
 way, and the float64 `uptime` reads either as `0`. `encoding/json` refuses both values, so one

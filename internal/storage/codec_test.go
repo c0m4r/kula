@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -1463,5 +1464,36 @@ func TestSixteenBitCountsSaturate(t *testing.T) {
 func TestAppendVariableRefusesNilSample(t *testing.T) {
 	if _, err := appendVariable(nil, nil); err == nil {
 		t.Fatal("encoded a variable block for a nil sample")
+	}
+}
+
+// TestOverlongNamesKeepTheRecord: a name too long for its one-byte length is
+// stored bounded (collector.BoundString), never failing the record. One such
+// name, a long mount path or a container name chosen by whoever ran it, used
+// to stop all history recording.
+func TestOverlongNamesKeepTheRecord(t *testing.T) {
+	sample := makeSampleFull(time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC))
+	long := "/var/lib/kubelet/pods/" + strings.Repeat("p", 4000)
+	sample.Data.Disks.FileSystems = []collector.FileSystemInfo{{Device: "/dev/sdz1", MountPoint: long, FSType: "ext4"}}
+	sample.Data.System.Hostname = strings.Repeat("h", 300)
+	sample.Data.Apps.Containers = []collector.ContainerStats{{ID: "0123456789ab", Name: strings.Repeat("c", 300)}}
+
+	encoded, err := encodeSample(sample)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	decoded, err := decodeSample(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d := decoded.Data
+	for name, pair := range map[string][2]string{
+		"mount point":    {d.Disks.FileSystems[0].MountPoint, long},
+		"hostname":       {d.System.Hostname, strings.Repeat("h", 300)},
+		"container name": {d.Apps.Containers[0].Name, strings.Repeat("c", 300)},
+	} {
+		if got, want := pair[0], collector.BoundString(pair[1]); got != want {
+			t.Errorf("%s stored as %q, want %q", name, got, want)
+		}
 	}
 }
