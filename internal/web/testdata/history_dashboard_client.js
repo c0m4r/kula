@@ -1377,6 +1377,26 @@ check(document.getElementById('card-psu_BAT0').parentElement === mainGrid &&
     document.getElementById('card-pg-replication').parentElement.id === 'applications-grid',
     'Leaving Focus mode left cards outside their sections');
 
+// Focus mode's selection is made by clicking cards, and Done shows the ones
+// clicked.
+focusMode.toggleFocusMode();
+check(state.focusSelecting && document.getElementById('focus-bar'), 'Focus mode did not start selecting');
+document.getElementById('card-cpu').click();
+document.getElementById('card-memory').click();
+document.getElementById('card-memory').click();
+check(document.getElementById('card-cpu').classList.contains('focus-selected') &&
+    !document.getElementById('card-memory').classList.contains('focus-selected'),
+    'Clicking a card did not toggle its Focus mode selection');
+document.getElementById('btn-focus-done').click();
+check(state.focusMode && !state.focusSelecting && sameIds(state.focusVisible, ['card-cpu']) &&
+    document.getElementById('card-cpu').classList.contains('focus-visible'), 'Done did not show the clicked cards');
+document.getElementById('card-memory').click();
+check(!document.getElementById('card-memory').classList.contains('focus-selected'),
+    'A card stayed selectable after Focus mode was applied');
+focusMode.toggleFocusMode();
+await settleHistory();
+check(!state.focusMode && sameIds(allCardIds(), withLateBattery), 'Leaving Focus mode after a selection moved cards');
+
 // Re-created cards come back in the same places, whatever order they arrive in.
 initCharts();
 data.redrawChartsFromBuffer();

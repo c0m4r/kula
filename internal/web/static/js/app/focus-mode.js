@@ -152,6 +152,9 @@ export function toggleFocusMode() {
         setSectionFocusChrome(t, { active: false, selecting: true, hidden: false });
     });
     btn.classList.add('focus-active');
+    // First: showing the bar removes it and the card click handlers of any
+    // earlier selection, so it would also detach the ones attached below.
+    showFocusBar();
 
     // Pre-select previously visible cards; a click toggles a card.
     const visible = new Set(state.focusVisible || []);
@@ -159,8 +162,6 @@ export function toggleFocusMode() {
         card.classList.toggle('focus-selected', visible.has(card.id));
         attachFocusClick(card);
     });
-
-    showFocusBar();
 }
 
 // The bar is built after the translations were applied to the page, so it
