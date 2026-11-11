@@ -78,16 +78,16 @@ func (c *Collector) fetchApache2(elapsed float64) *Apache2Stats {
 }
 
 // parseApache2Status parses the Apache2 mod_status ?auto key-value format
-// and computes per-second rates using the previous raw counters.
+// and computes per-second rates using the previous raw counters. The
+// scoreboard, which may continue over the lines after its key, is counted as
+// it is read: the page is the server's to shape, and gathering a scoreboard
+// cut into many lines by concatenation would cost the square of its length.
 func (c *Collector) parseApache2Status(body string, elapsed float64) *Apache2Stats {
 	stats := &Apache2Stats{}
 	var cur apache2Raw
-	lines := strings.Split(body, "\n")
-
-	var scoreboard string
 	scoreboardActive := false
 
-	for _, line := range lines {
+	for line := range strings.Lines(body) {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -96,7 +96,7 @@ func (c *Collector) parseApache2Status(body string, elapsed float64) *Apache2Sta
 		colon := strings.IndexByte(line, ':')
 		if colon < 0 {
 			if scoreboardActive {
-				scoreboard += line
+				countApache2Scoreboard(stats, line)
 			}
 			continue
 		}
@@ -106,7 +106,7 @@ func (c *Collector) parseApache2Status(body string, elapsed float64) *Apache2Sta
 
 		if key == "Scoreboard" {
 			scoreboardActive = true
-			scoreboard += val
+			countApache2Scoreboard(stats, val)
 			continue
 		}
 
@@ -162,36 +162,6 @@ func (c *Collector) parseApache2Status(body string, elapsed float64) *Apache2Sta
 	}
 	c.prevApache = cur
 
-	// Count Scoreboard worker states
-	if scoreboard != "" {
-		for _, ch := range scoreboard {
-			switch ch {
-			case '_':
-				stats.Waiting++
-			case 'S':
-				stats.Starting++
-			case 'R':
-				stats.Reading++
-			case 'W':
-				stats.Sending++
-			case 'K':
-				stats.Keepalive++
-			case 'D':
-				stats.DNS++
-			case 'C':
-				stats.Closing++
-			case 'L':
-				stats.Logging++
-			case 'G':
-				stats.Graceful++
-			case 'I':
-				stats.IdleCleanup++
-			case '.':
-				stats.OpenSlots++
-			}
-		}
-	}
-
 	c.debugf("[apache2] parsed: busy=%d idle=%d accesses=%d kbytes=%d rps=%.2f bps=%.2f W=%d R=%d S=%d K=%d D=%d C=%d L=%d G=%d I=%d .=%d",
 		stats.BusyWorkers, stats.IdleWorkers, stats.TotalAccesses, stats.TotalKBytes,
 		stats.ReqPerSec, stats.BytesPerSec,
@@ -204,6 +174,36 @@ func (c *Collector) parseApache2Status(body string, elapsed float64) *Apache2Sta
 	}
 
 	return stats
+}
+
+// countApache2Scoreboard adds the worker states of a piece of the scoreboard.
+func countApache2Scoreboard(stats *Apache2Stats, states string) {
+	for i := 0; i < len(states); i++ {
+		switch states[i] {
+		case '_':
+			stats.Waiting++
+		case 'S':
+			stats.Starting++
+		case 'R':
+			stats.Reading++
+		case 'W':
+			stats.Sending++
+		case 'K':
+			stats.Keepalive++
+		case 'D':
+			stats.DNS++
+		case 'C':
+			stats.Closing++
+		case 'L':
+			stats.Logging++
+		case 'G':
+			stats.Graceful++
+		case 'I':
+			stats.IdleCleanup++
+		case '.':
+			stats.OpenSlots++
+		}
+	}
 }
 
 // parseFloatQuiet parses a float64 from a string, returning 0 on failure.
