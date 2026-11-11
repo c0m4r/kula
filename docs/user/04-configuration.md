@@ -279,7 +279,8 @@ answers only `Host` names that no public DNS server can answer for:
 
 - IP addresses (`192.0.2.10`, shorthand such as `127.1`, `[::1]`), `localhost` and `*.localhost`;
 - single-label names (`myserver`);
-- names ending in `.local`, `.lan`, `.home`, `.corp`, `.localdomain`, `.internal` or `.home.arpa`;
+- names ending in `.local`, `.lan`, `.home`, `.corp`, `.localdomain`, `.internal`, `.test` or
+  `.home.arpa`;
 - this machine's hostname and [`global.hostname`](#global), the hosts of `http`/`https` `allowed_origins`,
   and the names in `allowed_hosts`.
 
