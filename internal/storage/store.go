@@ -69,10 +69,10 @@ type Store struct {
 const maxQueryCacheEntries = 256
 
 // maxAggBufferFactor bounds the in-memory aggregation buffers at this multiple
-// of their tier ratio. The buffers normally reset to empty every ratio samples,
-// so this never trips in healthy operation; it only matters if a lower tier's
-// writes keep failing, bounding memory so a stuck disk can't OOM the process
-// (the raw samples remain safe in tier 0).
+// of their tier ratio. A buffer holds one contiguous run of one window, about
+// ratio records, so this never trips in healthy operation, nor when collection
+// stalls; it only matters if a tier's writes keep failing, bounding memory so
+// a stuck disk can't OOM the process (the raw samples remain safe in tier 0).
 const maxAggBufferFactor = 4
 
 // queryCacheKey identifies a query with its exact bounds, point budget and
@@ -286,7 +286,10 @@ func (s *Store) WriteSample(sample *collector.Sample) error {
 // the boundaries inside it, its duration and sparse mean weights apportioned
 // like a history bucket fragment. A rollup then ends exactly on its window's
 // end. A window is flushed as soon as a record ends on that end, or else
-// (after an outage) when a record of a later window arrives.
+// (after an outage) when a record of a later window arrives. A run cut short
+// inside its window (a stall or an outage) is written as soon as the next
+// record shows it ended, so a buffer holds at most one run however often
+// collection stalls.
 // ------------------------------------------------------------------------------
 
 // rollupWindow returns the index of tier's window holding an interval that
@@ -311,7 +314,7 @@ func (s *Store) rollupRatio(tier int) int {
 
 // addToRollup buffers a source record for tier (raw samples for tier 1,
 // tier-1 rollups for tier 2), split at tier's window boundaries, and flushes
-// every window it closes. Caller holds s.mu.
+// every window and contiguous run it closes. Caller holds s.mu.
 func (s *Store) addToRollup(tier int, as *AggregatedSample) error {
 	if as == nil || as.Data == nil {
 		return nil
@@ -320,7 +323,7 @@ func (s *Store) addToRollup(tier int, as *AggregatedSample) error {
 	var firstErr error
 	for _, part := range s.rollupParts(tier, as) {
 		window := s.rollupWindow(tier, part.Timestamp)
-		if n := len(*buffer); n > 0 && s.rollupWindow(tier, (*buffer)[n-1].Timestamp) != window {
+		if n := len(*buffer); n > 0 && !s.rollupContinues(tier, (*buffer)[n-1], part) {
 			if err := s.flushRollup(tier); err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -343,6 +346,21 @@ func (s *Store) addToRollup(tier int, as *AggregatedSample) error {
 		}
 	}
 	return firstErr
+}
+
+// rollupContinues reports whether next extends previous's contiguous run in
+// the same window of tier, so both belong in one rollup record.
+func (s *Store) rollupContinues(tier int, previous, next *AggregatedSample) bool {
+	width := next.Duration
+	if width <= 0 {
+		width = s.configs[tier-1].Resolution
+	}
+	// A real hole is at least one raw interval wide (WriteSample caps
+	// a sample's duration), while durations written before 0.22.0
+	// miss the wall-clock spacing by clock-reading jitter.
+	return next.Timestamp.After(previous.Timestamp) &&
+		next.Timestamp.Add(-width).Sub(previous.Timestamp) <= s.configs[0].Resolution/2 &&
+		s.rollupWindow(tier, next.Timestamp) == s.rollupWindow(tier, previous.Timestamp)
 }
 
 // rollupWindowEnd returns the end of tier's window with the given index.
@@ -406,19 +424,7 @@ func (s *Store) flushRollup(tier int) error {
 	buffer, count := s.rollupBuffer(tier)
 	for len(*buffer) > 0 {
 		end := 1
-		for end < len(*buffer) {
-			previous, next := (*buffer)[end-1], (*buffer)[end]
-			width := next.Duration
-			if width <= 0 {
-				width = s.configs[tier-1].Resolution
-			}
-			// A real hole is at least one raw interval wide (WriteSample caps
-			// a sample's duration), while durations written before 0.22.0
-			// miss the wall-clock spacing by clock-reading jitter.
-			if !next.Timestamp.After(previous.Timestamp) || next.Timestamp.Add(-width).Sub(previous.Timestamp) > s.configs[0].Resolution/2 ||
-				s.rollupWindow(tier, next.Timestamp) != s.rollupWindow(tier, previous.Timestamp) {
-				break
-			}
+		for end < len(*buffer) && s.rollupContinues(tier, (*buffer)[end-1], (*buffer)[end]) {
 			end++
 		}
 		agg := s.aggregateAggregated((*buffer)[:end], s.configs[tier].Resolution)

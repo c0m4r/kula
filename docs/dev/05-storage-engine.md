@@ -75,7 +75,9 @@ spike could read up to half as high in one as in the other. A raw sample whose i
 straddles a window boundary (they usually do, by a fraction of a second) is split there like a
 history bucket fragment: its duration and sparse mean weights are apportioned, its values and
 extrema go to both parts. A window is flushed as soon as a part ends exactly on its end, or,
-after an outage, when a record of a later window arrives.
+after an outage, when a record of a later window arrives. A run cut short inside its window
+(a stall of more than two intervals, or an outage) is written as soon as the next record shows
+it ended, so a buffer holds at most one run however often collection stalls.
 
 Flushes partition the buffered observations into contiguous runs. Collection outages produce
 separate partial rollups at every tier, preserving each run's contributing duration instead

@@ -200,6 +200,54 @@ func TestRollupsTolerateClockReadingJitter(t *testing.T) {
 	}
 }
 
+// TestRollupsKeepWholeWindowsWhenCollectionStalls: a sample more than two
+// intervals after the previous one starts a new run, so a struggling host
+// writes many tier-1 records per five minutes. Tier 2 must hold all of them,
+// across a restart too; the bound meant for failing writes used to keep only
+// the newest 20 records of a window, 20 s of every 2 min here.
+func TestRollupsKeepWholeWindowsWhenCollectionStalls(t *testing.T) {
+	store := newMultiTierStore(t)
+	cfg, dir := store.configs, store.dir
+	base := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	ts := base
+	writeUntil := func(end time.Time) {
+		for ts.Before(end) {
+			ts = ts.Add(2500 * time.Millisecond)
+			if err := store.WriteSample(makeSampleWithCPU(ts, 50)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	writeUntil(base.Add(7*time.Minute + 30*time.Second))
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store = reopenStore(t, dir, cfg)
+	defer func() { _ = store.Close() }()
+	writeUntil(base.Add(20 * time.Minute))
+
+	const window = 5 * time.Minute
+	held := func(tier int) map[int64]time.Duration {
+		records, err := store.tiers[tier].ReadRange(base, base.Add(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[int64]time.Duration{}
+		for _, record := range records {
+			out[epochBucketIndex(record.Timestamp.Add(-time.Nanosecond), window)] += record.Duration
+		}
+		return out
+	}
+	tier1, tier2 := held(1), held(2)
+	// 120 samples of 1 s each per window: a gap's duration is capped.
+	for w := epochBucketIndex(base, window); w < epochBucketIndex(base.Add(20*time.Minute), window); w++ {
+		start := time.Unix(0, w*int64(window)).UTC().Format("15:04")
+		if tier1[w] != 2*time.Minute || tier2[w] != 2*time.Minute {
+			t.Errorf("window %s: tier 1 holds %s, tier 2 %s, want 2m0s each", start, tier1[w], tier2[w])
+		}
+	}
+}
+
 // TestWriteSampleDurationsTileWallClockTimestamps: a collector's timestamps
 // come from time.Now(), whose monotonic reading Sub would otherwise use.
 func TestWriteSampleDurationsTileWallClockTimestamps(t *testing.T) {
