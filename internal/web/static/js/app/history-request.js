@@ -4,6 +4,36 @@
    ============================================================ */
 'use strict';
 
+// The server answers a history request 503 with Retry-After when its query
+// slots stayed busy for as long as it lets a request wait. Such a request is
+// sent again after the delay it names, at most HISTORY_RETRY_LIMIT times and
+// only while it is still the current request; then it is reported failed.
+export const HISTORY_RETRY_LIMIT = 2;
+const HISTORY_RETRY_MAX_DELAY_MS = 30000;
+
+// How long a response asks to wait before the request is sent again, or null
+// when it is not to be retried: only a 503 naming a delay in seconds is.
+export function historyRetryDelay(response) {
+    if (response?.status !== 503) return null;
+    const value = response.headers?.get?.('Retry-After')?.trim();
+    if (!value || !/^\d{1,6}$/.test(value)) return null;
+    return Math.min(Number(value) * 1000, HISTORY_RETRY_MAX_DELAY_MS);
+}
+
+// Resolves after ms, or as soon as signal aborts.
+function waitUnlessAborted(ms, signal) {
+    return new Promise(resolve => {
+        const done = () => {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', done);
+            resolve();
+        };
+        const timer = setTimeout(done, ms);
+        signal.addEventListener('abort', done);
+        if (signal.aborted) done();
+    });
+}
+
 export class HistoryRequestController {
     constructor(fetchImpl = (...args) => fetch(...args)) {
         this.fetchImpl = fetchImpl;
@@ -36,7 +66,14 @@ export class HistoryRequestController {
         try {
             onStart?.(generation);
 
-            const response = await this.fetchImpl(url, { signal: controller.signal });
+            let response = await this.fetchImpl(url, { signal: controller.signal });
+            for (let retry = 0; retry < HISTORY_RETRY_LIMIT; retry++) {
+                const wait = historyRetryDelay(response);
+                if (wait === null) break;
+                await waitUnlessAborted(wait, controller.signal);
+                if (!this.isCurrent(request)) return { status: 'superseded', generation };
+                response = await this.fetchImpl(url, { signal: controller.signal });
+            }
             if (!response.ok) {
                 const suffix = response.status ? ` (${response.status})` : '';
                 throw new Error(`History request failed${suffix}`);

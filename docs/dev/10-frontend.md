@@ -128,8 +128,14 @@ blocked.
 
 WebSocket samples enter `charts-data.js`; preset, custom, zoom and reconnect requests share
 one abortable `HistoryRequestController`. Only its current generation can replace history.
-Failures retain the successful view and expose a failed status. Reconnection refreshes the
-whole selected preset. Custom/zoomed intervals stay frozen while live gauges and status update.
+A request the server answers `503` with `Retry-After` (its history query slots stayed busy)
+is sent again after that delay, at most twice and only while it is still the current request.
+Failures retain the successful view and expose a failed status. A rolling preset whose
+history failed is loaded again 15 s after the failed attempt began
+(`HISTORY_FAILURE_RETRY_MS`), not a whole refresh step later; a native preset, which streams
+live samples and never refreshes, is loaded again in the background as the reconnect repair is.
+Reconnection refreshes the whole selected preset. Custom/zoomed intervals stay frozen while
+live gauges and status update; a failed one stays failed until it is selected again.
 WebSocket close code 1008 signals session expiry or revocation: the dashboard cancels pending
 history, stops reconnecting, clears authenticated readings and returns to login. A refused
 handshake (a 401 once the session expired while the page slept) reaches the page only as a

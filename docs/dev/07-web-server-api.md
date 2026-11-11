@@ -136,7 +136,8 @@ and [DMTF SMBIOS specification, section 7.18](https://www.dmtf.org/sites/default
   a long window on a large host. A further request waits for a slot for up to 10 seconds
   (`historySlotWait`), or until its client goes away, and is then answered `503` with
   `Retry-After: 2`. Requests answered from the query cache wait like the others. The dashboard
-  keeps one history request in flight at a time.
+  keeps one history request in flight at a time and sends a refused one again after
+  `Retry-After` (see [Frontend](10-frontend.md#history-and-rendering)).
 - The response is streamed: the samples are encoded one at a time and sent in pieces of about
   1 MiB (`writeHistoryJSON`), never built whole, because the JSON of a long window at full width
   is tens of megabytes, more than its decoded samples. The bytes are the ones `writeJSON` would

@@ -1909,6 +1909,7 @@ export function pushLiveSample(sample) {
     updateAllCharts();
     updateSubtitles(liveSample);
     evaluateAlerts(liveSample);
+    retryFailedHistory();
 }
 
 function applyAggregationValidity(validAggregations) {
@@ -2009,14 +2010,30 @@ function rollingRefreshInterval(rangeSeconds, points) {
     });
 }
 
+// A rolling view whose history failed to load is loaded again this long after
+// the failed attempt began, however long its own refresh step: a long view
+// refreshes only every few minutes, and a native one not at all.
+const HISTORY_FAILURE_RETRY_MS = 15000;
+
 function refreshRollingHistory(interval) {
     const now = serverNow();
     if (state.historyViewEnd === null) {
         const end = Date.parse(state.historyCoverage?.requestedTo);
         state.historyViewEnd = Number.isFinite(end) ? end : now;
     }
-    if (state.loadingHistory || now - Math.max(state.historyRefreshAttempt, state.historyViewEnd) < interval) return;
+    const wait = state.historyStatus === 'failed' ? Math.min(interval, HISTORY_FAILURE_RETRY_MS) : interval;
+    if (state.loadingHistory || now - Math.max(state.historyRefreshAttempt, state.historyViewEnd) < wait) return;
     void fetchHistory(state.timeRange, { background: true, tail: true });
+}
+
+// A native rolling view takes live samples whether or not its history loaded,
+// so nothing else loads it again after a failure. The retry runs in the
+// background, as the reconnect repair does: live samples keep reaching the
+// gauges and the charts until the loaded view replaces them.
+function retryFailedHistory() {
+    if (state.historyStatus !== 'failed' || state.loadingHistory || state.timeRange === null ||
+        serverNow() - state.historyRefreshAttempt < HISTORY_FAILURE_RETRY_MS) return;
+    void fetchHistory(state.timeRange, { background: true });
 }
 
 // ---- Rolling tail refresh ----

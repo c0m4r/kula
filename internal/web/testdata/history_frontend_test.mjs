@@ -10,9 +10,11 @@ async function importSource(relativePath) {
 }
 
 const {
+    HISTORY_RETRY_LIMIT,
     HistoryRequestController,
     ROLLING_TAIL_BUCKETS,
     alignedBucketCount,
+    historyRetryDelay,
     historyViewAcceptsLiveSamples,
     liveHistoryRefreshInterval,
     rollingBudgetHolds,
@@ -281,9 +283,12 @@ test('zoom counts observations rather than outages or duplicate timestamps', () 
     assert.equal(dense.filter(ts => ts >= expanded.min && ts <= expanded.max).length, 12);
 });
 
-function jsonResponse(payload, { ok = true, status = 200 } = {}) {
-    return { ok, status, json: async () => payload };
+function jsonResponse(payload, { ok = true, status = 200, headers = {} } = {}) {
+    return { ok, status, headers: new Headers(headers), json: async () => payload };
 }
+
+const busy = (retryAfter = '0') =>
+    jsonResponse({ error: 'too many history requests in progress' }, { ok: false, status: 503, headers: { 'Retry-After': retryAfter } });
 
 test('only the latest history response is applied even when abort is ignored', async () => {
     const pending = [];
@@ -320,8 +325,11 @@ test('only the latest history response is applied even when abort is ignored', a
 });
 
 test('HTTP failures never apply a history payload', async () => {
-    const controller = new HistoryRequestController(async () =>
-        jsonResponse({ samples: [{ ts: 'ignored' }] }, { ok: false, status: 503 }));
+    let sent = 0;
+    const controller = new HistoryRequestController(async () => {
+        sent++;
+        return jsonResponse({ samples: [{ ts: 'ignored' }] }, { ok: false, status: 503 });
+    });
     let applied = false;
     let failure = null;
     let finished = false;
@@ -336,6 +344,80 @@ test('HTTP failures never apply a history payload', async () => {
     assert.equal(applied, false);
     assert.match(failure.message, /503/);
     assert.equal(finished, true);
+    assert.equal(sent, 1, 'a 503 without Retry-After is not sent again');
+});
+
+test('a history request the server was too busy for is sent again after Retry-After', async () => {
+    const answers = [busy(), busy(), jsonResponse({ id: 'loaded' })];
+    const urls = [];
+    const controller = new HistoryRequestController(async url => {
+        urls.push(url);
+        return answers.shift();
+    });
+    const events = [];
+
+    const result = await controller.fetchJSON('/busy', {
+        onStart: () => events.push('start'),
+        onApply: payload => events.push(payload.id),
+        onFailure: () => events.push('failure'),
+        onFinish: () => events.push('finish'),
+    });
+
+    assert.deepEqual(result, { status: 'applied', generation: 1 });
+    assert.deepEqual(urls, ['/busy', '/busy', '/busy']);
+    assert.deepEqual(events, ['start', 'loaded', 'finish']);
+});
+
+test('a history request still refused after its retries is reported failed', async () => {
+    let sent = 0;
+    const controller = new HistoryRequestController(async () => {
+        sent++;
+        return busy();
+    });
+    let failure = null;
+
+    const result = await controller.fetchJSON('/busy', { onFailure: error => { failure = error; } });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(sent, HISTORY_RETRY_LIMIT + 1);
+    assert.match(failure.message, /503/);
+});
+
+test('a superseded history request is not sent again', async () => {
+    let sent = 0;
+    const controller = new HistoryRequestController(async () => {
+        sent++;
+        return busy('30');
+    });
+    const failures = [];
+    const finished = [];
+
+    const pending = controller.fetchJSON('/busy', {
+        onFailure: error => failures.push(error),
+        onFinish: generation => finished.push(generation),
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const started = Date.now();
+    controller.supersede();
+
+    assert.deepEqual(await pending, { status: 'superseded', generation: 1 });
+    assert.ok(Date.now() - started < 5000, 'the wait for the retry outlived the request');
+    assert.equal(sent, 1);
+    assert.deepEqual(failures, []);
+    assert.deepEqual(finished, []);
+});
+
+test('only a 503 naming a delay in seconds is retried, and the delay is bounded', () => {
+    assert.equal(historyRetryDelay(busy('2')), 2000);
+    assert.equal(historyRetryDelay(busy('0')), 0);
+    assert.equal(historyRetryDelay(busy('3600')), 30000);
+    for (const value of ['', '-1', '1.5', 'Wed, 21 Oct 2026 07:28:00 GMT', '9999999']) {
+        assert.equal(historyRetryDelay(busy(value)), null, `Retry-After: ${value}`);
+    }
+    assert.equal(historyRetryDelay(jsonResponse({}, { ok: false, status: 503 })), null);
+    assert.equal(historyRetryDelay(jsonResponse({}, { ok: false, status: 500, headers: { 'Retry-After': '1' } })), null);
+    assert.equal(historyRetryDelay(jsonResponse({}, { ok: false, status: 429, headers: { 'Retry-After': '1' } })), null);
+    assert.equal(historyRetryDelay({ status: 503 }), null, 'a response without headers');
 });
 
 test('a locally served viewport advances the generation and aborts pending work', async () => {

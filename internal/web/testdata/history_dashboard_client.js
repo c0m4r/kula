@@ -1063,6 +1063,19 @@ check(announced > 0 && announcement.textContent === i18n.t('history_failed'),
     'A failed background refresh was not announced');
 announcementWatch.disconnect();
 window.fetch = nativeFetch;
+// The failed view is loaded again within the failure retry delay (15s), not a
+// whole refresh step later.
+check(state.rollingRefreshNote?.interval > 15000, 'The failed rolling view refreshes too often to test its retry');
+const failedAt = now;
+for (let i = 0; i < 30 && state.historyStatus === 'failed'; i++) {
+    now += 1000;
+    const sample = structuredClone(state.lastSample);
+    sample.ts = new Date(now).toISOString();
+    data.pushLiveSample(sample);
+    for (let waits = 0; state.loadingHistory && waits < 500; waits++) await pause(2);
+}
+check(state.historyStatus === 'complete' && now - failedAt <= 15000,
+    'A failed rolling view was not loaded again within the failure retry delay');
 window.Date = NativeDate;
 
 // 5,000 observations plus explicit gaps must all survive ingestion and redraw.
@@ -1297,6 +1310,33 @@ check(state.currentAggregation === 'avg' && state.suspendedAggregation === 'max'
 await pushLive();
 check(liveTotal.data.at(-1).x === liveNow && Number.isFinite(liveTotal.data.at(-1).y),
     'A native raw preset stopped streaming live samples');
+// A native preset whose history failed keeps streaming, and loads its history
+// again in the background once the failure retry delay (15s) has passed.
+const answeringFetch = window.fetch;
+let refuseHistory = true;
+let refusedHistory = 0;
+window.fetch = async (url, options) => {
+    if (!refuseHistory || !String(url).includes('/api/history?')) return answeringFetch(url, options);
+    refusedHistory++;
+    return new Response('{"error":"too many history requests in progress"}',
+        { status: 503, headers: { 'Content-Type': 'application/json' } });
+};
+await data.fetchHistory(300);
+check(state.historyStatus === 'failed' && state.historyViewEnd === null, 'A refused native preset was not reported failed');
+const refusals = refusedHistory;
+for (let i = 0; i < 10; i++) await pushLive();
+check(refusedHistory === refusals, 'A failed native preset was loaded again before the failure retry delay');
+check(liveTotal.data.at(-1).x === liveNow, 'A failed native preset stopped streaming live samples');
+refuseHistory = false;
+const requestsBeforeRetry = window.historyRequests;
+for (let i = 0; i < 10 && state.historyStatus === 'failed'; i++) await pushLive();
+check(window.historyRequests === requestsBeforeRetry + 1 && state.historyStatus === 'complete',
+    'A failed native preset never loaded its history again');
+check(state.historyViewEnd === null && document.getElementById('sampling-info').textContent.indexOf(i18n.t('history_failed')) === -1,
+    'A native preset still reports the failure it recovered from');
+await pushLive();
+check(liveTotal.data.at(-1).x === liveNow, 'A recovered native preset stopped streaming live samples');
+window.fetch = answeringFetch;
 bucketedView = true;
 await data.fetchHistory(300);
 check(state.currentAggregation === 'max' && state.suspendedAggregation === null,
