@@ -58,7 +58,11 @@ template, fixtures and tests that name the bundle.
 
 Modules are plain ES6 (no bundler). Load order matters: `state.js` first, `main.js` last.
 The server minifies them, like `style.css`, at startup (`web.minify_assets`); set it to `false`
-to read the original sources in browser developer tools.
+to read the original sources in browser developer tools. A new module needs a
+`<link rel="modulepreload" ... integrity="{{sri ...}}">` line in `index.html`: the browser
+checks an imported module's integrity only through that tag
+([Subresource Integrity](08-security.md#subresource-integrity-sri)), and
+`TestPagesLoadEveryScriptWithIntegrity` fails without it.
 
 `main.js` `init()` first arranges the cards in the stored order (see [Card order](#card-order)),
 then loads translations, restores the URL state and layout, then waits for one

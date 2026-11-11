@@ -97,8 +97,11 @@ per-application reducer branches.
 
 - `internal/web/static/`, `internal/i18n/locales/`, `VERSION` and `config.example.yaml` are
   `//go:embed`ed — rebuild for edits to take effect.
-- SRI hashes are computed at startup by walking every `static/**/*.js`, so a new script is
-  covered automatically; it still needs its template tag and CSP clearance.
+- SRI hashes are computed at startup by walking every `static/**/*.js`, but a hash protects
+  only a script the page names with it: a new classic script needs its `<script integrity>` tag,
+  and a new module needs a `<link rel="modulepreload" integrity>` in every page that imports it,
+  directly or not, or the browser runs it unchecked. `TestPagesLoadEveryScriptWithIntegrity`
+  walks each page's import graph and fails on a module without one. Both need CSP clearance.
 - Served `.css`/`.js` (except vendored `*.min.*`) is minified at startup by
   `internal/web/minify.go`, and SRI hashes cover the minified bytes. `TestEmbeddedAssetsMinify`
   fails if a shipped asset no longer minifies (it would silently be served unminified). Tests

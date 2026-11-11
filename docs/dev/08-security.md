@@ -124,10 +124,17 @@ When `web.security.headers` is on (default), responses carry:
 
 ## Subresource Integrity (SRI)
 
-All served JavaScript carries `integrity="sha384-..."` hashes computed at startup
+Every script a page loads carries an `integrity="sha384-..."` hash computed at startup
 (`calculateSRIs`, `sha512.Sum384`) and injected into the templated HTML, so a tampered asset
 won't execute. The hashes cover the bytes actually served — the minified form when
 `web.minify_assets` is on.
+
+A browser checks a hash only where the page names the script. Classic scripts and the entry
+module carry it on their `<script>` tag; a module that is imported, directly or through another
+module, is checked only through a `<link rel="modulepreload" integrity=...>` in the page head,
+and without one it is fetched and run unchecked. `TestPagesLoadEveryScriptWithIntegrity`
+renders every page template, walks the import graph from its entry modules, and fails on any
+script or imported module without the hash of its served bytes.
 
 ## WebSocket security
 

@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"regexp"
 	"strings"
 	"testing"
@@ -130,6 +132,90 @@ func TestChartJSScriptsDeferred(t *testing.T) {
 	}
 	if chartScripts == 0 || appModule < 0 {
 		t.Fatalf("found %d Chart.js scripts and app module at %d", chartScripts, appModule)
+	}
+}
+
+// A browser checks a module's integrity only where the page names the module:
+// the entry <script type="module"> carries its own, and every module it imports,
+// directly or not, needs a <link rel="modulepreload"> with integrity, or it is
+// fetched and run unchecked. Every page template is rendered, and every
+// first-party script it loads must carry the hash of the bytes served for it.
+func TestPagesLoadEveryScriptWithIntegrity(t *testing.T) {
+	s := NewServer(config.WebConfig{UI: true, MinifyAssets: true, Security: config.SecurityConfig{Headers: true}},
+		config.GlobalConfig{EasterEgg: true}, nil, nil, t.TempDir(), config.OllamaConfig{})
+	pages, err := fs.Glob(staticFS, "static/*.html")
+	if err != nil || len(pages) == 0 {
+		t.Fatalf("Glob(static/*.html) = %v, %v", pages, err)
+	}
+	tags := regexp.MustCompile(`<(script|link)\b[^>]*>`)
+	attributes := regexp.MustCompile(`\s([a-zA-Z-]+)(?:\s*=\s*"([^"]*)")?`)
+	// Read from the served (minified) bytes, which carry no comments. Only
+	// specifiers naming a script count: a bare string after "from" does not.
+	imports := regexp.MustCompile(`(?:\bfrom|\bimport)\s*\(?\s*["']([^"'\n]+\.m?js)["']`)
+	modules := 0
+	for _, page := range pages {
+		name := strings.TrimPrefix(page, "static/")
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req = req.WithContext(context.WithValue(req.Context(), nonceKey, "nonce"))
+		rec := httptest.NewRecorder()
+		s.renderTemplate(rec, req, name)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s rendered with status %d", name, rec.Code)
+		}
+
+		var entries []string
+		preloads := map[string]string{}
+		for _, tag := range tags.FindAllStringSubmatch(rec.Body.String(), -1) {
+			attrs := map[string]string{}
+			for _, attr := range attributes.FindAllStringSubmatch(tag[0], -1) {
+				attrs[strings.ToLower(attr[1])] = html.UnescapeString(attr[2])
+			}
+			switch {
+			case tag[1] == "script" && attrs["src"] != "":
+				if want := s.sriHashes[attrs["src"]]; want == "" || attrs["integrity"] != want {
+					t.Errorf("%s: %s loads without the integrity of its served bytes: %s", name, attrs["src"], tag[0])
+				}
+				if attrs["type"] == "module" {
+					entries = append(entries, attrs["src"])
+				}
+			case tag[1] == "script" && attrs["type"] == "module":
+				t.Errorf("%s: an inline module's imports are not checked here; load it from a file: %s", name, tag[0])
+			case tag[1] == "link" && attrs["rel"] == "modulepreload":
+				preloads[attrs["href"]] = attrs["integrity"]
+			}
+		}
+
+		// Walk the import graph from the entry modules.
+		seen := map[string]bool{}
+		queue := append([]string(nil), entries...)
+		for len(queue) > 0 {
+			module := queue[0]
+			queue = queue[1:]
+			if seen[module] {
+				continue
+			}
+			seen[module] = true
+			modules++
+			if want := s.sriHashes[module]; want == "" || preloads[module] != want {
+				t.Errorf("%s loads %s without a <link rel=\"modulepreload\"> carrying its integrity", name, module)
+			}
+			source, err := s.readStatic("static/" + module)
+			if err != nil {
+				t.Errorf("%s loads %s, which is not embedded: %v", name, module, err)
+				continue
+			}
+			for _, spec := range imports.FindAllSubmatch(source, -1) {
+				target := string(spec[1])
+				if !strings.HasPrefix(target, "./") && !strings.HasPrefix(target, "../") {
+					t.Errorf("%s imports %q: first-party modules import each other by relative path", module, target)
+					continue
+				}
+				queue = append(queue, path.Join(path.Dir(module), target))
+			}
+		}
+	}
+	if modules == 0 {
+		t.Fatal("no page loads a module; the template parsing above no longer matches the pages")
 	}
 }
 
