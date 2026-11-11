@@ -280,7 +280,9 @@ Static assets carry a weak `ETag` of the bytes they are served as (`staticETags`
 startup after minification) and `Cache-Control: no-cache`: the browser keeps its copy but
 revalidates on every use, so an unchanged binary answers `304 Not Modified` without a body, and
 an upgrade is picked up at once even though asset URLs carry no version. The templated pages
-(`index.html`, `game.html`) carry a per-request nonce and get neither header. With
+(`index.html`, `game.html`) carry a per-request nonce, so they get no `ETag` and are sent with
+`Cache-Control: no-store` (`renderTemplate`): neither the browser nor a shared cache may keep a
+copy that would serve the same nonce twice (`TestPagesAreNeverStored`). With
 `enable_compression`, responses that may be gzipped add `Vary: Accept-Encoding`; a 304 or 204 (or
 a handler that writes nothing) goes out unencoded, and `.woff2` fonts and the `/api/ollama/` stream
 (below any `base_path`) are never gzipped. Compressors come from a `sync.Pool` and are taken only

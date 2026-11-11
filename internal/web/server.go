@@ -1533,6 +1533,9 @@ func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, template
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// The page carries this response's CSP nonce, which must never be served
+	// twice: neither the browser nor a shared cache may keep a copy.
+	w.Header().Set("Cache-Control", "no-store")
 	if err := s.templates.ExecuteTemplate(w, templateName, data); err != nil {
 		log.Printf("Template execution error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)

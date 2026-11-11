@@ -127,6 +127,9 @@ When `web.security.headers` is on (default), responses carry:
 - `Strict-Transport-Security` (HSTS) when TLS or trusted `X-Forwarded-Proto: https` is present
   (since 0.15.0)
 
+The templated pages are sent with `Cache-Control: no-store` whether `headers` is on or not: each
+carries its response's nonce, which no browser or shared cache copy may serve again.
+
 ## Subresource Integrity (SRI)
 
 Every script a page loads carries an `integrity="sha384-..."` hash computed at startup

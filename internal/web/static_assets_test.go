@@ -219,6 +219,39 @@ func TestPagesLoadEveryScriptWithIntegrity(t *testing.T) {
 	}
 }
 
+// A page carries its response's CSP nonce, so no page template may be stored
+// by the browser or a shared cache, nor revalidated against an ETag.
+func TestPagesAreNeverStored(t *testing.T) {
+	s := NewServer(config.WebConfig{UI: true, EnableCompression: true, Security: config.SecurityConfig{Headers: true}},
+		config.GlobalConfig{EasterEgg: true}, nil, nil, t.TempDir(), config.OllamaConfig{})
+	pages, err := fs.Glob(staticFS, "static/*.html")
+	if err != nil || len(pages) == 0 {
+		t.Fatalf("Glob(static/*.html) = %v, %v", pages, err)
+	}
+	for _, page := range pages {
+		name := strings.TrimPrefix(page, "static/")
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req = req.WithContext(context.WithValue(req.Context(), nonceKey, "nonce"))
+		rec := httptest.NewRecorder()
+		s.renderTemplate(rec, req, name)
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", name, got)
+		}
+	}
+	// Through the routes and the gzip middleware, too.
+	handler := s.buildHandler()
+	for _, route := range []string{"/", "/index.html"} {
+		req := httptest.NewRequest(http.MethodGet, "http://localhost"+route, nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("ETag") != "" {
+			t.Errorf("GET %s = %d, Cache-Control %q, ETag %q; want 200, no-store and no ETag",
+				route, rec.Code, rec.Header().Get("Cache-Control"), rec.Header().Get("ETag"))
+		}
+	}
+}
+
 // The theme is resolved by a nonce'd inline script at the top of <body>, from
 // the server default rendered into the page, before anything paints.
 func TestIndexResolvesThemeBeforePaint(t *testing.T) {
