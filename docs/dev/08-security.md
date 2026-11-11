@@ -94,11 +94,15 @@ disabled on a TCP listener, only names a public DNS server cannot answer for: IP
 machine's hostname (`os.Hostname`) and `global.hostname`, each matched exactly, the hosts of
 `http`/`https` `allowed_origins` (an app or extension origin names no server), and
 `web.security.allowed_hosts` (normalized at load; `"*"` disables the check). Anything else gets
-a JSON `403`, logged once per name for up to 64 names. It wraps every route inside the base path except `/health`, `/status` and a `/metrics`
-that asks for a bearer token (a rebinding page cannot supply it). With auth enabled the page
-has no session cookie to send, so only a `/metrics` without a token, the one route with data
-and no credential of its own, is checked. A Unix socket has no browser connecting directly and
-is never checked.
+a JSON `403`, logged once per name for up to 64 names. It wraps every route inside the base
+path except `/health`, `/status` and a `/metrics` that asks for a bearer token (a rebinding page
+cannot supply it). With auth enabled the page has no session cookie to send, so only a
+`/metrics` without a token, the one route with data and no credential of its own, is checked. A
+Unix socket has no browser connecting directly and is never checked.
+
+The check assumes the resolver is not the attacker's. A local resolver answers the local-only
+and single-label names, so one an attacker runs (a hostile Wi-Fi network's DHCP-provided DNS)
+can rebind those too; the protection there is auth, not the `Host` check.
 
 ## Web security headers
 

@@ -267,9 +267,10 @@ matching origins, those origins pass `origin_validation`, and session cookies sw
 entry is an origin as a browser sends it, `scheme://host[:port]`: an `http`/`https` page, or an
 app webview or browser extension with its own scheme (`tauri://localhost`,
 `chrome-extension://<id>`). Case, a trailing slash and a default port are normalized at
-startup, and an entry with a path, a wildcard or no scheme stops it with an error. Keep `origin_validation` on alongside `allowed_origins`: with it off, those
-cross-site cookies reach a WebSocket that accepts any origin, so any page a signed-in user visits
-can read the live stream (Kula warns about this at startup). See
+startup, and an entry with a path, a wildcard or no scheme stops it with an error. Keep
+`origin_validation` on alongside `allowed_origins`: with it off, those cross-site cookies reach
+a WebSocket that accepts any origin, so any page a signed-in user visits can read the live
+stream (Kula warns about this at startup). See
 [Security Model](../dev/08-security.md).
 
 `allowed_hosts` guards against DNS rebinding while auth is disabled: a web page can point its
@@ -281,8 +282,11 @@ answers only `Host` names that no public DNS server can answer for:
 - single-label names (`myserver`);
 - names ending in `.local`, `.lan`, `.home`, `.corp`, `.localdomain`, `.internal`, `.test` or
   `.home.arpa`;
-- this machine's hostname and [`global.hostname`](#global), the hosts of `http`/`https` `allowed_origins`,
-  and the names in `allowed_hosts`.
+- this machine's hostname and [`global.hostname`](#global), the hosts of `http`/`https`
+  `allowed_origins`, and the names in `allowed_hosts`.
+
+Local and single-label names are answered by your local resolver, so on a network whose DNS
+you do not trust (a public Wi-Fi), they are no protection: enable auth there.
 
 Any other name gets `403 {"error": "host not allowed: …"}`, logged once per name; `/health`
 and `/status` stay open to probes, and so does `/metrics` when it has a bearer token. **Add the
