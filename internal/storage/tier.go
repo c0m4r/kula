@@ -193,54 +193,41 @@ func (t *Tier) readHeader() error {
 		t.newestTS = time.Unix(0, newestNano)
 	}
 
+	// Locate the previous pass, the old segment [oldestOff, its end) of a
+	// wrapped ring. Files written by tail-tracking code carry oldestOff;
+	// older ones kept the whole ring, the oldest record assumed at writeOff.
+	// Either way the record found there must prove itself (see oldRecordFrom),
+	// not merely be older than newestTS: after the clock steps back the whole
+	// previous pass is later than the newest record, and it was dropped. An
+	// offset that fails (a corrupt header from an earlier build, or one a
+	// crash left behind the data) is resynced forward to the next real record
+	// instead of being assumed at writeOff, which is no record boundary since
+	// the ring tracks its tail.
 	headerFlags := binary.LittleEndian.Uint32(buf[4:8])
-	tailTrusted := false
+	candidate := t.writeOff
+	t.wrapped = false
+	t.oldestOff = 0
 	if headerFlags&flagHeaderHasTail != 0 {
-		// Written by tail-tracking code.
-		t.wrapped = headerFlags&flagHeaderWrapped != 0
-		t.oldestOff = int64(binary.LittleEndian.Uint64(buf[56:64]))
-		switch {
-		case !t.wrapped:
-			tailTrusted = true // legitimate non-wrapped state; nothing to validate
-		case t.oldestOff >= t.writeOff && t.oldestOff < t.maxData:
-			// Validate the persisted tail: an offset left behind by an earlier
-			// buggy build can point at garbage (e.g. a far-future "2119"
-			// timestamp). Only trust a tail that decodes to a sane oldest.
-			if ts, err := t.readTimestampAt(t.oldestOff); err == nil &&
-				!ts.IsZero() && (t.newestTS.IsZero() || !ts.After(t.newestTS)) {
-				t.oldestTS = ts
-				tailTrusted = true
-			}
+		if headerFlags&flagHeaderWrapped == 0 {
+			candidate = -1 // a legitimate non-wrapped ring
+		} else if persisted := int64(binary.LittleEndian.Uint64(buf[56:64])); persisted >= t.writeOff && persisted < t.maxData {
+			candidate = persisted
 		}
 	}
-
-	if !tailTrusted {
-		// Reached for (a) pre-fix files with no tail metadata and (b)
-		// new-format files whose persisted wrapped tail failed validation
-		// (corrupt offset from an earlier buggy build). In BOTH cases reproduce
-		// the PREVIOUS binary's layout instead of dropping data: if the file is
-		// physically larger than [0, writeOff) it had wrapped, so keep the whole
-		// ring by assuming the oldest record begins at writeOff — exactly what
-		// the old code read (ReadRange becomes byte-for-byte identical). Tail
-		// tracking then refines oldestOff on the next writes.
-		//
-		// Dropping the [writeOff, maxData) segment here would wipe up to a whole
-		// buffer of history on upgrade — a stable node has uniform records and a
-		// perfectly valid old segment. Self-heal must never self-annihilate.
-		t.wrapped = false
-		t.oldestOff = 0
-		if t.count > 0 {
-			fileInfo, _ := t.file.Stat()
-			if fileInfo != nil && fileInfo.Size() > headerSize+t.writeOff {
-				t.wrapped = true
-				t.oldestOff = t.writeOff
-				// Refresh oldestTS from the assumed tail when it decodes sanely;
-				// otherwise keep the header value (display-only; it self-corrects
-				// as the ring cycles). This never affects what data is kept.
-				if ts, err := t.readTimestampAt(t.writeOff); err == nil &&
-					!ts.IsZero() && (t.newestTS.IsZero() || !ts.After(t.newestTS)) {
-					t.oldestTS = ts
+	if candidate >= 0 && t.count > 0 {
+		if fileInfo, _ := t.file.Stat(); fileInfo != nil && fileInfo.Size() > headerSize+t.writeOff {
+			// Records written before kind bytes (and legacy JSON) cannot
+			// prove themselves; keep the offset there, as the builds that
+			// wrote them did.
+			off := candidate
+			if t.codecVer >= codecVersion2 {
+				if found, ok := t.oldRecordFrom(candidate); ok {
+					off = found
 				}
+			}
+			t.wrapped, t.oldestOff = true, off
+			if ts, err := t.readTimestampAt(off); err == nil && !ts.IsZero() {
+				t.oldestTS = ts
 			}
 		}
 	}
@@ -924,10 +911,167 @@ func (t *Tier) recordHeaderSane(hdr []byte) (int64, bool) {
 	if ts.IsZero() || ts.Year() < 2000 {
 		return 0, false
 	}
-	if !t.newestTS.IsZero() && ts.After(t.newestTS.Add(time.Hour)) {
+	// A checksummed record proves itself (resync checks its trailer), so its
+	// time is not bounded: records from before a backwards clock step are
+	// later than the newest one.
+	if hdr[4] != recordKindChecksummed && !t.newestTS.IsZero() && ts.After(t.newestTS.Add(time.Hour)) {
 		return 0, false
 	}
 	return dataLen, true
+}
+
+// oldRecordSearch bounds how far oldRecordFrom looks: past the remains of
+// one overwritten record and the few a crash can leave unaccounted, without
+// scanning a whole ring of records that cannot prove themselves.
+const oldRecordSearch = 16 << 20
+
+// oldRecordFrom returns the first offset at or after from, within the ring
+// and oldRecordSearch, where a record proves itself as resync accepts one: by
+// its checksum, or for a record without one by a sane header followed by
+// another. Caller holds t.mu or the tier is not shared yet.
+func (t *Tier) oldRecordFrom(from int64) (int64, bool) {
+	end := t.maxData
+	if info, err := t.file.Stat(); err == nil {
+		end = min(end, info.Size()-headerSize)
+	}
+	end = min(end, from+oldRecordSearch)
+	if from < 0 || from >= end {
+		return 0, false
+	}
+	br := scanReader(io.NewSectionReader(t.file, headerSize+from, end-from))
+	defer releaseScanReader(br)
+	var skipped int64
+	if !t.resyncToNextRecord(br, &skipped, end-from) {
+		return 0, false
+	}
+	return from + skipped, true
+}
+
+// verifyOldSegment follows the previous pass from oldestOff to its end. A
+// crash can leave the header behind the data: the records written past
+// writeOff then fill the tail's place, followed by what is left of the old
+// record they overwrote, so the pass seems to end there, and the writer's
+// tail advance gives the rest of it up at that point. When the walk meets a
+// record that is not one (a stray length, kind byte or checksum) before a zero
+// length or the end of the ring, the pass resumes at the next record proven
+// after it; without one it is left as it was. A zero length ends the segment
+// as always: it is the sentinel, or a hole no walk can tell from one. Caller
+// holds t.mu exclusively, or the tier is not shared yet.
+func (t *Tier) verifyOldSegment() {
+	if !t.wrapped || t.codecVer < codecVersion2 {
+		return
+	}
+	// The remains of the record the unaccounted ones overwrote come next and
+	// may begin with what reads as a zero length, so resync past them
+	// before walking.
+	if end := t.unaccountedEnd(); end > t.oldestOff {
+		if off, ok := t.oldRecordFrom(end); ok {
+			t.oldestOff = off
+		}
+	}
+	for t.wrapped {
+		broken, ok := t.oldSegmentBreak(t.oldestOff)
+		if ok {
+			return
+		}
+		off, found := t.oldRecordFrom(max(broken, t.oldestOff+1))
+		if !found {
+			return
+		}
+		t.oldestOff = off
+	}
+	if ts, err := t.readTimestampAt(t.oldestOff); err == nil && !ts.IsZero() {
+		t.oldestTS = ts
+	}
+}
+
+// unaccountedEnd returns the end of the records a crash left past writeOff.
+// Write updates the header after each record, so a power loss can keep
+// records the header does not count; they are checksummed, newer than
+// newestTS and in order, and the first record that is not all three ends
+// them. Without such records it returns writeOff.
+func (t *Tier) unaccountedEnd() int64 {
+	off := t.writeOff
+	if t.newestTS.IsZero() {
+		return off
+	}
+	end := t.maxData
+	if info, err := t.file.Stat(); err == nil {
+		end = min(end, info.Size()-headerSize)
+	}
+	br := scanReader(io.NewSectionReader(t.file, headerSize+off, max(0, end-off)))
+	defer releaseScanReader(br)
+	last := t.newestTS.UnixNano()
+	for end-off >= 13 {
+		hdr, _ := br.Peek(13)
+		if len(hdr) < 13 {
+			break
+		}
+		dataLen := binary.LittleEndian.Uint32(hdr[0:4])
+		recordLen := 4 + int64(dataLen)
+		if !t.validRecordLen(dataLen) || off+recordLen > end || hdr[4] != recordKindChecksummed {
+			break
+		}
+		ts := int64(binary.LittleEndian.Uint64(hdr[5:13]))
+		if ts <= last || !peekedRecordIntact(br, recordLen) {
+			break
+		}
+		if _, err := br.Discard(int(recordLen)); err != nil {
+			break
+		}
+		last = ts
+		off += recordLen
+	}
+	return off
+}
+
+// oldSegmentBreak walks the old segment from start and returns the offset of
+// the first record that is not one, or ok when the walk reaches a zero length
+// or the end of the ring first. A record without a kind byte (written before
+// 0.11.0) is one unless it follows a kind-tagged record: a pass only ever
+// moved from the old format to the new.
+func (t *Tier) oldSegmentBreak(start int64) (int64, bool) {
+	tagged := false
+	end := t.maxData
+	if info, err := t.file.Stat(); err == nil {
+		end = min(end, info.Size()-headerSize)
+	}
+	br := scanReader(io.NewSectionReader(t.file, headerSize+start, max(0, end-start)))
+	defer releaseScanReader(br)
+	for off := start; ; {
+		if end-off < 4 {
+			return 0, true
+		}
+		hdr, _ := br.Peek(int(min(5, end-off)))
+		if len(hdr) < 4 {
+			return 0, true
+		}
+		dataLen := binary.LittleEndian.Uint32(hdr[0:4])
+		if dataLen == 0 {
+			return 0, true
+		}
+		recordLen := 4 + int64(dataLen)
+		if !t.validRecordLen(dataLen) || off+recordLen > end || len(hdr) < 5 {
+			return off, false
+		}
+		switch hdr[4] {
+		case recordKindChecksummed:
+			if !peekedRecordIntact(br, recordLen) {
+				return off, false
+			}
+			tagged = true
+		case recordKindBinary:
+			tagged = true
+		default:
+			if tagged {
+				return off, false
+			}
+		}
+		if _, err := br.Discard(int(recordLen)); err != nil {
+			return off, false
+		}
+		off += recordLen
+	}
 }
 
 // recordLenAt reads just the 4-byte length prefix of the record at the given

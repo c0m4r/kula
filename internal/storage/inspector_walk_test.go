@@ -122,6 +122,27 @@ func TestInspectorWalksTheRingLikeTheReader(t *testing.T) {
 			patch(t, path, 56, u64(1)) // before writeOff: readHeader distrusts it
 			return path, offsets[wrapRecords-1]
 		},
+		"wrapped, clock stepped back past the ring": func(t *testing.T) (string, int64) {
+			// The newest sample predates the whole previous pass.
+			path, offsets := wrapped(t)
+			patch(t, path, 48, u64(uint64(base.Add(-24*time.Hour).UnixNano())))
+			return path, offsets[wrapRecords-1]
+		},
+		"wrapped, persisted tail inside a record": func(t *testing.T) (string, int64) {
+			path, offsets := wrapped(t)
+			f, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			buf := make([]byte, 8)
+			_, err = f.ReadAt(buf, 56)
+			_ = f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			patch(t, path, 56, u64(binary.LittleEndian.Uint64(buf)+5))
+			return path, offsets[wrapRecords-1]
+		},
 		"wrapped, no tail tracking": func(t *testing.T) (string, int64) {
 			path, offsets := wrapped(t)
 			flags := binary.LittleEndian.AppendUint32(nil, headerFlags(t, path)&^(flagHeaderHasTail|flagHeaderWrapped))

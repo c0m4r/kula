@@ -182,6 +182,17 @@ the header that makes a record visible is written after it. Readers handle the d
   and the read-only store. A torn record therefore never reaches the latest-sample cache or the
   rollups that recovery replays. Records written before 0.22.0 cannot be verified; the ring
   replaces them within one pass.
+- **The previous pass.** A wrapped ring's header records where the previous pass starts. On
+  open, the record there must prove itself as a resync candidate does, not by its time: after
+  the clock steps back, the whole previous pass is later than the newest record. One that does
+  not is resynced forward from, never replaced by the write offset, which is no record
+  boundary. The header can also lag the data: records a crash left uncounted lie past the
+  write offset over the start of the previous pass, followed by the remains of a record they
+  overwrote. Without a sidecar from a clean shutdown, opening a tier skips those records
+  (checksummed, newer than the header's newest, in order), resyncs past the remains, and walks
+  the previous pass to its end, resuming after any record that is not one
+  (`verifyOldSegment`). A zero length still ends the pass: it is the sentinel, or a hole no
+  reader can tell from one.
 
 The check runs only on records a query decodes. It costs about 5 % of a record's decode time
 where Go's `hash/crc32` uses CPU instructions (amd64, arm64) and about 25 % with its portable

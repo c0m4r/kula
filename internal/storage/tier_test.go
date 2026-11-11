@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -434,6 +435,127 @@ func TestUpgradeCorruptNewFormatTailNeverWipes(t *testing.T) {
 	}
 	if gotN := fullReadChecked(t, tier2, base, newest); gotN != wantN {
 		t.Errorf("corrupt-tail recovery changed record count: got %d want %d", gotN, wantN)
+	}
+}
+
+func countAllRecords(t *testing.T, tier *Tier) int {
+	t.Helper()
+	records, err := tier.ReadRange(time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(records)
+}
+
+// TestWrappedTailSurvivesAClockStepBeyondRetention: after the clock steps back
+// further than the ring reaches, the whole previous pass is later than the
+// newest record. Its persisted tail used to be refused for that and replaced
+// by writeOff, no record boundary, which hid the pass and let the next write
+// drop it.
+func TestWrappedTailSurvivesAClockStepBeyondRetention(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tier_0.dat")
+	tier, err := OpenTier(path, 2<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	n := 0
+	write := func() {
+		clock = clock.Add(time.Second)
+		if err := tier.Write(varSample(clock, 1+n%13)); err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	for !tier.wrapped {
+		write()
+	}
+	for i := 0; i < 500; i++ {
+		write()
+	}
+	clock = clock.Add(-2 * time.Hour) // the ring holds about 25 minutes
+	for i := 0; i < 300; i++ {
+		write()
+	}
+	before := countAllRecords(t, tier)
+	if err := tier.Close(); err != nil {
+		t.Fatal(err)
+	}
+	tier, err = OpenTier(path, 2<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tier.Close() }()
+	if got := countAllRecords(t, tier); got != before {
+		t.Fatalf("reopened ring holds %d records, want %d", got, before)
+	}
+	write()
+	if got := countAllRecords(t, tier); !tier.wrapped || got != before+1 {
+		t.Fatalf("after one more write: wrapped %v, %d records, want %d", tier.wrapped, got, before+1)
+	}
+}
+
+// TestWrappedTailSurvivesAHeaderLaggingItsRecords: a crash between a record's
+// write and its header's keeps records the header does not count, written
+// over the start of the previous pass. Their remains end the pass early when
+// it is read from the persisted tail, and the writer's tail advance then gave
+// the rest of it up. Only what they overwrote may be lost.
+func TestWrappedTailSurvivesAHeaderLaggingItsRecords(t *testing.T) {
+	for _, lost := range []int{1, 5, 30} {
+		path := filepath.Join(t.TempDir(), "tier_0.dat")
+		tier, err := OpenTier(path, 2<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		n := 0
+		write := func() {
+			clock = clock.Add(time.Second)
+			if err := tier.Write(varSample(clock, 1+(n*7)%23)); err != nil {
+				t.Fatal(err)
+			}
+			n++
+		}
+		for !tier.wrapped {
+			write()
+		}
+		for i := 0; i < 500; i++ {
+			write()
+		}
+		header := make([]byte, headerSize)
+		if _, err := tier.file.ReadAt(header, 0); err != nil {
+			t.Fatal(err)
+		}
+		before := countAllRecords(t, tier)
+		for i := 0; i < lost; i++ {
+			write()
+		}
+		// The process dies with these records on disk but not their header.
+		_ = tier.file.Close()
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteAt(header, 0); err != nil {
+			t.Fatal(err)
+		}
+		_ = f.Close()
+		_ = os.Remove(seekSidecarPath(path))
+
+		tier, err = OpenTier(path, 2<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := countAllRecords(t, tier); got < before-lost-5 {
+			t.Errorf("header %d records behind: %d of %d records after the restart", lost, got, before)
+		}
+		for i := 0; i < 40; i++ {
+			write()
+		}
+		if got := countAllRecords(t, tier); !tier.wrapped || got < before-lost-5 {
+			t.Errorf("header %d records behind: wrapped %v, %d of %d records after 40 more writes", lost, tier.wrapped, got, before)
+		}
+		_ = tier.Close()
 	}
 }
 

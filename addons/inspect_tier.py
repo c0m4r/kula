@@ -51,9 +51,11 @@ MAX_RECORD_BYTES = 64 << 20  # maxRecordBytes
 RESYNC_PEEK = 4096  # resyncPeek: window for the two-records-in-a-row check
 SCAN_BUFFER = 1 << 20  # the scan's bufio size; resync verifies no larger record
 # Resync rejects timestamps before 2000 (local time, as Go's Year() reads it)
-# and more than an hour past the header's newest sample.
+# and, for records without a checksum, more than an hour past the header's
+# newest sample.
 MIN_SANE_NS = int(datetime.datetime(2000, 1, 1).timestamp()) * 10**9
 MAX_AHEAD_NS = 3600 * 10**9
+OLD_RECORD_SEARCH = 16 << 20  # oldRecordSearch
 _NONZERO = re.compile(rb"[^\x00]")
 
 
@@ -1039,7 +1041,9 @@ class Ring:
             ts = struct.unpack_from("<q", self.buf, HEADER_SIZE + pos + 4)[0]
         if ts < MIN_SANE_NS:
             return None
-        if self.newest_nano > 0 and ts > self.newest_nano + MAX_AHEAD_NS:
+        # A checksummed record proves itself, whatever its time: records from
+        # before a backwards clock step are later than the newest one.
+        if kind != RECORD_KIND_CHECKSUMMED and self.newest_nano > 0 and ts > self.newest_nano + MAX_AHEAD_NS:
             return None
         return data_len
 
@@ -1084,6 +1088,13 @@ class Ring:
             pos += 1
         return None
 
+    def old_record_from(self, pos: int, file_size: int) -> Optional[int]:
+        """oldRecordFrom: the first record proving itself at or after pos."""
+        end = min(self.max_data, file_size - HEADER_SIZE, pos + OLD_RECORD_SEARCH)
+        if pos < 0 or pos >= end:
+            return None
+        return self.resync(pos, end)
+
     def walk(self, start: int, size: int, resync: bool) -> Iterator[Tuple[int, int]]:
         """walkSegment: yields (offset, payload length) of each record."""
         pos, end = start, start + size
@@ -1126,39 +1137,29 @@ def tier_records(filepath: str) -> List[Tuple[int, int]]:
             return [rec for start, size, resync in segments for rec in ring.walk(start, size, resync)]
 
 
-def timestamp_at(buf: Any, max_data: int, file_size: int, pos: int) -> Optional[int]:
-    """readTimestampAt: the timestamp (ns) of the record at pos, if readable."""
-    if HEADER_SIZE + pos + 13 > file_size:
-        return None
-    data_len, kind = struct.unpack_from("<IB", buf, HEADER_SIZE + pos)
-    if not 0 < data_len <= min(MAX_RECORD_BYTES, max_data):
-        return None
-    if kind in (RECORD_KIND_BINARY, RECORD_KIND_CHECKSUMMED):
-        return struct.unpack_from("<q", buf, HEADER_SIZE + pos + 5)[0] if data_len >= 9 else None
-    if kind == ord("{"):
-        return None  # JSON tiers predate tail tracking, so no tail to validate
-    return struct.unpack_from("<q", buf, HEADER_SIZE + pos + 4)[0] if data_len >= 8 else None
-
-
 def ring_layout(buf: Any, header: Tuple, file_size: int) -> Tuple[bool, int]:
     """readHeader's wrap state: (wrapped, offset of the oldest record).
 
-    A persisted tail is trusted only when it decodes to a sane oldest record.
-    Otherwise (and for files written before tail tracking) a file larger than
-    [0, write_off) has wrapped, and its old pass is taken to start at
-    write_off, as the reader before tail tracking did.
+    A file larger than [0, write_off) has wrapped. Its old pass starts at the
+    persisted tail or, without one (files written before tail tracking), at
+    write_off, unless the record there does not prove itself: then at the
+    next record that does. Records that cannot prove themselves (no kind
+    byte, or JSON) keep the offset, as the readers that wrote them did.
     """
-    _, header_flags, _, max_data, write_off, count, _, newest_nano, oldest_off = header
+    _, header_flags, codec_ver, max_data, write_off, count, _, newest_nano, oldest_off = header
+    candidate = write_off
     if header_flags & FLAG_HAS_TAIL:
         if not header_flags & FLAG_WRAPPED:
             return False, 0
         if write_off <= oldest_off < max_data:
-            ts = timestamp_at(buf, max_data, file_size, oldest_off)
-            if ts is not None and (newest_nano <= 0 or ts <= newest_nano):
-                return True, oldest_off
-    if count > 0 and file_size > HEADER_SIZE + write_off:
-        return True, write_off
-    return False, 0
+            candidate = oldest_off
+    if count <= 0 or file_size <= HEADER_SIZE + write_off:
+        return False, 0
+    if (codec_ver or 1) >= CODEC_V2:
+        found = Ring(buf, max_data, codec_ver, newest_nano).old_record_from(candidate, file_size)
+        if found is not None:
+            return True, found
+    return True, candidate
 
 
 def open_ring(buf: Any, header: Tuple, file_size: int) -> Tuple[Ring, List[Tuple[int, int, bool]]]:

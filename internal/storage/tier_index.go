@@ -623,5 +623,7 @@ func (t *Tier) openSeekIndex() {
 		return
 	}
 	t.seekFromSidecar = false
+	// Without a sidecar from a clean shutdown the header may lag the data.
+	t.verifyOldSegment()
 	t.buildSeekIndex()
 }
