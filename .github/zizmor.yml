@@ -1,0 +1,12 @@
+# zizmor configuration, read by .github/workflows/zizmor.yml.
+#
+# zizmor already insists on full commit SHA pins; left to its defaults it
+# accepts an action from any owner. This makes the other rule of the security
+# model in workflows/ci.yml a finding instead of a convention.
+
+rules:
+  # No third-party actions.
+  forbidden-uses:
+    config:
+      allow:
+        - actions/*

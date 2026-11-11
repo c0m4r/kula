@@ -156,6 +156,8 @@ GitHub Actions workflows live in [`.github/workflows/`](../../.github/workflows/
   golangci-lint; no standalone `gofmt` step), then a `./kula --version` smoke test.
 - `frontend.yml` — the three Chromium fixtures, each in its own timed step.
 - `semgrep.yml` — static analysis security scan.
+- `zizmor.yml` — static analysis of the workflows themselves, run when anything under `.github/`
+  changes. [`.github/zizmor.yml`](../../.github/zizmor.yml) limits `uses:` to `actions/*`.
 
 [`addons/ci-local.sh`](../../addons/ci-local.sh) runs the same workflows locally, inside a Docker
 image that stands in for the `ubuntu-latest` hosted runner: the same Ubuntu release, a non-root

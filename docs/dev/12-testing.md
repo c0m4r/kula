@@ -19,7 +19,8 @@ Runs, in order (all must pass):
 
 CI runs the equivalent ([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)) plus
 Semgrep ([`semgrep.yml`](../../.github/workflows/semgrep.yml)); CI itself has no standalone
-`gofmt` step. A separate Frontend workflow
+`gofmt` step. zizmor ([`zizmor.yml`](../../.github/workflows/zizmor.yml)) audits the workflow
+files when they change. A separate Frontend workflow
 ([`frontend.yml`](../../.github/workflows/frontend.yml)) runs the
 [real-browser fixtures](#real-browser-fixtures) with Node.js 22 and the runner's Google Chrome.
 

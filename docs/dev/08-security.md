@@ -170,6 +170,15 @@ Optional bearer token on `/metrics`, constant-time compared.
   [`.github/CONTRIBUTING.md`](../../.github/CONTRIBUTING.md).
 - CI runs Semgrep ([`.github/workflows/semgrep.yml`](../../.github/workflows/semgrep.yml)) and
   `govulncheck` (via `check.sh`).
+- [zizmor](https://docs.zizmor.sh/)
+  ([`.github/workflows/zizmor.yml`](../../.github/workflows/zizmor.yml)) audits the workflows
+  themselves and fails when one leaves its token's permissions at the default, lets checkout
+  persist credentials, expands untrusted input into a script, or uses an action that is not an
+  `actions/*` one pinned to a full commit SHA. Its scan step is the only one in the workflows
+  that is handed the `GITHUB_TOKEN` — the read-only `contents: read` one — because the audits
+  that check the pinned actions against the GitHub API (impostor commits, known-vulnerable
+  versions, a version comment that does not match its SHA) need an authenticated client.
+  `addons/ci-local.sh` has no token and runs the offline audits only.
 
 ## Test coverage
 

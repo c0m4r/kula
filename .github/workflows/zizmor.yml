@@ -1,0 +1,93 @@
+# zizmor static analysis of the GitHub Actions workflows themselves.
+#
+# ─── Security model: ci.yml's, with one exception ──────────────────────────
+#   * The scan step is handed the GITHUB_TOKEN. zizmor's online audits
+#     (impostor-commit, known-vulnerable-actions, ref-confusion,
+#     ref-version-mismatch, stale-action-refs) need an authenticated GitHub
+#     API client to read the tags, commits and advisories of the actions
+#     pinned here.
+#   * That token is the `contents: read` one declared below: read access to
+#     this repository, which is public anyway, no write scope of any kind,
+#     and it dies with the job. GitHub prints what it was granted in the job
+#     log, under "Set up job" → "GITHUB_TOKEN Permissions".
+#   * Only the scan step's environment holds it. It is not written to
+#     .git/config (asserted below) and the install step never sees it.
+#   * pull_request, never pull_request_target: a pull request from a fork
+#     gets a read-only token whatever this file says.
+#   * zizmor rejects an action that is not pinned to a full commit SHA, and
+#     .github/zizmor.yml makes it reject every action outside actions/*.
+# ───────────────────────────────────────────────────────────────────────────
+
+name: zizmor
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/**']
+  pull_request:
+    paths: ['.github/**']
+  workflow_dispatch:
+
+# Top-level default: read-only, repo-scoped token for every job below. This
+# block is all the token handed to zizmor can do; do not add a write scope to
+# it, or a `permissions:` block to the job.
+permissions:
+  contents: read
+
+# A newer push to the same ref cancels the older, still-running scan.
+concurrency:
+  group: zizmor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Assert no credentials persisted in the checkout
+        # Belt-and-suspenders on top of persist-credentials:false (token never
+        # written) and contents:read (token can't write anyway). Strips any
+        # persisted git auth and FAILS the run if any remains — turning "no
+        # token on disk" from an assumption into an enforced invariant, before
+        # any dependency or tool is fetched, built, or run.
+        run: |
+          git config --local --unset-all http.https://github.com/.extraheader 2>/dev/null || true
+          git config --local --unset-all credential.helper                    2>/dev/null || true
+          rm -f "$HOME/.git-credentials"
+          if git config --local --list | grep -iE 'extraheader|authorization|x-access-token' >/dev/null 2>&1; then
+            echo "::error::Credential material present in .git/config" >&2
+            exit 1
+          fi
+          echo "OK: no credentials persisted in the local checkout."
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: Install zizmor
+        # Install into a throwaway venv, pinned to the latest release that was
+        # uploaded to PyPI more than 7 days ago. zizmor ships as a prebuilt
+        # wheel; --only-binary keeps pip from building an sdist instead.
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --only-binary=:all: --uploaded-prior-to=P7D zizmor
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: zizmor scan
+        # --strict-collection: a workflow zizmor cannot parse fails the run
+        # instead of being skipped with a warning.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "$GH_TOKEN" ]; then
+            zizmor --strict-collection .
+          else
+            # addons/ci-local.sh has no token, and zizmor refuses an empty one.
+            echo "No token: running the offline audits only."
+            env -u GH_TOKEN zizmor --offline --strict-collection .
+          fi
