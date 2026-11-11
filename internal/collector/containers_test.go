@@ -583,6 +583,12 @@ func TestDecodeContainerListPastTheOldCap(t *testing.T) {
 	if _, err := decodeContainerList(strings.NewReader(body)); err == nil || !strings.Contains(err.Error(), "larger than 1 MiB") {
 		t.Fatalf("over-cap list: err = %v, want the cap named", err)
 	}
+	for body, want := range map[string]string{"null": "", "{}": "not an array", `[{"Id":"a"},`: "decoding the container list"} {
+		got, err := decodeContainerList(strings.NewReader(body))
+		if (want == "" && (err != nil || got != nil)) || (want != "" && (err == nil || !strings.Contains(err.Error(), want))) {
+			t.Fatalf("decodeContainerList(%q) = %v, %v; want error %q", body, got, err, want)
+		}
+	}
 	exact := `[{"Id":"a","Names":["/a"],"State":"running"}]`
 	maxContainerListBytes = int64(len(exact))
 	if got, err := decodeContainerList(strings.NewReader(exact)); err != nil || len(got) != 1 {

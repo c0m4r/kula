@@ -303,13 +303,40 @@ var maxContainerListBytes int64 = 64 << 20
 // maxContainerListBytes instead of failing on its truncated JSON.
 func decodeContainerList(body io.Reader) ([]dockerContainer, error) {
 	limited := &io.LimitedReader{R: body, N: maxContainerListBytes + 1}
-	var containers []dockerContainer
-	err := json.NewDecoder(limited).Decode(&containers)
+	containers, err := streamContainerList(json.NewDecoder(limited))
 	if limited.N <= 0 {
 		return nil, fmt.Errorf("container list is larger than %d MiB; not collecting containers", maxContainerListBytes>>20)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("decoding the container list: %w", err)
+	}
+	return containers, nil
+}
+
+// streamContainerList decodes a JSON array of containers one element at a
+// time: Decode on the whole array would first buffer all of it, the full
+// size of the list, before keeping the few fields Kula reads.
+func streamContainerList(dec *json.Decoder) ([]dockerContainer, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if tok == nil {
+		return nil, nil // null
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
+		return nil, fmt.Errorf("not an array")
+	}
+	var containers []dockerContainer
+	for dec.More() {
+		var container dockerContainer
+		if err := dec.Decode(&container); err != nil {
+			return nil, err
+		}
+		containers = append(containers, container)
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, err
 	}
 	return containers, nil
 }
