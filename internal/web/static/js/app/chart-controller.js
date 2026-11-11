@@ -19,6 +19,17 @@ function defaultCancelFrame(handle) {
     }
 }
 
+function defaultPageHidden() {
+    return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
+
+// A background tab runs no animation frames, while live samples keep
+// arriving and Chart.js keeps a mutation record for every point pushed or
+// trimmed until a flush drains it. There flushes run on a timer instead (which
+// browsers throttle to once a second, later once a minute) and only drain;
+// layout and drawing wait for the tab's return.
+const HIDDEN_FLUSH_MS = 1000;
+
 function chartTarget(chart) {
     return chart?.canvas?.closest?.('.chart-card') || chart?.canvas || null;
 }
@@ -41,9 +52,21 @@ function targetIsRenderable(target) {
 }
 
 export class ChartUpdateController {
-    constructor({ scheduleFrame = defaultScheduleFrame, cancelFrame = defaultCancelFrame, observerFactory } = {}) {
+    constructor({
+        scheduleFrame = defaultScheduleFrame,
+        cancelFrame = defaultCancelFrame,
+        observerFactory,
+        scheduleTimer = (callback, ms) => setTimeout(callback, ms),
+        cancelTimer = handle => clearTimeout(handle),
+        pageHidden = defaultPageHidden,
+        visibilityEvents = typeof document !== 'undefined' ? document : null,
+    } = {}) {
         this.scheduleFrame = scheduleFrame;
         this.cancelFrame = cancelFrame;
+        this.scheduleTimer = scheduleTimer;
+        this.cancelTimer = cancelTimer;
+        this.pageHidden = pageHidden;
+        this.frameIsTimer = false;
         this.charts = new Set();
         // A data/scale update subsumes a render-only invalidation. Keeping the
         // strongest pending mode per chart lets cursor movement repaint via
@@ -61,6 +84,12 @@ export class ChartUpdateController {
             ? callback => new IntersectionObserver(callback, { rootMargin: '0px' })
             : null);
         this.observer = factory ? factory(entries => this.onIntersections(entries)) : null;
+        // A flush pending when the tab hides would never run; one pending when
+        // it returns would wait out its timer. Reschedule either way.
+        visibilityEvents?.addEventListener?.('visibilitychange', () => {
+            this.cancelPending();
+            this.requestFlush();
+        });
     }
 
     register(chart, cleanup = null) {
@@ -140,14 +169,24 @@ export class ChartUpdateController {
 
     requestFlush() {
         if (this.frame !== null || this.dirty.size === 0) return;
-        this.frame = this.scheduleFrame(() => {
+        const run = () => {
             this.frame = null;
             this.flush();
-        });
+        };
+        this.frameIsTimer = this.pageHidden();
+        this.frame = this.frameIsTimer ? this.scheduleTimer(run, HIDDEN_FLUSH_MS) : this.scheduleFrame(run);
+    }
+
+    cancelPending() {
+        if (this.frame === null) return;
+        if (this.frameIsTimer) this.cancelTimer(this.frame);
+        else this.cancelFrame(this.frame);
+        this.frame = null;
     }
 
     flush() {
         const visible = [];
+        const pageHidden = this.pageHidden();
 
         // Resolve every layout-dependent visibility read before Chart.js can
         // write canvas/layout state. This avoids read-after-write layout churn
@@ -157,7 +196,7 @@ export class ChartUpdateController {
                 this.dirty.delete(chart);
                 continue;
             }
-            if (!this.isVisible(chart)) {
+            if (pageHidden || !this.isVisible(chart)) {
                 // Chart.js retains mutation records until update(). Maintain
                 // point-index visibility without layout or drawing.
                 chart._updateHiddenIndices?.();
@@ -177,8 +216,7 @@ export class ChartUpdateController {
     }
 
     clear() {
-        if (this.frame !== null) this.cancelFrame(this.frame);
-        this.frame = null;
+        this.cancelPending();
         for (const chart of Array.from(this.charts)) this.unregister(chart);
         this.dirty.clear();
     }

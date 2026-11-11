@@ -873,6 +873,54 @@ test('chart updates are animation-frame batched and off-screen work is deferred'
     delete globalThis.window;
 });
 
+test('a background tab drains chart mutation records on a timer and draws on its return', () => {
+    const frames = [];
+    const timers = [];
+    let hidden = false;
+    const visibility = new EventTarget();
+    const controller = new ChartUpdateController({
+        scheduleFrame: callback => { frames.push(callback); return frames.length; },
+        cancelFrame: () => { frames.length = 0; },
+        scheduleTimer: callback => { timers.push(callback); return timers.length; },
+        cancelTimer: () => { timers.length = 0; },
+        pageHidden: () => hidden,
+        visibilityEvents: visibility,
+        observerFactory: () => ({ observe() {}, unobserve() {} }),
+    });
+    const chart = {
+        canvas: null,
+        updates: 0,
+        drains: 0,
+        update() { this.updates++; },
+        _updateHiddenIndices() { this.drains++; },
+        destroy() {},
+    };
+    controller.register(chart);
+
+    // An animation frame requested just before the tab hides never runs.
+    controller.mark(chart);
+    assert.equal(frames.length, 1);
+    hidden = true;
+    visibility.dispatchEvent(new Event('visibilitychange'));
+    assert.equal(frames.length, 0, 'the pending frame is replaced');
+    assert.equal(timers.length, 1, 'by a timer');
+    timers.shift()();
+    assert.equal(chart.drains, 1, 'hidden flushes drain mutation records');
+    assert.equal(chart.updates, 0, 'and do not draw');
+
+    controller.mark(chart); // the next live sample
+    assert.equal(frames.length, 0);
+    timers.shift()();
+    assert.equal(chart.drains, 2);
+
+    hidden = false;
+    visibility.dispatchEvent(new Event('visibilitychange'));
+    assert.equal(frames.length, 1, 'the return schedules a frame for the charts left dirty');
+    frames.shift()();
+    assert.equal(chart.updates, 1);
+    controller.clear();
+});
+
 test('chart visibility observer uses the same strict viewport boundary as rendering', () => {
     let options;
     globalThis.IntersectionObserver = class {

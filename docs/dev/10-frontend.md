@@ -207,7 +207,10 @@ During each flush, dirty off-screen charts still call the vendored Chart.js priv
 `_updateHiddenIndices()` method. It drains the `_dataChanges` mutation records and adjusts
 hidden-point indices after inserts and trims without running layout or drawing. Charts remain
 dirty so their deferred update runs when they enter the viewport. Clearing the records directly
-would lose point-visibility bookkeeping. The x-axis tick callback in `charts-init.js` also reads
+would lose point-visibility bookkeeping. A background tab runs no animation frames, so there
+flushes run on a one-second timer (which browsers throttle further) and treat every chart as
+off-screen; a `visibilitychange` moves a pending flush between the two, and the return draws
+the charts left dirty. The x-axis tick callback in `charts-init.js` also reads
 the time scale's private `_unit` (`this._unit`) to pick seconds, minutes or dates for its labels;
 without it every label falls back to hours and minutes. `TestChartBundle` asserts that both
 members exist, in the vendored bundle and in the upstream files `replace_chartjs.sh` installs.
