@@ -16,7 +16,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Take a backup if you may downgrade: older versions can't read the new tier records
 - Without auth, list the name you reach Kula by in `web.security.allowed_hosts` unless it is local (reverse proxies that forward `Host`, Tailscale, internal DNS)
 - Prometheus scraping `/metrics` by a DNS name needs a bearer token or the name in `web.security.allowed_hosts`
-- `allowed_origins` entries without a scheme or with a path or `*`, and a zero `session_timeout`, `max_websocket_conns` or `argon2` time or threads, now stop startup
+- `allowed_origins` entries other than a plain `scheme://host[:port]` (a path, query, `*` or non-punycode name), and a zero `session_timeout`, WebSocket limit or `argon2` time or threads, now stop startup
 - PgBouncer in front of PostgreSQL needs `ignore_startup_parameters`
 - Docker: mount `/run/utmp` or `/run/systemd/sessions` to keep the logged-in user count
 
@@ -75,7 +75,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - `https://` targets and PostgreSQL `verify-ca`/`verify-full` work under the sandbox
 - An `https://` Ollama URL without a port works under the sandbox
 - Logged-in user count works under the sandbox and on arm64, with a systemd-logind fallback
-- History no longer goes missing after a tier wraps with growing records, or after the clock stepped back
+- History no longer goes missing after a tier wraps with growing records, or after the clock stepped back, restarts included
 - A crash no longer loses the rollup of the minute it interrupted
 - Seek index temp files left by a crash are cleaned up
 - A rolling view no longer stays marked "partial" after one late refresh
