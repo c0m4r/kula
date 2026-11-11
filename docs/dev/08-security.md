@@ -219,7 +219,12 @@ Optional bearer token on `/metrics`, constant-time compared.
 
 - `KULA_POSTGRES_PASSWORD` is single-quoted and escaped (backslashes and single quotes) to
   prevent libpq connection-string injection (since 0.16.0).
-- Storage directory created `0750`; session file `0600`.
+- The storage directory is created `0750`, and every file Kula creates in it `0600`: tiers,
+  seek indexes, `sessions.json`, a migration's copy and backups (their directories `0750`). The
+  one exception is the custom-metrics socket `kula.sock`, `0660` so that clients in Kula's group
+  can write to it. Kula never changes the mode of a directory or file that already exists: a
+  storage directory created before 0.8.3 stays `0755`, and tier files created before 0.4.0 stay
+  `0644`, until changed by hand.
 - Tier files, their seek-index sidecars and a migration's temporary copy are opened with
   `O_NOFOLLOW` and must be regular files (`openRegular`): a symbolic link or FIFO planted in
   place of one is refused, never followed or waited on. The storage directory itself may be a
