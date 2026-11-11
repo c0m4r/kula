@@ -62,7 +62,11 @@ The image is a two-stage build ([`addons/docker/Dockerfile`](../../addons/docker
 
 - **Builder:** pinned `golang:1.26.11-trixie` (by digest), `CGO_ENABLED=0`, multi-arch via
   `ARG TARGETARCH`, `-trimpath -ldflags="-s -w" -buildvcs=false`, building only `./cmd/kula/`.
-- **Runtime:** pinned `alpine:3.24.1` (by digest) with an unprivileged `kula:kula` user.
+- **Runtime:** pinned `alpine:3.24.3` (by digest) with an unprivileged `kula:kula` user. Its uid
+  100 and gid 101 are pinned to what `adduser -S` gave earlier images, so their data volumes
+  stay writable; changing them would leave every existing volume owned by someone else. Root
+  owns `/app`, the binary and `/app/config.yaml` (`root:kula 0640`), so Kula cannot replace
+  them; only `/app/data` (`kula:kula 0750`) is Kula's.
 
 ```bash
 ./addons/docker/build.sh
@@ -72,7 +76,11 @@ docker compose -f addons/docker/docker-compose.yml up -d
 ```
 
 The image expects host PID/network and read-only `/proc` at runtime — see the user
-[Installation → Docker](../user/02-installation.md#docker) section.
+[Installation → Docker](../user/02-installation.md#docker) section. The compose file runs it
+with `cap_drop: [ALL]`, `no-new-privileges` and a read-only root filesystem, and needs no tmpfs:
+Kula writes only to the data volume (tier files, their seek indexes, `sessions.json`, backups,
+the custom-metrics socket). With `pid: host`, uid 100 is shared with any host account of that
+uid.
 
 ## Snap specifics
 

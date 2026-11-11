@@ -16,8 +16,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -ldflags="-s 
 # ---- Final Stage ----
 FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
-# Create unprivileged user
-RUN addgroup -S kula && adduser -S kula -G kula
+# Create the unprivileged user Kula runs as. Its ids are pinned to the ones
+# `adduser -S` gave earlier images (uid 100, gid 101: gid 100 is Alpine's
+# "users"), so data volumes those images wrote stay writable.
+RUN addgroup -S -g 101 kula && adduser -S -u 100 -G kula kula
 
 WORKDIR /app
 
@@ -33,8 +35,11 @@ RUN sed -i 's|directory: /var/lib/kula|directory: /app/data|' /app/config.yaml &
     sed -i 's|listen: "127.0.0.1"|listen: "0.0.0.0"|' /app/config.yaml && \
     sed -i 's|listen: ""|listen: "0.0.0.0"|' /app/config.yaml
 
-# Create data directory and set permissions
-RUN mkdir -p /app/data && chown -R kula:kula /app
+# Root owns the binary and the config, so Kula cannot rewrite either; it reads
+# the config through its group. Only the data directory is Kula's.
+RUN chown root:root /app /app/kula && chmod 0755 /app /app/kula && \
+    chown root:kula /app/config.yaml && chmod 0640 /app/config.yaml && \
+    install -d -o kula -g kula -m 0750 /app/data
 
 # Switch to unprivileged user
 USER kula

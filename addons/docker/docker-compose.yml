@@ -4,6 +4,14 @@ services:
     container_name: kula
     pid: "host" # Critical for monitoring host processes
     network_mode: "host" # Useful for network monitoring, depending on kula's needs. Alternatively, map ports.
+
+    # Kula needs no privileges: drop every capability, forbid gaining any
+    # back, and keep the container's filesystem read-only. It writes only to
+    # the data volume.
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+
     volumes:
       # To monitor the host system, we need access to host's /proc
       - /proc:/proc:ro

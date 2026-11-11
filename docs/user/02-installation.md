@@ -57,21 +57,39 @@ cd kula
 
 ## Docker
 
-Kula needs host PID and network namespaces plus read-only `/proc` to see the host.
+Kula needs host PID and network namespaces plus read-only `/proc` to see the host. It needs no
+capabilities, so drop them all.
 
 **Ephemeral (no persistent storage):**
 
 ```bash
-docker run --rm -it --name kula --pid host --network host -v /proc:/proc:ro c0m4r/kula:latest
+docker run --rm -it --name kula --pid host --network host \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  -v /proc:/proc:ro c0m4r/kula:latest
 ```
 
 **With persistent storage:**
 
 ```bash
 docker run -d --name kula --pid host --network host \
+  --read-only --cap-drop ALL --security-opt no-new-privileges:true \
   -v /proc:/proc:ro -v kula_data:/app/data c0m4r/kula:latest
 docker logs -f kula
 ```
+
+The image runs Kula as the unprivileged `kula` user, uid 100 and gid 101; these stay fixed, so a
+data volume written by an earlier image keeps working. Root owns the binary and
+`/app/config.yaml` (`root:kula 0640`), so Kula cannot rewrite them, and Kula writes only to
+`/app/data`: with a volume there, `--read-only` costs nothing. (Without one, `/app/data` is part
+of the image, so the ephemeral run above leaves the filesystem writable.)
+
+- **Your own config:** mount it read-only over `/app/config.yaml`. It holds the password hash and
+  tokens, so make it readable by the container's group only:
+  `sudo chown root:101 config.yaml && sudo chmod 0640 config.yaml`.
+- **A host directory for data** instead of a volume must be writable by uid 100:
+  `sudo chown 100:101 /path/to/data && sudo chmod 0750 /path/to/data`.
+- With `--pid host`, uid 100 is uid 100 on the host too: if a host account has that uid, Kula
+  can signal its processes.
 
 **Logged-in users:** Kula counts logins from the host's utmp or systemd-logind sessions, both
 in the host's `/run`, which a container does not see. The count is then unknown: the dashboard
@@ -80,6 +98,7 @@ them, mount whichever of the two the host has, read-only:
 
 ```bash
 docker run -d --name kula --pid host --network host \
+  --read-only --cap-drop ALL --security-opt no-new-privileges:true \
   -v /proc:/proc:ro -v kula_data:/app/data \
   --mount type=bind,source=/run/utmp,target=/run/utmp,readonly \
   --mount type=bind,source=/run/systemd/sessions,target=/run/systemd/sessions,readonly \
@@ -89,7 +108,8 @@ docker run -d --name kula --pid host --network host \
 `--mount` refuses a source the host does not have (`-v` would create it as a directory); drop
 that line instead.
 
-A `docker-compose.yml` is provided in [`addons/docker/`](../../addons/docker/docker-compose.yml).
+A `docker-compose.yml` is provided in [`addons/docker/`](../../addons/docker/docker-compose.yml);
+it sets `read_only`, `cap_drop: [ALL]` and `no-new-privileges`, and mounts `./config.yaml`.
 Images are published on [Docker Hub](https://hub.docker.com/r/c0m4r/kula) and GHCR.
 
 ---
