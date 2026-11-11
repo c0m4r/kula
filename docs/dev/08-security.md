@@ -119,10 +119,10 @@ When `web.security.headers` is on (default), responses carry:
   policy; `contentSecurityPolicy` builds both). `base-uri` and `form-action` do not fall back to
   `default-src`: an injected `<base>` could otherwise move the nonce'd scripts' relative URLs
   to another origin, and the `web.base_path` `<base>` is same-origin. Styles come only from the
-  served stylesheets: no inline
-  `style` attribute, `<style>` element or `setAttribute('style', …)` works, so the frontend
-  sets styles through the CSSOM (`element.style.x = …`), which the policy allows. The Chromium
-  fixtures (`watchCSPViolations` in `chromium_test_helper.mjs`) fail on any violation.
+  served stylesheets: no inline `style` attribute, `<style>` element or
+  `setAttribute('style', …)` works, so the frontend sets styles through the CSSOM
+  (`element.style.x = …`), which the policy allows. The Chromium fixtures
+  (`watchCSPViolations` in `chromium_test_helper.mjs`) fail on any violation.
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy: geolocation=(), microphone=(), camera=()`
 - `Strict-Transport-Security` (HSTS) when TLS or trusted `X-Forwarded-Proto: https` is present
