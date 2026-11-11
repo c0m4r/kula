@@ -128,18 +128,16 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/ma
 
 ```bash
 KULA_INSTALL=$(mktemp)
-curl -o ${KULA_INSTALL} -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v2.sh
-echo "bad61ee9eed4595d20fa7e613bd27c3b8700c67f8a5fcac756d282a811705398 ${KULA_INSTALL}" | sha256sum -c || rm -f ${KULA_INSTALL}
-bash ${KULA_INSTALL}
-rm -f ${KULA_INSTALL}
+curl -o "${KULA_INSTALL}" -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v2.sh
+echo "bad61ee9eed4595d20fa7e613bd27c3b8700c67f8a5fcac756d282a811705398 ${KULA_INSTALL}" | sha256sum -c && bash "${KULA_INSTALL}"
+rm -f "${KULA_INSTALL}"
 ```
 
 ### Standalone
 
 ```bash
 wget https://github.com/c0m4r/kula/releases/download/0.21.0/kula-0.21.0-amd64.tar.gz
-echo "270f63ce70262f1c21c0c27ea599fa793c4e6b0a43d404644a551bcd6dafe106 kula-0.21.0-amd64.tar.gz" | sha256sum -c || rm -f kula-0.21.0-amd64.tar.gz
-tar -xvf kula-0.21.0-amd64.tar.gz
+echo "270f63ce70262f1c21c0c27ea599fa793c4e6b0a43d404644a551bcd6dafe106 kula-0.21.0-amd64.tar.gz" | sha256sum -c && tar -xvf kula-0.21.0-amd64.tar.gz
 cd kula
 ./kula
 ```
@@ -163,8 +161,7 @@ docker logs -f kula
 
 ```bash
 wget https://github.com/c0m4r/kula/releases/download/0.21.0/kula-0.21.0-amd64.deb
-echo "db84f205eb4e0d17a7d2863d83a4a1ea2f801f7b579bbb04a0929c4b5e606a58 kula-0.21.0-amd64.deb" | sha256sum -c || rm -f kula-0.21.0-amd64.deb
-sudo dpkg -i kula-0.21.0-amd64.deb
+echo "db84f205eb4e0d17a7d2863d83a4a1ea2f801f7b579bbb04a0929c4b5e606a58 kula-0.21.0-amd64.deb" | sha256sum -c && sudo dpkg -i kula-0.21.0-amd64.deb
 journalctl -f -t kula
 ```
 
@@ -172,8 +169,7 @@ journalctl -f -t kula
 
 ```bash
 wget https://github.com/c0m4r/kula/releases/download/0.21.0/kula-0.21.0-x86_64.rpm
-echo "f244579293d35b185fec59eba3e5ae40073a1bc57061487fa1279ad7faf0bad4 kula-0.21.0-x86_64.rpm" | sha256sum -c || rm -f kula-0.21.0-x86_64.rpm
-sudo rpm -i kula-0.21.0-x86_64.rpm
+echo "f244579293d35b185fec59eba3e5ae40073a1bc57061487fa1279ad7faf0bad4 kula-0.21.0-x86_64.rpm" | sha256sum -c && sudo rpm -i kula-0.21.0-x86_64.rpm
 journalctl -f -t kula
 ```
 

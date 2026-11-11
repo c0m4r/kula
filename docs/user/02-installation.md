@@ -26,10 +26,9 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/ma
 
 ```bash
 KULA_INSTALL=$(mktemp)
-curl -o ${KULA_INSTALL} -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v2.sh
-echo "bad61ee9eed4595d20fa7e613bd27c3b8700c67f8a5fcac756d282a811705398  ${KULA_INSTALL}" | sha256sum -c || rm -f ${KULA_INSTALL}
-bash ${KULA_INSTALL}
-rm -f ${KULA_INSTALL}
+curl -o "${KULA_INSTALL}" -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v2.sh
+echo "bad61ee9eed4595d20fa7e613bd27c3b8700c67f8a5fcac756d282a811705398  ${KULA_INSTALL}" | sha256sum -c && bash "${KULA_INSTALL}"
+rm -f "${KULA_INSTALL}"
 ```
 
 The installer supports flags:
@@ -46,8 +45,7 @@ The installer supports flags:
 
 ```bash
 wget https://github.com/c0m4r/kula/releases/download/<version>/kula-<version>-amd64.tar.gz
-echo "<sha256>  kula-<version>-amd64.tar.gz" | sha256sum -c || rm -f kula-<version>-amd64.tar.gz
-tar -xvf kula-<version>-amd64.tar.gz
+echo "<sha256>  kula-<version>-amd64.tar.gz" | sha256sum -c && tar -xvf kula-<version>-amd64.tar.gz
 cd kula
 ./kula
 ```
@@ -97,8 +95,7 @@ Images are published on [Docker Hub](https://hub.docker.com/r/c0m4r/kula) and GH
 
 ```bash
 wget https://github.com/c0m4r/kula/releases/download/<version>/kula-<version>-amd64.deb
-echo "<sha256>  kula-<version>-amd64.deb" | sha256sum -c || rm -f kula-<version>-amd64.deb
-sudo dpkg -i kula-<version>-amd64.deb
+echo "<sha256>  kula-<version>-amd64.deb" | sha256sum -c && sudo dpkg -i kula-<version>-amd64.deb
 journalctl -f -t kula
 ```
 
@@ -110,8 +107,7 @@ The package installs a systemd unit; Kula starts automatically.
 
 ```bash
 wget https://github.com/c0m4r/kula/releases/download/<version>/kula-<version>-x86_64.rpm
-echo "<sha256>  kula-<version>-x86_64.rpm" | sha256sum -c || rm -f kula-<version>-x86_64.rpm
-sudo rpm -i kula-<version>-x86_64.rpm
+echo "<sha256>  kula-<version>-x86_64.rpm" | sha256sum -c && sudo rpm -i kula-<version>-x86_64.rpm
 journalctl -f -t kula
 ```
 
