@@ -1497,3 +1497,39 @@ func TestOverlongNamesKeepTheRecord(t *testing.T) {
 		}
 	}
 }
+
+// TestSectionCountsNeverWrap: a list past its uint16 count keeps its first
+// 65535 entries, and every section after it still decodes. A wrapped count
+// used to leave the rest of the list where the next section was expected.
+func TestSectionCountsNeverWrap(t *testing.T) {
+	sample := makeSampleFull(time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC))
+	sensors := make([]collector.CPUTempSensor, 65537)
+	for i := range sensors {
+		sensors[i] = collector.CPUTempSensor{Name: "t", Value: 40}
+	}
+	sample.Data.CPU.Sensors = sensors
+	devices := make([]collector.DiskDevice, 65536)
+	for i := range devices {
+		devices[i] = collector.DiskDevice{Name: "d", ID: "serial:x"}
+	}
+	sample.Data.Disks.Devices = devices
+
+	encoded, err := encodeSample(sample)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	decoded, err := decodeSample(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d := decoded.Data
+	if len(d.CPU.Sensors) != 65535 || len(d.Disks.Devices) != 65535 {
+		t.Fatalf("kept %d sensors and %d disks, want 65535 of each", len(d.CPU.Sensors), len(d.Disks.Devices))
+	}
+	if d.Disks.Devices[65534].ID != "serial:x" {
+		t.Error("disk identities no longer line up with the disks stored")
+	}
+	if d.System.Hostname != sample.Data.System.Hostname {
+		t.Errorf("hostname after the lists = %q, want %q", d.System.Hostname, sample.Data.System.Hostname)
+	}
+}

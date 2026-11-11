@@ -10,21 +10,25 @@ import (
 
 // Disk IDs extend each variable block AFTER PSU, leaving all existing offsets
 // intact. The record-level MeanStats trailer still follows all Data/Min/Max.
-// Layout: version u8, disk count u16, one length-prefixed ID per disk, in order.
-func appendDiskIDs(buf []byte, s *collector.Sample) ([]byte, error) {
-	if len(s.Disks.Devices) > math.MaxUint16 {
-		return buf, fmt.Errorf("too many disk identities")
-	}
+// Layout: version u8, disk count u16, one length-prefixed ID per disk, in order,
+// for the same disks the block stored (storedCount).
+//
+// An ID longer than its length can describe is never cut: it is stored empty,
+// so that disk is tracked by its kernel name (DiskDevice.SeriesKey) rather than
+// under a truncated identity, and the record is kept.
+func appendDiskIDs(buf []byte, s *collector.Sample) []byte {
+	devices := s.Disks.Devices[:storedCount(len(s.Disks.Devices))]
 	buf = append(buf, 1)
-	buf = appendUint16(buf, uint16(len(s.Disks.Devices)))
-	for _, disk := range s.Disks.Devices {
-		if len(disk.ID) > math.MaxUint16 {
-			return buf, fmt.Errorf("disk id exceeds 65535 bytes")
+	buf = appendUint16(buf, uint16(len(devices)))
+	for _, disk := range devices {
+		id := disk.ID
+		if len(id) > math.MaxUint16 {
+			id = ""
 		}
-		buf = appendUint16(buf, uint16(len(disk.ID)))
-		buf = append(buf, disk.ID...)
+		buf = appendUint16(buf, uint16(len(id)))
+		buf = append(buf, id...)
 	}
-	return buf, nil
+	return buf
 }
 
 func decodeDiskIDs(data []byte, s *collector.Sample) (int, error) {

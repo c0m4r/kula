@@ -23,10 +23,7 @@ func legacyHistoryPayload(t *testing.T, sample *AggregatedSample) []byte {
 		}
 		payload = appendFixed(payload, block)
 		variable := preTCPExtVariable(t, block)
-		ids, err := appendDiskIDs(nil, block)
-		if err != nil {
-			t.Fatal(err)
-		}
+		ids := appendDiskIDs(nil, block)
 		payload = append(payload, variable[:len(variable)-len(ids)]...)
 	}
 	return payload

@@ -46,7 +46,8 @@ identified by its byte offset in a fixed sequence, so **section order is the con
   (pre-0.22.0, no checksum) stays readable. Decode tier records only through
   `Tier.readRecord`, which verifies the checksum; calling `decodeSample` on a payload skips it.
 - One element never fails a record: names are bounded to the 255 bytes a one-byte length holds
-  (`collector.BoundString`, applied in `Collect()` and again by `appendStr`).
+  (`collector.BoundString`, applied in `Collect()` and again by `appendStr`), and a list past its
+  `u16` count keeps its first 65,535 entries (`storedCount`).
 - `FuzzDecodeSample` and `FuzzReadRecord` must never panic on malformed input.
 - `TestCodecPersistsEveryAggregatedNumericField` fails when a numeric field with an `agg`
   policy does not survive encode → decode; a new field needs a codec home, not just a tag.

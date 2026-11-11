@@ -72,7 +72,10 @@ Names and labels (interfaces, sensors, disks, mounts, containers, GPUs, power su
 groups and metrics, hostname, clock source) carry a one-byte length, so at most 255 bytes. The
 collector bounds each before anyone sees it (see [Collector](04-collector.md)), and `appendStr`
 applies the same `collector.BoundString` as a backstop instead of failing: one over-long name
-used to fail the whole record and stop history recording.
+used to fail the whole record and stop history recording. A disk ID (a `u16` length) too long
+for its field is stored empty, so that disk is tracked by its kernel name rather than under a
+cut identity. Section counts are `u16`: a longer list keeps its first 65,535 entries and the
+count says how many follow (`storedCount`); a wrapped count would misplace every later byte.
 
 Floats are stored finite. `putF32` saturates a value beyond float32's range at ±3.4028235e38
 and stores NaN as `0`; `getF32` reads an infinity or NaN left by an older version the same

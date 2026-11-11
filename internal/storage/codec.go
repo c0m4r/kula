@@ -227,6 +227,13 @@ func appendF32(b []byte, v float64) []byte {
 	return append(b, x[:]...)
 }
 
+// storedCount returns how many of n entries a section stores. Its count is a
+// uint16, so a longer list keeps its first 65535 entries and the count still
+// says how many follow; a wrapped count would misplace every later byte.
+func storedCount(n int) int {
+	return int(clampUint16(n))
+}
+
 // clampUint16 saturates a count to a 16-bit fixed field, so an out-of-range
 // value reads back as the nearest bound instead of wrapping.
 func clampUint16(n int) uint16 {
@@ -458,11 +465,10 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 		return buf, errors.New("variable block of a nil sample")
 	}
 
-	var err error
-
 	// Network interfaces
-	buf = appendUint16(buf, uint16(len(s.Network.Interfaces)))
-	for _, iface := range s.Network.Interfaces {
+	ifaces := s.Network.Interfaces[:storedCount(len(s.Network.Interfaces))]
+	buf = appendUint16(buf, uint16(len(ifaces)))
+	for _, iface := range ifaces {
 		buf = appendStr(buf, iface.Name)
 		buf = appendF32(buf, iface.RxMbps)
 		buf = appendF32(buf, iface.TxMbps)
@@ -479,15 +485,17 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	}
 
 	// CPU temperature sensors
-	buf = appendUint16(buf, uint16(len(s.CPU.Sensors)))
-	for _, sensor := range s.CPU.Sensors {
+	cpuSensors := s.CPU.Sensors[:storedCount(len(s.CPU.Sensors))]
+	buf = appendUint16(buf, uint16(len(cpuSensors)))
+	for _, sensor := range cpuSensors {
 		buf = appendStr(buf, sensor.Name)
 		buf = appendF32(buf, sensor.Value)
 	}
 
-	// Disk devices
-	buf = appendUint16(buf, uint16(len(s.Disks.Devices)))
-	for _, dev := range s.Disks.Devices {
+	// Disk devices (appendDiskIDs stores the IDs of the same ones)
+	devices := s.Disks.Devices[:storedCount(len(s.Disks.Devices))]
+	buf = appendUint16(buf, uint16(len(devices)))
+	for _, dev := range devices {
 		buf = appendStr(buf, dev.Name)
 		buf = appendF32(buf, dev.ReadsPerSec)
 		buf = appendF32(buf, dev.WritesPerSec)
@@ -495,16 +503,18 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 		buf = appendF32(buf, dev.WriteBytesPS)
 		buf = appendF32(buf, dev.Utilization)
 		buf = appendF32(buf, dev.Temperature)
-		buf = appendUint16(buf, uint16(len(dev.Sensors)))
-		for _, ts := range dev.Sensors {
+		diskSensors := dev.Sensors[:storedCount(len(dev.Sensors))]
+		buf = appendUint16(buf, uint16(len(diskSensors)))
+		for _, ts := range diskSensors {
 			buf = appendStr(buf, ts.Name)
 			buf = appendF32(buf, ts.Value)
 		}
 	}
 
 	// Filesystems
-	buf = appendUint16(buf, uint16(len(s.Disks.FileSystems)))
-	for _, fs := range s.Disks.FileSystems {
+	filesystems := s.Disks.FileSystems[:storedCount(len(s.Disks.FileSystems))]
+	buf = appendUint16(buf, uint16(len(filesystems)))
+	for _, fs := range filesystems {
 		buf = appendStr(buf, fs.Device)
 		buf = appendStr(buf, fs.MountPoint)
 		buf = appendStr(buf, fs.FSType)
@@ -518,13 +528,10 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	buf = appendStr(buf, s.System.Hostname)
 	buf = appendStr(buf, s.System.ClockSource)
 
-	// GPU entries — count is uint16-encoded; cap to avoid silent truncation.
-	gpuCount := len(s.GPU)
-	if gpuCount > 65535 {
-		gpuCount = 65535
-	}
-	buf = appendUint16(buf, uint16(gpuCount))
-	for _, g := range s.GPU[:gpuCount] {
+	// GPU entries
+	gpus := s.GPU[:storedCount(len(s.GPU))]
+	buf = appendUint16(buf, uint16(len(gpus)))
+	for _, g := range gpus {
 		buf = appendUint16(buf, uint16(g.Index))
 		buf = appendStr(buf, g.Name)
 		buf = appendStr(buf, g.Driver)
@@ -559,12 +566,9 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	}
 
 	// Containers (uint16 count + variable per container)
-	ctCount := len(s.Apps.Containers)
-	if ctCount > 65535 {
-		ctCount = 65535
-	}
-	buf = appendUint16(buf, uint16(ctCount))
-	for _, ct := range s.Apps.Containers[:ctCount] {
+	containers := s.Apps.Containers[:storedCount(len(s.Apps.Containers))]
+	buf = appendUint16(buf, uint16(len(containers)))
+	for _, ct := range containers {
 		buf = appendStr(buf, ct.ID)
 		buf = appendStr(buf, ct.Name)
 		buf = appendF32(buf, ct.CPUPct)
@@ -725,16 +729,14 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 		customKeys = append(customKeys, k)
 	}
 	sort.Strings(customKeys)
+	customKeys = customKeys[:storedCount(len(customKeys))]
 	buf = appendUint16(buf, uint16(len(customKeys)))
 	for _, group := range customKeys {
 		metrics := s.Apps.Custom[group]
 		buf = appendStr(buf, group)
-		mCount := len(metrics)
-		if mCount > 65535 {
-			mCount = 65535
-		}
-		buf = appendUint16(buf, uint16(mCount))
-		for _, m := range metrics[:mCount] {
+		metrics = metrics[:storedCount(len(metrics))]
+		buf = appendUint16(buf, uint16(len(metrics)))
+		for _, m := range metrics {
 			buf = appendStr(buf, m.Name)
 			buf = appendF32(buf, m.Value)
 		}
@@ -750,12 +752,9 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 	// name/type/status as length-prefixed strings followed by psuEntrySize
 	// scalar bytes.
 	buf = append(buf, psuSectionVersion)
-	psuCount := len(s.PSU)
-	if psuCount > 65535 {
-		psuCount = 65535
-	}
-	buf = appendUint16(buf, uint16(psuCount))
-	for _, ps := range s.PSU[:psuCount] {
+	supplies := s.PSU[:storedCount(len(s.PSU))]
+	buf = appendUint16(buf, uint16(len(supplies)))
+	for _, ps := range supplies {
 		buf = appendStr(buf, ps.Name)
 		buf = appendStr(buf, ps.Type)
 		buf = appendStr(buf, ps.Status)
@@ -777,9 +776,7 @@ func appendVariable(buf []byte, s *collector.Sample) ([]byte, error) {
 		buf = append(buf, pb[:]...)
 	}
 
-	if buf, err = appendDiskIDs(buf, s); err != nil {
-		return buf, err
-	}
+	buf = appendDiskIDs(buf, s)
 	return appendTCPExt(buf, s), nil
 }
 

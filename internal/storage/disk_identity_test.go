@@ -56,7 +56,7 @@ func TestDiskIdentityCodecCompatibility(t *testing.T) {
 	for _, block := range []*collector.Sample{a.Data, a.Min, a.Max} {
 		legacy = appendFixed(legacy, block)
 		variable := preTCPExtVariable(t, block)
-		extension, _ := appendDiskIDs(nil, block)
+		extension := appendDiskIDs(nil, block)
 		legacy = append(legacy, variable[:len(variable)-len(extension)]...)
 	}
 	legacy, err = appendMeanStats(legacy, a)
@@ -111,10 +111,7 @@ print(json.dumps([[d.get("id", "") for d in decoded[b]["disks"]["devices"]] for 
 
 func TestDiskIdentityCodecRejectsCorruptExtension(t *testing.T) {
 	sample := &collector.Sample{Disks: collector.DiskStats{Devices: []collector.DiskDevice{{Name: "sda", ID: "wwid:test"}}}}
-	extension, err := appendDiskIDs(nil, sample)
-	if err != nil {
-		t.Fatal(err)
-	}
+	extension := appendDiskIDs(nil, sample)
 	for n := 0; n < len(extension); n++ {
 		if _, err := decodeDiskIDs(extension[:n], sample); err == nil {
 			t.Fatalf("accepted truncation at %d", n)
@@ -131,9 +128,15 @@ func TestDiskIdentityCodecRejectsCorruptExtension(t *testing.T) {
 			t.Fatal("accepted corrupt extension")
 		}
 	}
+	// An identity too long for its length field is not cut short: the disk
+	// is stored without one, tracked by its kernel name, and the record kept.
 	sample.Disks.Devices[0].ID = strings.Repeat("x", 65536)
-	if _, err := appendDiskIDs(nil, sample); err == nil {
-		t.Fatal("silently truncated an oversized identity")
+	oversized := appendDiskIDs(nil, sample)
+	if _, err := decodeDiskIDs(oversized, sample); err != nil {
+		t.Fatalf("oversized identity: %v", err)
+	}
+	if sample.Disks.Devices[0].ID != "" || sample.Disks.Devices[0].SeriesKey() != "kernel:sda" {
+		t.Fatalf("oversized identity stored as %d bytes, want none (kernel name)", len(sample.Disks.Devices[0].ID))
 	}
 }
 
