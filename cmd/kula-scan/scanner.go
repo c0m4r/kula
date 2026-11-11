@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- fuzz-input PRNG; -seed reproducibility needs a seedable source; not security-sensitive (tokens use crypto/rand)
@@ -239,8 +240,9 @@ func NewScanner(opt Options) (*Scanner, error) {
 	transport := &http.Transport{
 		// kula-scan probes arbitrary targets; the Go client default min (TLS 1.2) is correct, and InsecureSkipVerify is the opt-in below.
 		// nosemgrep: missing-ssl-minversion
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: opt.Insecure}, //nolint:gosec // -insecure is an explicit opt-in for self-signed test instances
-		ForceAttemptHTTP2: true,
+		TLSClientConfig:        &tls.Config{InsecureSkipVerify: opt.Insecure}, //nolint:gosec // -insecure is an explicit opt-in for self-signed test instances
+		ForceAttemptHTTP2:      true,
+		MaxResponseHeaderBytes: maxResponseHeaderBytes,
 	}
 	client := &http.Client{
 		Timeout:   opt.Timeout,
@@ -381,12 +383,12 @@ func (s *Scanner) rawTCP(requestLine string) (int, string) {
 	if _, err := fmt.Fprintf(conn, "%s\r\nHost: %s\r\nConnection: close\r\n\r\n", requestLine, s.base.Host); err != nil {
 		return 0, ""
 	}
-	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	resp, err := readResponse(conn)
 	if err != nil {
 		return 0, ""
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
 	return resp.StatusCode, string(body)
 }
 
@@ -406,13 +408,64 @@ func (s *Scanner) rawExchange(raw string) (int, string) {
 	if _, err := conn.Write([]byte(raw)); err != nil {
 		return 0, ""
 	}
-	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	resp, err := readResponse(conn)
 	if err != nil {
 		return 0, ""
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
 	return resp.StatusCode, string(body)
+}
+
+// Bounds on what a target can make the scanner hold. Kula's responses are far
+// smaller; a hostile target could otherwise stream one endless header line
+// into memory until the request deadline.
+const (
+	maxResponseHeaderBytes = 2 << 20 // status line and headers
+	maxResponseBodyBytes   = 1 << 20 // body, read by the caller
+	maxWebSocketMessage    = 1 << 20 // one message the target sends
+)
+
+var errResponseTooLarge = errors.New("response headers larger than 2 MiB")
+
+// readResponse reads a response from a raw connection, failing once the status
+// line and headers pass maxResponseHeaderBytes. The caller still limits the
+// body to maxResponseBodyBytes.
+func readResponse(conn net.Conn) (*http.Response, error) {
+	limited := &io.LimitedReader{R: conn, N: maxResponseHeaderBytes}
+	resp, err := http.ReadResponse(bufio.NewReader(limited), nil)
+	if err != nil {
+		if limited.N <= 0 {
+			return nil, errResponseTooLarge
+		}
+		return nil, err
+	}
+	limited.N = maxResponseBodyBytes
+	return resp, nil
+}
+
+// budgetConn fails reads past a byte budget, so the WebSocket handshake, which
+// gorilla reads with http.ReadResponse, cannot buffer an endless header. The
+// budget is lifted once the handshake is done; from then on the scanner limits
+// each message it reads instead.
+type budgetConn struct {
+	net.Conn
+	remaining int64 // < 0: no budget
+}
+
+func (c *budgetConn) Read(p []byte) (int, error) {
+	if c.remaining < 0 {
+		return c.Conn.Read(p)
+	}
+	if c.remaining == 0 {
+		return 0, errResponseTooLarge
+	}
+	if int64(len(p)) > c.remaining {
+		p = p[:c.remaining]
+	}
+	n, err := c.Conn.Read(p)
+	c.remaining -= int64(n)
+	return n, err
 }
 
 // wsDial attempts a WebSocket upgrade to path with the given extra headers,
@@ -430,7 +483,26 @@ func (s *Scanner) wsDial(path string, headers http.Header) (*websocket.Conn, *ht
 	// Probe tool: connect to whatever the target offers; Go's client default min is TLS 1.2. InsecureSkipVerify is an explicit opt-in.
 	// nosemgrep: missing-ssl-minversion
 	dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: s.insecure} //nolint:gosec // explicit opt-in
-	return dialer.Dial(wsURL, headers)
+	// Dial calls this in the calling goroutine and is done with the budget
+	// when it returns.
+	var budgeted []*budgetConn
+	dialer.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		budget := &budgetConn{Conn: conn, remaining: maxResponseHeaderBytes}
+		budgeted = append(budgeted, budget)
+		return budget, nil
+	}
+	conn, resp, err := dialer.Dial(wsURL, headers)
+	for _, budget := range budgeted {
+		budget.remaining = -1
+	}
+	if conn != nil {
+		conn.SetReadLimit(maxWebSocketMessage)
+	}
+	return conn, resp, err
 }
 
 // ---- discovery ---------------------------------------------------------------

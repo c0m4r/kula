@@ -107,6 +107,9 @@ seed is printed so any finding is reproducible with `-seed <N>`.
 - Traversal payloads are sent over a **raw TCP/TLS socket** to bypass client-side URL
   normalization.
 - WebSocket probes use `gorilla/websocket` (the same lib the server uses).
+- What a target sends is bounded on every path: status line and headers at 2 MiB
+  (`readResponse` on raw sockets, `MaxResponseHeaderBytes` on the client, a read budget on the
+  WebSocket handshake), bodies at 1 MiB, and each WebSocket message at 1 MiB (`SetReadLimit`).
 - Findings quote what the target sent (header values, status lines, certificate names), so the
   text report writes every field through `printable`, which shows control characters, bidi
   controls and invalid UTF-8 as Go escapes (`\x1b`, `\u009b`). A hostile target cannot move the

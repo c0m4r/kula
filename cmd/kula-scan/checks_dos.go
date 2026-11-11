@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"net"
@@ -159,7 +158,7 @@ func runHeaderBombCheck(s *Scanner) []Finding {
 		_, _ = conn.Write([]byte("\r\n\r\n"))
 	}()
 
-	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	resp, err := readResponse(conn)
 	if err != nil {
 		// Server closed/reset the connection without a full response — it refused
 		// the oversized headers. That is the safe outcome.
@@ -289,6 +288,11 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 	_ = conn.SetReadDeadline(deadline)
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
+			if errors.Is(err, websocket.ErrReadLimit) {
+				// wsDial caps what the scanner reads; Kula's frames are far smaller.
+				return []Finding{finding("WS-MSGBOMB", "ws", "WebSocket message size limit", SevInfo, StatusError,
+					"the server sent a WebSocket message over 1 MiB, which the scanner does not read; this is not Kula's live stream.")}
+			}
 			return []Finding{finding("WS-MSGBOMB", "ws", "WebSocket message size limit", SevLow, StatusPass,
 				"the server closed the connection after an oversized client message (SetReadLimit enforced).").
 				withEvidence("close: %v", err)}

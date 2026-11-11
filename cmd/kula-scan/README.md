@@ -171,6 +171,8 @@ opt-in via `-fuzz` and independent of `-aggressive` (combine them for the widest
   line, bypassing any client-side URL normalization (mirrors the `rawRequest` helper in the
   runtime tests).
 - WebSocket probes use `github.com/gorilla/websocket` — the same library the server uses.
+- What the target sends is bounded: response headers at 2 MiB, bodies and WebSocket messages
+  at 1 MiB, so a hostile target cannot grow the scanner's memory.
 - The text report shows control characters from the target (in header values, status lines,
   certificate names) as escapes such as `\x1b`, so a hostile target cannot rewrite earlier
   result lines or write to your clipboard. `-json` escapes them as `\u001b` and the like, so
