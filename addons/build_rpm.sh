@@ -177,13 +177,17 @@ fi
 
 %post
 # Post-install script
-# Seed an active config from the packaged example on first install
+# The config holds the password hash, tokens and database passwords: root owns
+# it and the daemon only reads it, through its group. Seed it from the packaged
+# example on first install; take back one an older package gave the daemon.
 if [ ! -e /etc/kula/config.yaml ]; then
-    cp /etc/kula/config.example.yaml /etc/kula/config.yaml
+    install -m 0640 -o root -g kula /etc/kula/config.example.yaml /etc/kula/config.yaml
+else
+    chown root:kula /etc/kula/config.yaml
+    chmod 0640 /etc/kula/config.yaml
 fi
 
-# Set ownership for directories the program will use
-chown -R kula:kula /etc/kula
+# Storage belongs to the daemon
 chown -R kula:kula /var/lib/kula
 
 # Load systemd, enable and start service
@@ -208,7 +212,7 @@ fi
 %files
 %defattr(-,root,root,-)
 %attr(755, root, root) /usr/bin/kula
-%dir %attr(750, kula, kula) /etc/kula
+%dir %attr(750, root, kula) /etc/kula
 %config(noreplace) %attr(644, root, root) /etc/kula/config.example.yaml
 %attr(644, root, root) /usr/share/bash-completion/completions/kula
 %attr(644, root, root) /usr/lib/systemd/system/kula.service

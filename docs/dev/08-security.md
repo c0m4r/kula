@@ -163,6 +163,10 @@ Optional bearer token on `/metrics`, constant-time compared.
 - `KULA_POSTGRES_PASSWORD` is single-quoted and escaped (backslashes and single quotes) to
   prevent libpq connection-string injection (since 0.16.0).
 - Storage directory created `0750`; session file `0600`.
+- Packages and the guided installer install `/etc/kula` as `root:kula 0750` and seed
+  `config.yaml` as `root:kula 0640` (the snap: `0600` root), and set those modes again on
+  upgrade: the secrets in it reach root and the `kula` group only, and the daemon cannot rewrite
+  its own config. OpenRC and the packages keep `/var/lib/kula` at `0750`.
 
 ## Server timeouts
 

@@ -100,8 +100,8 @@ apps:
       - docker
 
   # CLI entry point: `kula --version`, `sudo kula tui`, `sudo kula inspect`,
-  # `sudo kula hash-password`. Reads the same config/data as the daemon, so
-  # the storage-touching subcommands generally need root (sudo).
+  # `sudo kula hash-password`. Reads the same config/data as the daemon, and
+  # only root may read either, so the subcommands that do need sudo.
   kula:
     command: bin/launch
     plugs:

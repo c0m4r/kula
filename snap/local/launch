@@ -5,20 +5,26 @@
 # dir, and a fresh install has no config file yet. This wrapper:
 #   1. points storage at $SNAP_COMMON/data (honoured via KULA_DIRECTORY, which
 #      config.Load applies before the Landlock sandbox reads the path);
-#   2. seeds an editable config at $SNAP_DATA/config.yaml on first run;
+#   2. seeds an editable config at $SNAP_DATA/config.yaml on first run, readable
+#      by root only (it holds the password hash, tokens and database passwords);
 #   3. execs the real binary with --config and forwards any arguments.
 #
 # Only the root-run daemon can write $SNAP_DATA / $SNAP_COMMON; for the
-# user-facing `kula` CLI the writes are best-effort (run storage-touching
-# subcommands with sudo).
+# user-facing `kula` CLI the writes are best-effort, and the subcommands that
+# read the config or storage need sudo.
 set -eu
 
 CONFIG="${SNAP_DATA}/config.yaml"
 export KULA_DIRECTORY="${KULA_DIRECTORY:-${SNAP_COMMON}/data}"
 
-# Seed an editable config from the packaged example on first run.
-if [ ! -f "${CONFIG}" ] && [ -w "${SNAP_DATA}" ]; then
-    cp "${SNAP}/etc/kula/config.example.yaml" "${CONFIG}"
+# Seed an editable config from the packaged example on first run, and take
+# group and world access from one an older launcher left readable.
+if [ -w "${SNAP_DATA}" ]; then
+    if [ ! -f "${CONFIG}" ]; then
+        install -m 0600 "${SNAP}/etc/kula/config.example.yaml" "${CONFIG}"
+    else
+        chmod go-rwx "${CONFIG}"
+    fi
 fi
 
 # Ensure the writable data dir exists (best-effort for the non-root CLI).

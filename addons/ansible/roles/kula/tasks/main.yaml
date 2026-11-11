@@ -29,9 +29,9 @@
   ansible.builtin.template:
     src: config.yaml.j2
     dest: /etc/kula/config.yaml
-    owner: kula
+    owner: root
     group: kula
-    mode: '0600'
+    mode: '0640'
   become: true
 
 - name: Enable systemd service

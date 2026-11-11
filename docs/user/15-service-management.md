@@ -6,7 +6,9 @@ automatically; the steps below are for manual setup or non-systemd systems.
 
 All of them run Kula as a dedicated unprivileged `kula:kula` user, with config at
 `/etc/kula/config.yaml`, data at `/var/lib/kula`, and an optional Unix-socket runtime dir at
-`/run/kula`.
+`/run/kula`. The config holds the password hash, the Prometheus token and database passwords,
+so root owns it: `/etc/kula` is `root:kula 0750` and `config.yaml` `root:kula 0640`. The
+service reads it through its group and cannot rewrite it; `/var/lib/kula` is `kula:kula 0750`.
 
 ## systemd
 
@@ -74,8 +76,12 @@ Before enabling any of these, ensure:
    ```bash
    sudo useradd --system --home-dir /var/lib/kula --shell /usr/sbin/nologin kula
    ```
-3. Config exists at `/etc/kula/config.yaml` (copy `config.example.yaml`).
-4. Data dir exists: `sudo install -d -o kula -g kula /var/lib/kula`.
+3. Config exists at `/etc/kula/config.yaml`, readable by the `kula` group only:
+   ```bash
+   sudo install -d -m 0750 -o root -g kula /etc/kula
+   sudo install -m 0640 -o root -g kula config.example.yaml /etc/kula/config.yaml
+   ```
+4. Data dir exists: `sudo install -d -m 0750 -o kula -g kula /var/lib/kula`.
 
 The distro packages handle all of this for you.
 

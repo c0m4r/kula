@@ -156,6 +156,15 @@ For the full developer build matrix (cross-compilation, package builders), see
 
 ---
 
+## Where the config lives
+
+The `.deb`, `.rpm` and AUR packages and the guided installer seed `/etc/kula/config.yaml` from
+the example on first install. It holds the password hash, the Prometheus token and database
+passwords, so it is `root:kula 0640` in a `root:kula 0750` directory: only root and the `kula`
+group can read it, and the service cannot rewrite it. Edit it as root. Upgrades keep its
+content and restore those modes. The snap keeps its config at
+`/var/snap/kula/current/config.yaml`, readable by root only.
+
 ## Where data is stored
 
 By default Kula stores its tier files under `/var/lib/kula`. If it can't write there
