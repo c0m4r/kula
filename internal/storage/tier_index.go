@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"bufio"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -105,8 +104,8 @@ func (t *Tier) walkSegment(seg ringSegment, start int64, visit func(offset int64
 	if bytesRead < 0 || bytesRead > seg.size {
 		return
 	}
-	sr := io.NewSectionReader(t.file, headerSize+start, seg.size-bytesRead)
-	br := bufio.NewReaderSize(sr, 1024*1024)
+	br := scanReader(io.NewSectionReader(t.file, headerSize+start, seg.size-bytesRead))
+	defer releaseScanReader(br)
 	for bytesRead < seg.size {
 		if seg.size-bytesRead < 4 {
 			return

@@ -289,6 +289,8 @@ On 36 hours of mock history at the default tier sizes (223 MB tier 0), a clean r
    follows it (see the seek index above), in batches of at most 512 decoded records. Reduce batches into stable output buckets, preserving contributing counts,
    sparse mean weights, and extrema across batch boundaries. Binary records outside the
    window are skipped using their timestamp headers without allocating metric payloads.
+   A scan takes its 1 MiB read buffer from a pool (`scanReaders`) rather than allocating one
+   per segment, which for a scan of a few records was nearly all it allocated.
 4. Choose a stable output step from 1/2/5-style intervals (including 10, 15, and 30 units),
    align groups to Unix-epoch boundaries, and reduce to at most `points` results. The API caps
    `points` at 5000 and all ranges at 31 days.

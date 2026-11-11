@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -881,5 +882,40 @@ func TestTierBoundsRecordLength(t *testing.T) {
 	// The active segment resyncs past the bad prefix to the third record.
 	if len(samples) != 2 || !samples[1].Timestamp.Equal(base.Add(2*time.Second)) {
 		t.Fatalf("read %d samples around a corrupt length, want the first and third", len(samples))
+	}
+}
+
+// TestScansReuseTheirReadBuffer verifies that a scan takes its read buffer
+// from the pool. Allocated for every segment of every scan, that megabyte
+// was nearly all a scan of a few records cost, and a dashboard refreshing
+// the newest buckets of a view runs one such scan after another.
+func TestScansReuseTheirReadBuffer(t *testing.T) {
+	tier, err := OpenTier(t.TempDir()+"/tier.dat", 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tier.Close() }()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	const records = 100
+	for i := range records {
+		if err := tier.Write(varSample(base.Add(time.Duration(i)*time.Second), 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	from, to := base.Add((records-10)*time.Second), base.Add(records*time.Second)
+
+	const scans = 200
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for range scans {
+		if got, err := tier.ReadRange(from, to); err != nil || len(got) != 10 {
+			t.Fatalf("ReadRange: %d records, %v", len(got), err)
+		}
+	}
+	runtime.ReadMemStats(&after)
+	// The pool gives no guarantee (it empties at a collection, and drops a
+	// share of what it is handed under the race detector), so allow half.
+	if perScan := (after.TotalAlloc - before.TotalAlloc) / scans; perScan > scanReaderSize/2 {
+		t.Errorf("a ten-record scan allocated %d bytes, want well under its %d-byte read buffer", perScan, scanReaderSize)
 	}
 }

@@ -502,6 +502,28 @@ func (t *Tier) validRecordLen(dataLen uint32) bool {
 // if a writer overtakes a reader between batches.
 var errHistorySnapshotExpired = errors.New("history retention changed during query; retry the request")
 
+// scanReaderSize is the read-ahead of a tier scan.
+const scanReaderSize = 1 << 20
+
+// scanReaders recycles the read buffers of tier scans. A scan used to
+// allocate one for every ring segment, and for a scan of a few records (the
+// newest buckets of a view, refreshed over and over) that megabyte was
+// nearly everything it allocated.
+var scanReaders = sync.Pool{New: func() any { return bufio.NewReaderSize(nil, scanReaderSize) }}
+
+// scanReader returns a pooled reader set to read from r, to be handed back
+// through releaseScanReader.
+func scanReader(r io.Reader) *bufio.Reader {
+	br := scanReaders.Get().(*bufio.Reader)
+	br.Reset(r)
+	return br
+}
+
+func releaseScanReader(br *bufio.Reader) {
+	br.Reset(nil) // the pool must not keep a tier file reachable
+	scanReaders.Put(br)
+}
+
 // ReadRange returns all samples within [from, to]. History queries use the
 // batched scanner to avoid retaining every decoded source record at once.
 func (t *Tier) ReadRange(from, to time.Time) ([]*AggregatedSample, error) {
@@ -571,6 +593,9 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 		segments = segments[1:]
 	}
 
+	br := scanReader(nil)
+	defer releaseScanReader(br)
+
 	scanned := 0
 	for _, seg := range segments {
 		// Start at the seek point nearest before `from` (tier_index.go); the
@@ -579,8 +604,7 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 		bytesRead := start - seg.start
 
 		// Use buffered reader for drastic performance improvement over thousands of reads.
-		sr := io.NewSectionReader(t.file, headerSize+start, seg.size-bytesRead)
-		br := bufio.NewReaderSize(sr, 1024*1024)
+		br.Reset(io.NewSectionReader(t.file, headerSize+start, seg.size-bytesRead))
 
 		for bytesRead < seg.size {
 			if consume != nil && batchSize > 0 && scanned >= batchSize {
