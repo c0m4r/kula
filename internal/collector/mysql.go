@@ -81,6 +81,9 @@ func newMysqlCollector(host string, port int, user, password, dbname string, deb
 		config: mysqlConfig(host, port, user, password, dbname, t),
 	}
 	mc.poller.stale = t.stale
+	mc.poller.name, mc.poller.discard = "[mysql]", mc.discard
+	dialer := newDBDialer()
+	mc.config.DialFunc = dialer.DialContext
 	mc.session = dbSession{
 		name:     "[mysql]",
 		label:    label,
@@ -89,6 +92,7 @@ func newMysqlCollector(host string, port int, user, password, dbname string, deb
 			setup:    mc.setupSession,
 			reap:     reapMysqlSession,
 			describe: func(ref dbSessionRef) string { return fmt.Sprintf("connection %d", ref.id) },
+			abort:    dialer.abort,
 		},
 	}
 	if connector, err := mysql.NewConnector(mc.config); err == nil {
@@ -204,6 +208,12 @@ func (mc *mysqlCollector) Latest() *MysqlStats {
 // Close waits for the poller, stopped by its context, to end its session.
 func (mc *mysqlCollector) Close() {
 	mc.poller.wait(5 * time.Second)
+}
+
+// discard drops the session and rate baseline of a poll that panicked.
+func (mc *mysqlCollector) discard() {
+	mc.prev = mysqlRaw{}
+	mc.session.discard()
 }
 
 // poll runs one collection on the collector's session.

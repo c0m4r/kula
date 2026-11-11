@@ -140,12 +140,14 @@ func (c *Collector) StartApplications() {
 	}
 
 	if appCfg.Nginx.Enabled {
-		startStatusPoller(ctx, &c.nginxPoller, collCfg.Interval, c.collectNginx)
+		startStatusPoller(ctx, &c.nginxPoller, c.nginxLog.name, collCfg.Interval, c.collectNginx,
+			func() { c.prevNginx = nginxRaw{} })
 		log.Printf("[nginx] monitoring enabled at %s", appCfg.Nginx.StatusURL)
 	}
 
 	if appCfg.Apache2.Enabled {
-		startStatusPoller(ctx, &c.apachePoller, collCfg.Interval, c.collectApache2)
+		startStatusPoller(ctx, &c.apachePoller, c.apacheLog.name, collCfg.Interval, c.collectApache2,
+			func() { c.prevApache = apache2Raw{} })
 		log.Printf("[apache2] monitoring enabled at %s", appCfg.Apache2.StatusURL)
 	}
 

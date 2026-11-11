@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -32,26 +35,40 @@ func tickInterval(d time.Duration) time.Duration {
 // while a poll runs is dropped (time.Ticker drops ticks), so polls never
 // overlap: whatever the poll touches (a database session, rate baselines)
 // belongs to the goroutine alone. cleanup runs once the context is done.
+//
+// A poll that panics fails alone (see run): the goroutine is the only one
+// that runs it, and an unrecovered panic there would end the whole process.
 type poller[T any] struct {
 	mu     sync.Mutex
 	latest *T
 	at     time.Time
 	stale  time.Duration
 	done   chan struct{}
+
+	// name prefixes the poller's log lines, e.g. "[mysql]".
+	name string
+	// discard, when set, drops what a poll that panicked was in the middle
+	// of (a database session, rate baselines), so the next one starts clean.
+	discard func()
+	// panicked is set by a poll that panicked and cleared by one that returns
+	// a result, so a streak of panics is logged once. It belongs to the poll
+	// goroutine.
+	panicked bool
 }
 
 func (p *poller[T]) start(ctx context.Context, interval time.Duration, poll func(context.Context) *T, cleanup func()) {
 	p.done = make(chan struct{})
 	go func() {
 		defer close(p.done)
-		defer cleanup()
+		defer p.guard("closing", cleanup)
 		ticker := time.NewTicker(tickInterval(interval))
 		defer ticker.Stop()
 		for {
 			if ctx.Err() != nil {
 				return
 			}
-			if stats := poll(ctx); stats != nil {
+			if stats := p.run(ctx, poll); stats != nil {
+				p.panicked = false
 				p.mu.Lock()
 				p.latest, p.at = stats, time.Now()
 				p.mu.Unlock()
@@ -63,6 +80,64 @@ func (p *poller[T]) start(ctx context.Context, interval time.Duration, poll func
 			}
 		}
 	}()
+}
+
+// run runs one poll. The database drivers parse what the server sends without
+// checking every length, so a malformed reply — from a broken server, or from
+// whoever answers on its port — can panic inside them. A panic fails this poll
+// alone: it is logged once per streak, discard drops the session or baselines
+// the poll was in the middle of, and the poll counts as one that found nothing.
+func (p *poller[T]) run(ctx context.Context, poll func(context.Context) *T) (stats *T) {
+	defer func() {
+		if r := recover(); r != nil {
+			stats = nil
+			if !p.panicked {
+				log.Printf("%s poll panicked: %q at %s; discarding its state (logged once until a poll succeeds)",
+					p.name, fmt.Sprint(r), panicSite())
+				p.panicked = true
+			}
+			if p.discard != nil {
+				p.guard("discarding a panicked poll", p.discard)
+			}
+		}
+	}()
+	return poll(ctx)
+}
+
+// guard runs f, logging a panic in it instead of letting it end the process.
+func (p *poller[T]) guard(what string, f func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("%s %s panicked: %q at %s", p.name, what, fmt.Sprint(r), panicSite())
+		}
+	}()
+	f()
+}
+
+// panicSite names where the panic being recovered started, and the caller of
+// that frame (the site is often a small helper, such as a bounds-checked
+// read). Called from the deferred function that recovers the panic, the
+// panicking frames are still on the stack below runtime.gopanic: the first of
+// them outside the runtime is the site.
+func panicSite() string {
+	pcs := make([]uintptr, 64)
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(1, pcs)])
+	var site []string
+	inPanic := false
+	for len(site) < 2 {
+		f, more := frames.Next()
+		if inPanic && !strings.HasPrefix(f.Function, "runtime.") {
+			site = append(site, fmt.Sprintf("%s (%s:%d)", f.Function, filepath.Base(f.File), f.Line))
+		}
+		inPanic = inPanic || f.Function == "runtime.gopanic"
+		if !more {
+			break
+		}
+	}
+	if len(site) == 0 {
+		return "an unknown site"
+	}
+	return strings.Join(site, ", called from ")
 }
 
 // Latest returns the newest poll result while it is current, nil otherwise.
@@ -88,9 +163,11 @@ func (p *poller[T]) wait(timeout time.Duration) {
 
 // startStatusPoller polls an HTTP status page (nginx, Apache2) every interval
 // in its own goroutine. collect receives the seconds since the poll before,
-// whose counters are its rate baseline.
-func startStatusPoller[T any](ctx context.Context, p *poller[T], interval time.Duration, collect func(elapsed float64) *T) {
+// whose counters are its rate baseline; reset drops that baseline after a
+// poll that panicked.
+func startStatusPoller[T any](ctx context.Context, p *poller[T], name string, interval time.Duration, collect func(elapsed float64) *T, reset func()) {
 	p.stale = pollStale(interval)
+	p.name, p.discard = name, reset
 	var last time.Time
 	p.start(ctx, interval, func(context.Context) *T {
 		now := time.Now()

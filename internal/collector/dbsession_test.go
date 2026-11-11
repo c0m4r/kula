@@ -477,10 +477,10 @@ func TestDBSessionBoundAbortsWorkPastItsDeadline(t *testing.T) {
 	<-ctx.Done()
 }
 
-// TestPgDialerAbortEndsBlockedReads covers what bound relies on for
+// TestDBDialerAbortEndsBlockedReads covers what bound relies on for
 // PostgreSQL: abort fails a read blocked on a server that never answers, and
 // closed connections leave the dialer's open set.
-func TestPgDialerAbortEndsBlockedReads(t *testing.T) {
+func TestDBDialerAbortEndsBlockedReads(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -505,7 +505,7 @@ func TestPgDialerAbortEndsBlockedReads(t *testing.T) {
 		}
 	}()
 
-	d := newPgDialer()
+	d := newDBDialer()
 	closed, err := d.DialContext(context.Background(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)

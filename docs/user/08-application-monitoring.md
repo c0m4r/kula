@@ -290,6 +290,9 @@ Kula is built never to be the reason a PostgreSQL or MySQL server runs out of co
 - **Failures back off.** A server that is down or refusing connections is retried after one
   collection interval (1 s by default), then after twice as long each time, up to 5 minutes,
   not every interval.
+- **A malformed reply fails one poll.** A reply that crashes the database driver (from a
+  broken server, or from whatever answers on its port) fails that poll only: Kula logs it once,
+  closes the connection and backs off as above, while everything else keeps running.
 - **Clean shutdown.** Stopping Kula closes its sessions.
 
 No extra privilege is needed: a database user may always end its own sessions.

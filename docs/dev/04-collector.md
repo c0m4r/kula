@@ -105,6 +105,19 @@ API and WebSocket payloads.
   `startStatusPoller` (request timeout `max(2s, 2×interval)`, no redirects, failures logged on
   change by `pollLog`); their clients, baselines and logs belong to the poll goroutine, so
   `debugDone`, which `Collect` writes, is atomic.
+- **A poll that panics fails alone.** lib/pq and go-sql-driver/mysql index server packets
+  without checking every length, so one malformed reply — from a broken server, or from
+  whoever answers on its port — panics inside the driver, and in a goroutine an unrecovered
+  panic ends the process. `poller.run` recovers it: the poll yields `nil`, the panic is logged
+  once per streak (escaped, with the frame it started in), and the poller's `discard` drops
+  what the poll was in the middle of — a status page's rate baseline, or a database session
+  (`dbSession.discard`). database/sql releases a connection's lock only when its statement
+  returns, so after a panic mid-statement `Conn.Close` would block forever; `discard` instead
+  closes the network connections through the dialer, closes the driver connection through
+  `Conn.Raw`, closes the pool, remembers the session for reaping and backs off. `cleanup` runs
+  under the same guard. `poll_panic_test.go` drives both real drivers against the malformed
+  replies; one leftover is go-sql-driver/mysql's per-connection watcher goroutine, which a
+  panic during its handshake leaves parked (one per attempt, under the backoff).
 - **Database collectors own exactly one session.** `postgres.go` and `mysql.go` poll through
   `dbsession.go`: a pinned `sql.Conn` from a pool capped at one; polls in their own goroutine,
   one at a time (`poller`, read by `Collect` through `Latest()`), with a hard timeout of
@@ -113,11 +126,12 @@ API and WebSocket payloads.
   connection (matched by PostgreSQL pid + `backend_start`, MySQL connection id + user + server
   start) before polling resumes, and the collector closes its probe connection and backs off
   while it lives; failed attempts back off exponentially from one interval to 5 minutes.
-  lib/pq keeps reading after a context ends, so its dialer uses short TCP keepalives for an
-  idle half-open connection, and tracks its connections so that `dbSession.bound` can close
-  them when work outlives its deadline by `abortGrace` (5 s): keepalives cannot detect a frozen
-  server whose kernel still acknowledges, or data waiting on the retransmission timer. `dbsession_test.go` checks the bounds (one client connection, at most two server
-  sessions) against a fake driver.
+  lib/pq keeps reading after a context ends, so both drivers dial through `dbDialer`, which
+  uses short TCP keepalives for an idle half-open connection and tracks its connections so
+  that `dbSession.bound` can close them when work outlives its deadline by `abortGrace` (5 s):
+  keepalives cannot detect a frozen server whose kernel still acknowledges, or data waiting on
+  the retransmission timer. `dbsession_test.go` checks the bounds (one client connection, at
+  most two server sessions) against a fake driver.
 - **PostgreSQL's relation statistics are read once a minute.** The `pg_stat_user_tables` sums
   and `pg_database_size` walk every relation, the latter with a `stat()` of each file (about
   30 and 60 ms of server time at 10 000 tables), so `postgres.go` reads them every
