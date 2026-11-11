@@ -13,6 +13,16 @@ export function storedAggregation() {
     return isAggregation(stored) ? stored : null;
 }
 
+/**
+ * The stored Focus mode selection, or null when none is stored or it is not a
+ * list of card ids: a string would start Focus mode with every card hidden,
+ * and an object would make it throw.
+ */
+export function storedFocusVisible() {
+    const stored = readJsonPref('kula_focus_visible', null);
+    return Array.isArray(stored) && stored.every(id => typeof id === 'string') ? stored : null;
+}
+
 // ---- State ----
 export const state = {
     ws: null,
@@ -64,7 +74,7 @@ export const state = {
     focusSelecting: false,
     // Rearrange mode (rearrange.js) owns the card layout while it is on.
     rearranging: false,
-    focusVisible: readJsonPref('kula_focus_visible', null),
+    focusVisible: storedFocusVisible(),
     currentResolution: '1s', // resolution of data currently loaded in charts
     currentSourceResolution: '1s',
     currentDownsampled: false,

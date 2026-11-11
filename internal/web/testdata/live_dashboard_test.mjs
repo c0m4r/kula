@@ -388,6 +388,17 @@ try {
     const activeAgg = await evaluate(`document.querySelector('#agg-presets-list .time-btn.active')?.dataset.agg ?? null`);
     check(activeAgg === 'avg', 'a malformed aggregation preference was not replaced by avg', { activeAgg });
     await evaluate(`localStorage.removeItem('kula_aggregation')`);
+    // So is a Focus mode selection that is not a list of card ids: a string
+    // used to start Focus mode with every card hidden, an object to throw.
+    for (const stored of ['"card-cpu"', '{"length":1}']) {
+        await evaluate(`localStorage.setItem('kula_focus_visible', ${JSON.stringify(stored)})`);
+        await call('Page.navigate', { url: `${base}/?range=300` });
+        await settle(s => s.lastAge <= 2.5, `the dashboard did not start with the Focus selection ${stored}`);
+        const focus = await evaluate(`({ mode: document.getElementById('btn-focus').classList.contains('focus-active'),
+            cpu: document.getElementById('card-cpu').getClientRects().length > 0 })`);
+        check(!focus.mode && focus.cpu, `the Focus selection ${stored} was not ignored`, focus);
+    }
+    await evaluate(`localStorage.removeItem('kula_focus_visible')`);
     await resize(1920, 1080);
 
     // Blocked site data makes every localStorage access throw, as it does from
