@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -757,6 +758,53 @@ func TestCustomCollectorDedup(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("metric %d: expected %+v, got %+v", i, want[i], got[i])
 		}
+	}
+}
+
+// TestCustomCollectorRefusesUnstorableValues verifies that a value beyond the
+// 32-bit float range history stores is left out like a missing reading, that
+// the rest of its message is kept, and that the refusal is logged once per
+// metric, not on every message.
+func TestCustomCollectorRefusesUnstorableValues(t *testing.T) {
+	configs := map[string][]config.CustomMetricConfig{
+		"fans": {{Name: "fan1"}, {Name: "fan2"}},
+	}
+	set, order := indexConfigs(configs)
+	cc := &customCollector{
+		latest:      make(map[string]customGroup),
+		configSet:   set,
+		configOrder: order,
+		staleAfter:  time.Minute,
+	}
+	var logged strings.Builder
+	previous := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	values := func() []CustomMetricValue { return cc.Latest()["fans"] }
+	only := func(step string, want CustomMetricValue) {
+		t.Helper()
+		if got := values(); len(got) != 1 || got[0] != want {
+			t.Fatalf("%s: got %+v, want only %+v", step, got, want)
+		}
+	}
+
+	cc.processMessage(map[string][]map[string]float64{"fans": {{"fan1": 1e39}, {"fan2": 800}}})
+	only("out of range beside a good value", CustomMetricValue{Name: "fan2", Value: 800})
+
+	// A message with nothing storable leaves the group as it was.
+	cc.processMessage(map[string][]map[string]float64{"fans": {{"fan1": -math.MaxFloat64}}})
+	only("out of range alone", CustomMetricValue{Name: "fan2", Value: 800})
+	if n := strings.Count(logged.String(), "fans/fan1"); n != 1 {
+		t.Errorf("refusal logged %d times, want once:\n%s", n, logged.String())
+	}
+
+	// The largest float32 is storable, and a metric back in range is no
+	// longer remembered as refused.
+	cc.processMessage(map[string][]map[string]float64{"fans": {{"fan1": math.MaxFloat32}}})
+	only("largest float32", CustomMetricValue{Name: "fan1", Value: math.MaxFloat32})
+	if len(cc.outOfRange) != 0 {
+		t.Errorf("still marked out of range: %v", cc.outOfRange)
 	}
 }
 

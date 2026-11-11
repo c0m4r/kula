@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"os"
 	"sync"
@@ -57,6 +58,7 @@ type customCollector struct {
 	latest      map[string]customGroup
 	configSet   map[string]map[string]struct{} // group -> set of configured names (membership)
 	configOrder map[string][]string            // group -> configured names in config order
+	outOfRange  map[string]struct{}            // metrics whose last value was refused, logged once each
 	staleAfter  time.Duration                  // drop a group's values this long after its last update
 	sockPath    string
 	listener    net.Listener
@@ -237,6 +239,9 @@ func (cc *customCollector) processMessage(data map[string][]map[string]float64) 
 				if _, configured := nameSet[name]; !configured {
 					continue // skip unconfigured metrics
 				}
+				if !cc.storable(group, name, val) {
+					continue
+				}
 				seen[name] = val
 			}
 		}
@@ -256,6 +261,32 @@ func (cc *customCollector) processMessage(data map[string][]map[string]float64) 
 		cc.latest[group] = customGroup{values: values, seen: time.Now()}
 		cc.debugDone.Store(true)
 	}
+}
+
+// storable reports whether val fits the 32-bit float history stores it as. A
+// value beyond that range (a producer's "no reading" sentinel such as the
+// largest float64) is refused, so the metric shows a gap like any missing
+// reading instead of a number the live view and history would disagree on.
+// Each metric is logged when it starts being refused, not on every message.
+// The caller holds cc.mu.
+func (cc *customCollector) storable(group, name string, val float64) bool {
+	inRange := math.Abs(val) <= math.MaxFloat32
+	if inRange && len(cc.outOfRange) == 0 {
+		return true // the usual case, without building a key
+	}
+	key := group + "\x00" + name
+	if inRange {
+		delete(cc.outOfRange, key)
+		return true
+	}
+	if _, logged := cc.outOfRange[key]; !logged {
+		if cc.outOfRange == nil {
+			cc.outOfRange = make(map[string]struct{})
+		}
+		cc.outOfRange[key] = struct{}{}
+		log.Printf("[custom] %s/%s: value %g refused: values are stored as 32-bit floats, up to ±%.3g", group, name, val, math.MaxFloat32)
+	}
+	return false
 }
 
 // Latest returns the most recently received custom metrics.
