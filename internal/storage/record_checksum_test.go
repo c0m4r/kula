@@ -347,6 +347,62 @@ func TestResyncVerifiesChecksummedRecords(t *testing.T) {
 	}
 }
 
+// TestResyncBoundsChecksumWork plants the active pass of a crafted tier file:
+// [00 00 0F 00 03] repeated reads, at every fifth byte, as a sane checksummed
+// header claiming 960 KiB, the bytes after its kind byte a timestamp in 2004,
+// whose trailer never matches. Resync verified every one of them, about a
+// megabyte of checksum per five bytes it passed: 2 MiB of it took 14 s to
+// walk, 8 MiB 90 s, holding the tier lock. A walk must stay linear and still
+// find the records written after the pattern.
+func TestResyncBoundsChecksumWork(t *testing.T) {
+	tier, err := OpenTier(t.TempDir()+"/tier_0.dat", 4<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tier.Close() }()
+	// An impossible first length starts the resync.
+	bomb := append([]byte{0xFF, 0xFF, 0xFF, 0xFF}, bytes.Repeat([]byte{0x00, 0x00, 0x0F, 0x00, 0x03}, (2<<20)/5)...)
+	if _, err := tier.file.WriteAt(bomb, headerSize); err != nil {
+		t.Fatal(err)
+	}
+	tier.writeOff = int64(len(bomb))
+	base := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	const n = 5
+	for i := 0; i < n; i++ {
+		if err := tier.Write(varSample(base.Add(time.Duration(i)*time.Second), 2)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	type result struct {
+		scanned, latest []*AggregatedSample
+		err             error
+	}
+	done := make(chan result, 1)
+	go func() {
+		var r result
+		tier.mu.Lock()
+		tier.buildSeekIndex() // walks the whole pass
+		tier.mu.Unlock()
+		r.scanned, r.err = tier.ReadRange(base.Add(-time.Hour), base.Add(time.Hour))
+		if r.err == nil {
+			r.latest, r.err = tier.ReadLatest(n)
+		}
+		done <- r
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if len(r.scanned) != n || len(r.latest) != n || !r.latest[n-1].Timestamp.Equal(base.Add((n-1)*time.Second)) {
+			t.Fatalf("scan found %d records and the tail read %d, want the %d written after the pattern", len(r.scanned), len(r.latest), n)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("walks still running after 10 s: resync verifies every crafted candidate")
+	}
+}
+
 // TestInspectorVerifiesRecordChecksums keeps addons/inspect_tier.py in step:
 // it decodes checksummed and older records as the Go reader does, and
 // rejects a checksummed record that fails its trailer.

@@ -172,10 +172,16 @@ back as zeros, or as what an older ring pass left there. A process crash cannot 
 the header that makes a record visible is written after it. Readers handle the damage two ways:
 
 - **Holes.** In the active segment, a length prefix that cannot start a record makes the scan
-  resync byte by byte to the next plausible record instead of stopping there. A `0x03`
-  candidate must match its checksum; an older one must be followed by a second plausible
-  header or end the segment exactly. A candidate running past the segment end is never
-  accepted.
+  resync to the next plausible record instead of stopping there. A record of a v2 tier starts
+  four bytes before its kind byte, so resync passes the positions before the next `0x02` or
+  `0x03` at once, and a hole of zeros at the speed of a byte search. A `0x03` candidate must
+  match its checksum; an older one must be followed by a second plausible header or end the
+  segment exactly. A candidate running past the segment end is never accepted. Checksums that
+  fail cost a walk of a segment at most 64 MiB plus 16 bytes for every byte resync passes
+  (`resyncBudget`); a candidate the budget cannot pay for is passed over unverified. Real
+  damage holds few such candidates, but a crafted file can repeat one every five bytes, each
+  claiming nearly a megabyte: verified one by one, 8 MiB of it took 90 s to scan, holding the
+  tier lock. Bounded, it takes 0.2 s, and the walk still finds the records after it.
 - **Torn records.** The CRC-32 (IEEE, as Python's `zlib.crc32` computes it) covers the length
   prefix and every payload byte before the trailer. A record that fails it is skipped by every
   reader, like any record that does not decode: history scans, `ReadLatest`, restart recovery
@@ -423,8 +429,9 @@ and skipped. The reverse does not hold; an older binary may misread a newer reco
 - [`addons/inspect_tier.py`](../../addons/inspect_tier.py) is a standalone Python decoder of the
   same format — useful for offline analysis and as a cross-check on the Go codec. It walks the
   ring as the Go reader does: the same wrap state and tail validation, segments clipped to the
-  file, the 64 MiB record cap, and resync past holes in the active pass, so after an unclean
-  shutdown it reports the same latest record as `kula inspect --verbose`.
+  file, the 64 MiB record cap, and resync past holes in the active pass with the same checksum
+  budget, so after an unclean shutdown it reports the same latest record as
+  `kula inspect --verbose`.
   `TestInspectorWalksTheRingLikeTheReader` compares the records both visit on damaged tiers.
 
 ## Mock data

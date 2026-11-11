@@ -106,6 +106,7 @@ func (t *Tier) walkSegment(seg ringSegment, start int64, visit func(offset int64
 	}
 	br := scanReader(io.NewSectionReader(t.file, headerSize+start, seg.size-bytesRead))
 	defer releaseScanReader(br)
+	budget := newResyncBudget()
 	for bytesRead < seg.size {
 		if seg.size-bytesRead < 4 {
 			return
@@ -116,7 +117,7 @@ func (t *Tier) walkSegment(seg ringSegment, start int64, visit func(offset int64
 		}
 		dataLen := binary.LittleEndian.Uint32(hdr[0:4])
 		if !t.validRecordLen(dataLen) || bytesRead+4+int64(dataLen) > seg.size {
-			if !seg.resync || !t.resyncToNextRecord(br, &bytesRead, seg.size) {
+			if !seg.resync || !t.resyncToNextRecord(br, &bytesRead, seg.size, budget) {
 				return
 			}
 			continue

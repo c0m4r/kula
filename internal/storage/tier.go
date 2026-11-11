@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -221,7 +222,7 @@ func (t *Tier) readHeader() error {
 			// wrote them did.
 			off := candidate
 			if t.codecVer >= codecVersion2 {
-				if found, ok := t.oldRecordFrom(candidate); ok {
+				if found, ok := t.oldRecordFrom(candidate, newResyncBudget()); ok {
 					off = found
 				}
 			}
@@ -589,6 +590,7 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 		// records before it would all have been skipped.
 		start := t.seekStart(seg, from)
 		bytesRead := start - seg.start
+		budget := newResyncBudget()
 
 		// Use buffered reader for drastic performance improvement over thousands of reads.
 		br.Reset(io.NewSectionReader(t.file, headerSize+start, seg.size-bytesRead))
@@ -636,7 +638,7 @@ func (t *Tier) scanRange(from, to time.Time, batchSize int, consume func([]*Aggr
 				// sentinel: stop. In the active segment it is a hole from an
 				// unclean shutdown — skip past it and keep the data written after
 				// it instead of abandoning the rest of the tier.
-				if !seg.resync || !t.resyncToNextRecord(br, &bytesRead, seg.size) {
+				if !seg.resync || !t.resyncToNextRecord(br, &bytesRead, seg.size, budget) {
 					break
 				}
 				continue
@@ -813,10 +815,36 @@ func (t *Tier) readRecord(data []byte) (*AggregatedSample, error) {
 	}
 }
 
+// Resync verifies a checksummed candidate whole, which costs a CRC over the
+// length it claims. A misaligned position rarely reads as a sane checksummed
+// header, but a crafted file can repeat one every few bytes, each claiming
+// close to a megabyte: resync then verified about a megabyte per byte it
+// passed, and an 8 MiB tier took 90 s to scan. So each walk of a segment
+// gets a budget for candidates that fail their checksum: it starts at
+// resyncChecksumAllowance and earns resyncChecksumCredit for every byte
+// resync passes. A candidate the budget cannot pay for is passed over
+// unverified, like any position that starts no record. Real damage rarely
+// puts more than a few false candidates before the next record, so the budget
+// does not touch it, and a crafted file costs time linear in its size.
+// addons/inspect_tier.py spends the same budget.
+const (
+	resyncChecksumAllowance = 64 << 20
+	resyncChecksumCredit    = 16
+)
+
+// resyncBudget is the checksum work a walk may still spend on resync
+// candidates that fail their checksum. One walk shares one budget across all
+// its resyncs. Not safe for concurrent use; every walk makes its own.
+type resyncBudget struct{ left int64 }
+
+func newResyncBudget() *resyncBudget {
+	return &resyncBudget{left: resyncChecksumAllowance}
+}
+
 // resyncToNextRecord advances br past a corrupt or zero-filled hole until it is
 // positioned at the start of a plausible record, returning true on success and
 // false if it reaches the end of the segment first. *bytesRead is advanced by
-// the number of bytes skipped.
+// the number of bytes skipped. budget bounds the checksums it verifies in vain.
 //
 // Such holes are the signature of an unclean shutdown: Kula does not fsync every
 // write (see Close), so a power loss can leave the header's count/writeOff
@@ -825,7 +853,7 @@ func (t *Tier) readRecord(data []byte) (*AggregatedSample, error) {
 // silently hide every sample written after it. Only called on the active head
 // segment, where any zero/garbage is corruption rather than the legitimate
 // end-of-segment sentinel written on wrap.
-func (t *Tier) resyncToNextRecord(br *bufio.Reader, bytesRead *int64, segSize int64) bool {
+func (t *Tier) resyncToNextRecord(br *bufio.Reader, bytesRead *int64, segSize int64, budget *resyncBudget) bool {
 	// Checksummed records are verified whole. For records without a checksum,
 	// peek a window large enough to hold a typical record plus the following
 	// record's header, so resync can require TWO valid records in a row before
@@ -850,9 +878,16 @@ func (t *Tier) resyncToNextRecord(br *bufio.Reader, bytesRead *int64, segSize in
 				// A checksummed record proves itself; a misaligned read cannot
 				// match a trailer (barring a 1-in-2^32 coincidence), even where
 				// the record is too large for the cross-check below. A torn one
-				// is passed over too: the caller would skip it anyway.
-				if peekedRecordIntact(br, next) {
+				// is passed over too: the caller would skip it anyway. A record
+				// too large to peek whole passes on its header, for free.
+				if next > int64(br.Size()) {
 					return true
+				}
+				if budget.left >= next {
+					if peekedRecordIntact(br, next) {
+						return true
+					}
+					budget.left -= next
 				}
 			case *bytesRead+next == segSize:
 				// This record runs to the end of the segment: nothing follows to
@@ -870,12 +905,36 @@ func (t *Tier) resyncToNextRecord(br *bufio.Reader, bytesRead *int64, segSize in
 				return true
 			}
 		}
-		if _, err := br.Discard(1); err != nil {
+		step := t.resyncStep(hdr)
+		if _, err := br.Discard(step); err != nil {
 			return false
 		}
-		*bytesRead++
+		*bytesRead += int64(step)
+		budget.left += int64(step) * resyncChecksumCredit
 	}
 	return false
+}
+
+// resyncStep returns how far resync may advance from a position hdr (the
+// peeked bytes there) shows starts no record: to the next position whose kind
+// byte, four bytes in, could start one. A v2 tier's records all carry a kind
+// byte, so the positions before it are no candidates, and a hole of zeros is
+// passed at the speed of a byte search. A legacy tier advances one byte.
+func (t *Tier) resyncStep(hdr []byte) int {
+	if t.codecVer < codecVersion2 || len(hdr) <= 5 {
+		return 1
+	}
+	rest := hdr[5:]
+	next := bytes.IndexByte(rest, recordKindChecksummed)
+	if older := bytes.IndexByte(rest, recordKindBinary); older >= 0 && (next < 0 || older < next) {
+		next = older
+	}
+	if next < 0 {
+		// No kind byte in the window: the first position whose kind byte lies
+		// past it.
+		return len(hdr) - 4
+	}
+	return next + 1
 }
 
 // recordHeaderSane reports whether hdr — positioned at a record's 4-byte length
@@ -928,8 +987,10 @@ const oldRecordSearch = 16 << 20
 // oldRecordFrom returns the first offset at or after from, within the ring
 // and oldRecordSearch, where a record proves itself as resync accepts one: by
 // its checksum, or for a record without one by a sane header followed by
-// another. Caller holds t.mu or the tier is not shared yet.
-func (t *Tier) oldRecordFrom(from int64) (int64, bool) {
+// another. A caller that searches again from where a search left off passes
+// the same budget, so the searches together stay linear. Caller holds t.mu
+// or the tier is not shared yet.
+func (t *Tier) oldRecordFrom(from int64, budget *resyncBudget) (int64, bool) {
 	end := t.maxData
 	if info, err := t.file.Stat(); err == nil {
 		end = min(end, info.Size()-headerSize)
@@ -941,7 +1002,7 @@ func (t *Tier) oldRecordFrom(from int64) (int64, bool) {
 	br := scanReader(io.NewSectionReader(t.file, headerSize+from, end-from))
 	defer releaseScanReader(br)
 	var skipped int64
-	if !t.resyncToNextRecord(br, &skipped, end-from) {
+	if !t.resyncToNextRecord(br, &skipped, end-from, budget) {
 		return 0, false
 	}
 	return from + skipped, true
@@ -961,11 +1022,12 @@ func (t *Tier) verifyOldSegment() {
 	if !t.wrapped || t.codecVer < codecVersion2 {
 		return
 	}
+	budget := newResyncBudget()
 	// The remains of the record the unaccounted ones overwrote come next and
 	// may begin with what reads as a zero length, so resync past them
 	// before walking.
 	if end := t.unaccountedEnd(); end > t.oldestOff {
-		if off, ok := t.oldRecordFrom(end); ok {
+		if off, ok := t.oldRecordFrom(end, budget); ok {
 			t.oldestOff = off
 		}
 	}
@@ -974,7 +1036,7 @@ func (t *Tier) verifyOldSegment() {
 		if ok {
 			return
 		}
-		off, found := t.oldRecordFrom(max(broken, t.oldestOff+1))
+		off, found := t.oldRecordFrom(max(broken, t.oldestOff+1), budget)
 		if !found {
 			return
 		}

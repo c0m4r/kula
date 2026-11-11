@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"os"
@@ -105,6 +106,28 @@ func TestInspectorWalksTheRingLikeTheReader(t *testing.T) {
 			header = binary.LittleEndian.AppendUint64(header, uint64(base.Add(-time.Hour).UnixNano()))
 			patch(t, path, headerSize+stale, header)
 			return path, offsets[5]
+		},
+		"crafted checksum candidates": func(t *testing.T) (string, int64) {
+			// Every 13 bytes a sane checksummed header whose trailer never
+			// matches, claiming twice resync's checksum allowance in all.
+			// Once the allowance is spent, each reader can pay for the next
+			// candidate only after passing a few hundred bytes, and the record
+			// right after the run, larger than a candidate's claim, is passed
+			// over too: both must pass over the same ones.
+			path, offsets := write(t, 2<<20, 100, 120)
+			const claim = 4 << 10
+			if size := offsets[76] - offsets[75]; size <= 2*claim {
+				t.Fatalf("records are %d bytes, want more than twice a candidate's %d", size, claim)
+			}
+			unit := binary.LittleEndian.AppendUint32(nil, claim)
+			unit = append(unit, recordKindChecksummed)
+			unit = binary.LittleEndian.AppendUint64(unit, uint64(base.UnixNano()))
+			region := int(offsets[75] - offsets[5])
+			if work := region / len(unit) * (4 + claim); work < 2*resyncChecksumAllowance {
+				t.Fatalf("the candidates claim %d bytes of checksum work, want twice the %d allowance", work, resyncChecksumAllowance)
+			}
+			patch(t, path, headerSize+offsets[5], bytes.Repeat(unit, region/len(unit)))
+			return path, offsets[99]
 		},
 		"header past the file end": func(t *testing.T) (string, int64) {
 			path, offsets := write(t, 1<<20, 8, 2)

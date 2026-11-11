@@ -56,7 +56,13 @@ SCAN_BUFFER = 1 << 20  # the scan's bufio size; resync verifies no larger record
 MIN_SANE_NS = int(datetime.datetime(2000, 1, 1).timestamp()) * 10**9
 MAX_AHEAD_NS = 3600 * 10**9
 OLD_RECORD_SEARCH = 16 << 20  # oldRecordSearch
+# resyncChecksumAllowance and resyncChecksumCredit: the checksum work one walk
+# may spend on resync candidates that fail it, and what each byte resync
+# passes adds to it.
+RESYNC_CHECKSUM_ALLOWANCE = 64 << 20
+RESYNC_CHECKSUM_CREDIT = 16
 _NONZERO = re.compile(rb"[^\x00]")
+_KIND_BYTE = re.compile(rb"[\x02\x03]")
 
 
 # ---------------------------------------------------------------------------
@@ -1051,15 +1057,32 @@ class Ring:
         """peekedRecordIntact: a checksummed record verifies whole."""
         if record_len > SCAN_BUFFER:
             return True
-        payload = self.buf[HEADER_SIZE + pos + 4:HEADER_SIZE + pos + record_len]
-        try:
-            checked_record_body(payload)
-        except ValueError:
+        start = HEADER_SIZE + pos + 4
+        end = HEADER_SIZE + pos + record_len - RECORD_CHECKSUM_SIZE
+        if end - start < 1:
             return False
-        return True
+        # Checked in place: a copy of each candidate would double the work.
+        with memoryview(self.buf) as view:
+            crc = zlib.crc32(struct.pack("<I", record_len - 4))
+            crc = zlib.crc32(view[start:end], crc)
+        return crc == struct.unpack_from("<I", self.buf, end)[0]
 
-    def resync(self, pos: int, end: int) -> Optional[int]:
-        """resyncToNextRecord: the next plausible record start in [pos, end)."""
+    def resync_step(self, pos: int, window_end: int) -> int:
+        """resyncStep: how far to advance from pos, which starts no record."""
+        if self.codec_ver < CODEC_V2 or window_end - pos <= 5:
+            return 1
+        # The next position whose kind byte, four bytes in, could start one.
+        found = _KIND_BYTE.search(self.buf, HEADER_SIZE + pos + 5, HEADER_SIZE + window_end)
+        if found is None:
+            return window_end - pos - 4
+        return found.start() - HEADER_SIZE - pos - 4
+
+    def resync(self, pos: int, end: int, budget: List[int]) -> Optional[int]:
+        """resyncToNextRecord: the next plausible record start in [pos, end).
+
+        budget holds the checksum work the walk may still spend on candidates
+        that fail it (resyncBudget); every byte passed adds to it.
+        """
         while end - pos >= 13:
             if self.buf[HEADER_SIZE + pos:HEADER_SIZE + pos + 4] == b"\0\0\0\0":
                 # No record starts on a zero length: jump to 3 bytes before the
@@ -1067,7 +1090,9 @@ class Ring:
                 found = _NONZERO.search(self.buf, HEADER_SIZE + pos, HEADER_SIZE + end)
                 if found is None:
                     return None
-                pos = found.start() - HEADER_SIZE - 3
+                step = found.start() - HEADER_SIZE - 3 - pos
+                pos += step
+                budget[0] += step * RESYNC_CHECKSUM_CREDIT
                 continue
             window_end = min(pos + RESYNC_PEEK, end)
             data_len = self.header_sane(pos, window_end)
@@ -1076,8 +1101,13 @@ class Ring:
                 if pos + record_len > end:
                     pass  # runs past the segment: no record of it
                 elif self._byte(pos + 4) == RECORD_KIND_CHECKSUMMED:
-                    if self.intact(pos, record_len):
+                    if record_len > SCAN_BUFFER:
                         return pos
+                    # A candidate the budget cannot pay for is passed over.
+                    if budget[0] >= record_len:
+                        if self.intact(pos, record_len):
+                            return pos
+                        budget[0] -= record_len
                 elif pos + record_len == end:
                     return pos
                 elif record_len + 13 <= window_end - pos:
@@ -1085,7 +1115,9 @@ class Ring:
                         return pos
                 else:
                     return pos
-            pos += 1
+            step = self.resync_step(pos, window_end)
+            pos += step
+            budget[0] += step * RESYNC_CHECKSUM_CREDIT
         return None
 
     def old_record_from(self, pos: int, file_size: int) -> Optional[int]:
@@ -1093,15 +1125,16 @@ class Ring:
         end = min(self.max_data, file_size - HEADER_SIZE, pos + OLD_RECORD_SEARCH)
         if pos < 0 or pos >= end:
             return None
-        return self.resync(pos, end)
+        return self.resync(pos, end, [RESYNC_CHECKSUM_ALLOWANCE])
 
     def walk(self, start: int, size: int, resync: bool) -> Iterator[Tuple[int, int]]:
         """walkSegment: yields (offset, payload length) of each record."""
         pos, end = start, start + size
+        budget = [RESYNC_CHECKSUM_ALLOWANCE]
         while end - pos >= 4:
             data_len = self._u32(pos)
             if not self.valid_len(data_len) or pos + 4 + data_len > end:
-                nxt = self.resync(pos, end) if resync else None
+                nxt = self.resync(pos, end, budget) if resync else None
                 if nxt is None:
                     return
                 pos = nxt
