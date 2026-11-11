@@ -140,6 +140,7 @@
     "ai_prompt_load": "過去5分間のサーバー負荷を確認してください。",
     "ai_prompt_network": "いくつのネットワークインターフェースを監視していますか？",
     "ai_analyse_prompt": "{title} のデータを分析してください。",
+    "ai_answer_truncated": "回答が長すぎるため、残りは表示されません。",
     "select_all": "すべて選択",
     "deselect_all": "すべて解除",
     "applications": "アプリケーション",

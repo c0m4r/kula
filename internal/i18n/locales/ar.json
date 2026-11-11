@@ -140,6 +140,7 @@
     "ai_prompt_load": "تحقق من حمل الخادم خلال آخر 5 دقائق.",
     "ai_prompt_network": "كم عدد واجهات الشبكة التي نراقبها؟",
     "ai_analyse_prompt": "حلل هذه البيانات لـ {title}.",
+    "ai_answer_truncated": "كانت الإجابة طويلة جدًا؛ لا يُعرض الباقي.",
     "select_all": "تحديد الكل",
     "deselect_all": "إلغاء تحديد الكل",
     "applications": "التطبيقات",

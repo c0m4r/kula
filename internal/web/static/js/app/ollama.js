@@ -7,7 +7,7 @@
 import { state, escapeHTML } from './state.js';
 import { i18n } from './i18n.js';
 import { apiUrl } from './api.js';
-import { createSSEReader } from './ai-stream.js';
+import { appendAnswer, createFrameRenderer, createSSEReader } from './ai-stream.js';
 
 // ---- Conversation history (max 20 turns kept per session in memory) ----
 const MAX_HISTORY = 20;
@@ -189,7 +189,7 @@ function renderMessagesForActiveSession() {
         renderWelcomePrompts(messagesEl);
         return;
     }
-    for (const m of sess.history) appendMessage(m.role, m.content, false);
+    for (const m of sess.history) appendMessage(m.role, m.content, false, m.truncated);
 }
 
 /** Render a welcome block with example prompts the user can click to send. */
@@ -540,7 +540,7 @@ function clearConversation() {
     if (sess.kind === 'current') fetchSessionContext();
 }
 
-function appendMessage(role, content, streaming = false) {
+function appendMessage(role, content, streaming = false, truncated = false) {
     const messages = document.getElementById('ai-messages');
     if (!messages) return null;
 
@@ -554,7 +554,7 @@ function appendMessage(role, content, streaming = false) {
     const body = document.createElement('div');
     body.className = 'ai-msg-body';
     if (streaming) body.classList.add('ai-typing');
-    body.innerHTML = renderMarkdownLite(content);
+    paintAnswer(body, content, truncated);
 
     div.appendChild(label);
     div.appendChild(body);
@@ -636,7 +636,9 @@ function renderMarkdownLite(text) {
 
 /**
  * streamChatResponse fetches /api/ollama/chat and streams the SSE response
- * into assistantBody, returning the full accumulated content string.
+ * into assistantBody, returning { content, truncated }. The answer is
+ * repainted at most once per animation frame, and kept to AI_MAX_ANSWER: past
+ * that the stream is closed and a notice says the answer was cut.
  * Releases the reader lock even on error. [M1]
  */
 async function streamChatResponse({ prompt, messages, context, assistantBody }) {
@@ -648,7 +650,7 @@ async function streamChatResponse({ prompt, messages, context, assistantBody }) 
         headers,
         body: JSON.stringify({
             prompt,
-            messages: messages.slice(-MAX_HISTORY),
+            messages: messages.slice(-MAX_HISTORY).map(({ role, content }) => ({ role, content })),
             context,
             lang: i18n.currentLang,
             model: selectedModel || undefined,
@@ -663,7 +665,15 @@ async function streamChatResponse({ prompt, messages, context, assistantBody }) 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     const sse = createSSEReader();
-    let fullContent = '';
+    let content = '';
+    let truncated = false;
+    let fetchingMetrics = false;
+    const view = createFrameRenderer(() => {
+        if (!assistantBody) return;
+        paintAnswer(assistantBody, content, truncated, fetchingMetrics);
+        const msgs = document.getElementById('ai-messages');
+        if (msgs) scrollToBottom(msgs); // [M8]
+    });
 
     try { // [M1] ensure reader is always released
         read: while (true) {
@@ -675,30 +685,44 @@ async function streamChatResponse({ prompt, messages, context, assistantBody }) 
                 if (event === 'error') throw new Error(typeof data === 'string' && data ? data : 'stream error');
                 if (event === 'tool_call') {
                     // Show a temporary indicator while the tool executes.
-                    if (assistantBody) {
-                        assistantBody.innerHTML = renderMarkdownLite(fullContent) +
-                            '<span class="ai-tool-call">🔧 Fetching metrics…</span>';
-                        const msgs = document.getElementById('ai-messages');
-                        if (msgs) scrollToBottom(msgs);
-                    }
+                    fetchingMetrics = true;
+                    view.schedule();
                     continue;
                 }
                 if (event !== 'message' || typeof data !== 'string') continue;
 
-                fullContent += data;
-                if (assistantBody) {
-                    assistantBody.innerHTML = renderMarkdownLite(fullContent);
-                    const msgs = document.getElementById('ai-messages');
-                    if (msgs) scrollToBottom(msgs); // [M8]
+                fetchingMetrics = false;
+                ({ answer: content, truncated } = appendAnswer(content, data));
+                view.schedule();
+                if (truncated) {
+                    // Nothing more will be shown: close the stream, which also
+                    // stops the server reading the backend.
+                    await reader.cancel().catch(() => {});
+                    break read;
                 }
             }
         }
+        fetchingMetrics = false;
+        view.flush();
     } finally {
+        view.cancel(); // an error message replaces the answer; no late repaint
         reader.releaseLock(); // [M1]
     }
 
     assistantBody?.classList.remove('ai-typing');
-    return fullContent;
+    return { content, truncated };
+}
+
+/** Paint an assistant answer, with the tool-call indicator or the cut notice. */
+function paintAnswer(body, content, truncated, fetchingMetrics = false) {
+    body.innerHTML = renderMarkdownLite(content) +
+        (fetchingMetrics ? '<span class="ai-tool-call">🔧 Fetching metrics…</span>' : '');
+    if (truncated) {
+        const notice = document.createElement('div');
+        notice.className = 'ai-truncated';
+        notice.textContent = i18n.t('ai_answer_truncated');
+        body.appendChild(notice);
+    }
 }
 
 // ---- Send ----
@@ -727,14 +751,14 @@ async function sendAnalysis() {
     setUIBusy(true);
 
     try {
-        const fullContent = await streamChatResponse({
+        const { content, truncated } = await streamChatResponse({
             prompt,
             messages: sess.history,
             context: sess.context,
             assistantBody,
         });
-        if (fullContent) {
-            sess.history.push({ role: 'assistant', content: fullContent });
+        if (content) {
+            sess.history.push({ role: 'assistant', content, truncated });
             if (sess.history.length > MAX_HISTORY) sess.history = sess.history.slice(-MAX_HISTORY);
         }
     } catch (err) {
@@ -795,14 +819,14 @@ export async function analyzeChartData(chartTitle, csvData) {
     setUIBusy(true);
 
     try {
-        const fullContent = await streamChatResponse({
+        const { content, truncated } = await streamChatResponse({
             prompt,
             messages: sess.history,
             context: sess.context,
             assistantBody,
         });
-        if (fullContent) {
-            sess.history.push({ role: 'assistant', content: fullContent });
+        if (content) {
+            sess.history.push({ role: 'assistant', content, truncated });
             if (sess.history.length > MAX_HISTORY) sess.history = sess.history.slice(-MAX_HISTORY);
         }
     } catch (err) {

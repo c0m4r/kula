@@ -149,6 +149,7 @@
     "ai_prompt_load": "Check server load over the last 5 minutes.",
     "ai_prompt_network": "How many network interfaces do we monitor?",
     "ai_analyse_prompt": "Analyse this data for {title}.",
+    "ai_answer_truncated": "The answer was too long; the rest is not shown.",
     "select_all": "Select all",
     "deselect_all": "Deselect all",
     "applications": "Applications",

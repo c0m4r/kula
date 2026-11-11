@@ -140,6 +140,7 @@
     "ai_prompt_load": "Sprawdź obciążenie serwera w ciągu ostatnich 5 minut.",
     "ai_prompt_network": "Ile interfejsów sieciowych monitorujemy?",
     "ai_analyse_prompt": "Przeanalizuj te dane dla {title}.",
+    "ai_answer_truncated": "Odpowiedź była zbyt długa; reszta nie jest wyświetlana.",
     "select_all": "Zaznacz wszystko",
     "deselect_all": "Odznacz wszystko",
     "applications": "Aplikacje",

@@ -140,6 +140,7 @@
     "ai_prompt_load": "Verificar a carga do servidor nos últimos 5 minutos.",
     "ai_prompt_network": "Quantas interfaces de rede monitorizamos?",
     "ai_analyse_prompt": "Analise estes dados para {title}.",
+    "ai_answer_truncated": "A resposta era longa demais; o restante não é exibido.",
     "select_all": "Selecionar tudo",
     "deselect_all": "Desmarcar tudo",
     "applications": "Aplicações",

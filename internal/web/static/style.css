@@ -4444,6 +4444,12 @@ html.tv-mode.tv-idle * {
     opacity: 0.8;
 }
 
+.ai-truncated {
+    margin-top: 0.4rem;
+    font-size: 0.78rem;
+    color: var(--accent-yellow);
+}
+
 /* Typing cursor */
 .ai-typing::after {
     content: '▋';

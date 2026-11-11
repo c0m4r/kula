@@ -140,6 +140,7 @@
     "ai_prompt_load": "Serverauslastung der letzten 5 Minuten prüfen.",
     "ai_prompt_network": "Wie viele Netzwerkschnittstellen überwachen wir?",
     "ai_analyse_prompt": "Analysiere diese Daten für {title}.",
+    "ai_answer_truncated": "Die Antwort war zu lang; der Rest wird nicht angezeigt.",
     "select_all": "Alle auswählen",
     "deselect_all": "Alle abwählen",
     "applications": "Anwendungen",

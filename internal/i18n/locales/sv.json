@@ -140,6 +140,7 @@
     "ai_prompt_load": "Kontrollera serverbelastningen de senaste 5 minuterna.",
     "ai_prompt_network": "Hur många nätverksgränssnitt övervakar vi?",
     "ai_analyse_prompt": "Analysera dessa data för {title}.",
+    "ai_answer_truncated": "Svaret var för långt; resten visas inte.",
     "select_all": "Markera alla",
     "deselect_all": "Avmarkera alla",
     "applications": "Applikationer",

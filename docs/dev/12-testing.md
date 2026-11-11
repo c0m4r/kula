@@ -56,7 +56,8 @@ It also runs `chart_bundle_test.mjs`. That test checks that the vendored Chart.j
 only the dashboard's components and keeps time-axis ticks on local hours across a DST switch. It
 also covers the calendar math of the native `Date` adapter.
 `ollama_test.go` runs [`ai_stream_test.mjs`](../../internal/web/testdata/ai_stream_test.mjs), which
-feeds the AI panel's stream reader the chat's Server-Sent Events byte by byte.
+feeds the AI panel's stream reader the chat's Server-Sent Events byte by byte, and checks the
+answer's length cap and that its repaints are coalesced into animation frames.
 `TestHistoryResponsesMatchDashboardContract` (storage) checks the `/api/history` contract from
 both sides. It queries real stores the way the dashboard does (unaligned millisecond bounds and
 its point budget): raw and 2s-bucketed five-minute views, a right-edge clip, an outage, an empty
@@ -276,7 +277,14 @@ refused with 401, which a page sees only as a socket closing before it opens. Th
 must show the login screen, stop reconnecting behind it, and stream again after signing in. It
 takes about ten seconds.
 
-Run all four fixtures with
+[`ai_panel_test.mjs`](../../internal/web/testdata/ai_panel_test.mjs) runs the real `kula serve`
+with the AI assistant pointed at a fake Ollama on loopback and drives the AI panel. An answer
+must stream and render as markdown, and a chat must run on the model picked in the panel,
+carrying only `system`, `user` and `assistant` turns. A failing backend must show a generic
+error without its address. A 1 MiB answer in 8-byte chunks must end within seconds, cut at the
+panel's cap with its notice, without stopping the page for a second. It takes a few seconds.
+
+Run all five fixtures with
 [`addons/test-frontend-regressions.sh`](../../addons/test-frontend-regressions.sh), which needs
 Node.js 22+, a Chromium/Chrome executable and Go. It reports the skipped optional local
 dependency when Node.js or the browser is missing. `./addons/check.sh` does not run the

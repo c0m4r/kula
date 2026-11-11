@@ -114,7 +114,7 @@ those charts the same way (`applySpanGaps()`).
 | `alerts.js` | Alert evaluation (clock sync, low entropy, overload) + dropdown |
 | `i18n.js` | Fetches translations from `/api/i18n` and applies to the DOM |
 | `ollama.js` | AI assistant panel; SSE streaming from `/api/ollama/chat` |
-| `ai-stream.js` | Import-free reader of the AI chat's Server-Sent Events, whose data payloads are JSON strings |
+| `ai-stream.js` | Import-free reader of the AI chat's Server-Sent Events, whose data payloads are JSON strings; caps the answer at 32 KiB and coalesces its repaints into animation frames |
 
 Modules keep preferences in `localStorage` only through `prefs.js`. When site data is blocked,
 every access to `localStorage` throws, and a full quota makes writes throw. `readPref()` and

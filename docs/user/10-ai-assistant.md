@@ -39,7 +39,8 @@ When enabled, a 🤖 button appears in the dashboard header.
   in the history API; up to 5 tool-call rounds of 8 calls per turn).
 - **Model selector** — switch between any locally-available Ollama model mid-session.
 - **Draggable & resizable panel** — drag by the header, resize from the bottom-right grip.
-- **Streaming responses** with markdown rendering.
+- **Streaming responses** with markdown rendering. The panel shows up to 32,768 characters of
+  an answer; a longer one is cut there with a notice, and the rest is not fetched.
 
 ## How requests are protected
 

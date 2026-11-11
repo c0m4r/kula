@@ -127,10 +127,11 @@ per-application reducer branches.
   per-card document listeners that retain discarded cards. Keep opening and menu interactions
   from dismissing the dropdown, and preserve dismissal on unrelated bubbling icon clicks.
 - Run `./addons/test-frontend-regressions.sh` when changing viewport culling, split-card
-  teardown/dropdowns, card placement or Rearrange mode, or the vendored Chart.js version. It
-  covers mutation retention, point visibility after trimming, split-card listener/instance
-  cleanup and card placement, and drives the real `kula serve` in Chromium to check live
-  streaming versus bucketed refreshes and rearranging with real input. These browser
+  teardown/dropdowns, card placement or Rearrange mode, the AI panel, or the vendored Chart.js
+  version. It covers mutation retention, point visibility after trimming, split-card
+  listener/instance cleanup and card placement, and drives the real `kula serve` in Chromium to
+  check live streaming versus bucketed refreshes, rearranging with real input, and the AI
+  panel against a fake Ollama. These browser
   fixtures require Node.js 22+, Chromium/Chrome and Go. The separate Frontend workflow
   (`.github/workflows/frontend.yml`) runs each with its own timeout; `./addons/check.sh` does not.
 - `js/chartjs/chartjs-bundle.min.js` is generated from `addons/chartjs/` by
