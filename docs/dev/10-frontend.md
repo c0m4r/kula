@@ -455,6 +455,7 @@ Package: [`internal/tui`](../../internal/tui/), built with **Bubble Tea** + **Li
 | [`history.go`](../../internal/tui/history.go) | The History view: chart definitions, window/range state, background loads |
 | [`chart.go`](../../internal/tui/chart.go) | Braille line charts with envelopes, axes and time ticks; block area charts for live trends |
 | [`styles.go`](../../internal/tui/styles.go) | Adaptive foreground palette (no painted background) shared by every view |
+| [`sanitize.go`](../../internal/tui/sanitize.go) | `cleanText`, which makes host-provided strings safe to write to the terminal |
 
 `tui.RunHeadless(collector, tui.Options{...})` drives it. The live views sample through the
 TUI's own collector. The History view queries a `tui.HistorySource`, which `cmd/kula` provides
@@ -472,6 +473,13 @@ midpoints, and a spacing wider than about two steps breaks the line (`historyDat
 
 Layout rules the views rely on:
 
+- Every string that comes from the host (hostname, OS line, mount point, filesystem device and
+  type, interface, disk, sensor and GPU names, GPU driver, clock source) goes through
+  `cleanText` before it is styled or measured. It replaces C0 and C1 controls, DEL,
+  bidirectional controls and invalid UTF-8 with U+FFFD, so a crafted volume label or interface
+  name cannot send an escape sequence (clipboard write, window title, screen repaint) to the
+  operator's terminal. `truncatePlain` cleans its input too.
+  `TestHostStringsCannotWriteToTheTerminal` covers each place a host string is drawn.
 - Three text tones, each with one job (documented in `styles.go`): text for values and names,
   muted for labels, units, details and hints, faint for decoration only (rules, separators, bar
   tracks). Faint is too low in contrast for information, especially on light backgrounds.

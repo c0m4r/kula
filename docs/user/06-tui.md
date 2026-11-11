@@ -140,4 +140,9 @@ The header shows the hostname, and the Overview view closes with an
 OS · kernel · architecture line, unless `global.show_system_info` is `false`, in which case
 both are hidden.
 
+Names that come from the host (the hostname, mount points, which can carry a volume label,
+and interface, disk, sensor and GPU names) are shown with control characters and
+bidirectional-text controls replaced by `�`, so a crafted name cannot send escape sequences
+to your terminal.
+
 Next: [Authentication](07-authentication.md).

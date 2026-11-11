@@ -113,7 +113,7 @@ func (m model) renderHeader() string {
 	left := sBrand.Render("KULA")
 	if m.showSystemInfo && m.sample != nil && m.sample.System.Hostname != "" {
 		hostWidth := clamp(m.width/3, 10, 32)
-		left += sFaint.Render(" / ") + sStrong.Render(truncatePlain(m.sample.System.Hostname, hostWidth))
+		left += sFaint.Render(" / ") + sStrong.Render(truncatePlain(cleanText(m.sample.System.Hostname), hostWidth))
 	}
 
 	if m.width >= 88 && m.sample != nil && m.sample.System.UptimeHuman != "" {
@@ -470,13 +470,13 @@ func (m model) overviewLines(width int) []string {
 	hostItems := []metricItem{
 		{"Uptime", fallback(sample.System.UptimeHuman, "—")},
 		{"Processes", fmt.Sprintf("%d · %d running", sample.Process.Total, sample.Process.Running)},
-		{"Clock", clockText(sample.System.ClockSync, sample.System.ClockSource)},
+		{"Clock", clockText(sample.System.ClockSync, cleanText(sample.System.ClockSource))},
 		{"Users", userCountText(sample.System.UserCount)},
 	}
 	lines = append(lines, metricGrid(hostItems, width, responsiveColumns(width, 1, 4))...)
 
 	if m.showSystemInfo {
-		system := strings.TrimSpace(strings.Join([]string{m.osName, m.kernelVersion, m.cpuArch}, "  ·  "))
+		system := cleanText(strings.TrimSpace(strings.Join([]string{m.osName, m.kernelVersion, m.cpuArch}, "  ·  ")))
 		if system != "" {
 			lines = append(lines, sMuted.Render(truncatePlain(system, width)))
 		}
@@ -489,7 +489,7 @@ func (m model) overviewLines(width int) []string {
 			detail += fmt.Sprintf("  ·  %.1f°C", gpu.Temperature)
 		}
 		lines = append(lines, sMuted.Render("GPU  ")+
-			sText.Render(truncatePlain(gpu.Name, max(8, width-lipgloss.Width(detail)-7)))+
+			sText.Render(truncatePlain(cleanText(gpu.Name), max(8, width-lipgloss.Width(detail)-7)))+
 			sFaint.Render("  ")+statusStyle(gpu.LoadPct).Render(detail))
 	}
 
@@ -580,7 +580,7 @@ func (m model) cpuLines(width int) []string {
 			lines = append(lines, renderTemperature("Package", cpu.Temperature, width))
 		}
 		for _, sensor := range cpu.Sensors {
-			lines = append(lines, renderTemperature(sensor.Name, sensor.Value, width))
+			lines = append(lines, renderTemperature(cleanText(sensor.Name), sensor.Value, width))
 		}
 	}
 	return lines
@@ -653,7 +653,7 @@ func (m model) networkLines(width int) []string {
 		for _, iface := range network.Interfaces {
 			drops := iface.RxDrop + iface.TxDrop
 			lines = append(lines, tableRow([]string{
-				iface.Name,
+				cleanText(iface.Name),
 				fmtBitRate(iface.RxMbps),
 				fmtBitRate(iface.TxMbps),
 				fmt.Sprintf("%.0f", iface.RxPPS),
@@ -664,7 +664,7 @@ func (m model) networkLines(width int) []string {
 	} else {
 		for _, iface := range network.Interfaces {
 			lines = append(lines,
-				sStrong.Render(truncatePlain(iface.Name, max(6, width/3)))+
+				sStrong.Render(truncatePlain(cleanText(iface.Name), max(6, width/3)))+
 					sMuted.Render("  ↓ ")+valueStyle(fmtBitRate(iface.RxMbps), sText).Render(fmtBitRate(iface.RxMbps))+
 					sMuted.Render("  ↑ ")+valueStyle(fmtBitRate(iface.TxMbps), sText).Render(fmtBitRate(iface.TxMbps)),
 				sMuted.Render(fmt.Sprintf("  packets %.0f ↓  %.0f ↑  ·  drops %d",
@@ -725,7 +725,7 @@ func (m model) diskLines(width int) []string {
 		)
 		for _, device := range disks.Devices {
 			lines = append(lines, tableRow([]string{
-				device.Name,
+				cleanText(device.Name),
 				fmt.Sprintf("%.1f", device.ReadsPerSec),
 				fmt.Sprintf("%.1f", device.WritesPerSec),
 				fmtByteRate(device.ReadBytesPS),
@@ -740,7 +740,7 @@ func (m model) diskLines(width int) []string {
 	} else {
 		for _, device := range disks.Devices {
 			lines = append(lines,
-				sStrong.Render(truncatePlain(device.Name, max(6, width/4)))+
+				sStrong.Render(truncatePlain(cleanText(device.Name), max(6, width/4)))+
 					sMuted.Render("  R ")+valueStyle(fmtByteRate(device.ReadBytesPS), sText).Render(fmtByteRate(device.ReadBytesPS))+
 					sMuted.Render("  W ")+valueStyle(fmtByteRate(device.WriteBytesPS), sText).Render(fmtByteRate(device.WriteBytesPS))+
 					"  "+statusStyle(device.Utilization).Render(fmt.Sprintf("%.1f%%", device.Utilization)),
@@ -755,7 +755,7 @@ func (m model) diskLines(width int) []string {
 		labelWidth := newGaugeLayout(width).labelWidth
 		for _, filesystem := range disks.FileSystems {
 			detail := fmtBytes(filesystem.Used) + " / " + fmtBytes(filesystem.Total)
-			mount := filesystem.MountPoint
+			mount := cleanText(filesystem.MountPoint)
 			if lipgloss.Width(mount) > labelWidth {
 				// A long mount point gets its own line instead of being cut
 				// to an ambiguous prefix such as "/var/lib/do".
@@ -765,7 +765,7 @@ func (m model) diskLines(width int) []string {
 			lines = append(lines, renderGauge(mount, filesystem.UsedPct, detail, width)...)
 			if width >= 76 && (filesystem.Device != "" || filesystem.FSType != "") {
 				lines = append(lines, sMuted.Render("  "+
-					truncatePlain(strings.TrimSpace(filesystem.Device+"  "+filesystem.FSType), width-2)))
+					truncatePlain(cleanText(strings.TrimSpace(filesystem.Device+"  "+filesystem.FSType)), width-2)))
 			}
 		}
 	}
@@ -837,10 +837,10 @@ func (m model) gpuLines(width int) []string {
 		if index > 0 {
 			lines = append(lines, "")
 		}
-		title := fmt.Sprintf("%d  %s", gpu.Index, fallback(gpu.Name, "GPU"))
+		title := fmt.Sprintf("%d  %s", gpu.Index, fallback(cleanText(gpu.Name), "GPU"))
 		lines = append(lines,
 			sStrong.Render(truncatePlain(title, max(1, width-18)))+
-				sMuted.Render("  "+fallback(gpu.Driver, "unknown driver")))
+				sMuted.Render("  "+fallback(cleanText(gpu.Driver), "unknown driver")))
 		lines = append(lines, renderGauge("Core", gpu.LoadPct, "", width)...)
 		if gpu.VRAMTotal > 0 {
 			lines = append(lines, renderGauge("VRAM", gpu.VRAMUsedPct,
@@ -890,19 +890,21 @@ func assessHealth(sample *collector.Sample) (healthLevel, []string) {
 		pressure("swap", sample.Swap.UsedPercent)
 	}
 	for _, device := range sample.Disks.Devices {
+		name := cleanText(device.Name)
 		switch {
 		case device.Utilization >= 95:
-			add(fmt.Sprintf("%s %.0f%% busy", device.Name, device.Utilization), healthCritical)
+			add(fmt.Sprintf("%s %.0f%% busy", name, device.Utilization), healthCritical)
 		case device.Utilization >= 80:
-			add(fmt.Sprintf("%s %.0f%% busy", device.Name, device.Utilization), healthWatch)
+			add(fmt.Sprintf("%s %.0f%% busy", name, device.Utilization), healthWatch)
 		}
 	}
 	for _, filesystem := range sample.Disks.FileSystems {
 		// "disk /" rather than a bare "/", which reads as a separator.
+		mount := cleanText(filesystem.MountPoint)
 		if filesystem.UsedPct >= 90 {
-			add(fmt.Sprintf("disk %s %.0f%% full", filesystem.MountPoint, filesystem.UsedPct), healthCritical)
+			add(fmt.Sprintf("disk %s %.0f%% full", mount, filesystem.UsedPct), healthCritical)
 		} else if filesystem.UsedPct >= 80 {
-			add(fmt.Sprintf("disk %s %.0f%% full", filesystem.MountPoint, filesystem.UsedPct), healthWatch)
+			add(fmt.Sprintf("disk %s %.0f%% full", mount, filesystem.UsedPct), healthWatch)
 		}
 	}
 	if sample.CPU.Temperature >= 90 {
@@ -1415,10 +1417,14 @@ func padLeft(value string, width int) string {
 	return strings.Repeat(" ", max(0, width-lipgloss.Width(value))) + value
 }
 
+// truncatePlain cuts plain text to width columns. It cleans its input as
+// well, so a host string that reaches it without cleanText still cannot carry
+// an escape sequence, or be cut inside one.
 func truncatePlain(value string, width int) string {
 	if width <= 0 {
 		return ""
 	}
+	value = cleanText(value)
 	if lipgloss.Width(value) <= width {
 		return value
 	}
