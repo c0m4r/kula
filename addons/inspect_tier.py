@@ -98,8 +98,17 @@ def _get_u64(data: bytes, off: int) -> Tuple[int, int]:
     return struct.unpack_from("<Q", data, off)[0], off + 8
 
 
+F32_MAX = struct.unpack("<f", b"\xff\xff\x7f\x7f")[0]
+
+
 def _get_f32(data: bytes, off: int) -> Tuple[float, int]:
     v = struct.unpack_from("<f", data, off)[0]
+    # As Go's getF32: records from before values were saturated on write can
+    # hold an infinity (read as the float32 limit) or a NaN (read as 0).
+    if math.isnan(v):
+        v = 0.0
+    elif math.isinf(v):
+        v = math.copysign(F32_MAX, v)
     return round(float(v), 6), off + 4
 
 
@@ -109,6 +118,9 @@ def _get_i64(data: bytes, off: int) -> Tuple[int, int]:
 
 def _get_f64(data: bytes, off: int) -> Tuple[float, int]:
     v = struct.unpack_from("<d", data, off)[0]
+    # As Go's finiteF64: an infinity or NaN reads as 0.
+    if not math.isfinite(v):
+        v = 0.0
     return v, off + 8
 
 

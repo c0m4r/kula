@@ -142,13 +142,42 @@ var encPool = sync.Pool{New: func() any { b := make([]byte, 0, 3000); return &b 
 
 // putF32 encodes a float64 as a float32 in little-endian byte order.
 // Rate/percentage fields need at most 7 significant digits — float32 is sufficient.
+// A value float32 cannot hold is stored as the nearest one it can (finiteF32):
+// an infinity or NaN on disk would come back in every history response that
+// covers the record, and encoding/json refuses to encode either.
 func putF32(b []byte, v float64) {
-	binary.LittleEndian.PutUint32(b, math.Float32bits(float32(v)))
+	binary.LittleEndian.PutUint32(b, math.Float32bits(float32(finiteF32(v))))
 }
 
-// getF32 decodes a little-endian float32 to float64.
+// getF32 decodes a little-endian float32 to float64. An infinity or NaN, as
+// records written before putF32 saturated can hold, reads back as putF32
+// stores it now.
 func getF32(b []byte) float64 {
-	return float64(math.Float32frombits(binary.LittleEndian.Uint32(b)))
+	return finiteF32(float64(math.Float32frombits(binary.LittleEndian.Uint32(b))))
+}
+
+// finiteF32 returns v limited to what a float32 holds as a finite number: a
+// value beyond its range, infinities included, becomes the largest magnitude
+// of its sign, and NaN becomes 0.
+func finiteF32(v float64) float64 {
+	switch {
+	case math.IsNaN(v):
+		return 0
+	case v > math.MaxFloat32:
+		return math.MaxFloat32
+	case v < -math.MaxFloat32:
+		return -math.MaxFloat32
+	}
+	return v
+}
+
+// finiteF64 returns v, or 0 for an infinity or NaN: the same guard for the
+// fields stored as float64.
+func finiteF64(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return v
 }
 
 // ---- Length-prefixed string helpers -----------------------------------------
@@ -400,7 +429,7 @@ func appendFixed(buf []byte, s *collector.Sample) []byte {
 	binary.LittleEndian.PutUint32(b[182:], uint32(int32(s.Process.Blocked)))
 	binary.LittleEndian.PutUint32(b[186:], uint32(int32(s.Process.Threads)))
 	// System (14 bytes)
-	binary.LittleEndian.PutUint64(b[190:], math.Float64bits(s.System.Uptime))
+	binary.LittleEndian.PutUint64(b[190:], math.Float64bits(finiteF64(s.System.Uptime)))
 	ent := s.System.Entropy
 	if ent < 0 {
 		ent = 0
@@ -922,7 +951,7 @@ func decodeFixed(data []byte) (*collector.Sample, int, error) {
 	s.Process.Blocked = int(int32(binary.LittleEndian.Uint32(data[182:])))
 	s.Process.Threads = int(int32(binary.LittleEndian.Uint32(data[186:])))
 	// System
-	s.System.Uptime = math.Float64frombits(binary.LittleEndian.Uint64(data[190:]))
+	s.System.Uptime = finiteF64(math.Float64frombits(binary.LittleEndian.Uint64(data[190:])))
 	s.System.Entropy = int(int32(binary.LittleEndian.Uint32(data[198:])))
 	s.System.UserCount = decodeUserCount(data[202])
 	s.System.ClockSync = data[203] != 0
