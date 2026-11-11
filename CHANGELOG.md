@@ -42,7 +42,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Split charts expand and collapse like every other chart
 - Disk temperatures and power supplies are read every 10 s, set with `collection.disk_temp_interval` and `collection.power_supply_interval`
 - PostgreSQL reads table health and database size once a minute, `max_connections` once per session
-- Containers are inspected once instead of every second, and removed ones are forgotten
+- Containers are inspected once instead of every second, removed ones are forgotten, and their list takes far less memory
 - Hosts without a GPU look for one once a minute
 - Remove systemd service ProtectClock that prevents reading clock
 - Apache2 charts and the AI assistant show current request and byte rates
@@ -75,7 +75,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - `https://` targets and PostgreSQL `verify-ca`/`verify-full` work under the sandbox
 - An `https://` Ollama URL without a port works under the sandbox
 - Logged-in user count works under the sandbox and on arm64, with a systemd-logind fallback
-- History no longer goes missing after a tier wraps with growing records, or after the clock stepped back, restarts included
+- History no longer goes missing after a tier wraps with growing records, after a crash, or after the clock stepped back, restarts included
 - A crash no longer loses the rollup of the minute it interrupted
 - Seek index temp files left by a crash are cleaned up
 - A rolling view no longer stays marked "partial" after one late refresh
@@ -95,7 +95,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Used memory and swap can no longer read as an absurd value
 - `web.graphs.gpu_temp` takes effect
 - Split charts no longer merge devices whose names differ only in punctuation
-- A malformed aggregation preference no longer blanks the dashboard
+- A malformed aggregation or Focus mode preference no longer blanks the dashboard
 - `kula hash-password` refuses an empty password, answers `--help` and keeps spaces in a piped password
 - Rolling views no longer announce every refresh to screen readers
 - The AI assistant's metrics tool keeps to the history range limits
@@ -104,6 +104,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Custom metric values beyond the 32-bit float range are refused and logged once
 - Tier 1 and 2 rollups no longer carry needless statistics, so they retain more history
 - Shutdown waits for the sample being collected before closing storage
+- Live views follow the server's clock when the browser's is off
+- A dashboard in a background tab no longer piles up chart memory
+- Selecting charts in Focus mode no longer pins their crosshair
 
 ### Security
 
@@ -117,7 +120,9 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - A startup warning when `allowed_origins` without `origin_validation` exposes the live stream
 - DNS rebinding protection: with auth disabled, and on `/metrics` without a token, only local host names and `web.security.allowed_hosts` are answered
 - History requests can no longer be made to read the whole raw tier
-- Login rate limits count an IPv6 client by its /64
+- Login rate limits count an IPv6 client by its /64, and a NAT64 one by its IPv4 address
+- Behind `trust_proxy`, rate limits use the proxy's own `X-Forwarded-For` entry, and only a valid address
+- A startup warning when a `unix_socket` without `trust_proxy` gives every client one login limit
 
 ## [0.21.0] - 2026-10-01
 
