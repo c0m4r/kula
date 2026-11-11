@@ -325,7 +325,7 @@ func (s *Scanner) do(method, path string, headers map[string]string, body string
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if s.verbose {
-		fmt.Printf("    %s %s -> %d (%d bytes)\n", method, path, resp.StatusCode, len(raw))
+		fmt.Printf("    %s %s -> %d (%d bytes)\n", printable(method), printable(path), resp.StatusCode, len(raw))
 	}
 	return httpResult{status: resp.StatusCode, header: resp.Header, body: string(raw)}
 }

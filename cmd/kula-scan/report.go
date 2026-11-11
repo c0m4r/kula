@@ -89,26 +89,28 @@ func (r *Report) writeText(w io.Writer, noColor bool) {
 		groups[f.Category] = append(groups[f.Category], f)
 	}
 
-	_, _ = fmt.Fprintf(w, "\n%s %s\n", color(cBold, "kula-scan — target:"), r.Target)
+	_, _ = fmt.Fprintf(w, "\n%s %s\n", color(cBold, "kula-scan — target:"), printable(r.Target))
 
+	// Any field may quote the target (a header value, a certificate name, an
+	// error message), so each is written through printable.
 	for _, cat := range order {
-		_, _ = fmt.Fprintf(w, "\n%s\n", color(cBold, strings.ToUpper(cat)))
+		_, _ = fmt.Fprintf(w, "\n%s\n", color(cBold, strings.ToUpper(printable(cat))))
 		for _, f := range groups[cat] {
 			tag := fmt.Sprintf("%-5s", f.Status.String())
-			line := fmt.Sprintf("  %s %-10s %s", color(statusColor(f.Status), tag), f.ID, f.Title)
+			line := fmt.Sprintf("  %s %-10s %s", color(statusColor(f.Status), tag), printable(f.ID), printable(f.Title))
 			// Severity tag only matters for things that went wrong.
 			if f.Status == StatusFail || f.Status == StatusWarn {
 				line += " " + color(severityColor(f.Severity), "["+f.Severity.String()+"]")
 			}
 			_, _ = fmt.Fprintln(w, line)
 			if f.Detail != "" {
-				_, _ = fmt.Fprintf(w, "        %s\n", color(cGray, f.Detail))
+				_, _ = fmt.Fprintf(w, "        %s\n", color(cGray, printable(f.Detail)))
 			}
 			if f.Evidence != "" {
-				_, _ = fmt.Fprintf(w, "        %s %s\n", color(cGray, "evidence:"), f.Evidence)
+				_, _ = fmt.Fprintf(w, "        %s %s\n", color(cGray, "evidence:"), printable(f.Evidence))
 			}
 			if f.Remediation != "" && (f.Status == StatusFail || f.Status == StatusWarn) {
-				_, _ = fmt.Fprintf(w, "        %s %s\n", color(cBlue, "fix:"), f.Remediation)
+				_, _ = fmt.Fprintf(w, "        %s %s\n", color(cBlue, "fix:"), printable(f.Remediation))
 			}
 		}
 	}
@@ -136,9 +138,26 @@ func severityColor(sev Severity) string {
 
 // writeJSON renders the report as indented JSON.
 func (r *Report) writeJSON(w io.Writer) error {
-	enc := json.NewEncoder(w)
+	var encoded strings.Builder
+	enc := json.NewEncoder(&encoded)
 	enc.SetIndent("", "  ")
-	return enc.Encode(r)
+	if err := enc.Encode(r); err != nil {
+		return err
+	}
+	// The encoder escapes C0 controls but writes DEL, C1 and bidi controls
+	// raw. Escape those too, so the JSON is as safe to print to a terminal as
+	// the text report. Outside strings JSON is ASCII, so only string contents
+	// change, and they decode to the same text.
+	var out strings.Builder
+	for _, r := range encoded.String() {
+		if r >= 0x7f && terminalControl(r) {
+			fmt.Fprintf(&out, `\u%04x`, r)
+		} else {
+			out.WriteRune(r)
+		}
+	}
+	_, err := io.WriteString(w, out.String())
+	return err
 }
 
 // worstFailure returns the highest severity among FAIL findings, or -1 when

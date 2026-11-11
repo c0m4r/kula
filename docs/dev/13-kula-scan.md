@@ -107,6 +107,12 @@ seed is printed so any finding is reproducible with `-seed <N>`.
 - Traversal payloads are sent over a **raw TCP/TLS socket** to bypass client-side URL
   normalization.
 - WebSocket probes use `gorilla/websocket` (the same lib the server uses).
+- Findings quote what the target sent (header values, status lines, certificate names), so the
+  text report writes every field through `printable`, which shows control characters, bidi
+  controls and invalid UTF-8 as Go escapes (`\x1b`, `\u009b`). A hostile target cannot move the
+  cursor to rewrite a FAIL line as a PASS, or set the clipboard. `-json` `\u`-escapes the same
+  characters (the encoder alone leaves DEL, C1 and bidi controls raw), so it decodes to the text
+  as received.
 - Checks: [`checks.go`](../../cmd/kula-scan/checks.go),
   [`checks_ws.go`](../../cmd/kula-scan/checks_ws.go),
   [`checks_aggressive.go`](../../cmd/kula-scan/checks_aggressive.go),

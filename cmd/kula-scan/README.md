@@ -171,6 +171,10 @@ opt-in via `-fuzz` and independent of `-aggressive` (combine them for the widest
   line, bypassing any client-side URL normalization (mirrors the `rawRequest` helper in the
   runtime tests).
 - WebSocket probes use `github.com/gorilla/websocket` — the same library the server uses.
+- The text report shows control characters from the target (in header values, status lines,
+  certificate names) as escapes such as `\x1b`, so a hostile target cannot rewrite earlier
+  result lines or write to your clipboard. `-json` escapes them as `\u001b` and the like, so
+  it still decodes to the text the target sent.
 - Checks live in [`checks.go`](checks.go), [`checks_ws.go`](checks_ws.go),
   [`checks_aggressive.go`](checks_aggressive.go), [`checks_bypass.go`](checks_bypass.go),
   [`checks_dos.go`](checks_dos.go), [`checks_fuzz.go`](checks_fuzz.go), and
