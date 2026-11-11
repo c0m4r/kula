@@ -121,6 +121,34 @@ func TestRunBackupUncompressed(t *testing.T) {
 	}
 }
 
+// TestBackupFilesAreNeverOpenedThroughALink plants a symbolic link where a
+// backup file is about to be created. Followed, the backup overwrote the file
+// it points to with a copy of the tier.
+func TestBackupFilesAreNeverOpenedThroughALink(t *testing.T) {
+	for _, link := range []string{"tier_0.dat", "tier_0.dat.gz"} {
+		t.Run(link, func(t *testing.T) {
+			s, _ := newSched(t, &fakeStore{tiers: 1, fail: -1}, config.BackupConfig{
+				Enabled: true, Cron: "0 0 * * *", MaxTier: 1, Retention: "1d", Compress: true,
+			})
+			victim := filepath.Join(t.TempDir(), "elsewhere")
+			contents := []byte("not the backup's to write\n")
+			if err := os.WriteFile(victim, contents, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			if err := os.Symlink(victim, filepath.Join(dir, link)); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.backupTier(0, dir); err == nil {
+				t.Fatalf("backupTier wrote %s through a symbolic link", link)
+			}
+			if got, err := os.ReadFile(victim); err != nil || !bytes.Equal(got, contents) {
+				t.Fatalf("the file %s points to was changed: %q, %v", link, got, err)
+			}
+		})
+	}
+}
+
 func TestRunBackupFailureLeavesNoPartial(t *testing.T) {
 	s, _ := newSched(t, &fakeStore{tiers: 3, fail: 1}, config.BackupConfig{
 		Enabled: true, Cron: "0 0 * * *", MaxTier: 3, Retention: "1d", Compress: true,

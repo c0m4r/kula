@@ -20,6 +20,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"kula/internal/config"
@@ -169,12 +170,17 @@ func (s *Scheduler) RunBackup(now time.Time) error {
 	return nil
 }
 
+// createFlags create a backup file in a run directory RunBackup has just made:
+// anything already at the path, a symbolic link above all, was planted there,
+// and following it would have the backup overwrite what it points to.
+const createFlags = os.O_RDWR | os.O_CREATE | os.O_EXCL | syscall.O_NOFOLLOW
+
 // backupTier copies tier i into dir, then, when compression is enabled, gzips
 // the raw copy. Only the file that is kept is synced: the raw copy a .gz
 // replaces is deleted unsynced, so the disk need not write it at all.
 func (s *Scheduler) backupTier(i int, dir string) error {
 	rawPath := filepath.Join(dir, fmt.Sprintf("tier_%d.dat", i))
-	raw, err := os.OpenFile(rawPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	raw, err := os.OpenFile(rawPath, createFlags, 0600)
 	if err != nil {
 		return err
 	}
@@ -195,7 +201,7 @@ func (s *Scheduler) backupTier(i int, dir string) error {
 		return err
 	}
 	gzPath := rawPath + ".gz"
-	gzFile, err := os.OpenFile(gzPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	gzFile, err := os.OpenFile(gzPath, createFlags, 0600)
 	if err != nil {
 		return err
 	}
