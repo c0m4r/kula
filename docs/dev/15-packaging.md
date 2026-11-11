@@ -96,9 +96,21 @@ rollouts (`deploy.sh`, `kula.yaml`, the `roles/kula` role with a `config.yaml.j2
 
 ## Install scripts
 
-- [`addons/install_v2.sh`](../../addons/install_v2.sh) — current guided installer (auto-detects
-  distro, verifies checksums; flags `-y`/`--yes`, `--skip-verify`).
-- [`addons/install.sh`](../../addons/install.sh) — earlier multi-distro installer.
+- [`addons/install_v3.sh`](../../addons/install_v3.sh) — current guided installer (auto-detects
+  distro, verifies checksums; flags `-y`/`--yes`, `--skip-verify`). README, the user docs and
+  the landing page pin its sha256.
+- [`addons/install_v2.sh`](../../addons/install_v2.sh) and
+  [`addons/install.sh`](../../addons/install.sh) — earlier installers, kept byte for byte as
+  published, so a copy of the instructions that pins their checksums still verifies them.
+  Later fixes are not carried back: `install.sh` verifies none of its downloads, and both leave
+  `/etc/kula` to the `kula` user and keep a tarball's stored owners when extracting as root.
+
+A published installer never changes. To change the installer, copy the current one to the next
+`install_vN.sh`, change the copy, and move the URL and the pinned checksum in
+[`README.md`](../../README.md),
+[`docs/user/02-installation.md`](../user/02-installation.md#verifying-the-installer-first),
+[`landing/landing.js`](../../landing/landing.js) and
+[`landing/index.html`](../../landing/index.html) to it (`grep -rn` the old name and hash).
 
 ## Packaging helpers
 
@@ -124,9 +136,8 @@ pass `./addons/check.sh` there.
 4. `./addons/release.sh` — build all artifacts + checksums.
 5. Build/push the Docker image and any distro packages needed.
 6. Publish the GitHub release with `dist/` artifacts and `CHECKSUMS.sha256.txt`.
-7. If `addons/install_v2.sh` changed, update its pinned checksum everywhere it appears:
-   [`README.md`](../../README.md),
-   [`docs/user/02-installation.md`](../user/02-installation.md#verifying-the-installer-first) and
-   [`landing/landing.js`](../../landing/landing.js) (`grep -rn` the old hash).
+7. If the installer changed, it is a new `install_vN.sh` (see
+   [Install scripts](#install-scripts)); check that every pinned URL and checksum names it, and
+   that the earlier installers still hash to what they were published with.
 
 Next: [Contributing](16-contributing.md).

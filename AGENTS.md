@@ -164,6 +164,9 @@ per-application reducer branches.
 - Security defaults stay strict (headers, CSRF, rate limits, sandbox). Relaxations are opt-in
   through config, never the new default.
 - Keep dependencies minimal — self-containment is the product.
+- Published installers (`addons/install.sh`, `install_v2.sh`, …) never change: copies of the
+  instructions pin their sha256. Changes go into a new `install_vN.sh`, and the URL and pinned
+  checksum in README, `docs/user/02-installation.md` and `landing/` move to it.
 
 ## Where things live
 

@@ -9,7 +9,10 @@ it without installing anything else. The examples below use **amd64 (x86_64)**; 
 
 Package versions and checksums below are placeholders — take current values from the
 [latest release](https://github.com/c0m4r/kula/releases/latest) and its
-`CHECKSUMS.sha256.txt`. The installer checksum is the current hash of `install_v2.sh` on `main`.
+`CHECKSUMS.sha256.txt`. The installer checksum is the hash of `install_v3.sh` on `main`. A
+published installer never changes, so the checksum an older copy of these instructions pins
+still matches the installer it names (`install_v2.sh`, or the original `install.sh`); a newer
+installer gets a new name.
 
 ---
 
@@ -19,15 +22,15 @@ The installer auto-detects your distro and offers the best packaging option, ver
 download against the release's `CHECKSUMS.sha256.txt`.
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v2.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v3.sh)"
 ```
 
 ### Verifying the installer first
 
 ```bash
 KULA_INSTALL=$(mktemp)
-curl -o "${KULA_INSTALL}" -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v2.sh
-echo "bad61ee9eed4595d20fa7e613bd27c3b8700c67f8a5fcac756d282a811705398  ${KULA_INSTALL}" | sha256sum -c && bash "${KULA_INSTALL}"
+curl -o "${KULA_INSTALL}" -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v3.sh
+echo "a567aec0671e379f8a40204c848c9d5a85ba1331c6902f0b1e0688a2f210c0eb  ${KULA_INSTALL}" | sha256sum -c && bash "${KULA_INSTALL}"
 rm -f "${KULA_INSTALL}"
 ```
 

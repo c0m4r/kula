@@ -30,8 +30,9 @@ kula/
 │   ├── benchmark.sh        # Storage benchmark suite
 │   ├── fuzz.sh             # Run the fuzz targets
 │   ├── test-frontend-regressions.sh # Browser frontend regression tests
-│   ├── install.sh          # Legacy guided installer
-│   ├── install_v2.sh       # Current guided installer
+│   ├── install.sh          # Original installer, kept as published
+│   ├── install_v2.sh       # Second guided installer, kept as published
+│   ├── install_v3.sh       # Current guided installer
 │   ├── build_deb.sh        # Debian/Ubuntu package builder
 │   ├── build_rpm.sh        # RHEL/Fedora package builder
 │   ├── build_aur.sh        # Arch AUR package builder
