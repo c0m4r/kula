@@ -19,9 +19,9 @@ func TestCleanTextReplacesTerminalControls(t *testing.T) {
 		"newline":     "a\nb\r",
 		"tab":         "a\tb",
 		"nul":         "a\x00b",
-		"rlo":         "a‮b",
-		"lri":         "a⁦b⁩",
-		"rlm":         "a‏b",
+		"rlo":         "a\u202eb",
+		"lri":         "a\u2066b\u2069",
+		"rlm":         "a\u200fb",
 		"invalid utf": "a\xffb\xc3",
 	}
 	for name, input := range cases {
@@ -58,7 +58,7 @@ func TestTruncatePlainCannotCutInsideAnEscape(t *testing.T) {
 // hostile packs the sequences a crafted name could carry: an OSC 52
 // clipboard write, a window title, a screen clear, a C1 CSI and a
 // right-to-left override.
-const hostile = "\x1b]52;c;cm0gLXJmIH4K\x07\x1b]0;PWNED\x07\x1b[2J\u009b31m‮"
+const hostile = "\x1b]52;c;cm0gLXJmIH4K\x07\x1b]0;PWNED\x07\x1b[2J\u009b31m\u202e"
 
 // shown is how a name followed by hostile starts on screen once cleaned.
 func shown(name string) string { return name + "�]52" }
