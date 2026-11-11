@@ -130,7 +130,7 @@ func run(args []string) int {
 // passwordEnv names the environment variable that can carry the password
 // instead of -password, whose value any local user can read in the process
 // list and which the shell keeps in its history.
-const passwordEnv = "KULA_SCAN_PASSWORD"
+const passwordEnv = "KULA_SCAN_PASSWORD" //nolint:gosec // G101: the variable's name, not a credential
 
 // resolvePassword returns the -password value, or the passwordEnv variable
 // when the flag is empty.
