@@ -81,8 +81,10 @@ done
   exact only up to 16,777,216 (2²⁴). The live view shows the value as sent. A counter or ID
   past that range comes back rounded; send a rate, or scale it down, instead.
 - A value beyond ±3.4 × 10³⁸, the 32-bit float range, is refused and logged once: the metric
-  shows a gap until a value in range arrives. Leave a metric out of the message when it has
-  no reading, rather than sending a sentinel such as the largest double.
+  is left out of its message, as if it had no reading. A message whose every value is refused
+  is ignored, so the group keeps its last values until it goes stale (see below). Leave a
+  metric out of the message when it has no reading, rather than sending a sentinel such as the
+  largest double.
 - Messages are newline-delimited JSON — one object per line, at most 64 KB per line. Only
   metrics declared for a group in the config are stored; unknown names are ignored. The socket
   is created with `0660` permissions (owner + group), and connections that stay idle for five

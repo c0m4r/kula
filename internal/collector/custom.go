@@ -265,8 +265,9 @@ func (cc *customCollector) processMessage(data map[string][]map[string]float64) 
 
 // storable reports whether val fits the 32-bit float history stores it as. A
 // value beyond that range (a producer's "no reading" sentinel such as the
-// largest float64) is refused, so the metric shows a gap like any missing
-// reading instead of a number the live view and history would disagree on.
+// largest float64) is refused, so the metric is left out like any missing
+// reading instead of a number the live view and history would disagree on;
+// a message with nothing else is ignored, and its group goes stale.
 // Each metric is logged when it starts being refused, not on every message.
 // The caller holds cc.mu.
 func (cc *customCollector) storable(group, name string, val float64) bool {
