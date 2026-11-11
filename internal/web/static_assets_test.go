@@ -139,7 +139,8 @@ func TestChartJSScriptsDeferred(t *testing.T) {
 // the entry <script type="module"> carries its own, and every module it imports,
 // directly or not, needs a <link rel="modulepreload"> with integrity, or it is
 // fetched and run unchecked. Every page template is rendered, and every
-// first-party script it loads must carry the hash of the bytes served for it.
+// first-party script it loads or preloads must carry the hash of the bytes
+// served for it.
 func TestPagesLoadEveryScriptWithIntegrity(t *testing.T) {
 	s := NewServer(config.WebConfig{UI: true, MinifyAssets: true, Security: config.SecurityConfig{Headers: true}},
 		config.GlobalConfig{EasterEgg: true}, nil, nil, t.TempDir(), config.OllamaConfig{})
@@ -181,11 +182,23 @@ func TestPagesLoadEveryScriptWithIntegrity(t *testing.T) {
 			case tag[1] == "script" && attrs["type"] == "module":
 				t.Errorf("%s: an inline module's imports are not checked here; load it from a file: %s", name, tag[0])
 			case tag[1] == "link" && attrs["rel"] == "modulepreload":
+				// A preload fills the module map the page's imports and
+				// entry scripts then take the module from, so a preload
+				// without the right hash would let even an entry run
+				// unchecked.
+				if want := s.sriHashes[attrs["href"]]; want == "" || attrs["integrity"] != want {
+					t.Errorf("%s: %s is preloaded without the integrity of its served bytes: %s", name, attrs["href"], tag[0])
+				}
 				preloads[attrs["href"]] = attrs["integrity"]
 			}
 		}
 
-		// Walk the import graph from the entry modules.
+		// Walk the import graph from the entry modules, whose own tags carry
+		// their integrity; every module they import needs a preload.
+		isEntry := map[string]bool{}
+		for _, entry := range entries {
+			isEntry[entry] = true
+		}
 		seen := map[string]bool{}
 		queue := append([]string(nil), entries...)
 		for len(queue) > 0 {
@@ -196,7 +209,7 @@ func TestPagesLoadEveryScriptWithIntegrity(t *testing.T) {
 			}
 			seen[module] = true
 			modules++
-			if want := s.sriHashes[module]; want == "" || preloads[module] != want {
+			if _, preloaded := preloads[module]; !preloaded && !isEntry[module] {
 				t.Errorf("%s loads %s without a <link rel=\"modulepreload\"> carrying its integrity", name, module)
 			}
 			source, err := s.readStatic("static/" + module)

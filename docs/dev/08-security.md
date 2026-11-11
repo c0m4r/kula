@@ -141,9 +141,11 @@ won't execute. The hashes cover the bytes actually served — the minified form 
 A browser checks a hash only where the page names the script. Classic scripts and the entry
 module carry it on their `<script>` tag; a module that is imported, directly or through another
 module, is checked only through a `<link rel="modulepreload" integrity=...>` in the page head,
-and without one it is fetched and run unchecked. `TestPagesLoadEveryScriptWithIntegrity`
-renders every page template, walks the import graph from its entry modules, and fails on any
-script or imported module without the hash of its served bytes.
+and without one it is fetched and run unchecked. A preload fills the module map that imports
+and entry scripts then take the module from, so every preload needs the hash too.
+`TestPagesLoadEveryScriptWithIntegrity` renders every page template, walks the import graph
+from its entry modules, and fails on any script, preload or imported module without the hash
+of its served bytes.
 
 ## WebSocket security
 
