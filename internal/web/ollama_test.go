@@ -620,6 +620,50 @@ func TestOpenAIToolCallIndices(t *testing.T) {
 	}
 }
 
+// TestToolCallsPerRoundAreCapped: a backend asking for thousands of tool
+// calls a round gets ollamaMaxToolCalls run per round (it used to get them
+// all: 10,000 history queries for one chat).
+func TestToolCallsPerRoundAreCapped(t *testing.T) {
+	const asked, perChunk = 2000, 200
+	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := `{"function":{"name":"get_metrics","arguments":{"resource":"cpu"}}}`
+		for i := 0; i < asked; i += perChunk {
+			_, _ = fmt.Fprintf(w, `{"message":{"tool_calls":[%s]},"done":false}`+"\n", strings.TrimSuffix(strings.Repeat(call+",", perChunk), ","))
+		}
+		_, _ = fmt.Fprintln(w, `{"message":{"content":""},"done":true}`)
+	}))
+	defer native.Close()
+	var frames []string
+	for i := 0; i < asked; i += perChunk {
+		var fragments []string
+		for j := i; j < i+perChunk; j++ {
+			fragments = append(fragments, fmt.Sprintf(`{"index":%d,"id":"c%d","function":{"name":"get_metrics","arguments":"{}"}}`, j, j))
+		}
+		frames = append(frames, `{"choices":[{"delta":{"tool_calls":[`+strings.Join(fragments, ",")+`]},"finish_reason":"tool_calls"}]}`)
+	}
+	openai := openAICompatServer(t, frames...)
+	defer openai.Close()
+
+	for name, oc := range map[string]*ollamaClient{
+		"ollama": newOllamaClient(config.OllamaConfig{Enabled: true, URL: native.URL, Model: "m1", Timeout: "5s"}),
+		"openai": newOpenAICompatClient(openai.URL),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var runs atomic.Int32
+			executor := func(string, json.RawMessage) string { runs.Add(1); return "ok" }
+			rec := httptest.NewRecorder()
+			err := oc.streamChat(context.Background(), "m1", []ollamaMessage{{Role: "user", Content: "x"}},
+				[]ollamaToolDef{metricsToolDef()}, executor, rec, rec, false)
+			if err != nil {
+				t.Fatalf("streamChat: %v", err)
+			}
+			if got, want := runs.Load(), int32(ollamaMaxToolRounds*ollamaMaxToolCalls); got != want {
+				t.Errorf("%d tool calls ran, want %d (%d rounds of %d)", got, want, ollamaMaxToolRounds, ollamaMaxToolCalls)
+			}
+		})
+	}
+}
+
 // ---- Tool data formatting -------------------------------------------------
 
 func mkSample(cpuUsage float64) *storage.AggregatedSample {

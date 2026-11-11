@@ -52,6 +52,9 @@ const (
 	ollamaMetaRateLimit = 60
 	// ollamaMaxToolRounds is the maximum number of tool-call iterations.
 	ollamaMaxToolRounds = 5
+	// ollamaMaxToolCalls is the maximum number of tool calls run per round:
+	// one per resource get_metrics offers. Further calls are dropped.
+	ollamaMaxToolCalls = 8
 	// ollamaToolMaxItems caps per-category rows in tool result CSV.
 	ollamaToolMaxItems = 10
 )
@@ -557,10 +560,16 @@ func (oc *ollamaClient) doStreamRound(
 			}
 			continue
 		}
-		// Collect tool calls from any chunk (not just the done chunk).
-		if len(chunk.Message.ToolCalls) > 0 {
-			toolCalls = append(toolCalls, chunk.Message.ToolCalls...)
+		// Collect tool calls from any chunk (not just the done chunk), up to
+		// the per-round cap.
+		calls := chunk.Message.ToolCalls
+		if room := ollamaMaxToolCalls - len(toolCalls); len(calls) > room {
+			if debugLog {
+				log.Printf("[DEBUG] [Ollama] dropped %d tool call(s) over the cap of %d per round", len(calls)-room, ollamaMaxToolCalls)
+			}
+			calls = calls[:room]
 		}
+		toolCalls = append(toolCalls, calls...)
 		if chunk.Message.Content != "" {
 			if debugLog {
 				fullResponse.WriteString(chunk.Message.Content)
@@ -648,6 +657,7 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 		args strings.Builder
 	}
 	accumMap := make(map[int]*toolCallAccum)
+	dropped := 0 // fragments of calls over the per-round cap
 
 	var fullResponse strings.Builder
 	var finishReason string
@@ -682,12 +692,16 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 		}
 		for _, tc := range choice.Delta.ToolCalls {
 			// The index names the call a fragment belongs to; a negative one
-			// names none.
+			// names none. Calls past the per-round cap are dropped.
 			if tc.Index < 0 {
 				continue
 			}
 			a, ok := accumMap[tc.Index]
 			if !ok {
+				if len(accumMap) >= ollamaMaxToolCalls {
+					dropped++
+					continue
+				}
 				a = &toolCallAccum{}
 				accumMap[tc.Index] = a
 			}
@@ -711,6 +725,9 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 
 	if debugLog && fullResponse.Len() > 0 {
 		log.Printf("[DEBUG] [Ollama/OpenAI] output response:\n%s", fullResponse.String())
+	}
+	if debugLog && dropped > 0 {
+		log.Printf("[DEBUG] [Ollama/OpenAI] dropped %d tool-call fragment(s) over the cap of %d calls per round", dropped, ollamaMaxToolCalls)
 	}
 
 	if finishReason != "tool_calls" || len(accumMap) == 0 {

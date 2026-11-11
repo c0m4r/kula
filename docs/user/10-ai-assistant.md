@@ -36,7 +36,7 @@ When enabled, a 🤖 button appears in the dashboard header.
 - **Agentic tool calling** — the model can call a `get_metrics` tool to pull historical time
   series for `cpu`, `memory`, `swap`, `load`, `network`, `disk_io`, `disk_space` or `gpu` on
   demand (downsampled to about 100 points, default range the last hour, at most 31 days, as
-  in the history API; up to 5 tool-call rounds per turn).
+  in the history API; up to 5 tool-call rounds of 8 calls per turn).
 - **Model selector** — switch between any locally-available Ollama model mid-session.
 - **Draggable & resizable panel** — drag by the header, resize from the bottom-right grip.
 - **Streaming responses** with markdown rendering.
@@ -54,7 +54,7 @@ Kula proxies to Ollama through a hardened endpoint (`/api/ollama/*`). The proxy:
 - **Rate-limits** — 10 chat requests per IP per minute; 60 metadata (model list/context)
   requests per IP per minute.
 - **Caps bodies & responses** — chat request body max 32 KB; Ollama response stream max 10 MB.
-- **Limits the tool loop** — at most 5 `get_metrics` rounds per chat turn.
+- **Limits the tool loop** — at most 5 rounds of up to 8 `get_metrics` calls per chat turn.
 - **Stays on the configured address** — `ollama.url` must be loopback, and a redirect from it
   is not followed: the request fails with an error naming the redirect target, so you can set
   `ollama.url` to that address instead.

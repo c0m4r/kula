@@ -268,7 +268,7 @@ requires: one invalid byte would fail the whole scrape. See
 [`ollama.go`](../../internal/web/ollama.go) is an OpenAI-compatible proxy to a **local** Ollama:
 
 - `handleOllamaChat` — streams a chat completion as SSE, running an agentic tool-calling loop
-  where the model can call `get_metrics` (≤5 rounds), backed by `Collector.FormatForAI()`.
+  where the model can call `get_metrics` (≤5 rounds, ≤8 calls each), backed by `Collector.FormatForAI()`.
 - `handleOllamaModels` — lists locally available models.
 - `handleOllamaContext` — bootstraps a per-chart analysis session with recent data as CSV.
 
