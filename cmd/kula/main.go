@@ -213,11 +213,11 @@ func runServe(cfg *config.Config, configPath string, osName, kernelVersion, cpuA
 
 	// Enforce Landlock sandbox: restrict filesystem and network access
 	// to only what Kula needs, before opening storage files or anything
-	// else. A kernel without Landlock leaves Kula unconfined with a log
-	// line; on one with Landlock, an error means the sandbox is not in
-	// force, and Kula does not run without it.
+	// else. It is a hardening layer, not a requirement: a kernel without
+	// Landlock, or one that refuses the ruleset, leaves Kula unconfined
+	// with a warning.
 	if err := enforceSandbox(configPath, cfg.Storage.Directory, cfg.Web, cfg.Applications, cfg.Ollama); err != nil {
-		log.Fatalf("Refusing to start without the Landlock sandbox: %v", err)
+		log.Printf("Warning: Landlock sandbox not enforced, Kula runs unconfined: %v", err)
 	}
 
 	coll := collector.New(cfg.Global, cfg.Collection, cfg.Applications, cfg.Storage.Directory)
@@ -337,7 +337,7 @@ func runTUI(cfg *config.Config, osName, kernelVersion, cpuArch string) {
 	// confine it as well, before it collects or opens storage, to their
 	// reads and connections and the storage directory read-only.
 	if err := sandbox.EnforceTUI(cfg.Storage.Directory, apps); err != nil {
-		log.Fatalf("Refusing to start the TUI without the Landlock sandbox: %v", err)
+		log.Printf("Warning: Landlock sandbox not enforced, the TUI runs unconfined: %v", err)
 	}
 
 	coll := collector.New(cfg.Global, cfg.Collection, apps, cfg.Storage.Directory)

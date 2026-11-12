@@ -18,8 +18,10 @@
 // Both request the newest Landlock ABI go-landlock knows and use BestEffort
 // to degrade gracefully: an older kernel enforces the part of the ruleset it
 // supports, and a kernel without Landlock (pre-5.13, or disabled) leaves the
-// process unconfined with a log line. On a kernel with Landlock, a rule that
-// cannot be applied is an error.
+// process unconfined with a log line. The sandbox is a hardening layer, not a
+// requirement: a grant the config asks for that cannot be applied is logged
+// and left out, and a kernel that refuses the ruleset leaves the process
+// unconfined, with a warning from the caller.
 package sandbox
 
 import (
@@ -447,19 +449,13 @@ func (rs *ruleset) unsupported(what string) bool {
 	return true
 }
 
-// err reports the grants the config asks for that cannot be applied.
-func (rs *ruleset) err() error {
-	if len(rs.errs) == 0 {
-		return nil
-	}
-	return fmt.Errorf("sandbox: %w", errors.Join(rs.errs...))
-}
-
 // restrict applies the ruleset to the whole process. A grant the config asks
-// for that cannot be applied, or a rule the kernel refuses, is an error.
+// for that cannot be applied is logged and left out: what it names cannot be
+// reached, sandbox or not. An error means the kernel did not accept the
+// ruleset, and the process is not confined.
 func (rs *ruleset) restrict(what, details string) error {
-	if err := rs.err(); err != nil {
-		return err
+	for _, err := range rs.errs {
+		log.Printf("Warning: sandbox: %v (left out of the sandbox)", err)
 	}
 	// The local time zone loads on first use, from /etc/localtime, which
 	// the sandbox does not grant: load it now, or log times turn UTC.
@@ -526,8 +522,10 @@ func (rs *ruleset) coverage() (confined, missing []string) {
 // or connects out.
 //
 // On a kernel without Landlock it logs a line and returns nil, without
-// touching anything. On a kernel with Landlock every error means the sandbox
-// is not in force, and Kula must not start.
+// touching anything. A grant the config asks for that cannot be applied, such
+// as a socket path through a regular file, is logged and left out, and the
+// rest is enforced. An error means the sandbox is not in force: the caller
+// warns and runs unconfined.
 func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appCfg config.ApplicationsConfig, ollamaCfg config.OllamaConfig) error {
 	rs := newRuleset()
 	if rs.unsupported("") {
@@ -545,19 +543,17 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 		return fmt.Errorf("sandbox: resolving storage dir: %w", err)
 	}
 
+	rs.addSystemReads()
+	// Config file: read-only
+	rs.add(landlock.ROFiles(absConfigPath).IgnoreIfMissing())
 	// The storage directory must exist to be granted.
 	if err := os.MkdirAll(absStorageDir, 0750); err != nil {
-		return fmt.Errorf("sandbox: creating storage dir: %w", err)
-	}
-
-	rs.addSystemReads()
-	rs.add(
-		// Config file: read-only
-		landlock.ROFiles(absConfigPath).IgnoreIfMissing(),
+		rs.fail("storage.directory", err)
+	} else {
 		// Data storage: read-write. Connecting to a socket there lets the
 		// custom-metrics collector tell a live kula.sock from a stale one.
-		landlock.RWDirs(absStorageDir).WithResolveUnix(),
-	)
+		rs.add(landlock.RWDirs(absStorageDir).WithResolveUnix())
+	}
 
 	webStatus := ", net: disabled"
 	if webCfg.Enabled {
@@ -566,24 +562,26 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 			if err != nil {
 				return fmt.Errorf("sandbox: resolving web unix_socket: %w", err)
 			}
+			webStatus = ", web: unix:" + absSock
 			sockDir := filepath.Dir(absSock)
 			if info, err := os.Stat(sockDir); err != nil {
-				return fmt.Errorf("sandbox: web.unix_socket %s: its directory: %w", absSock, err)
+				rs.fail("web.unix_socket", fmt.Errorf("%s: its directory: %w", absSock, err))
 			} else if !info.IsDir() {
-				return fmt.Errorf("sandbox: web.unix_socket %s: %s is not a directory", absSock, sockDir)
+				rs.fail("web.unix_socket", fmt.Errorf("%s: %s is not a directory", absSock, sockDir))
+			} else {
+				// Create the socket and remove a stale one; nothing else there.
+				rs.add(landlock.PathAccess(accessSocketListener, sockDir))
+				// Before removing a socket left there, the server connects to
+				// it to make sure no other process still serves it.
+				rs.addUnixSocket("web.unix_socket", "web", absSock, false)
 			}
-			// Create the socket and remove a stale one; nothing else there.
-			rs.add(landlock.PathAccess(accessSocketListener, sockDir))
-			// Before removing a socket left there, the server connects to
-			// it to make sure no other process still serves it.
-			rs.addUnixSocket("web.unix_socket", "web", absSock, false)
-			webStatus = ", web: unix:" + absSock
 		} else if webCfg.Port > 0 {
 			if webCfg.Port > 65535 {
-				return fmt.Errorf("sandbox: invalid web port %d", webCfg.Port)
+				rs.fail("web.port", fmt.Errorf("invalid port %d", webCfg.Port))
+			} else {
+				rs.add(landlock.BindTCP(uint16(webCfg.Port)))
+				webStatus = fmt.Sprintf(", net: bind TCP/%d", webCfg.Port)
 			}
-			rs.add(landlock.BindTCP(uint16(webCfg.Port)))
-			webStatus = fmt.Sprintf(", net: bind TCP/%d", webCfg.Port)
 		}
 	}
 
@@ -606,7 +604,8 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 //
 // A storage directory that does not exist yet stays unreadable until the TUI
 // restarts. Semantics as for Enforce: without Landlock it logs and returns
-// nil; otherwise an error means the TUI must not start.
+// nil, a grant that cannot be applied is logged and left out, and an error
+// means the sandbox is not in force.
 func EnforceTUI(storageDir string, appCfg config.ApplicationsConfig) error {
 	rs := newRuleset()
 	if rs.unsupported(" for the TUI") {

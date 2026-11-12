@@ -402,11 +402,7 @@ func TestServeOpensStorageUnderTheSandbox(t *testing.T) {
 			enforced = err == nil
 			return err
 		}
-		openStore = func(config.StorageConfig) (*storage.Store, error) {
-			fmt.Printf("storage opened, sandbox enforced before: %v\n", enforced)
-			os.Exit(0)
-			return nil, nil
-		}
+		openStore = openStoreAndExit(&enforced)
 		runServeMain()
 	}
 
@@ -428,12 +424,30 @@ func TestServeOpensStorageUnderTheSandbox(t *testing.T) {
 	}
 }
 
-// TestServeRefusesToStartWithoutTheSandbox: on a kernel with Landlock, a grant
-// the config asks for that cannot be applied — a PostgreSQL socket directory
-// that is a regular file — stops Kula with a message naming the setting,
-// where it used to log a warning and serve without any sandbox.
-func TestServeRefusesToStartWithoutTheSandbox(t *testing.T) {
+// openStoreAndExit replaces openStore in a child process: it reports whether
+// the sandbox was enforced before storage opened, then exits.
+func openStoreAndExit(enforced *bool) func(config.StorageConfig) (*storage.Store, error) {
+	return func(config.StorageConfig) (*storage.Store, error) {
+		fmt.Printf("storage opened, sandbox enforced before: %v\n", *enforced)
+		os.Exit(0)
+		return nil, nil
+	}
+}
+
+// TestServeLeavesOutAGrantThatCannotBeApplied: a grant the config asks for
+// that cannot be applied — a PostgreSQL socket directory that is a regular
+// file — is logged with its setting and left out, and Kula starts under the
+// rest of the sandbox.
+func TestServeLeavesOutAGrantThatCannotBeApplied(t *testing.T) {
 	if os.Getenv("KULA_TEST_SERVE_ARGS") != "" {
+		enforced := false
+		enforce := enforceSandbox
+		enforceSandbox = func(configPath, storageDir string, webCfg config.WebConfig, appCfg config.ApplicationsConfig, ollamaCfg config.OllamaConfig) error {
+			err := enforce(configPath, storageDir, webCfg, appCfg, ollamaCfg)
+			enforced = err == nil
+			return err
+		}
+		openStore = openStoreAndExit(&enforced)
 		runServeMain()
 	}
 	if abi, err := llsyscall.LandlockGetABIVersion(); err != nil || abi < 1 {
@@ -463,14 +477,44 @@ applications:
 		t.Fatal(err)
 	}
 
-	cmd, logPath := startKula(t, "TestServeRefusesToStartWithoutTheSandbox", dir, "-config", configPath, "serve")
+	cmd, logPath := startKula(t, "TestServeLeavesOutAGrantThatCannotBeApplied", dir, "-config", configPath, "serve")
 	code := waitExit(cmd, 15*time.Second)
 	logText := readLog(t, logPath)
-	if code == -1 {
-		t.Fatalf("kula serve kept running although its sandbox could not be applied:\n%s", logText)
+	if code != 0 || !strings.Contains(logText, "storage opened, sandbox enforced before: true") {
+		t.Errorf("exit %d; want storage opened under the sandbox:\n%s", code, logText)
 	}
-	if code == 0 || !strings.Contains(logText, "Refusing to start without the Landlock sandbox") ||
-		!strings.Contains(logText, "applications.postgres.host") {
-		t.Errorf("exit %d; want a refusal naming applications.postgres.host:\n%s", code, logText)
+	if !strings.Contains(logText, "Warning: sandbox: applications.postgres.host: ") ||
+		!strings.Contains(logText, "Landlock sandbox enforced") {
+		t.Errorf("want a warning naming applications.postgres.host, then the sandbox enforced:\n%s", logText)
+	}
+}
+
+// TestServeStartsWhenTheSandboxCannotBeEnforced: a sandbox the kernel refuses,
+// such as under a container's syscall filter that denies Landlock, leaves Kula
+// unconfined with a warning, and Kula starts.
+func TestServeStartsWhenTheSandboxCannotBeEnforced(t *testing.T) {
+	if os.Getenv("KULA_TEST_SERVE_ARGS") != "" {
+		enforced := false
+		enforceSandbox = func(string, string, config.WebConfig, config.ApplicationsConfig, config.OllamaConfig) error {
+			return errors.New("sandbox: enforcing landlock: operation not permitted")
+		}
+		openStore = openStoreAndExit(&enforced)
+		runServeMain()
+	}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	cfg := fmt.Sprintf("storage:\n  directory: %q\nweb:\n  enabled: false\napplications:\n  containers:\n    enabled: false\n",
+		filepath.Join(dir, "storage"))
+	if err := os.WriteFile(configPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, logPath := startKula(t, "TestServeStartsWhenTheSandboxCannotBeEnforced", dir, "-config", configPath, "serve")
+	code := waitExit(cmd, 10*time.Second)
+	logText := readLog(t, logPath)
+	if code != 0 || !strings.Contains(logText, "storage opened, sandbox enforced before: false") ||
+		!strings.Contains(logText, "Warning: Landlock sandbox not enforced, Kula runs unconfined: sandbox: enforcing landlock: operation not permitted") {
+		t.Errorf("exit %d; want a warning and Kula started unconfined:\n%s", code, logText)
 	}
 }

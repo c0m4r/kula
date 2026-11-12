@@ -30,13 +30,21 @@ To get full confinement, run on a newer kernel: the `Landlock sandbox enforced (
 [Landlock Sandbox](../dev/09-sandbox.md).
 
 ```
-Refusing to start without the Landlock sandbox: sandbox: applications.postgres.host: ...
+Warning: sandbox: applications.postgres.host: ... (left out of the sandbox)
 ```
 
-On a kernel with Landlock, Kula does not start when its sandbox cannot be applied. The message
-names the setting whose grant failed, for example a PostgreSQL `host` that is a file rather than
-the socket directory, or a `web.unix_socket` whose directory does not exist. Fix the setting and
-start Kula again.
+A path in the config that the sandbox cannot grant, for example a PostgreSQL `host` that is a
+file rather than the socket directory, or a `web.unix_socket` whose directory does not exist.
+Kula starts under the rest of the sandbox, but what that setting names stays unreachable: fix it
+and restart Kula.
+
+```
+Warning: Landlock sandbox not enforced, Kula runs unconfined: ...
+```
+
+The kernel has Landlock but refused Kula's ruleset, typically because a container or snap
+syscall filter denies a Landlock call. Kula keeps running without the sandbox. Allow the
+`landlock_*` syscalls in that filter to get the confinement back.
 
 ## Dashboard loads but shows no live data
 

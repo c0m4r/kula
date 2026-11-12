@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -99,12 +100,12 @@ func TestPostgresGrants(t *testing.T) {
 				t.Errorf("grants = %+v, want %+v", got, tc.want)
 			}
 			// Never rs.restrict here: it would confine the test process.
-			err := rs.err()
+			err := errors.Join(rs.errs...)
 			if tc.wantErr == "" && err != nil {
-				t.Errorf("err() = %v, want none", err)
+				t.Errorf("failed grants: %v, want none", err)
 			}
 			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
-				t.Errorf("err() = %v, want an error naming %q", err, tc.wantErr)
+				t.Errorf("failed grants: %v, want one naming %q", err, tc.wantErr)
 			}
 		})
 	}
@@ -146,8 +147,8 @@ func TestMysqlGrants(t *testing.T) {
 	for path, wantErr := range map[string]bool{ca: false, filepath.Join(dir, "missing.pem"): false, sockDir: true} {
 		rs := &ruleset{}
 		rs.addMysql(config.MysqlConfig{Enabled: true, Host: "127.0.0.1", Port: 3306, SSLMode: "verify-ca", SSLRootCert: path})
-		if err := rs.err(); (err != nil) != wantErr || (wantErr && !strings.Contains(err.Error(), "applications.mysql.sslrootcert")) {
-			t.Errorf("sslrootcert %s: err() = %v, want an error: %v", path, err, wantErr)
+		if err := errors.Join(rs.errs...); (err != nil) != wantErr || (wantErr && !strings.Contains(err.Error(), "applications.mysql.sslrootcert")) {
+			t.Errorf("sslrootcert %s: failed grants: %v, want one: %v", path, err, wantErr)
 		}
 	}
 }

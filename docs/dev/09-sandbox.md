@@ -22,17 +22,24 @@ after loading the config — *before* storage is opened (`Enforce` creates the s
 first, since a grant needs it to exist), before the web server and collectors start:
 
 ```go
-if err := sandbox.Enforce(configPath, cfg.Storage.Directory, cfg.Web,
-                          cfg.Applications, cfg.Ollama); err != nil {
-    log.Fatalf("Refusing to start without the Landlock sandbox: %v", err)
+if err := enforceSandbox(configPath, cfg.Storage.Directory, cfg.Web,
+                         cfg.Applications, cfg.Ollama); err != nil {
+    log.Printf("Warning: Landlock sandbox not enforced, Kula runs unconfined: %v", err)
 }
 ```
 
-On a kernel without Landlock, `Enforce` logs that it skips the sandbox and returns `nil`, and Kula
-runs unconfined. On a kernel with Landlock, an error means the sandbox is not in force, so Kula
-**refuses to start** rather than serve without it: a grant the config asks for that cannot be
-applied (a PostgreSQL `host` that is a regular file, a `web.unix_socket` directory that does not
-exist, a `PGSSLCERT` path through a file) is named in the message, with its setting.
+The sandbox is a hardening layer, not a requirement, so Kula always starts:
+
+- On a kernel without Landlock, `Enforce` logs that it skips the sandbox and returns `nil`, and
+  Kula runs unconfined.
+- A grant the config asks for that cannot be applied (a PostgreSQL `host` that is a regular file,
+  a `web.unix_socket` directory that does not exist, a `PGSSLCERT` path through a file) is logged
+  with its setting (`Warning: sandbox: applications.postgres.host: … (left out of the sandbox)`)
+  and left out; the rest is enforced. What such a grant names cannot be reached, sandbox or not,
+  so leaving it out costs nothing the process could have used.
+- When the kernel refuses the ruleset, for example under a container or snap syscall filter that
+  denies a Landlock call, `Enforce` returns the error and `runServe` logs that Kula runs
+  unconfined.
 
 ## The TUI
 
@@ -43,8 +50,8 @@ above (it has no custom-metrics socket and no Ollama proxy), the storage directo
 (read files, list directories) for the History view, and `/dev/tty` (read, and the terminal
 ioctls), which Bubble Tea opens when standard input is not a terminal. It grants no write, no
 socket creation, no TCP bind and no execution. A storage directory that does not exist when the
-TUI starts is not granted, and stays unreadable until the TUI restarts. Errors are handled as
-for `kula serve`.
+TUI starts is not granted, and stays unreadable until the TUI restarts. Failures are handled as
+for `kula serve`: the TUI starts, confined as far as the kernel allows.
 
 ## Kernel requirements & graceful degradation
 
