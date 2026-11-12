@@ -14,12 +14,10 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 - Everyone signs in again once
 - Take a backup if you may downgrade: older versions can't read the new tier records
-- Without auth, list the name you reach Kula by in `web.security.allowed_hosts` unless it is local (reverse proxies that forward `Host`, Tailscale, internal DNS)
-- Prometheus scraping `/metrics` by a DNS name needs a bearer token or the name in `web.security.allowed_hosts`
-- `allowed_origins` entries other than a plain `scheme://host[:port]` (a path, query, `*` or non-punycode name), and a zero `session_timeout`, WebSocket limit or `argon2` time or threads, now stop startup
+- Without auth, and for `/metrics` scraped without a bearer token, list the name you reach Kula by in `web.security.allowed_hosts` unless it is local (reverse proxies that forward `Host`, Tailscale, internal DNS)
+- Startup now stops on an unknown config setting, a `-config` path that cannot be read or created, an `allowed_origins` entry other than a plain `scheme://host[:port]`, or a zero `session_timeout`, WebSocket limit or `argon2` time or threads
 - PgBouncer in front of PostgreSQL needs `ignore_startup_parameters`
 - Docker: mount `/run/utmp` or `/run/systemd/sessions` to keep the logged-in user count
-- Unknown config settings, and a `-config` path that cannot be read or created, now stop startup
 - Hosts with dozens of containers, disks or interfaces may need a higher `MemoryMax` in a systemd drop-in
 
 ### Added
@@ -32,38 +30,26 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Changed
 
+- History queries read only their time range (TUI too), and restarts are faster: each tier keeps a small `tier_N.idx` seek index
 - Rolling views refresh only their newest buckets instead of the whole range
-- History queries read only their time range instead of the whole tier file, and use far less memory
-- Faster restarts: each tier keeps a small `tier_N.idx` seek index
-- Stored records carry a checksum (older versions can't read the new records)
-- Backups no longer pause collection or the dashboard
+- History queries, compressed responses and container lists use far less memory
+- Stored records carry a checksum, and backups no longer pause collection or the dashboard
 - Tier 1 and 2 rollups align to wall-clock minutes, so rolling and past views agree
-- `/api/history` accepts an optional `tier` hint
-- API and WebSocket errors are always JSON
-- Failed WebSocket writes are logged only at debug level
-- Compressed responses use far less memory
-- tui: history reads only its time range
-- Cards keep one consistent order everywhere
-- Split charts expand and collapse like every other chart
+- `/api/history` accepts an optional `tier` hint, and API and WebSocket errors are always JSON
+- History requests take turns; dashboards retry one the server was too busy for and reconnect at staggered times after a restart
 - Disk temperatures and power supplies are read every 10 s, set with `collection.disk_temp_interval` and `collection.power_supply_interval`
-- PostgreSQL reads table health and database size once a minute, `max_connections` once per session
-- Containers are inspected once instead of every second, removed ones are forgotten, and their list takes far less memory
-- Hosts without a GPU look for one once a minute
-- Remove systemd service ProtectClock that prevents reading clock
+- PostgreSQL table health, container details, GPU detection and System Info sensors are read far less often
+- Only containers with a full runtime ID are monitored, up to a limit per sample
+- Charts are built once on page load, and Graph Bounds apply without reloading them
+- Cards keep one consistent order everywhere, and split charts expand and collapse like every other chart
 - Apache2 charts and the AI assistant show current request and byte rates
 - The login form tells a wrong password apart from a rate limit or a busy server
-- Dashboards reconnect at staggered times after a restart
-- Charts are built once on page load, and Graph Bounds apply without reloading them
-- Settings that would break login or WebSockets are refused at startup, and `allowed_origins` is normalized
+- Unknown settings and ones that would break login or WebSockets stop startup, and `allowed_origins` is normalized
 - `kula_system_logged_in_users` is omitted when the host has neither utmp nor logind sessions
-- History requests take turns, and the dashboard retries one the server was too busy for
-- The systemd unit caps Kula's memory
-- Only containers with a full runtime ID are monitored, up to a limit per sample
-- `/api/system-info` no longer rereads sensors and batteries on request
-- tui: log lines are printed when it exits
-- kula-scan: a default run signs in once and logs out; account enumeration needs `-aggressive`
+- systemd: the unit caps Kula's memory and no longer sets `ProtectClock`, which kept it from reading the clock
 - A setting the sandbox cannot grant is left out with a warning instead of disabling the whole sandbox
-- `go_modules_updates.py` holds back freshly released updates
+- Failed WebSocket writes are logged only at debug level, and the TUI prints its log lines when it exits
+- kula-scan: a default run signs in once and logs out; account enumeration needs `-aggressive`
 
 ### Deprecated
 
@@ -71,99 +57,59 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 ### Fixed
 
-- collector: fix clock sync detection with local-time RTC
-- Battery/UPS charts no longer jump to the top of the dashboard
-- PostgreSQL replication no longer appears among the MySQL charts
-- Disk and GPU temperature split charts no longer go missing in Focus mode
-- A Focus mode selection of only application charts no longer starts out hidden
-- Collapsing a split chart no longer reorders the application charts
 - Disk utilization is measured again (read 0% since 0.7.0)
-- TCP retransmissions are measured and stored in history (older versions can't read the new records)
-- The first TCP errors and resets after a quiet boot are counted
-- PostgreSQL and MySQL monitoring no longer piles up server connections
-- PostgreSQL polls stuck on a frozen server are cut off at their time limit
-- MySQL passwords with `@`, `/` or `:` and IPv6 hosts work; PostgreSQL settings are quoted
-- nginx, Apache2, PostgreSQL, MySQL and container rates no longer spike after a restart or failed poll
-- Rootless Podman is found for the user Kula runs as
-- `https://` targets and PostgreSQL `verify-ca`/`verify-full` work under the sandbox
-- An `https://` Ollama URL without a port works under the sandbox
+- TCP retransmissions are measured and stored in history, and the first errors and resets after a quiet boot are counted
+- Clock sync with a local-time RTC, mounts with a space in their path, and used memory and swap are measured correctly
+- `web.graphs.gpu_temp` takes effect
 - Logged-in user count works under the sandbox and on arm64, with a systemd-logind fallback
-- History no longer goes missing after a tier wraps with growing records, after a crash, or after the clock stepped back, restarts included
-- A crash no longer loses the rollup of the minute it interrupted
-- Seek index temp files left by a crash are cleaned up
-- A rolling view no longer stays marked "partial" after one late refresh
-- Reading a damaged tier file no longer hangs
-- Bearer tokens work with auth status and logout
+- Containers: rootless Podman is found for the user Kula runs as, hosts with hundreds of containers keep their metrics, and a socket that refuses connections is no longer reported as missing
+- PostgreSQL and MySQL monitoring no longer piles up server connections; MySQL passwords with `@`, `/` or `:` and IPv6 hosts work
+- PostgreSQL: polls on a frozen server are cut off, settings are quoted, and a standby of a quiet primary no longer shows a growing replication lag
+- nginx, Apache2, PostgreSQL, MySQL and container rates no longer spike after a restart or failed poll
 - A hung network mount or a slow nginx or Apache2 status page no longer stalls collection
 - nginx and Apache2 failures are logged when they change, and redirects are not followed
-- An expired session returns to the login screen instead of reconnecting forever
-- AI panel actions no longer run twice after signing in again
-- Alerts, application and battery charts, card subtitles, device names, and login, AI panel and disk messages are translated
-- Split charts and the sampling tooltip follow a language change
-- Long views keep 1-minute detail right after a restart
+- `https://` targets, an Ollama URL without a port and PostgreSQL `verify-ca`/`verify-full` work under the sandbox
+- History no longer goes missing after a tier wraps, a crash, a restart or a clock step back, and long views keep 1-minute detail right after a restart
+- Damaged tier files, records from a newer version, infinite, NaN or out-of-range values and over-long names or lists no longer hang or break history
+- Custom metric values beyond the 32-bit float range are refused and logged once
+- Shutdown waits for the sample being collected before closing storage
+- Tier 1 and 2 rollups no longer carry needless statistics, so they retain more history
 - `inspect_tier.py` walks damaged tiers the way Kula does and answers `--help`
-- A standby of a quiet PostgreSQL primary no longer shows a growing replication lag
-- Hosts with hundreds of containers no longer lose their container metrics
-- Mounts with a space in their path are measured
-- Used memory and swap can no longer read as an absurd value
-- `web.graphs.gpu_temp` takes effect
+- Battery/UPS, PostgreSQL replication and application charts no longer end up in the wrong place
+- Focus mode no longer hides split temperature charts or an application-only selection, or pins the crosshair of charts being selected
 - Split charts no longer merge devices whose names differ only in punctuation
 - A malformed aggregation or Focus mode preference no longer blanks the dashboard
+- An expired session returns to the login screen instead of reconnecting forever, and AI panel actions no longer run twice after signing in again
+- Alerts, application and battery charts, card subtitles, device names and login, AI panel and disk messages are translated; split charts and the sampling tooltip follow a language change
+- Rolling views no longer stay marked "partial" after a late refresh or announce every refresh to screen readers
+- Live views follow the server's clock when the browser's is off, and a background tab no longer piles up chart memory
+- AI assistant: long answers no longer freeze the tab, long conversations are no longer refused, and the metrics tool keeps to the history range limits
+- Bearer tokens work with auth status and logout
+- `/metrics` writes each metric family once, with valid UTF-8 label values, so `promtool` accepts it
 - `kula hash-password` refuses an empty password, answers `--help` and keeps spaces in a piped password
-- Rolling views no longer announce every refresh to screen readers
-- The AI assistant's metrics tool keeps to the history range limits
-- Records from a newer version are skipped instead of misread, in `inspect_tier.py` too
-- An infinity, NaN or out-of-range value no longer breaks history; a sample that cannot be encoded answers an error and is logged
-- Custom metric values beyond the 32-bit float range are refused and logged once
-- Tier 1 and 2 rollups no longer carry needless statistics, so they retain more history
-- Shutdown waits for the sample being collected before closing storage
-- Live views follow the server's clock when the browser's is off
-- A dashboard in a background tab no longer piles up chart memory
-- Selecting charts in Focus mode no longer pins their crosshair
-- An over-long name or list no longer stops or garbles history recording
-- Names cut to length no longer end in a broken character
-- `/metrics` writes each metric family once, so `promtool` accepts it
 - runit: logging no longer blocks Kula
-- A configured container socket that refuses connections is no longer reported as missing
-- Long AI answers no longer freeze the tab, and long conversations are no longer refused
-- `gen-mock-data` stops when an explicit `-config` is missing
 
 ### Security
 
-- Login is refused while auth is disabled
-- Concurrent password hashing is bounded by CPU and memory
-- Sessions are tied to the account password; everyone signs in again after upgrading
-- Request paths can no longer forge access log lines
-- Content-Security-Policy no longer allows inline styles
-- API responses are not stored by browsers or proxies
-- The Ollama proxy no longer follows redirects
-- A startup warning when `allowed_origins` without `origin_validation` exposes the live stream
 - DNS rebinding protection: with auth disabled, and on `/metrics` without a token, only local host names and `web.security.allowed_hosts` are answered
-- History requests can no longer be made to read the whole raw tier
-- Login rate limits count an IPv6 client by its /64, and a NAT64 one by its IPv4 address
-- Behind `trust_proxy`, rate limits use the proxy's own `X-Forwarded-For` entry, and only a valid address
-- A startup warning when a `unix_socket` without `trust_proxy` gives every client one login limit
-- Concurrent history requests can no longer exhaust memory
+- Sessions are tied to the account password, and login is refused while auth is disabled
+- Concurrent logins and history requests can no longer exhaust CPU or memory, and a history request can no longer read the whole raw tier
+- Login rate limits count an IPv6 client by its /64 and a NAT64 one by its IPv4 address; behind `trust_proxy` they use the proxy's own `X-Forwarded-For` entry, and only a valid address
+- Startup warnings when `allowed_origins` without `origin_validation` exposes the live stream, or a `unix_socket` without `trust_proxy` gives every client one login limit
+- A `unix_socket` whose mode cannot be set is not served, and the custom metrics socket limits its connections
+- Content-Security-Policy no longer allows inline styles, pins `base-uri` and `form-action`, and lets only the game page reach the score URL
+- Every dashboard module loads with an integrity check
+- Dashboard pages and API responses are never cached, and signing in clears the password field
+- AI proxy: connects only to loopback, follows no redirects, forwards only user and assistant turns on a listed model, limits tool calls and concurrent chats, and keeps backend errors from the client
+- Logs, the TUI and kula-scan escape text from requests, monitored servers and scan targets; logs hide credentials in status URLs, and kula-scan bounds what a target streams
 - The sandbox confines Unix sockets, UDP and signals on newer kernels, opens storage under it, and covers `kula tui`
 - Local users can no longer plant fake containers, and a root Kula no longer uses another user's Podman socket
-- A fake database server can no longer crash Kula
-- `.deb` and snap configs are no longer world-readable or writable by the service, and upgrades leave a linked config alone
-- Release tarballs no longer hand `/opt/kula` to the builder's uid
-- The documented installer check runs only an installer that passed it
-- Crafted tier files can no longer hang or exhaust Kula, `kula inspect`, the TUI or `inspect_tier.py`
+- A fake database server can no longer crash Kula, and crafted tier files can no longer hang or exhaust it, the TUI or `inspect_tier.py`
 - Storage, backup, session and GPU log files are never opened through a link or FIFO
-- Every dashboard module loads with an integrity check
-- Content-Security-Policy pins `base-uri` and `form-action`, and only the game page reaches the score URL
-- Dashboard pages are never cached, and signing in clears the password field
-- The AI chat forwards only user and assistant turns on a listed model, with limited tool calls and concurrent chats
-- The AI proxy connects only to loopback, and backend errors no longer reach the client
-- The TUI and kula-scan escape control characters that hosts and targets send, and kula-scan bounds what a target streams
-- Logs hide credentials in status URLs and escape text from monitored servers
-- `/metrics` label values are always valid UTF-8
-- The custom metrics socket limits its connections
-- A `unix_socket` whose mode cannot be set is not served
+- `.deb` and snap configs are no longer world-readable or writable by the service, upgrades leave a linked config alone, and release tarballs no longer hand `/opt/kula` to the builder's uid
 - Docker: the container drops all capabilities and runs read-only, and root owns the binary and config
-- The Chart.js lockfile must match the registry, and CI rebuilds the bundle from it
+- The documented installer check runs only an installer that passed it
+- The Chart.js lockfile must match the registry, CI rebuilds the bundle from it, and `go_modules_updates.py` holds back freshly released updates
 - Vulnerabilities are reported privately
 
 ## [0.21.0] - 2026-10-01
