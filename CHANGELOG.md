@@ -19,11 +19,16 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - `allowed_origins` entries other than a plain `scheme://host[:port]` (a path, query, `*` or non-punycode name), and a zero `session_timeout`, WebSocket limit or `argon2` time or threads, now stop startup
 - PgBouncer in front of PostgreSQL needs `ignore_startup_parameters`
 - Docker: mount `/run/utmp` or `/run/systemd/sessions` to keep the logged-in user count
+- Unknown config settings, and a `-config` path that cannot be read or created, now stop startup
+- Hosts with dozens of containers, disks or interfaces may need a higher `MemoryMax` in a systemd drop-in
 
 ### Added
 
 - Rearrange gauges and chart cards in the Customization menu (#51)
 - Prometheus: current Apache2 rates `kula_apache2_accesses_per_second` and `kula_apache2_served_bytes_per_second`
+- MySQL over TLS with `sslmode` and `sslrootcert`
+- `install_v3.sh` installer
+- kula-scan reads the password from `KULA_SCAN_PASSWORD`
 
 ### Changed
 
@@ -51,6 +56,14 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Charts are built once on page load, and Graph Bounds apply without reloading them
 - Settings that would break login or WebSockets are refused at startup, and `allowed_origins` is normalized
 - `kula_system_logged_in_users` is omitted when the host has neither utmp nor logind sessions
+- History requests take turns, and the dashboard retries one the server was too busy for
+- The systemd unit caps Kula's memory
+- Only containers with a full runtime ID are monitored, up to a limit per sample
+- `/api/system-info` no longer rereads sensors and batteries on request
+- tui: log lines are printed when it exits
+- kula-scan: a default run signs in once and logs out; account enumeration needs `-aggressive`
+- A setting the sandbox cannot grant is left out with a warning instead of disabling the whole sandbox
+- `go_modules_updates.py` holds back freshly released updates
 
 ### Deprecated
 
@@ -107,6 +120,13 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Live views follow the server's clock when the browser's is off
 - A dashboard in a background tab no longer piles up chart memory
 - Selecting charts in Focus mode no longer pins their crosshair
+- An over-long name or list no longer stops or garbles history recording
+- Names cut to length no longer end in a broken character
+- `/metrics` writes each metric family once, so `promtool` accepts it
+- runit: logging no longer blocks Kula
+- A configured container socket that refuses connections is no longer reported as missing
+- Long AI answers no longer freeze the tab, and long conversations are no longer refused
+- `gen-mock-data` stops when an explicit `-config` is missing
 
 ### Security
 
@@ -123,6 +143,28 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 - Login rate limits count an IPv6 client by its /64, and a NAT64 one by its IPv4 address
 - Behind `trust_proxy`, rate limits use the proxy's own `X-Forwarded-For` entry, and only a valid address
 - A startup warning when a `unix_socket` without `trust_proxy` gives every client one login limit
+- Concurrent history requests can no longer exhaust memory
+- The sandbox confines Unix sockets, UDP and signals on newer kernels, opens storage under it, and covers `kula tui`
+- Local users can no longer plant fake containers, and a root Kula no longer uses another user's Podman socket
+- A fake database server can no longer crash Kula
+- `.deb` and snap configs are no longer world-readable or writable by the service, and upgrades leave a linked config alone
+- Release tarballs no longer hand `/opt/kula` to the builder's uid
+- The documented installer check runs only an installer that passed it
+- Crafted tier files can no longer hang or exhaust Kula, `kula inspect`, the TUI or `inspect_tier.py`
+- Storage, backup, session and GPU log files are never opened through a link or FIFO
+- Every dashboard module loads with an integrity check
+- Content-Security-Policy pins `base-uri` and `form-action`, and only the game page reaches the score URL
+- Dashboard pages are never cached, and signing in clears the password field
+- The AI chat forwards only user and assistant turns on a listed model, with limited tool calls and concurrent chats
+- The AI proxy connects only to loopback, and backend errors no longer reach the client
+- The TUI and kula-scan escape control characters that hosts and targets send, and kula-scan bounds what a target streams
+- Logs hide credentials in status URLs and escape text from monitored servers
+- `/metrics` label values are always valid UTF-8
+- The custom metrics socket limits its connections
+- A `unix_socket` whose mode cannot be set is not served
+- Docker: the container drops all capabilities and runs read-only, and root owns the binary and config
+- The Chart.js lockfile must match the registry, and CI rebuilds the bundle from it
+- Vulnerabilities are reported privately
 
 ## [0.21.0] - 2026-10-01
 
