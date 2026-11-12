@@ -41,6 +41,10 @@ func mysqlTLSConfig(sslmode, sslrootcert, host string) (*tls.Config, error) {
 			return nil, fmt.Errorf("sslrootcert %s holds no PEM certificate", sslrootcert)
 		}
 	}
+	// InsecureSkipVerify is set below only where the mode asks for it: verify-ca
+	// checks the chain itself in VerifyConnection, and require without a CA is
+	// the documented opt-in to an unchecked certificate (the default is disable).
+	// nosemgrep: bypass-tls-verification
 	cfg := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
 	switch {
 	case sslmode == "verify-full":

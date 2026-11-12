@@ -104,6 +104,8 @@ func writeSamplesJSON[S any](w http.ResponseWriter, envelope any, samples []S) {
 	sent := false
 	flush := func() bool {
 		sent = true
+		// Writes encoding/json output as application/json (not text/html); the XSS rule doesn't apply.
+		// nosemgrep: no-direct-write-to-responsewriter
 		_, err := w.Write(buf.Bytes())
 		buf.Reset()
 		return err == nil
