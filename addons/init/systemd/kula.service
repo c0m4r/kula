@@ -60,7 +60,11 @@ LimitNOFILE=65536
 # (systemctl edit kula):
 #   [Service]
 #   MemoryMax=2G
+#   Environment=GOMEMLIMIT=1GiB
 MemoryMax=1G
+# A soft target for Go's garbage collector, well below MemoryMax: above it,
+# Kula collects garbage harder rather than grow towards the hard limit.
+Environment=GOMEMLIMIT=512MiB
 
 [Install]
 WantedBy=multi-user.target
