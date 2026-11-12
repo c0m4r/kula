@@ -979,7 +979,7 @@ func TestCustomCollectorCapsConnections(t *testing.T) {
 	waitFor("the freed slot serves a producer", func() bool { return len(cc.Latest()["fans"]) == 1 })
 }
 
-// A client's bytes are quoted in the log: a decoding error names the map
+// A client's bytes are quoted in the log: a decoding error may name the map
 // keys it failed on, control characters and all, and a valid line may carry a
 // raw carriage return between its tokens.
 func TestCustomLinesAreLoggedEscaped(t *testing.T) {
@@ -991,7 +991,9 @@ func TestCustomLinesAreLoggedEscaped(t *testing.T) {
 		cc.handleConn(server)
 		close(done)
 	}()
-	_, _ = client.Write([]byte("{\"custom\":{\"\\u001b]0;owned\\u0007\":[{\"a\":\"s\"}]}}\n"))
+	const rawKey = "\x1b]0;owned\a"
+	badValue := "{\"custom\":{\"\\u001b]0;owned\\u0007\":[{\"a\":\"s\"}]}}"
+	_, _ = client.Write([]byte(badValue + "\n"))
 	_, _ = client.Write([]byte("{\"custom\":\r{\"g\":[{\"a\":1}]}}\n"))
 	_ = client.Close()
 	<-done
@@ -999,8 +1001,17 @@ func TestCustomLinesAreLoggedEscaped(t *testing.T) {
 	if strings.ContainsAny(out, "\x1b\a\r") {
 		t.Errorf("the log carries raw control characters: %q", out)
 	}
-	if !strings.Contains(out, `\x1b]0;owned\a`) || !strings.Contains(out, `\r{`) {
-		t.Errorf("the log does not show the escaped client bytes: %q", out)
+	if !strings.Contains(out, "invalid JSON") || !strings.Contains(out, `\r{`) {
+		t.Errorf("the log does not show the rejected line and the escaped valid one: %q", out)
+	}
+	// encoding/json names the map key in its error from Go 1.27 on; an older
+	// decoder names only the struct field, leaving no client bytes to escape.
+	err := json.Unmarshal([]byte(badValue), new(customMessage))
+	if err == nil {
+		t.Fatal("a string where a number belongs was decoded")
+	}
+	if strings.Contains(err.Error(), rawKey) && !strings.Contains(out, `\x1b]0;owned\a`) {
+		t.Errorf("the log does not show the escaped map key: %q", out)
 	}
 }
 
