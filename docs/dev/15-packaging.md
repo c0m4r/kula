@@ -60,8 +60,13 @@ archive; only the remote path appends its checksums to `CHECKSUMS.sha256.txt`.
 
 The image is a two-stage build ([`addons/docker/Dockerfile`](../../addons/docker/Dockerfile)):
 
-- **Builder:** pinned `golang:1.26.11-trixie` (by digest), `CGO_ENABLED=0`, multi-arch via
-  `ARG TARGETARCH`, `-trimpath -ldflags="-s -w" -buildvcs=false`, building only `./cmd/kula/`.
+- **Builder:** pinned `golang:1.26.11-trixie` (by digest), `CGO_ENABLED=0`,
+  `-trimpath -ldflags="-s -w" -buildvcs=false`, building only `./cmd/kula/`. It runs on the
+  build machine's platform (`--platform=$BUILDPLATFORM`) and cross-compiles with
+  `GOARCH=$TARGETARCH`, so the Go image does not need a variant for every target (the pinned
+  one has no `linux/riscv64`) and no Go runs under emulation. The runtime stage still runs
+  `RUN` steps for the target, so a multi-arch push needs QEMU binfmt handlers on the builder
+  host.
 - **Runtime:** pinned `alpine:3.24.3` (by digest) with an unprivileged `kula:kula` user. Its uid
   100 and gid 101 are pinned to what `adduser -S` gave earlier images, so their data volumes
   stay writable; changing them would leave every existing volume owned by someone else. Root

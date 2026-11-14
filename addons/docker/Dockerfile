@@ -1,4 +1,8 @@
-FROM golang:1.26.11-trixie@sha256:fa340cb59ebeb1d53ac1cccfc334201d938fe5f3458003cccb767096d8e032b8 AS builder
+# The builder runs on the build machine's platform and cross-compiles for the
+# target with GOARCH below: the Go image need not exist for every platform the
+# push scripts build (this pin has no linux/riscv64), and nothing in this stage
+# runs under emulation.
+FROM --platform=$BUILDPLATFORM golang:1.26.11-trixie@sha256:fa340cb59ebeb1d53ac1cccfc334201d938fe5f3458003cccb767096d8e032b8 AS builder
 
 WORKDIR /app
 
