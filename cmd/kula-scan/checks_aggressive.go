@@ -22,8 +22,13 @@ func aggressiveChecks() []check {
 }
 
 // runOversizedBodyCheck verifies the login body size cap (MaxBytesReader, 4 KiB)
-// rejects an oversized payload instead of buffering it.
+// rejects an oversized payload instead of buffering it. SKIP when auth is
+// disabled: Kula then answers /api/login with 404 and reads no body.
 func runOversizedBodyCheck(s *Scanner) []Finding {
+	if !s.authEnabled {
+		return []Finding{finding("INPUT-AGG", "input", "Login body size cap", SevInfo, StatusSkip,
+			"auth is disabled; the instance has no login endpoint to send a body to.")}
+	}
 	big := strings.Repeat("A", 8*1024)
 	body := `{"username":"x","password":"` + big + `"}`
 	hdr := map[string]string{
@@ -51,8 +56,13 @@ func runOversizedBodyCheck(s *Scanner) []Finding {
 
 // runLoginRateCheck fires a burst of bad logins from this IP and expects the
 // rate limiter to start answering 429. NOTE: this locks out login from the
-// scanner's IP for ~5 minutes.
+// scanner's IP for ~5 minutes. SKIP when auth is disabled: there is no login
+// endpoint to throttle.
 func runLoginRateCheck(s *Scanner) []Finding {
+	if !s.authEnabled {
+		return []Finding{finding("RATE-LOGIN", "rate", "Login brute-force rate limiting", SevInfo, StatusSkip,
+			"auth is disabled; the instance has no login endpoint to brute-force.")}
+	}
 	const burst = 8
 	limited := 0
 	for i := 0; i < burst; i++ {

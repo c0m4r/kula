@@ -97,6 +97,10 @@ login from the same address until the window passes.
   These wait up to `-dos-wait` (default 35s, sized for the 30s `ReadTimeout`) — raise it if your
   target uses longer timeouts, or they'll false-fail.
 
+With auth disabled Kula has no login endpoint (`/api/login` answers 404), so the probes that
+drive it — `AUTH-006`, `RATE-LOGIN`, `BYPASS-XFF`, `INPUT-AGG` and the login half of
+`FUZZ-BODY` — report `SKIP` and send it nothing.
+
 Run `-aggressive` against staging, or accept temporary disruption on production.
 
 ## Fuzzing (`-fuzz`)

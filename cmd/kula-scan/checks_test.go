@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -674,4 +675,66 @@ func TestXFFBypassNotPossible(t *testing.T) {
 	defer ts.Close()
 	s := scannerForDos(t, ts, "", "", time.Second)
 	wantStatus(t, runXFFBypassCheck(s), "BYPASS-XFF", StatusPass)
+}
+
+// ---- auth disabled -----------------------------------------------------------
+
+// authOffMock answers like Kula with web.auth disabled: /api/login is a JSON
+// 404 whatever is sent to it. It counts the requests that reach /api/login
+// and /api/ollama/chat.
+func authOffMock(ollama bool, loginHits, chatHits *atomic.Int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte("ok"))
+		case "/api/auth/status":
+			writeJSONResp(w, map[string]any{"auth_required": false, "authenticated": true})
+		case "/api/config":
+			writeJSONResp(w, map[string]any{"auth_enabled": false, "ollama_enabled": ollama})
+		case "/api/login":
+			loginHits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+		case "/api/ollama/chat":
+			chatHits.Add(1)
+			http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+}
+
+// TestLoginProbesSkipWithoutAuth: with auth disabled there is no login
+// endpoint, so the probes that drive it must skip instead of reading its 404
+// as a missing safeguard (INPUT-AGG warned, RATE-LOGIN failed HIGH) or as a
+// passed one (AUTH-006, FUZZ-BODY), and must not send it anything.
+func TestLoginProbesSkipWithoutAuth(t *testing.T) {
+	for _, ollama := range []bool{false, true} {
+		var loginHits, chatHits atomic.Int64
+		ts := httptest.NewServer(authOffMock(ollama, &loginHits, &chatHits))
+		s := scannerForFuzz(t, ts, mockUser, mockPass)
+		if s.authEnabled || s.ollama != ollama {
+			t.Fatalf("discovery: authEnabled=%v ollama=%v, want false/%v", s.authEnabled, s.ollama, ollama)
+		}
+
+		wantStatus(t, runOversizedBodyCheck(s), "INPUT-AGG", StatusSkip)
+		wantStatus(t, runLoginRateCheck(s), "RATE-LOGIN", StatusSkip)
+		wantStatus(t, []Finding{enumerationFinding(s)}, "AUTH-006", StatusSkip)
+		wantStatus(t, runXFFBypassCheck(s), "BYPASS-XFF", StatusSkip)
+		body := runFuzzBody(s)
+		if ollama {
+			// The Ollama chat still parses a body, so the probe runs there.
+			wantStatus(t, body, "FUZZ-BODY", StatusPass)
+			if chatHits.Load() == 0 {
+				t.Error("FUZZ-BODY sent nothing to /api/ollama/chat with Ollama enabled")
+			}
+		} else {
+			wantStatus(t, body, "FUZZ-BODY", StatusSkip)
+		}
+		if n := loginHits.Load(); n != 0 {
+			t.Errorf("ollama=%v: %d requests reached /api/login with auth disabled", ollama, n)
+		}
+		ts.Close()
+	}
 }

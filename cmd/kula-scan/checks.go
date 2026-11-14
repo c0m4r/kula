@@ -283,6 +283,12 @@ func cookieAttributeFindings(s *Scanner) []Finding {
 // for a real username and for a random username must be indistinguishable. It
 // runs only with -aggressive (AUTH-006 in authChecks).
 func enumerationFinding(s *Scanner) Finding {
+	if !s.authEnabled {
+		// Without auth every login answers the same 404, which would read as
+		// a pass.
+		return finding("AUTH-006", "auth", "Username enumeration resistance", SevInfo, StatusSkip,
+			"auth is disabled; the instance has no login endpoint to compare responses from.")
+	}
 	if s.username == "" {
 		return finding("AUTH-006", "auth", "Username enumeration resistance", SevInfo, StatusSkip,
 			"no -username supplied; cannot compare a known user against an unknown one.")

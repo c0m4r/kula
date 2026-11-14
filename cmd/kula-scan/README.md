@@ -135,6 +135,10 @@ with the flag (a warning is printed first):
 - **`BYPASS-XFF`** — rotates spoofed `X-Forwarded-For` headers against the login limiter
   to detect a `trust_proxy` misconfiguration; consumes login attempts (locks you out).
 
+With auth disabled Kula has no login endpoint (`/api/login` answers 404), so the probes
+that drive it — `AUTH-006`, `RATE-LOGIN`, `BYPASS-XFF`, `INPUT-AGG` and the login half of
+`FUZZ-BODY` — report **SKIP** and send it nothing.
+
 The `dos` probes wait up to `-dos-wait` (default 35s) for the server to drop a stalled or
 idle connection — sized for Kula's default 30s `ReadTimeout`. **Raise `-dos-wait` if the
 target runs longer read timeouts**, or the slow-connection checks will report a false

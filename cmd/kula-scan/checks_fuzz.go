@@ -191,7 +191,13 @@ func runFuzzPath(s *Scanner) []Finding {
 // runFuzzBody sends a curated set of malformed JSON bodies to the JSON POST
 // endpoints. Login is per-IP rate-limited, so coverage there is best-effort;
 // the point is that a malformed body must yield 400 — never a 5xx or a panic.
+// Login exists only with auth enabled (Kula answers it with 404 otherwise) and
+// the Ollama chat only with Ollama enabled; with neither the probe is skipped.
 func runFuzzBody(s *Scanner) []Finding {
+	if !s.authEnabled && !s.ollama {
+		return []Finding{finding("FUZZ-BODY", "fuzz", "Malformed JSON body handling", SevInfo, StatusSkip,
+			"auth and Ollama are disabled; the instance has no endpoint that parses a JSON body.")}
+	}
 	bodies := []string{
 		`{`, `{"username":}`, `{"username":123,"password":[]}`, `[1,2,3]`, `"x"`, `null`, `12345`,
 		"\x00\x01garbage", `{"username":"` + strings.Repeat("A", 6000) + `"}`,
@@ -213,7 +219,9 @@ func runFuzzBody(s *Scanner) []Finding {
 			}
 		}
 	}
-	post("/api/login")
+	if s.authEnabled {
+		post("/api/login")
+	}
 	if s.ollama {
 		post("/api/ollama/chat")
 	}
