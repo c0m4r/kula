@@ -1,27 +1,58 @@
 _kula_completion() {
-    local cur prev opts commands
+    local cur prev command word i opts
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    commands="serve tui hash-password inspect disks"
-    opts="--config -config --help -h --version -version -v"
+    local commands="serve tui hash-password inspect disks"
+
+    # The value of -config, as "-config FILE" or "-config=FILE" (bash splits
+    # the "=" into a word of its own).
+    if [[ ${prev} == "--config" || ${prev} == "-config" ]] ||
+        [[ ${prev} == "=" && ${COMP_CWORD} -ge 2 &&
+            ( ${COMP_WORDS[COMP_CWORD-2]} == "--config" || ${COMP_WORDS[COMP_CWORD-2]} == "-config" ) ]]; then
+        mapfile -t COMPREPLY < <(compgen -f -- "${cur}")
+        return 0
+    fi
+
+    # The command is the first word that is neither an option nor the value
+    # of -config.
+    command=""
+    for (( i=1; i < COMP_CWORD; i++ )); do
+        word="${COMP_WORDS[i]}"
+        case "${word}" in
+            --config|-config)
+                if [[ ${COMP_WORDS[i+1]} == "=" ]]; then
+                    (( i += 2 ))
+                else
+                    (( i++ ))
+                fi
+                ;;
+            -*) ;;
+            *)
+                command="${word}"
+                break
+                ;;
+        esac
+    done
 
     if [[ ${cur} == -* ]] ; then
-        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+        # -config, -h and --help go before or after the command; -v and
+        # -version only before it; --verbose only after inspect.
+        case "${command}" in
+            "") opts="--config -config --help -h --version -version -v" ;;
+            inspect) opts="--config -config --help -h --verbose -verbose" ;;
+            *) opts="--config -config --help -h" ;;
+        esac
+        mapfile -t COMPREPLY < <(compgen -W "${opts}" -- "${cur}")
         return 0
     fi
 
-    if [[ ${prev} == "--config" || ${prev} == "-config" ]] ; then
-        COMPREPLY=( $(compgen -f -- ${cur}) )
-        return 0
+    # Offer the commands until one has been given.
+    if [[ -z ${command} ]]; then
+        mapfile -t COMPREPLY < <(compgen -W "${commands}" -- "${cur}")
     fi
-
-    # Only offer commands if we are at the first argument and it's not an option
-    if [[ ${COMP_CWORD} -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "${commands}" -- ${cur}) )
-        return 0
-    fi
+    return 0
 }
 
 complete -F _kula_completion kula

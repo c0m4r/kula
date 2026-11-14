@@ -1,9 +1,9 @@
-.TH KULA 1 "September 2026" "kula" "User Manuals"
+.TH KULA 1 "November 2026" "kula" "User Manuals"
 .SH NAME
 kula \- lightweight system monitoring daemon
 .SH SYNOPSIS
 .B kula
-[\fIOPTIONS\fR] [\fICOMMAND\fR]
+[\fIOPTIONS\fR] [\fICOMMAND\fR] [\fIOPTIONS\fR]
 .SH DESCRIPTION
 .B kula
 (Kula) is a self-contained, lightweight system monitoring daemon written in Go.
@@ -25,24 +25,82 @@ Generates an Argon2id hash of a password, suitable for use in the configuration 
 .B inspect
 Displays storage tier resolution, coverage, and file information.
 Pass \fB\-\-verbose\fR to also print the latest recorded metrics from each tier.
+A tier file that does not exist yet, as on a fresh install, is reported and is not an
+error. One that exists but cannot be inspected is reported on standard error, and
+\fBkula\fR exits with status 1 after printing the other tiers.
 .TP
 .B disks
 Lists available disks and partitions supported by Kula, with their persistent IDs.
 Copy IDs into collection.devices to select disks across reboots.
 Devices without a unique persistent ID are marked unavailable (unstable kernel name).
-This command does not load configuration or access storage; configured device filters
-do not restrict the listing. Virtual, logical and optical devices excluded by Kula's
-disk collector are omitted.
+This command does not load configuration or access storage; a \fB\-config\fR given with it
+is ignored, and no configuration file is created. Configured device filters do not
+restrict the listing. Virtual, logical and optical devices excluded by Kula's disk
+collector are omitted.
 .SH OPTIONS
+\fB\-config\fR, \fB\-h\fR and \fB\-\-help\fR may be given before the command or after it;
+\fB\-v\fR and \fB\-version\fR only before it. Every option may be written with one dash or
+two, and an option after the command takes precedence over the same option before it.
 .TP
-\fB\-\-config\fR \fIFILE\fP
-Path to the configuration file (default: config.yaml).
+\fB\-config\fR \fIFILE\fP
+Path to the configuration file (default: \fIconfig.yaml\fR in the working directory).
+Without this option, a missing \fIconfig.yaml\fR means the built-in defaults. A \fIFILE\fR
+given explicitly is always used: if it does not exist, it is created from the packaged
+example configuration, with mode 0600, and a warning is logged; if it cannot be created
+there or cannot be read, \fBkula\fR refuses to start rather than run on built-in defaults,
+which would serve without authentication. A setting the configuration does not know, such
+as a misspelled key, also stops \fBkula\fR, with an error naming its line.
 .TP
-\fB\-\-version\fR, \fB\-v\fR
+\fB\-h\fR, \fB\-\-help\fR
+Show the help message and exit. After a command, show that command's help; it then reads
+no configuration and starts nothing.
+.TP
+\fB\-v\fR, \fB\-version\fR
 Print the version and exit.
 .TP
-\fB\-\-help\fR
-Show the help message and exit.
+\fB\-\-verbose\fR
+After \fBinspect\fR only: also print the latest recorded metrics from each tier.
+.SH ENVIRONMENT
+These variables override the corresponding settings of the configuration file:
+.TP
+.B KULA_DIRECTORY
+storage.directory, where the tier files are written.
+.TP
+.B KULA_LOGLEVEL
+web.logging.level: access, perf or debug. Set but empty, it disables logging.
+.TP
+.B KULA_LISTEN
+web.listen, the bind address.
+.TP
+.B KULA_PORT
+web.port, the bind port. A value outside 1\-65535 is ignored with a warning.
+.TP
+.B KULA_UNIX_SOCKET
+web.unix_socket: listen on a Unix socket instead of TCP.
+.TP
+.B KULA_MOUNTS_DETECTION
+collection.mounts_detection: auto, host or self.
+.TP
+.B KULA_BASE_PATH
+web.base_path, the URL sub-path prefix. Set but empty, it clears the configured one.
+.TP
+.B KULA_POSTGRES_PASSWORD
+applications.postgres.password.
+.TP
+.B KULA_MYSQL_PASSWORD
+applications.mysql.password.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, or the help or the version was printed.
+.TP
+.B 1
+An error: an unknown command, a configuration or storage that cannot be used, or, for
+\fBinspect\fR, a tier file that exists but cannot be inspected.
+.TP
+.B 2
+A command line \fBkula\fR does not accept: an unknown option, or an argument the command
+does not take.
 .SH FILES
 .TP
 .I /etc/kula/config.yaml

@@ -4,8 +4,14 @@ Kula is a single binary with a handful of subcommands. Running it with no comman
 `serve`.
 
 ```
-kula [flags] [command]
+kula [flags] [command] [flags]
 ```
+
+`-config`, `-h` and `--help` may come before the command or after it, so
+`kula serve -config /etc/kula/config.yaml` and `kula -config /etc/kula/config.yaml serve` are
+the same; `-v` and `-version` only before it. `kula <command> --help` prints that command's
+help and exits without reading a config or starting anything. An argument a command does not
+take is refused with exit status 2 rather than ignored.
 
 ## Commands
 
@@ -71,6 +77,10 @@ Pass `--verbose` to also decode and print the latest recorded metrics from each 
 kula inspect --verbose
 ```
 
+A tier file that does not exist yet, as on a fresh install, is reported and is not an error. One
+that exists but cannot be inspected (unreadable, or not a tier file) is reported on standard
+error, and `kula inspect` exits with status 1 after printing the other tiers.
+
 ### `kula disks`
 
 Lists available disks and partitions supported by Kula, with the persistent IDs to copy into
@@ -82,17 +92,28 @@ kula disks
 
 Devices without a unique persistent ID are marked `unavailable (unstable kernel name)`.
 Virtual, logical and optical devices excluded by the disk collector are omitted. The command
-runs before config loading: it does not read `config.yaml`, does not create storage
-directories, and configured `collection.devices` filters do not restrict the listing.
+runs before config loading: it does not read `config.yaml` (a `-config` given with it is
+ignored, and no config is seeded), does not create storage directories, and configured
+`collection.devices` filters do not restrict the listing.
 
 ## Flags
 
 | Flag | Description |
 |------|-------------|
-| `-config <path>` | Path to the configuration file (default `config.yaml`). If the path is given explicitly but does not exist, Kula seeds it from the packaged example config (logging a warning) instead of failing; if it cannot be created or read, Kula refuses to start rather than run on built-in defaults. |
-| `-version`, `-v` | Print version and exit. |
-| `--verbose` | (`kula inspect` only) Also decode and print the latest recorded metrics from each tier. |
-| `-h`, `--help` | Show usage. |
+| `-config <path>` | Path to the configuration file (default `config.yaml`). Before or after the command, the same way. If the path is given explicitly but does not exist, Kula seeds it from the packaged example config (logging a warning) instead of failing; if it cannot be created or read, Kula refuses to start rather than run on built-in defaults. |
+| `-version`, `-v` | Print version and exit. Before the command only. |
+| `--verbose` | (after `inspect` only) Also decode and print the latest recorded metrics from each tier. |
+| `-h`, `--help` | Show usage; after a command, that command's help. |
+
+Every flag may be written with one dash or two (`-config` or `--config`).
+
+## Exit status
+
+| Status | Meaning |
+|--------|---------|
+| `0` | Success, or the help or the version was printed. |
+| `1` | An error: an unknown command, a config or storage that cannot be used, or a tier file `kula inspect` could not inspect. |
+| `2` | A command line Kula does not accept: an unknown flag, or an argument the command does not take. |
 
 ## Environment variables
 
@@ -113,8 +134,9 @@ These override the corresponding config fields (see [Configuration](04-configura
 ## Examples
 
 ```bash
-# Start with a custom config
+# Start with a custom config (the flag may also follow the command)
 kula -config /etc/kula/config.yaml
+kula serve -config /etc/kula/config.yaml
 
 # Quick run on a specific address/port without editing config
 KULA_LISTEN=127.0.0.1 KULA_PORT=9000 kula
