@@ -166,7 +166,7 @@ Distro and container package builders live in `addons/` — see [Packaging & Rel
 ./addons/build_deb.sh      # → dist/kula-*.deb
 ./addons/build_rpm.sh      # → dist/kula-*.rpm
 ./addons/build_aur.sh      # → dist/kula-<version>-aur/ (then makepkg -si)
-./addons/build_snap.sh     # → dist/kula-*.snap (needs snapcraft + LXD)
+./addons/build_snap.sh     # → dist/kula-*.snap (in Docker, else snapcraft + LXD)
 ./addons/build_appimage.sh # → dist/kula-<version>-<arch>.AppImage (needs appimagetool)
 ./addons/docker/build.sh   # Docker image
 ```

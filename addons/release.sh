@@ -63,13 +63,14 @@ for arch in "${ARCHS[@]}"; do
 done
 
 # Snap, cross-built from source for all archs by the go plugin (so it ignores
-# the binaries above). Use `./addons/build_snap.sh --remote` for native
-# Launchpad builds instead. Skipped if snapcraft is unavailable so the release
+# the binaries above): in Docker when it is usable, else in snapcraft's LXD
+# instances. Use `./addons/build_snap.sh --remote` for native Launchpad builds
+# instead. Skipped if neither docker nor snapcraft is installed so the release
 # still completes.
-if command -v snapcraft >/dev/null 2>&1; then
+if command -v docker >/dev/null 2>&1 || command -v snapcraft >/dev/null 2>&1; then
     ./addons/build_snap.sh cross || echo "Warning: snap build failed, skipping"
 else
-    echo "Notice: snapcraft not found — skipping snap build"
+    echo "Notice: neither docker nor snapcraft found — skipping snap build"
 fi
 
 # Generate checksums over the distributable artifacts (very last step).

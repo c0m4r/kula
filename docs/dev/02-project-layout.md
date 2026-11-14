@@ -46,6 +46,7 @@ kula/
 │   ├── chartjs/            # Chart.js bundle inputs: pinned packages, entry, Date adapter
 │   ├── ansible/            # Ansible deployment role
 │   ├── bash-completion/    # Bash completion script
+│   ├── build_snap/         # Snapcraft image for build_snap.sh's Docker builds
 │   ├── docker/             # Dockerfile + compose + push scripts
 │   ├── init/               # systemd, OpenRC, runit service files
 │   ├── man/                # man page (kula.1)

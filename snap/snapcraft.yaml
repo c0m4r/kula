@@ -128,6 +128,11 @@ parts:
     # mis-reads as the compiler version ("invalid go compiler version 'go:
     # downloading ...'"). `local` keeps the check quiet; the override-build
     # step below restores `auto` so the pinned toolchain is still fetched.
+    #
+    # Docker builds (addons/build_snap.sh) get no build-snaps: snapcraft skips
+    # them inside a container. Their image carries the Go release go.mod names
+    # instead, and the script refuses a build that needs any other build snap
+    # until addons/build_snap/Dockerfile provides it.
     build-snaps:
       - go/latest/stable
     build-environment:
