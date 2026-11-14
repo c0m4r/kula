@@ -969,6 +969,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if s.store != nil {
 		ranges, interval = s.store.RetainedRanges()
 	}
+	// Bounds read from a tier file are in local time, but a rollup tier's
+	// newest end, written during this run, is a window boundary computed in
+	// UTC. All of them carry the local offset, as they did before 0.22.0.
+	for i := range ranges {
+		ranges[i].From = ranges[i].From.Local()
+		ranges[i].To = ranges[i].To.Local()
+	}
 
 	info := map[string]interface{}{
 		"history": map[string]interface{}{

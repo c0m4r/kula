@@ -540,6 +540,64 @@ func TestHandleConfigExposesUISettings(t *testing.T) {
 	}
 }
 
+// Every bound in history.ranges carries the local offset, as before 0.22.0:
+// the ends a rollup tier writes during a run are window boundaries computed
+// in UTC, and were printed with "Z" beside local starts. The samples end
+// 0.37s into each second, as live ones do, so rollups are split at those
+// boundaries, and are stamped in a zone that is neither local nor UTC, so
+// the test fails on a host whose local zone is UTC too.
+func TestHandleConfigRetainedRangesUseTheLocalOffset(t *testing.T) {
+	store, err := storage.NewStore(config.StorageConfig{
+		Directory: t.TempDir(),
+		Tiers: []config.TierConfig{
+			{Resolution: time.Second, MaxSize: "10MB", MaxBytes: 10 * 1024 * 1024},
+			{Resolution: time.Minute, MaxSize: "10MB", MaxBytes: 10 * 1024 * 1024},
+			{Resolution: 5 * time.Minute, MaxSize: "10MB", MaxBytes: 10 * 1024 * 1024},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	zone := time.FixedZone("test", 5*3600+1800)
+	start := time.Now().Add(-time.Hour).Truncate(5 * time.Minute).Add(370 * time.Millisecond).In(zone)
+	for i := 1; i <= 7*60; i++ {
+		ts := start.Add(time.Duration(i) * time.Second)
+		if err := store.WriteSample(&collector.Sample{Timestamp: ts}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := NewServer(config.WebConfig{}, config.GlobalConfig{}, &collector.Collector{}, store, t.TempDir(), config.OllamaConfig{})
+	rec := httptest.NewRecorder()
+	http.HandlerFunc(s.handleConfig).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	var got struct {
+		History struct {
+			Ranges []struct {
+				From string `json:"from"`
+				To   string `json:"to"`
+			} `json:"ranges"`
+		} `json:"history"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding /api/config: %v", err)
+	}
+	if len(got.History.Ranges) != 3 {
+		t.Fatalf("ranges = %+v, want one per tier", got.History.Ranges)
+	}
+	for i, r := range got.History.Ranges {
+		for _, value := range []string{r.From, r.To} {
+			parsed, err := time.Parse(time.RFC3339Nano, value)
+			if err != nil {
+				t.Fatalf("tier %d: %q: %v", i, value, err)
+			}
+			if want := parsed.Local().Format(time.RFC3339Nano); value != want {
+				t.Errorf("tier %d bound %q, want the local form %q", i, value, want)
+			}
+		}
+	}
+}
+
 func TestHandleHealth(t *testing.T) {
 	s := NewServer(config.WebConfig{Security: config.SecurityConfig{Headers: true, OriginValidation: true}}, config.GlobalConfig{}, nil, nil, t.TempDir(), config.OllamaConfig{})
 

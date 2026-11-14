@@ -213,7 +213,9 @@ and (if shown) version.
 `history` contains `collection_interval_ms` and `ranges: [{from,to}, ...]` for nonempty
 storage tiers. These are inexpensive interval envelopes derived from in-memory tier headers
 (the oldest end timestamp is extended left by that tier's native resolution),
-not an index of every available day or proof of gap-free data. The date picker refreshes them
+not an index of every available day or proof of gap-free data. Every bound is written with the
+server's local UTC offset, including a rollup tier's newest end, which the store computes as a
+UTC window boundary. The date picker refreshes them
 on opening; no retention scan or new endpoint is involved.
 
 ### `GET /api/i18n?lang=`
