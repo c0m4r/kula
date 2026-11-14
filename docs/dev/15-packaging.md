@@ -56,6 +56,19 @@ on reboot, after which LXD refuses to start the instance with "Missing source pa
 `build_aur.sh` first asks whether to package the local checkout or the published GitHub source
 archive; only the remote path appends its checksums to `CHECKSUMS.sha256.txt`.
 
+### The service on install and upgrade
+
+The `.deb` postinst and the `.rpm` `%post` enable and start `kula.service` on first install
+only. They tell an upgrade by their arguments: the deb's `$2` is the previously configured
+version (empty on a first install), the rpm's `$1` is 1 on install and 2 or more on upgrade. On
+upgrade they run `systemctl daemon-reload` and, when systemd runs the host
+(`/run/systemd/system` exists), `systemctl try-restart kula.service`: a running Kula restarts on
+the new binary and unit, a stopped one stays stopped, and whether it is enabled stays the
+administrator's choice. A failed restart prints a hint naming `journalctl -u kula` and does not
+fail the upgrade. Removal stops and disables the service. The AUR `kula.install` only reloads
+systemd, on install and upgrade alike, and leaves starting and restarting Kula to the
+administrator.
+
 ## Docker
 
 The image is a two-stage build ([`addons/docker/Dockerfile`](../../addons/docker/Dockerfile)):

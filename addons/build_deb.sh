@@ -138,11 +138,20 @@ if [ "\$1" = "configure" ]; then
     chown -R kula:kula /var/lib/kula
     chmod 0750 /var/lib/kula
 
-    # Load systemd, enable and start service
+    # Load the unit. A first install (no previously configured version in
+    # \$2) enables and starts the service. An upgrade, on a host systemd
+    # runs, restarts the service only if it is running, so the new version
+    # takes over, and leaves whether it is enabled to the administrator.
     if command -v systemctl >/dev/null; then
         systemctl daemon-reload || true
-        systemctl enable kula.service || true
-        systemctl start kula.service || true
+        if [ -z "\$2" ]; then
+            systemctl enable kula.service || true
+            systemctl start kula.service || true
+        elif [ -d /run/systemd/system ]; then
+            if ! systemctl try-restart kula.service; then
+                echo "kula: kula.service failed to restart after the upgrade; see journalctl -u kula" >&2
+            fi
+        fi
     fi
 fi
 

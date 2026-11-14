@@ -122,7 +122,12 @@ echo "<sha256>  kula-<version>-amd64.deb" | sha256sum -c && sudo dpkg -i kula-<v
 journalctl -f -t kula
 ```
 
-The package installs a systemd unit; Kula starts automatically.
+The package installs a systemd unit, then enables and starts Kula.
+
+To upgrade, install the newer package the same way. A running Kula restarts on the new version,
+a stopped one stays stopped, and the service stays enabled or disabled as you left it. If the
+restart fails, the package says so and the upgrade still completes: `journalctl -u kula` shows
+why.
 
 ---
 
@@ -133,6 +138,10 @@ wget https://github.com/c0m4r/kula/releases/download/<version>/kula-<version>-x8
 echo "<sha256>  kula-<version>-x86_64.rpm" | sha256sum -c && sudo rpm -i kula-<version>-x86_64.rpm
 journalctl -f -t kula
 ```
+
+The package installs a systemd unit, then enables and starts Kula. Upgrade with
+`sudo rpm -U kula-<version>-x86_64.rpm`; the service is handled as for the
+[`.deb`](#debian--ubuntu-deb): restarted only if it is running, its enabled state left alone.
 
 ---
 

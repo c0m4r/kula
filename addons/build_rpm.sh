@@ -197,11 +197,20 @@ fi
 # Storage belongs to the daemon
 chown -R kula:kula /var/lib/kula
 
-# Load systemd, enable and start service
+# Load the unit. A first install (\$1 is 1) enables and starts the service.
+# An upgrade (\$1 is 2 or more), on a host systemd runs, restarts the service
+# only if it is running, so the new version takes over, and leaves whether it
+# is enabled to the administrator.
 if command -v systemctl >/dev/null; then
     systemctl daemon-reload || true
-    systemctl enable kula.service || true
-    systemctl start kula.service || true
+    if [ "\$1" = 1 ]; then
+        systemctl enable kula.service || true
+        systemctl start kula.service || true
+    elif [ -d /run/systemd/system ]; then
+        if ! systemctl try-restart kula.service; then
+            echo "kula: kula.service failed to restart after the upgrade; see journalctl -u kula" >&2
+        fi
+    fi
 fi
 
 %preun
