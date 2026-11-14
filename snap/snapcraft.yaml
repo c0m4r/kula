@@ -117,9 +117,9 @@ parts:
   kula:
     plugin: go
     source: .
-    # Track the newest stable Go. go.mod pins a `go` version
-    # when the snap's bundled Go is older, Go's GOTOOLCHAIN feature
-    # fetches the pinned toolchain on demand at build time.
+    # Track the newest stable Go. go.mod pins a `go` version; when the snap's
+    # bundled Go is older, Go's GOTOOLCHAIN feature fetches the pinned
+    # toolchain on demand at build time.
     #
     # GOTOOLCHAIN is forced to `local` here for the snapcraft go plugin's
     # environment check only: that check parses the output of a bare
