@@ -44,7 +44,7 @@ def send_kula_metrics() -> None:
         )
     except PermissionError:
         print(
-            "Error: Permission daenied. "
+            "Error: Permission denied. "
             "You might need to run this as kula user.",
             file=sys.stderr,
         )

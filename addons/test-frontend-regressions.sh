@@ -4,7 +4,6 @@ set -e
 
 GREEN="\033[0;32m"
 CYAN="\033[0;36m"
-RED="\033[0;31m"
 RESET="\033[0m"
 
 cd "$(dirname "$0")/.."
