@@ -563,6 +563,38 @@ func TestRuntimeBearerSessionStatusAndLogout(t *testing.T) {
 	}
 }
 
+// TestRuntimeLogoutAnswersJSON: the logout answer is labelled as the JSON it is,
+// like every other JSON answer, rather than sniffed as text/plain.
+func TestRuntimeLogoutAnswersJSON(t *testing.T) {
+	_, ts := newSecuredTestServer(t, nil)
+	res := login(t, ts, secUser, secPass)
+	if res.session == "" {
+		t.Fatal("setup login failed")
+	}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/logout", nil)
+	req.Header.Set("Cookie", "kula_session="+res.session)
+	req.Header.Set("Origin", ts.URL)
+	req.Header.Set("X-CSRF-Token", res.csrf)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/logout: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("logout = %d (%s), want 200", resp.StatusCode, raw)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("logout Content-Type = %q, want application/json", ct)
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil || body.Status != "logged out" {
+		t.Errorf("logout body %q (%v), want {\"status\":\"logged out\"}", raw, err)
+	}
+}
+
 // TestRuntimeErrorsAreJSON drives every refusal the middleware and the WebSocket
 // handshake can give through the production chain: each answers with a JSON
 // {"error": ...} body labelled application/json, as the handlers' own errors do.

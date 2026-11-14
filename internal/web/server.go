@@ -1188,8 +1188,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		SameSite: sameSite,
 	})
 
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "logged out"})
+	writeJSON(w, map[string]string{"status": "logged out"})
 }
 
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
