@@ -411,12 +411,12 @@ When you add an application metric type, the frontend side is: add the group to 
 `card-order.js`, create the chart dynamically on first data (`if (s.apps?.foo) { ... }`) with
 `createAppChartCard(..., 'foo', rank)`, which places the card through `card-layout.js`, and
 register the card ID in `charts-init.js`'s `destroyAppCharts()` for cleanup. See
-[Adding a Metric Type](14-adding-metrics.md#11-frontend-charts).
+[Adding a Metric Type](14-adding-metrics.md#11-frontend-charts--internalwebstaticjsappcharts-datajs).
 
 ### System Info page
 
 `system-info.js` renders the hardware inventory fetched from `GET /api/system-info` (see
-[Web Server & API](07-web-server-api.md#get-api-system-info)). It has its own request lifecycle:
+[Web Server & API](07-web-server-api.md#get-apisystem-info)). It has its own request lifecycle:
 chart history, pause state, and the WebSocket buffer never supply its values. A poll that only
 changes a temperature or a byte count patches the few live widgets in place instead of rebuilding
 the page, so scroll position, text selection, hover state, and the mount search survive every
