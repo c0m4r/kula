@@ -175,6 +175,11 @@ per-application reducer branches.
 - Security defaults stay strict (headers, CSRF, rate limits, sandbox). Relaxations are opt-in
   through config, never the new default.
 - Keep dependencies minimal — self-containment is the product.
+- Tests never use the real `~/.kula`: a config loaded without a storage directory falls back
+  to it. A test that loads one sets `KULA_DIRECTORY` (`ownStorage` in `internal/config`, whose
+  `TestMain` fails when a test writes to `HOME`); `HOME=/nonexistent go test ./...` must pass.
+- A GET-only API route is registered through `readOnly()` (`internal/web/server.go`), which
+  answers other methods with a JSON 405; add it to `TestReadOnlyRoutesRefuseOtherMethods`.
 - Published installers (`addons/install.sh`, `install_v2.sh`, …) never change: copies of the
   instructions pin their sha256. Changes go into a new `install_vN.sh`, and the URL and pinned
   checksum in README, `docs/user/02-installation.md` and `landing/` move to it.

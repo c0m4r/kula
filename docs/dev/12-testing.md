@@ -51,6 +51,18 @@ writes/exec/network actually fail once Landlock is enforced, as far as the kerne
 enforces it — and `TestServeUnderTheSandbox` checks that every collector and listener still
 reaches its target under it.
 
+Tests never use the real `~/.kula`. A config loaded without a storage directory falls back from
+`/var/lib/kula` to `$HOME/.kula`, creating it and writing a probe file there, so a test that
+loads one gives it a directory of its own: `ownStorage` in `internal/config`, `KULA_DIRECTORY`
+for a child process. That package's `TestMain` points `HOME` at an empty directory and fails
+when a test writes to it, and `HOME=/nonexistent go test ./...` passes.
+[`cli_test.go`](../../cmd/kula/cli_test.go) runs the built command as a child process with
+`HOME`, `KULA_DIRECTORY` and `KULA_UNIX_SOCKET` inside its temporary directory, and kills it
+after 20 s. It covers `--help` after every command, a refused extra argument, a `-config` after
+the command, and the exit status of `inspect`.
+`TestLandingPagePinsItsScript` (root package) fails when the integrity hash
+`landing/index.html` pins for `landing.js` is stale; `landing/gen_sri.sh` regenerates it.
+
 When Node.js is available, `server_test.go` runs `history_frontend_test.mjs`. It checks request
 cancellation and stale responses, envelope preservation, formatter reuse, missing-data breaks,
 viewport batching and culling, gestures, keyboard exploration and complete formula-safe CSV.
@@ -327,6 +339,9 @@ black addons/*.py addons/ci-local/*.py
 pylint addons/*.py addons/ci-local/*.py
 mypy --strict addons/*.py addons/ci-local/*.py
 ```
+
+`mypy --strict` needs the `types-PyYAML` and `types-requests` stubs; without them it reports
+only the missing-stub lines.
 
 The `addons/ci-local.sh` step runner has its own tests — expression tables that pin GitHub's
 semantics (literals, loose equality, implicit `success()`) and small workflows run end to end.
