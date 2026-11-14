@@ -74,7 +74,7 @@ All metrics are prefixed `kula_`. The exporter covers the full collection surfac
 **Network / TCP / sockets:** `kula_network_rx_mbps`, `kula_network_tx_mbps`,
 `kula_network_{rx,tx}_packets_per_second`, `kula_network_{rx,tx}_{bytes,packets,errors,drops}_total`,
 `kula_tcp_established`, `kula_tcp_errors_per_second`, `kula_tcp_resets_per_second`,
-`kula_sockets_tcp_in_use`, `kula_sockets_tcp_time_wait`, `kula_sockets_udp_in_use`.
+`kula_tcp_retransmissions_per_second`, `kula_sockets_tcp_in_use`, `kula_sockets_tcp_time_wait`, `kula_sockets_udp_in_use`.
 
 **Disk / filesystem:** `kula_disk_info`, `kula_disk_reads_per_second`,
 `kula_disk_writes_per_second`, `kula_disk_read_bytes_per_second`,

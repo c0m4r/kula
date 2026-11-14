@@ -220,6 +220,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	gauge("kula_tcp_resets_per_second",
 		"TCP resets sent per second.",
 		host, d.Network.TCP.OutRsts)
+	gauge("kula_tcp_retransmissions_per_second",
+		"TCP segments retransmitted per second.",
+		host, d.Network.TCP.Retrans)
 	gauge("kula_sockets_tcp_in_use",
 		"Number of TCP sockets in use.",
 		host, float64(d.Network.Sockets.TCPInUse))

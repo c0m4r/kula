@@ -4,6 +4,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +55,7 @@ func newTestStoreWithSample(t *testing.T) *storage.Store {
 				RxMbps: 10.0,
 				TxMbps: 2.5,
 			}},
-			TCP:     collector.TCPStats{CurrEstab: 42},
+			TCP:     collector.TCPStats{CurrEstab: 42, InErrs: 0.5, OutRsts: 1.25, Retrans: 3.5},
 			Sockets: collector.SocketStats{TCPInUse: 20, UDPInUse: 5},
 		},
 		Disks: collector.DiskStats{
@@ -220,9 +222,69 @@ func TestHandleMetrics(t *testing.T) {
 		`kula_apache2_requests_per_second{host="testhost"} 2.5`,
 		"# HELP kula_apache2_requests_per_second Deprecated:",
 		"# HELP kula_apache2_bytes_per_second Deprecated:",
+		// The TCP rates, retransmissions beside errors and resets.
+		`kula_tcp_errors_per_second{host="testhost"} 0.5`,
+		`kula_tcp_resets_per_second{host="testhost"} 1.25`,
+		"# HELP kula_tcp_retransmissions_per_second TCP segments retransmitted per second.\n" +
+			"# TYPE kula_tcp_retransmissions_per_second gauge\n" +
+			`kula_tcp_retransmissions_per_second{host="testhost"} 3.5` + "\n",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("rounded metric %q not found in /metrics output", want)
+		}
+	}
+	checkExposition(t, body)
+}
+
+// checkExposition checks body is valid text exposition as strict parsers
+// such as promtool read it: each family has one HELP and one TYPE line of a
+// known type, followed by all of its samples, each a valid name and a number.
+func checkExposition(t *testing.T, body string) {
+	t.Helper()
+	validName := regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
+	headers := map[string]int{}
+	current := ""
+	done := map[string]bool{}
+	for line := range strings.SplitSeq(strings.TrimSuffix(body, "\n"), "\n") {
+		if rest, ok := strings.CutPrefix(line, "# HELP "); ok {
+			name, help, _ := strings.Cut(rest, " ")
+			if !validName.MatchString(name) || help == "" {
+				t.Errorf("HELP line %q: invalid name or empty text", line)
+			}
+			headers[name+" HELP"]++
+			continue
+		}
+		if rest, ok := strings.CutPrefix(line, "# TYPE "); ok {
+			name, kind, _ := strings.Cut(rest, " ")
+			if kind != "gauge" && kind != "counter" {
+				t.Errorf("TYPE line %q: unexpected type", line)
+			}
+			if headers[name+" HELP"] != 1 {
+				t.Errorf("TYPE line %q has no HELP line before it", line)
+			}
+			headers[name+" TYPE"]++
+			if current != "" {
+				done[current] = true
+			}
+			current = name
+			continue
+		}
+		end := strings.IndexAny(line, "{ ")
+		if end < 0 {
+			t.Fatalf("sample %q has no value", line)
+		}
+		name := line[:end]
+		if !validName.MatchString(name) || name != current || done[name] {
+			t.Fatalf("sample %q is not in its family's group (current family %q)", line, current)
+		}
+		value := line[strings.LastIndexByte(line, ' ')+1:]
+		if _, err := strconv.ParseFloat(value, 64); err != nil {
+			t.Errorf("sample %q: value %q is not a number", line, value)
+		}
+	}
+	for header, n := range headers {
+		if n != 1 {
+			t.Errorf("%s appears %d times", header, n)
 		}
 	}
 }
@@ -328,34 +390,7 @@ func TestMetricFamiliesAreGrouped(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleMetrics(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 
-	headers := map[string]int{}
-	current := ""
-	done := map[string]bool{}
-	for line := range strings.SplitSeq(strings.TrimSuffix(w.Body.String(), "\n"), "\n") {
-		if rest, ok := strings.CutPrefix(line, "# HELP "); ok {
-			name, _, _ := strings.Cut(rest, " ")
-			headers[name+" HELP"]++
-			continue
-		}
-		if rest, ok := strings.CutPrefix(line, "# TYPE "); ok {
-			name, _, _ := strings.Cut(rest, " ")
-			headers[name+" TYPE"]++
-			if current != "" {
-				done[current] = true
-			}
-			current = name
-			continue
-		}
-		name := line[:strings.IndexAny(line, "{ ")]
-		if name != current || done[name] {
-			t.Fatalf("sample %q is not in its family's group (current family %q)", line, current)
-		}
-	}
-	for header, n := range headers {
-		if n != 1 {
-			t.Errorf("%s appears %d times", header, n)
-		}
-	}
+	checkExposition(t, w.Body.String())
 	for _, want := range []string{
 		`kula_container_cpu_percent{host="host",id="aaaaaaaaaaaa",name="web"} 1`,
 		`kula_container_cpu_percent{host="host",id="bbbbbbbbbbbb",name="db"} 2`,
