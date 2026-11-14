@@ -178,6 +178,9 @@ per-application reducer branches.
 - Published installers (`addons/install.sh`, `install_v2.sh`, …) never change: copies of the
   instructions pin their sha256. Changes go into a new `install_vN.sh`, and the URL and pinned
   checksum in README, `docs/user/02-installation.md` and `landing/` move to it.
+- `landing/index.html` pins `landing/landing.js` with an integrity hash, and a browser refuses
+  a script that no longer matches it: run `landing/gen_sri.sh` after every change to
+  `landing.js`. `TestLandingPagePinsItsScript` fails when the two disagree.
 
 ## Where things live
 
