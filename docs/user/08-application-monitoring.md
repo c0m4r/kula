@@ -338,9 +338,9 @@ Kula is built never to be the reason a PostgreSQL or MySQL server runs out of co
   than the hours the server defaults allow. The limits scale up with longer collection
   intervals, up to a one-minute poll limit.
 - **No session is left behind.** If a poll cannot finish within 10 s (twice the collection
-  interval when that is longer, at most one minute), Kula closes that connection, even when
-  the server has frozen and stopped answering, and, from its next connection, ends the old
-  session (`pg_terminate_backend` /
+  interval when that is longer, at most one minute), Kula gives up on it and closes that
+  connection within about 5 s more, even when the server has frozen and stopped answering,
+  and, from its next connection, ends the old session (`pg_terminate_backend` /
   `KILL CONNECTION` — its own session only, identified so that no other client's can match).
   While that old session is still alive, Kula does not poll beside it. So even during an
   incident there are at most two Kula sessions per server, one of them on its way out.

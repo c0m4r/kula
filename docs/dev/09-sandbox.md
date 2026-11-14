@@ -126,7 +126,7 @@ grant on the directory would open every socket below it (the D-Bus system bus, s
 socket). That grant follows the file: if its server recreates it — `docker.sock` in `/run`, from a
 `dockerd` that is not socket-activated — Kula reaches it again only after a restart. A socket
 that does not exist yet at startup is logged with the same advice. A host that cannot hold a
-socket at all (a path through a regular file) stops startup with an error naming the setting.
+socket at all (a path through a regular file) is left out with a warning naming the setting.
 
 The sockets Kula itself listens on need no grant: Landlock restricts the connecting process, not
 the listener. A PostgreSQL or MySQL host given as an abstract address (`@name`) leaves abstract
@@ -197,7 +197,7 @@ If you add an application collector that connects somewhere, extend the ruleset 
 and, for a host name, DNS), `rs.addTCPConnect(label, port)` and `rs.addHostName(host)` for another
 TCP client, `rs.addUnixSocket(key, label, path, true)` for a Unix socket, and
 `rs.addReadOnly(key, path, false)` for a file it reads, such as a CA certificate. See
-[Adding a Metric Type](14-adding-metrics.md#5-sandbox).
+[Adding a Metric Type](14-adding-metrics.md#5-sandbox--internalsandboxsandboxgo).
 
 ## Tests
 

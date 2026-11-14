@@ -19,8 +19,9 @@ Like `kula serve`, the TUI confines itself with the [Landlock sandbox](../dev/09
 before it collects anything or opens storage. It can read `/proc`, `/sys` and its storage
 directory, and reach only the ports and sockets of the applications enabled in its config (plus
 DNS when one of them is a host name); it cannot write files, listen on a port or socket, run
-programs or signal other processes. On a kernel without Landlock it runs unconfined; on one with
-Landlock, a sandbox that cannot be applied stops it with a message naming the setting.
+programs or signal other processes. On a kernel without Landlock it runs unconfined. A grant its
+config asks for that cannot be applied is left out with a warning naming the setting, and a
+sandbox the kernel refuses leaves the TUI running unconfined, with a warning.
 
 ## Tabs
 
