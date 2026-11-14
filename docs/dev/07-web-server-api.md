@@ -41,23 +41,30 @@ Routes are registered on an inner mux, then wrapped so everything is served unde
 | Method | Route | Handler | Auth |
 |--------|-------|---------|------|
 | GET | `/`, `/index.html` | dashboard SPA | — |
-| GET | `/api/current` | latest sample (`Collector.Latest()`) | yes¹ |
+| GET/HEAD | `/api/current` | latest sample (`Collector.Latest()`) | yes¹ |
 | GET/HEAD | `/api/system-info` | current hardware inventory and utilization | yes¹ |
-| GET | `/api/history` | time-range history | yes¹ |
-| GET | `/api/config` | UI config (theme, langs, graph bounds, custom metrics, ollama) | yes¹ |
+| GET/HEAD | `/api/history` | time-range history | yes¹ |
+| GET/HEAD | `/api/config` | UI config (theme, langs, graph bounds, custom metrics, ollama) | yes¹ |
 | POST | `/api/login` | login (`404` while `web.auth.enabled` is false) | public |
 | POST | `/api/logout` | logout | public |
-| GET | `/api/auth/status` | whether auth is on / logged in | public |
-| GET | `/api/i18n?lang=` | locale strings | yes¹ |
+| GET/HEAD | `/api/auth/status` | whether auth is on / logged in | public |
+| GET/HEAD | `/api/i18n?lang=` | locale strings | yes¹ |
 | POST | `/api/ollama/chat` | AI chat (SSE stream) | yes¹ |
-| GET | `/api/ollama/models` | list local Ollama models | yes¹ |
-| GET/POST | `/api/ollama/context` | metrics snapshot a new AI session pins as its context | yes¹ |
+| GET/HEAD | `/api/ollama/models` | list local Ollama models | yes¹ |
+| GET/HEAD | `/api/ollama/context` | metrics snapshot a new AI session pins as its context | yes¹ |
 | GET | `/ws` | WebSocket live stream | yes¹ |
-| GET | `/metrics` | Prometheus exposition | bearer (optional) |
+| GET/HEAD | `/metrics` | Prometheus exposition | bearer (optional) |
 | GET | `/health`, `/status` | liveness (`200 kula is healthy`) | public |
 | GET | static: `/js/`, `/fonts/`, `/style.css`, `/kula.svg`, `/favicon.ico`, `/game.*` (when `global.easter_egg`) | embedded assets | — |
 
 ¹ Protected by `AuthMiddleware` only when `web.auth.enabled` is true; otherwise open.
+
+An API route answers a method it does not serve with a JSON `405` whose `Allow` header names
+the ones it does: `GET, HEAD` for the read-only routes (wrapped in `readOnly` where they are
+registered; `/api/system-info` checks after its own `404`), `POST` for login, logout and the
+chat. The check runs in the handler, after CORS, auth and CSRF, so a request those refuse
+keeps their `401` or `403`, and a CORS preflight from an allowed origin is answered by
+`corsMiddleware` before it. `/metrics` answers a plain-text `405` with the same `Allow`.
 
 `/api/login`, `/api/logout`, and `/api/auth/status` go through the CORS middleware but **not**
 the auth middleware (you must reach them while logged out). Everything under `/api/` else goes
@@ -217,7 +224,8 @@ rejected.
 
 Every error under `/api/` and `/ws` is a JSON object, `{"error":"<message>"}`, with
 `Content-Type: application/json`: the handlers' own errors, the auth middleware's `401`, the CSRF
-middleware's `403`, `404` for an unknown `/api/` path, and a refused WebSocket handshake (`403`
+middleware's `403`, `404` for an unknown `/api/` path, `405` for a method a route does not serve,
+and a refused WebSocket handshake (`403`
 for a foreign Origin, `429` over a connection limit, `400` for a malformed upgrade).
 `jsonError` writes them with `json.Marshal` (not `fmt.Sprintf`) to prevent JSON injection.
 `/api/current` answers through `writeJSON`, which turns a sample that cannot be encoded (a NaN

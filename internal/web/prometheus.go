@@ -19,6 +19,7 @@ import (
 // returns an empty 200 response so scrapers don't alarm on startup.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}

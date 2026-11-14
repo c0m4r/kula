@@ -14,8 +14,7 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		methodNotAllowed(w, "GET, HEAD")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

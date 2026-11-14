@@ -366,7 +366,8 @@ func TestMetricFamiliesAreGrouped(t *testing.T) {
 	}
 }
 
-// TestHandleMetricsMethodNotAllowed verifies that POST /metrics returns 405.
+// TestHandleMetricsMethodNotAllowed verifies that POST /metrics returns 405
+// naming the methods it serves.
 func TestHandleMetricsMethodNotAllowed(t *testing.T) {
 	store := newTestStoreWithSample(t)
 	defer func() { _ = store.Close() }()
@@ -379,6 +380,9 @@ func TestHandleMetricsMethodNotAllowed(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST /metrics status = %d, want 405", w.Code)
+	}
+	if got := w.Header().Get("Allow"); got != "GET, HEAD" {
+		t.Errorf("POST /metrics Allow = %q, want %q", got, "GET, HEAD")
 	}
 }
 

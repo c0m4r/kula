@@ -354,7 +354,7 @@ func (oc *ollamaClient) chatModel(ctx context.Context, requested string, debugLo
 // response back as Server-Sent Events (text/event-stream).
 func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		methodNotAllowed(w, http.MethodPost)
 		return
 	}
 

@@ -324,6 +324,26 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_, _ = w.Write(b)
 }
 
+// methodNotAllowed answers a JSON 405 naming the methods the route serves.
+func methodNotAllowed(w http.ResponseWriter, allow string) {
+	w.Header().Set("Allow", allow)
+	jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+// readOnly serves h for GET and HEAD (net/http sends no body for HEAD) and
+// answers any other method with a JSON 405. It sits behind CORS, auth and CSRF:
+// a CORS preflight from an allowed origin is answered before it gets here, and
+// a request those layers refuse keeps their answer.
+func readOnly(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			methodNotAllowed(w, "GET, HEAD")
+			return
+		}
+		h(w, r)
+	}
+}
+
 // writeJSON answers with v encoded as JSON. encoding/json refuses some values
 // (a NaN or infinity in a sample) and then writes nothing, which used to go out
 // as an empty 200 the dashboard could not parse; such a failure is answered
@@ -508,17 +528,20 @@ func (s *Server) buildHandler() http.Handler {
 
 	// API routes
 	apiMux := http.NewServeMux()
-	apiMux.HandleFunc("/api/current", s.handleCurrent)
+	// Read-only routes answer other methods with a JSON 405; system-info
+	// checks the method itself, after its own 404, and login, logout and the
+	// chat accept only POST.
+	apiMux.HandleFunc("/api/current", readOnly(s.handleCurrent))
 	apiMux.HandleFunc("/api/system-info", s.handleSystemInfo)
-	apiMux.HandleFunc("/api/history", s.handleHistory)
-	apiMux.HandleFunc("/api/config", s.handleConfig)
+	apiMux.HandleFunc("/api/history", readOnly(s.handleHistory))
+	apiMux.HandleFunc("/api/config", readOnly(s.handleConfig))
 	apiMux.HandleFunc("/api/login", s.handleLogin)
 	apiMux.HandleFunc("/api/logout", s.handleLogout)
-	apiMux.HandleFunc("/api/auth/status", s.handleAuthStatus)
-	apiMux.HandleFunc("/api/i18n", s.handleI18n)
+	apiMux.HandleFunc("/api/auth/status", readOnly(s.handleAuthStatus))
+	apiMux.HandleFunc("/api/i18n", readOnly(s.handleI18n))
 	apiMux.HandleFunc("/api/ollama/chat", s.handleOllamaChat)
-	apiMux.HandleFunc("/api/ollama/models", s.handleOllamaModels)
-	apiMux.HandleFunc("/api/ollama/context", s.handleOllamaContext)
+	apiMux.HandleFunc("/api/ollama/models", readOnly(s.handleOllamaModels))
+	apiMux.HandleFunc("/api/ollama/context", readOnly(s.handleOllamaContext))
 	apiMux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		jsonError(w, "not found", http.StatusNotFound)
 	})
@@ -1056,7 +1079,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		methodNotAllowed(w, http.MethodPost)
 		return
 	}
 
@@ -1137,7 +1160,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		methodNotAllowed(w, http.MethodPost)
 		return
 	}
 
