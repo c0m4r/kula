@@ -109,7 +109,8 @@ docker run -d --name kula --pid host --network host \
 that line instead.
 
 A `docker-compose.yml` is provided in [`addons/docker/`](../../addons/docker/docker-compose.yml);
-it sets `read_only`, `cap_drop: [ALL]` and `no-new-privileges`, and mounts `./config.yaml`.
+it sets `read_only`, `cap_drop: [ALL]` and `no-new-privileges`, and mounts `./config.yaml`. Its
+utmp and logind session mounts are commented out: uncomment whichever the host has.
 Images are published on [Docker Hub](https://hub.docker.com/r/c0m4r/kula) and GHCR.
 
 ---

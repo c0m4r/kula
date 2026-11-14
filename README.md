@@ -144,18 +144,39 @@ cd kula
 
 ### Docker
 
+Kula needs the host's PID and network namespaces and a read-only `/proc`, and no capabilities.
+
 Temporary, no persistent storage:
 
 ```bash
-docker run --rm -it --name kula --pid host --network host -v /proc:/proc:ro c0m4r/kula:latest
+docker run --rm -it --name kula --pid host --network host \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  -v /proc:/proc:ro c0m4r/kula:latest
 ```
 
 With persistent storage:
 
 ```bash
-docker run -d --name kula --pid host --network host -v /proc:/proc:ro -v kula_data:/app/data c0m4r/kula:latest
+docker run -d --name kula --pid host --network host \
+  --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+  -v /proc:/proc:ro -v kula_data:/app/data c0m4r/kula:latest
 docker logs -f kula
 ```
+
+To count logged-in users, also mount the host's utmp or systemd-logind sessions, whichever it
+has, read-only. `--mount` refuses a source the host does not have (`-v` would create it as a
+directory); drop that line instead:
+
+```bash
+docker run -d --name kula --pid host --network host \
+  --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+  -v /proc:/proc:ro -v kula_data:/app/data \
+  --mount type=bind,source=/run/utmp,target=/run/utmp,readonly \
+  --mount type=bind,source=/run/systemd/sessions,target=/run/systemd/sessions,readonly \
+  c0m4r/kula:latest
+```
+
+More in [Installation → Docker][install-docker].
 
 ### Debian / Ubuntu (.deb)
 
@@ -305,6 +326,7 @@ Kula is built for privacy-conscious infrastructure. It is a completely self-cont
 [install]: https://github.com/c0m4r/kula/blob/main/docs/user/02-installation.md
 [install-verify]: https://github.com/c0m4r/kula/blob/main/docs/user/02-installation.md#verifying-the-installer-first
 [install-tarball]: https://github.com/c0m4r/kula/blob/main/docs/user/02-installation.md#standalone-binary-tarball
+[install-docker]: https://github.com/c0m4r/kula/blob/main/docs/user/02-installation.md#docker
 [install-deb]: https://github.com/c0m4r/kula/blob/main/docs/user/02-installation.md#debian--ubuntu-deb
 [install-rpm]: https://github.com/c0m4r/kula/blob/main/docs/user/02-installation.md#rhel--fedora--centos--rocky--alma-rpm
 [install-aur]: https://github.com/c0m4r/kula/blob/main/docs/user/02-installation.md#arch-linux--manjaro-aur

@@ -131,6 +131,7 @@ The distro packages handle all of this for you.
 
 For Docker/Podman, you don't need an init script — see the
 [Docker section of Installation](02-installation.md#docker). Use `--pid host --network host -v
-/proc:/proc:ro` so Kula can see the host.
+/proc:/proc:ro` so Kula can see the host; that section also drops its capabilities and mounts
+the host's utmp or logind sessions so it can count logged-in users.
 
 Next: [Troubleshooting](16-troubleshooting.md).
