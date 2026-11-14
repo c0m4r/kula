@@ -321,7 +321,7 @@ elif [ "$INSTALL_METHOD" == "rpm" ]; then
     elif command -v yum >/dev/null; then
         exec_as_root yum install -y "$target"
     else
-        exec_as_root rpm -ivh "$target"
+        exec_as_root rpm -Uvh "$target"
     fi
     rm -f "$target"
     echo -e "${GREEN}Installation successful!${NC}"
@@ -361,6 +361,11 @@ elif [ "$INSTALL_METHOD" == "tarball_systemd" ]; then
     tar -xzf "$target" -C "$extract_dir"
 
     cd "$extract_dir/kula"
+    # A unit already in place means this run upgrades an installation.
+    upgrade=0
+    if [ -e /etc/systemd/system/kula.service ]; then
+        upgrade=1
+    fi
     if ! getent group kula >/dev/null; then
         exec_as_root groupadd --system kula
     fi
@@ -376,10 +381,18 @@ elif [ "$INSTALL_METHOD" == "tarball_systemd" ]; then
     exec_as_root install -dm750 /usr/share/kula
     exec_as_root cp -r CHANGELOG.md README.md LICENSE VERSION config.example.yaml /usr/share/kula/
 
-    echo -e "${BLUE}Reloading systemd and enabling service...${NC}"
+    # A first install enables and starts the service. An upgrade restarts it
+    # only if it is running, so the new version takes over, and leaves whether
+    # it is enabled as it was.
     exec_as_root systemctl daemon-reload
-    exec_as_root systemctl enable kula.service
-    exec_as_root systemctl start kula.service
+    if [ "$upgrade" -eq 0 ]; then
+        echo -e "${BLUE}Enabling and starting service...${NC}"
+        exec_as_root systemctl enable kula.service
+        exec_as_root systemctl start kula.service
+    else
+        echo -e "${BLUE}Restarting service if it is running...${NC}"
+        exec_as_root systemctl try-restart kula.service || echo -e "${YELLOW}Notice: Could not restart service 'kula'. See: journalctl -u kula${NC}"
+    fi
 
     cd - >/dev/null
     rm -f "$target"
@@ -395,6 +408,11 @@ elif [ "$INSTALL_METHOD" == "alpine" ]; then
     tar -xzf "$target" -C "$extract_dir"
 
     cd "$extract_dir/kula"
+    # An init script already in place means this run upgrades an installation.
+    upgrade=0
+    if [ -e /etc/init.d/kula ]; then
+        upgrade=1
+    fi
 
     if ! getent group kula >/dev/null 2>&1; then
         exec_as_root addgroup kula
@@ -411,9 +429,15 @@ elif [ "$INSTALL_METHOD" == "alpine" ]; then
     exec_as_root install -dm750 /usr/share/kula
     exec_as_root cp -r CHANGELOG.md README.md LICENSE VERSION config.example.yaml /usr/share/kula/
 
-    echo -e "${BLUE}Enabling and starting service...${NC}"
-    exec_as_root rc-update add kula default
-    exec_as_root rc-service kula start
+    # As on systemd: an upgrade restarts only a running service.
+    if [ "$upgrade" -eq 0 ]; then
+        echo -e "${BLUE}Enabling and starting service...${NC}"
+        exec_as_root rc-update add kula default
+        exec_as_root rc-service kula start
+    else
+        echo -e "${BLUE}Restarting service if it is running...${NC}"
+        exec_as_root rc-service --ifstarted kula restart || echo -e "${YELLOW}Notice: Could not restart service 'kula'. You might need to restart it manually.${NC}"
+    fi
 
     cd - >/dev/null
     rm -f "$target"
@@ -429,6 +453,11 @@ elif [ "$INSTALL_METHOD" == "void" ]; then
     tar -xzf "$target" -C "$extract_dir"
 
     cd "$extract_dir/kula"
+    # A run script already in place means this run upgrades an installation.
+    upgrade=0
+    if [ -e /etc/sv/kula/run ]; then
+        upgrade=1
+    fi
 
     if ! getent group kula >/dev/null 2>&1; then
         exec_as_root groupadd --system kula
@@ -450,9 +479,23 @@ elif [ "$INSTALL_METHOD" == "void" ]; then
         exec_as_root chmod +x /etc/sv/kula/log/run
     fi
 
-    echo -e "${BLUE}Enabling and starting service...${NC}"
-    exec_as_root ln -sf /etc/sv/kula /var/service/
-    exec_as_root sv up kula || echo -e "${YELLOW}Notice: Could not start service 'kula'. You might need to start it manually.${NC}"
+    # As on systemd: an upgrade restarts only a running service.
+    if [ "$upgrade" -eq 0 ]; then
+        echo -e "${BLUE}Enabling and starting service...${NC}"
+        exec_as_root ln -sf /etc/sv/kula /var/service/
+        # runsvdir finds a new service within five seconds and starts it;
+        # until then sv has nothing to talk to.
+        for _ in 1 2 3 4 5 6 7; do
+            if exec_as_root sv status kula >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+        done
+        exec_as_root sv up kula || echo -e "${YELLOW}Notice: Could not start service 'kula'. You might need to start it manually.${NC}"
+    elif exec_as_root sv status kula 2>/dev/null | grep -q '^run:'; then
+        echo -e "${BLUE}Restarting service...${NC}"
+        exec_as_root sv restart kula || echo -e "${YELLOW}Notice: Could not restart service 'kula'. You might need to restart it manually.${NC}"
+    fi
 
     cd - >/dev/null
     rm -f "$target"
@@ -461,10 +504,11 @@ elif [ "$INSTALL_METHOD" == "void" ]; then
 elif [ "$INSTALL_METHOD" == "docker" ]; then
     echo -e "${BLUE}Docker is installed. You can run Kula via Docker container.${NC}"
     echo -e "Run the following command to start Kula:"
-    echo -e "${CYAN}docker run -d --name kula --pid host --network host -v /proc:/proc:ro -v kula_data:/app/data c0m4r/kula:latest${NC}"
+    echo -e "${CYAN}docker run -d --name kula --pid host --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true -v /proc:/proc:ro -v kula_data:/app/data c0m4r/kula:latest${NC}"
     echo ""
     echo -e "To persist configuration, use volume mounts and provide your config.yaml."
-    echo -e "You can find more at https://hub.docker.com/r/c0m4r/kula"
+    echo -e "To count logged-in users, also mount the host's /run/utmp or /run/systemd/sessions read-only."
+    echo -e "You can find more at https://github.com/${GITHUB_REPO}/blob/main/docs/user/02-installation.md#docker"
     echo ""
     exit 0
 elif [ "$INSTALL_METHOD" == "tarball_opt" ]; then

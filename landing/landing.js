@@ -174,9 +174,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (isVerified) {
             if (selectedTool === 'curl') {
-                command = `KULA_INSTALL=$(mktemp) ; curl -o "\${KULA_INSTALL}" -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v3.sh ; echo "a567aec0671e379f8a40204c848c9d5a85ba1331c6902f0b1e0688a2f210c0eb  \${KULA_INSTALL}" | sha256sum -c && bash "\${KULA_INSTALL}" ; rm -f "\${KULA_INSTALL}"`;
+                command = `KULA_INSTALL=$(mktemp) ; curl -o "\${KULA_INSTALL}" -fsSL https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v3.sh ; echo "1f90556010a7e427525b2c919f9bcedc406a7de1a81a78bcd6baeefb5852494e  \${KULA_INSTALL}" | sha256sum -c && bash "\${KULA_INSTALL}" ; rm -f "\${KULA_INSTALL}"`;
             } else {
-                command = `KULA_INSTALL=$(mktemp) ; wget -O "\${KULA_INSTALL}" -q https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v3.sh ; echo "a567aec0671e379f8a40204c848c9d5a85ba1331c6902f0b1e0688a2f210c0eb  \${KULA_INSTALL}" | sha256sum -c && bash "\${KULA_INSTALL}" ; rm -f "\${KULA_INSTALL}"`;
+                command = `KULA_INSTALL=$(mktemp) ; wget -O "\${KULA_INSTALL}" -q https://raw.githubusercontent.com/c0m4r/kula/refs/heads/main/addons/install_v3.sh ; echo "1f90556010a7e427525b2c919f9bcedc406a7de1a81a78bcd6baeefb5852494e  \${KULA_INSTALL}" | sha256sum -c && bash "\${KULA_INSTALL}" ; rm -f "\${KULA_INSTALL}"`;
             }
         } else {
             if (selectedTool === 'curl') {

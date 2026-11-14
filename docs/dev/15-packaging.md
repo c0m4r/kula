@@ -69,6 +69,11 @@ fail the upgrade. Removal stops and disables the service. The AUR `kula.install`
 systemd, on install and upgrade alike, and leaves starting and restarting Kula to the
 administrator.
 
+The guided installer follows the same rule where it installs from the tarball. A unit, init
+script or run script already in place marks an upgrade: systemd gets `try-restart`, OpenRC
+`rc-service --ifstarted kula restart`, and runit `sv restart` when `sv status` reports the
+service running. A first install enables and starts the service.
+
 ## Docker
 
 The image is a two-stage build ([`addons/docker/Dockerfile`](../../addons/docker/Dockerfile)):
