@@ -425,6 +425,40 @@ func TestHandleMetricsBearerTokenAuthorized(t *testing.T) {
 	}
 }
 
+// The auth scheme name is case-insensitive (RFC 9110 §11.1), so a scraper
+// that sends "bearer" is let in; the token itself and the rest of the header
+// are checked as strictly as before.
+func TestHandleMetricsBearerSchemeAnyCase(t *testing.T) {
+	store := newTestStoreWithSample(t)
+	defer func() { _ = store.Close() }()
+
+	srv := newTestServer(t, store)
+	srv.cfg.PrometheusMetrics.Token = "secret-token"
+
+	for authz, want := range map[string]int{
+		"Bearer secret-token":  http.StatusOK,
+		"bearer secret-token":  http.StatusOK,
+		"BEARER secret-token":  http.StatusOK,
+		"bEaReR secret-token":  http.StatusOK,
+		"bearer Secret-Token":  http.StatusUnauthorized,
+		"bearer wrong-token":   http.StatusUnauthorized,
+		"bearersecret-token":   http.StatusUnauthorized,
+		"Basic secret-token":   http.StatusUnauthorized,
+		"Bearer":               http.StatusUnauthorized,
+		"bearer ":              http.StatusUnauthorized,
+		"secret-token":         http.StatusUnauthorized,
+		"Bearerx secret-token": http.StatusUnauthorized,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		req.Header.Set("Authorization", authz)
+		w := httptest.NewRecorder()
+		srv.handleMetrics(w, req)
+		if w.Code != want {
+			t.Errorf("Authorization %q: status = %d, want %d", authz, w.Code, want)
+		}
+	}
+}
+
 // TestHandleMetricsEmptyStore verifies that /metrics returns 200 with an
 // empty body when no sample has been written yet.
 func TestHandleMetricsEmptyStore(t *testing.T) {

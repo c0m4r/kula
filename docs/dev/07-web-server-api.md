@@ -265,8 +265,8 @@ policy instead (the Ollama chat stream sends `no-cache`).
 [`prometheus.go`](../../internal/web/prometheus.go) renders all metrics in text exposition
 format, with all series prefixed `kula_` and per-device labels. Disk series label `device` with
 the persistent ID (or `kernel:<name>` when none is available), and `kula_disk_info` reports the
-current `kernel_name` and `identity_source` alongside it. Optional bearer-token auth
-(constant-time compare). Samples are gathered per metric family and written family by family,
+current `kernel_name` and `identity_source` alongside it. Optional bearer-token auth (scheme
+name in any case, token constant-time compared). Samples are gathered per metric family and written family by family,
 one `# HELP` and `# TYPE` each, since per-container series are produced container by container
 (`TestMetricFamiliesAreGrouped`). `escapeLabel` makes label values valid UTF-8, as the format
 requires: one invalid byte would fail the whole scrape. See

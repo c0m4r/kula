@@ -14,7 +14,7 @@ import (
 // handleMetrics serves Prometheus-compatible metrics in text exposition format.
 // The endpoint is disabled unless explicitly registered by configuration.
 // When a bearer token is configured, callers must send
-// Authorization: Bearer <token>.
+// Authorization: Bearer <token>, the scheme in any case.
 // It reflects the latest collected sample; if no sample is available yet it
 // returns an empty 200 response so scrapers don't alarm on startup.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -26,8 +26,10 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	if token := s.cfg.PrometheusMetrics.Token; token != "" {
 		authz := r.Header.Get("Authorization")
+		// The scheme name is case-insensitive (RFC 9110 §11.1); the token is not.
 		const prefix = "Bearer "
-		if !strings.HasPrefix(authz, prefix) || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(authz[len(prefix):])), []byte(token)) != 1 {
+		if len(authz) < len(prefix) || !strings.EqualFold(authz[:len(prefix)], prefix) ||
+			subtle.ConstantTimeCompare([]byte(strings.TrimSpace(authz[len(prefix):])), []byte(token)) != 1 {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="kula-metrics"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return

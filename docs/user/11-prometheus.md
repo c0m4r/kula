@@ -37,7 +37,8 @@ Scrapers must then send:
 Authorization: Bearer a-long-random-secret
 ```
 
-Token comparison is constant-time. In Prometheus:
+The scheme name may be written in any case (`bearer` works too); the token must match exactly,
+and the comparison is constant-time. In Prometheus:
 
 ```yaml
 scrape_configs:
