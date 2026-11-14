@@ -289,7 +289,8 @@ symlink pointed elsewhere) is readable again after a restart.
 **Metrics:** threads (connected/running/cached), max connections, queries/select/insert/
 update/delete/slow per second, InnoDB buffer-pool reads/s and hit %, row-lock waits,
 table-lock waits, plus replication state (IO/SQL running, seconds-behind, last IO/SQL errno,
-IO state, replicas connected).
+IO state, replicas connected). The hit % reads 0 when the server counts more buffer-pool disk
+reads than read requests, as MariaDB 11.8 does: the ratio of the two means nothing there.
 
 > **Caveat on `Seconds_Behind_Source`:** this is the SQL thread's view of how far behind it is
 > on what it currently sees, *not* the true lag from the primary.

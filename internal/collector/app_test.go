@@ -647,6 +647,28 @@ func TestMysqlCollectorCounterReset(t *testing.T) {
 	}
 }
 
+// TestMysqlHitRatioWithoutMeaning: the InnoDB buffer pool hit ratio is left at
+// 0, as before the first read request, when the server counts more disk reads
+// than read requests (MariaDB 11.8 does: it read -678.95 %).
+func TestMysqlHitRatioWithoutMeaning(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		reads, requests int64
+		want            float64
+	}{
+		{"no read requests yet", 0, 0, 0},
+		{"every request from memory", 0, 1000, 100},
+		{"every request from disk", 1000, 1000, 0},
+		{"more disk reads than requests", 7_890, 1_016, 0},
+	} {
+		stats := &MysqlStats{}
+		(&mysqlCollector{}).calculateStats(stats, mysqlRaw{innodbBPReads: tc.reads, innodbBPRequests: tc.requests, valid: true}, 0)
+		if stats.InnodbBufferPoolHitPct != tc.want {
+			t.Errorf("%s: hit ratio %.2f %%, want %.2f", tc.name, stats.InnodbBufferPoolHitPct, tc.want)
+		}
+	}
+}
+
 // TestMysqlRatesNeedABaseline: a failed poll leaves no baseline, so the next
 // poll reports no rates instead of two intervals of growth over one; a
 // server with no queries yet still establishes one.

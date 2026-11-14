@@ -478,7 +478,10 @@ func (mc *mysqlCollector) calculateStats(stats *MysqlStats, cur mysqlRaw, elapse
 	}
 	mc.prev = cur
 
-	if cur.innodbBPRequests > 0 {
+	// The hit ratio is left at 0, as before the first read request, when the
+	// server counts more disk reads than read requests: MariaDB 11.8 does,
+	// and a ratio of the two then means nothing.
+	if cur.innodbBPRequests > 0 && cur.innodbBPReads <= cur.innodbBPRequests {
 		hits := cur.innodbBPRequests - cur.innodbBPReads
 		stats.InnodbBufferPoolHitPct = round2(float64(hits) / float64(cur.innodbBPRequests) * 100)
 	}
