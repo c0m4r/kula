@@ -323,6 +323,28 @@ func TestDashboardStorageGoesThroughPrefs(t *testing.T) {
 	}
 }
 
+// Chart.js binds its dataset controllers again only in update(), which a chart
+// that is off screen defers, so a chart that loses a dataset must update at
+// once or its next live point throws and no chart is drawn again. Datasets are
+// removed through dropDatasets (chart-envelope.js), which does that.
+func TestChartDatasetsAreDroppedThroughTheHelper(t *testing.T) {
+	modules, err := fs.Glob(staticFS, "static/js/app/*.js")
+	if err != nil || len(modules) == 0 {
+		t.Fatalf("Glob(static/js/app/*.js) = %v, %v", modules, err)
+	}
+	direct := regexp.MustCompile(`\.datasets\s*=[^=;\n]*\.(?:filter|slice)\(|\.datasets\.(?:splice|pop|shift)\(`)
+	for _, module := range modules {
+		source, err := staticFS.ReadFile(module)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", module, err)
+		}
+		if at := direct.FindIndex(source); at != nil {
+			line := bytes.Count(source[:at[0]], []byte("\n")) + 1
+			t.Errorf("%s:%d removes chart datasets directly; use dropDatasets from chart-envelope.js", module, line)
+		}
+	}
+}
+
 // Static assets revalidate with an ETag of the served bytes: a match is a 304
 // with no body (and no gzip framing), anything else is the full asset.
 func TestStaticAssetsRevalidate(t *testing.T) {

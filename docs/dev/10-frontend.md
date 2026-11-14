@@ -236,6 +236,15 @@ without it every label falls back to hours and minutes. `TestChartBundle` assert
 members exist, in the vendored bundle and in the upstream files `replace_chartjs.sh` installs.
 Revalidate these private contracts with the browser regressions whenever Chart.js is upgraded.
 
+Chart.js binds one controller to each dataset index and binds them again only in `update()`,
+so the deferral has a second consequence. A chart that loses a dataset while it is off-screen
+keeps a controller past the new end, which still listens to the array of a dataset that
+stayed; the next point pushed there throws inside the live sample, and no chart is drawn
+again until the view changes. `dropDatasets()` in `chart-envelope.js` removes datasets and
+updates the chart at once. Expired sensors (`ensureSensorDatasets()`) and stopped containers
+(`pruneDeadContainers()`) go through it, and `TestChartDatasetsAreDroppedThroughTheHelper`
+fails on a module that assigns a filtered `datasets` array itself.
+
 History loads, local zooms, and aggregation changes ingest their samples in a synchronous
 `batchChartUI` call. It commits only the last presentation update for each key, retaining
 every observation and extrema pair. New chart structures are still created when discovered.

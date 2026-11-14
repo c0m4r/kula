@@ -1336,6 +1336,32 @@ check(state.historyViewEnd === null && document.getElementById('sampling-info').
     'A native preset still reports the failure it recovered from');
 await pushLive();
 check(liveTotal.data.at(-1).x === liveNow, 'A recovered native preset stopped streaming live samples');
+// A container that stops leaves its charts once its last point has left the
+// window. Its cards sit far down the page, where a chart that was seen once
+// keeps its Chart.js controllers and defers every later update: losing a
+// dataset there must not break the samples that follow, or no chart is drawn
+// again. The series that stays must come after the one that goes.
+const fixtureContainer = name => ({ id: name.padEnd(64, '0'), name, cpu_pct: 5, mem_used: 1048576, mem_limit: 0,
+    mem_pct: 1, net_rx_bps: 0, net_tx_bps: 0, disk_r_bps: 0, disk_w_bps: 0 });
+state.lastSample.apps = { ...state.lastSample.apps, containers: ['stopped', 'kept'].map(fixtureContainer) };
+await pushLive();
+const containerCpu = state.containerCharts?.cpu;
+check(containerCpu?.data.datasets.length === 2, 'Container fixture did not build two series');
+const scrollBeforeContainers = window.scrollY;
+containerCpu.canvas.closest('.chart-card').scrollIntoView({ behavior: 'instant', block: 'center' });
+for (let attempt = 0; attempt < 100 && containerCpu.getSortedVisibleDatasetMetas().length < 2; attempt++) await frame();
+check(containerCpu.getSortedVisibleDatasetMetas().length === 2, 'Container charts were not drawn in view');
+window.scrollTo(0, 0);
+for (let attempt = 0; attempt < 100 && chartUpdates.isVisible(containerCpu); attempt++) await frame();
+check(!chartUpdates.isVisible(containerCpu), 'Container fixture needs its charts off screen');
+state.lastSample.apps.containers = [fixtureContainer('kept')];
+for (let i = 0; i <= state.timeRange + 1; i++) await pushLive();
+check(containerCpu.data.datasets.length === 1 && containerCpu.data.datasets[0].containerKey === 'container_kept',
+    'A stopped container kept its series after leaving the window');
+check(liveTotal.data.at(-1).x === liveNow, 'Charts stopped streaming after a stopped container left the window');
+delete state.lastSample.apps.containers;
+await pushLive();
+window.scrollTo(0, scrollBeforeContainers);
 window.fetch = answeringFetch;
 bucketedView = true;
 await data.fetchHistory(300);
@@ -1595,6 +1621,7 @@ window.result = { status: 'pass', charts: originalCharts.length, layout_ms: Math
     gesture_request_isolation: true, minimum_zoom_points: 12, legacy_metric_compatibility: true,
     unavailable_replication_lag: true, filesystem_aggregation_tooltips: true,
     bucketed_live_preset: true, suspended_aggregation: true, chart_image_export: true,
-    card_order: true, card_rearrange: true, ai_panel_wired_once: true, errors };
+    card_order: true, card_rearrange: true, ai_panel_wired_once: true,
+    stopped_container_streaming: true, errors };
 check(errors.length === 0, errors.join('; '));
 window.ready = true;

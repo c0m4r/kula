@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
 
 
 async function importSource(relativePath) {
@@ -107,6 +108,7 @@ const {
     appendEnvelopeGap,
     appendEnvelopePoint,
     clearEnvelopeData,
+    dropDatasets,
     ensureSensorDatasets,
     envelopePlugin,
     envelopeRuns,
@@ -1785,6 +1787,83 @@ test('drop index follows reading order and is stable across the move it causes',
                         `columns ${columns}, rtl ${rtl}, dragged ${dragged}, pointer ${x},${y}`);
                 }
             }
+        }
+    }
+});
+
+// Enough of CanvasRenderingContext2D for Chart.js to lay out and draw.
+function stubCanvas(width, height) {
+    const canvas = { width, height, style: {} };
+    const values = { canvas };
+    canvas.getContext = () => new Proxy(values, {
+        get: (target, key) => (key in target ? target[key]
+            : key === 'measureText' ? text => ({ width: String(text).length * 6 }) : () => {}),
+        set: (target, key, value) => { target[key] = value; return true; },
+    });
+    return canvas;
+}
+
+// Chart.js as the page loads it: the script tags of index.html, in order.
+async function loadChartJs() {
+    const page = await readFile(new URL('../static/index.html', import.meta.url), 'utf8');
+    const scripts = [...page.matchAll(/<script[^>]*\ssrc="(js\/chartjs\/[^"]+)"/g)].map(match => match[1]);
+    assert.ok(scripts.length > 0, 'index.html loads no Chart.js script');
+    for (const src of scripts) {
+        vm.runInThisContext(await readFile(new URL(`../static/${src}`, import.meta.url), 'utf8'), { filename: src });
+    }
+    return globalThis.Chart;
+}
+
+// Last in this file: it puts the real Chart.js into the global scope.
+test('a chart that loses a dataset while its update is deferred keeps accepting points', async () => {
+    const previous = { window: globalThis.window, document: globalThis.document };
+    // Without a DOM, Chart.js takes the canvas as it is.
+    delete globalThis.window;
+    delete globalThis.document;
+    const Chart = await loadChartJs();
+    const build = datasets => {
+        const chart = new Chart(stubCanvas(800, 300), {
+            type: 'line',
+            data: { datasets },
+            options: { responsive: false, animation: false, parsing: false, scales: { x: { type: 'time' } } },
+        });
+        chart.updates = 0;
+        const update = chart.update.bind(chart);
+        chart.update = mode => { chart.updates++; return update(mode); };
+        return chart;
+    };
+    try {
+        // An off-screen chart: chart-controller.js runs no update() between
+        // samples, so nothing else rebinds the controllers after a removal.
+        const containers = build(['stopped', 'kept', 'last'].map(label => ({ label, data: [{ x: 1000, y: 1 }] })));
+        const [, kept, last] = containers.data.datasets;
+        dropDatasets(containers, dataset => dataset.label !== 'stopped');
+        assert.deepEqual(containers.data.datasets, [kept, last]);
+        appendEnvelopePoint(kept, 2000, 2);
+        appendEnvelopePoint(last, 2000, 3);
+        containers._updateHiddenIndices();
+        assert.equal(containers.getDatasetMeta(1).data.length, 2, 'the last dataset lost its controller');
+        dropDatasets(containers, () => true);
+        assert.equal(containers.updates, 1, 'a chart updates once when it loses a dataset, and not otherwise');
+        containers.destroy();
+
+        const sensors = build([]);
+        const palette = [['blue', 'lightblue'], ['red', 'pink']];
+        const [expired, reporting] = ensureSensorDatasets(sensors, ['Expired', 'Reporting'], palette, 1000);
+        appendEnvelopeGap(expired, 1000);
+        appendEnvelopePoint(reporting, 1000, 40);
+        sensors.update('none');
+        sensors.updates = 0;
+        assert.deepEqual(ensureSensorDatasets(sensors, ['Reporting'], palette, 2000), [reporting]);
+        appendEnvelopePoint(reporting, 2000, 41);
+        sensors._updateHiddenIndices();
+        assert.equal(sensors.getDatasetMeta(0).data.length, 2, 'the remaining sensor lost its controller');
+        assert.equal(sensors.updates, 1, 'a chart updates once when a sensor expires');
+        sensors.destroy();
+    } finally {
+        for (const [name, value] of Object.entries(previous)) {
+            if (value === undefined) delete globalThis[name];
+            else globalThis[name] = value;
         }
     }
 });

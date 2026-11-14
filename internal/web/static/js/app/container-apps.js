@@ -10,7 +10,7 @@ import { createTimeSeriesChart } from './charts-init.js';
 import { i18n } from './i18n.js';
 import { pinSectionHeadForCards } from './section-utils.js';
 import { queueChartUpdate } from './chart-controller.js';
-import { appendEnvelopePoint, hasEnvelopeData } from './chart-envelope.js';
+import { appendEnvelopePoint, dropDatasets, hasEnvelopeData } from './chart-envelope.js';
 import { updateChartUI } from './chart-ui.js';
 
 // Palette for assigning a stable color per container/app.
@@ -289,7 +289,7 @@ function pruneDeadContainers(liveKeys, tsMs) {
     for (const m of CONTAINER_METRICS) {
         const chart = state.containerCharts?.[m.key];
         if (!chart) continue;
-        chart.data.datasets = chart.data.datasets.filter(ds => !dead.has(ds.containerKey));
+        dropDatasets(chart, ds => !dead.has(ds.containerKey));
     }
     for (const key of doomed) delete state.containerApps[key];
 }

@@ -54,6 +54,8 @@ reaches its target under it.
 When Node.js is available, `server_test.go` runs `history_frontend_test.mjs`. It checks request
 cancellation and stale responses, envelope preservation, formatter reuse, missing-data breaks,
 viewport batching and culling, gestures, keyboard exploration and complete formula-safe CSV.
+Its last test loads the real Chart.js the way `index.html` does: a chart that loses a dataset
+while its update is deferred must keep accepting points.
 It also runs `chart_bundle_test.mjs`. That test checks that the vendored Chart.js bundle registers
 only the dashboard's components and keeps time-axis ticks on local hours across a DST switch. It
 also covers the calendar math of the native `Date` adapter.
@@ -232,6 +234,8 @@ to chart count. Device-selection checks preserve unrelated datasets and shared g
 all chart coordinates must remain valid for disabled Chart.js parsing.
 Startup must build each chart once (the `/api/config` Graph Bounds default reaches its chart in
 place), and applying a bound from a card's menu must keep the chart and fetch no history.
+A container that stops must leave its charts, which are off-screen by then, once its last point
+has left the window, and the charts must keep streaming.
 Three network split/join cycles check that document click listeners do not accumulate and the
 Chart.js instance count returns to baseline. Each cycle also checks that Graph Bounds opens
 and dismisses on both a body click and an unrelated theme-button click.

@@ -90,11 +90,26 @@ export function hasEnvelopeData(dataset) {
     return dataset.$kulaValueCount > 0;
 }
 
+/**
+ * Drop the datasets `keep` rejects. Chart.js binds a controller to each
+ * dataset index and binds them again only in update(), which a chart that is
+ * off screen defers (chart-controller.js). Until then the controller past the
+ * new end still listens to a kept dataset's array, and the next point pushed
+ * there throws in the middle of a live sample, which stops every chart. So a
+ * chart that loses a dataset updates at once.
+ */
+export function dropDatasets(chart, keep) {
+    const kept = chart.data.datasets.filter(keep);
+    if (kept.length === chart.data.datasets.length) return;
+    chart.data.datasets = kept;
+    if (typeof chart.update === 'function') chart.update('none');
+}
+
 /** Keep sensor identities stable when their order or availability changes. */
 export function ensureSensorDatasets(chart, names, colorPairs, ts) {
     if (!chart?.data?.datasets) return [];
     const active = new Set(names);
-    chart.data.datasets = chart.data.datasets.filter(dataset =>
+    dropDatasets(chart, dataset =>
         active.has(dataset.$kulaSensorName || dataset.label) || hasEnvelopeData(dataset));
     for (const name of names) {
         let dataset = chart.data.datasets.find(candidate =>

@@ -119,6 +119,11 @@ per-application reducer branches.
   method to preserve hidden-point indices when data is trimmed; do not simply clear
   `_dataChanges`. The x-axis tick callback in `charts-init.js` reads the private time-scale
   `_unit`. `TestChartBundle` asserts both exist; recheck them when upgrading Chart.js.
+- Chart.js binds its dataset controllers again only in `update()`, which an off-screen chart
+  defers. Remove a dataset from a chart only through `dropDatasets()` (`chart-envelope.js`),
+  which updates the chart at once; after assigning a filtered `datasets` array yourself, the
+  next live point throws and no chart is drawn again.
+  `TestChartDatasetsAreDroppedThroughTheHelper` fails on a module that does.
 - Dashboard cards enter the page only through `card-layout.js` `placeCard()`, and only
   `arrangeCards()` moves them. The layout must stay a function of the cards present, the stored
   order (`kula_card_order`) and the mode. Never append a card yourself or give it a persistent
