@@ -1147,7 +1147,9 @@ def run_job(path: Path, job_id: str, options: argparse.Namespace) -> int:
     if strategy.get("matrix"):
         raw_matrix = strategy["matrix"]
         if not isinstance(raw_matrix, dict):
-            raise Unsupported("a strategy.matrix expression is not emulated by ci-local")
+            raise Unsupported(
+                "a strategy.matrix expression is not emulated by ci-local"
+            )
         for key in ("include", "exclude"):
             if key in raw_matrix:
                 raise Unsupported(f"strategy.matrix {key} is not emulated by ci-local")
@@ -1503,7 +1505,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 # does not run.
                 unfinished = set()
                 for job_id in jobs_in_needs_order(jobs):
-                    blocked = [need for need in job_needs(jobs[job_id]) if need in unfinished]
+                    blocked = [
+                        need for need in job_needs(jobs[job_id]) if need in unfinished
+                    ]
                     if blocked:
                         print(
                             yellow(

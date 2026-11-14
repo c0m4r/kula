@@ -120,7 +120,9 @@ def check_go_updates() -> None:
             )
             print(f"  go get {' '.join(ready)}")
             print("  go mod tidy")
-            print("Check the versions they pull in (git diff go.mod); avoid go get -u, which")
+            print(
+                "Check the versions they pull in (git diff go.mod); avoid go get -u, which"
+            )
             print("takes the newest release of every dependency, however recent.")
     except subprocess.CalledProcessError as e:
         print(f"Error checking for updates: {e}", file=sys.stderr)

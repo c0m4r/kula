@@ -870,7 +870,7 @@ def _decode_variable(
             if size > len(data) - off - 2:
                 raise ValueError("truncated disk id")
             off += 2
-            identity = data[off:off + size].decode("utf-8")
+            identity = data[off : off + size].decode("utf-8")
             off += size
             if identity:
                 dev["id"] = identity
@@ -932,10 +932,17 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
     result: Dict[str, Any] = {
         # Presentation provenance only; no bytes are added to the record.
         "extrema_profile": (
-            "none" if flags & 7 != 7 else
-            "current" if flags & FLAG_REDUCER_V2 else
-            "none" if flags & (FLAG_HAS_MEAN_STATS | FLAG_HAS_DISK_IDS) else
-            "legacy"
+            "none"
+            if flags & 7 != 7
+            else (
+                "current"
+                if flags & FLAG_REDUCER_V2
+                else (
+                    "none"
+                    if flags & (FLAG_HAS_MEAN_STATS | FLAG_HAS_DISK_IDS)
+                    else "legacy"
+                )
+            )
         ),
         "timestamp": (
             datetime.datetime.fromtimestamp(ts_ns / 1e9).astimezone().isoformat()
@@ -974,8 +981,15 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
         if flags & flag:
             block, off = _decode_fixed(payload, off)
             block, off = _decode_variable(
-                payload, off, block, has_apps, has_apache2, has_mysql, has_psu,
-                has_disk_ids, has_tcp_ext,
+                payload,
+                off,
+                block,
+                has_apps,
+                has_apache2,
+                has_mysql,
+                has_psu,
+                has_disk_ids,
+                has_tcp_ext,
             )
             result[label] = block
 
@@ -994,11 +1008,17 @@ def decode_v2_record(payload: bytes) -> Optional[Dict[str, Any]]:
             off += 2
             if size == 0 or len(payload) - off < size + 16:
                 raise ValueError("truncated mean statistic")
-            path = payload[off:off + size].decode("utf-8")
+            path = payload[off : off + size].decode("utf-8")
             off += size
             total, weight = struct.unpack_from("<dd", payload, off)
             off += 16
-            if path in stats or not math.isfinite(total) or not math.isfinite(weight) or weight < 0 or (weight == 0 and total != 0):
+            if (
+                path in stats
+                or not math.isfinite(total)
+                or not math.isfinite(weight)
+                or weight < 0
+                or (weight == 0 and total != 0)
+            ):
                 raise ValueError("invalid mean statistic")
             stats[path] = {"sum": total, "weight": weight}
         if off != len(payload):
@@ -1021,7 +1041,9 @@ class Ring:
     and the walk resyncs past it; in the old segment it is the end.
     """
 
-    def __init__(self, buf: Any, max_data: int, codec_ver: int, newest_nano: int) -> None:
+    def __init__(
+        self, buf: Any, max_data: int, codec_ver: int, newest_nano: int
+    ) -> None:
         self.buf = buf  # the whole file (mmap or bytes)
         self.max_data = max_data
         self.codec_ver = codec_ver or 1
@@ -1057,7 +1079,11 @@ class Ring:
             return None
         # A checksummed record proves itself, whatever its time: records from
         # before a backwards clock step are later than the newest one.
-        if kind != RECORD_KIND_CHECKSUMMED and self.newest_nano > 0 and ts > self.newest_nano + MAX_AHEAD_NS:
+        if (
+            kind != RECORD_KIND_CHECKSUMMED
+            and self.newest_nano > 0
+            and ts > self.newest_nano + MAX_AHEAD_NS
+        ):
             return None
         return data_len
 
@@ -1081,7 +1107,9 @@ class Ring:
         if self.codec_ver < CODEC_V2 or window_end - pos <= 5:
             return 1
         # The next position whose kind byte, four bytes in, could start one.
-        found = _KIND_BYTE.search(self.buf, HEADER_SIZE + pos + 5, HEADER_SIZE + window_end)
+        found = _KIND_BYTE.search(
+            self.buf, HEADER_SIZE + pos + 5, HEADER_SIZE + window_end
+        )
         if found is None:
             return window_end - pos - 4
         return found.start() - HEADER_SIZE - pos - 4
@@ -1093,7 +1121,7 @@ class Ring:
         that fail it (resyncBudget); every byte passed adds to it.
         """
         while end - pos >= 13:
-            if self.buf[HEADER_SIZE + pos:HEADER_SIZE + pos + 4] == b"\0\0\0\0":
+            if self.buf[HEADER_SIZE + pos : HEADER_SIZE + pos + 4] == b"\0\0\0\0":
                 # No record starts on a zero length: jump to 3 bytes before the
                 # next non-zero byte, the first place one could.
                 found = _NONZERO.search(self.buf, HEADER_SIZE + pos, HEADER_SIZE + end)
@@ -1152,7 +1180,7 @@ class Ring:
             pos += 4 + data_len
 
     def payload(self, pos: int, data_len: int) -> bytes:
-        return bytes(self.buf[HEADER_SIZE + pos + 4:HEADER_SIZE + pos + 4 + data_len])
+        return bytes(self.buf[HEADER_SIZE + pos + 4 : HEADER_SIZE + pos + 4 + data_len])
 
 
 def ring_segments(
@@ -1168,7 +1196,10 @@ def ring_segments(
         segments.append((old_start, max_data - old_start, False))
     segments.append((0, write_off, True))
     data_size = file_size - HEADER_SIZE
-    return [(start, max(0, min(size, data_size - start)), resync) for start, size, resync in segments]
+    return [
+        (start, max(0, min(size, data_size - start)), resync)
+        for start, size, resync in segments
+    ]
 
 
 def tier_records(filepath: str) -> List[Tuple[int, int]]:
@@ -1176,7 +1207,11 @@ def tier_records(filepath: str) -> List[Tuple[int, int]]:
     with open(filepath, "rb") as f:
         with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as buf:
             ring, segments = open_ring(buf, parse_header(buf[:HEADER_SIZE]), len(buf))
-            return [rec for start, size, resync in segments for rec in ring.walk(start, size, resync)]
+            return [
+                rec
+                for start, size, resync in segments
+                for rec in ring.walk(start, size, resync)
+            ]
 
 
 def ring_layout(buf: Any, header: Header, file_size: int) -> Tuple[bool, int]:
@@ -1188,7 +1223,17 @@ def ring_layout(buf: Any, header: Header, file_size: int) -> Tuple[bool, int]:
     next record that does. Records that cannot prove themselves (no kind
     byte, or JSON) keep the offset, as the readers that wrote them did.
     """
-    _, header_flags, codec_ver, max_data, write_off, count, _, newest_nano, oldest_off = header
+    (
+        _,
+        header_flags,
+        codec_ver,
+        max_data,
+        write_off,
+        count,
+        _,
+        newest_nano,
+        oldest_off,
+    ) = header
     candidate = write_off
     if header_flags & FLAG_HAS_TAIL:
         if not header_flags & FLAG_WRAPPED:
@@ -1198,7 +1243,9 @@ def ring_layout(buf: Any, header: Header, file_size: int) -> Tuple[bool, int]:
     if count <= 0 or file_size <= HEADER_SIZE + write_off:
         return False, 0
     if (codec_ver or 1) >= CODEC_V2:
-        found = Ring(buf, max_data, codec_ver, newest_nano).old_record_from(candidate, file_size)
+        found = Ring(buf, max_data, codec_ver, newest_nano).old_record_from(
+            candidate, file_size
+        )
         if found is not None:
             return True, found
     return True, candidate
@@ -1218,7 +1265,9 @@ def check_geometry(header: Header) -> None:
         )
 
 
-def open_ring(buf: Any, header: Header, file_size: int) -> Tuple[Ring, List[Tuple[int, int, bool]]]:
+def open_ring(
+    buf: Any, header: Header, file_size: int
+) -> Tuple[Ring, List[Tuple[int, int, bool]]]:
     """The walker and segments for a parsed header."""
     check_geometry(header)
     _, _, codec_ver, max_data, write_off, _, _, newest_nano, _ = header
@@ -1278,7 +1327,9 @@ def inspect_tier(filepath: str) -> None:
 def print_tier(filepath: str, buf: Any, file_size: int) -> None:
     """Print the header of a mapped tier file and its latest record."""
     header = parse_header(buf[:HEADER_SIZE])
-    magic, _, codec_ver, max_data, write_off, count, oldest_nano, newest_nano, _ = header
+    magic, _, codec_ver, max_data, write_off, count, oldest_nano, newest_nano, _ = (
+        header
+    )
     if magic != MAGIC:
         # Escaped: the bytes come from the file, and raw they reach the
         # terminal as control sequences.

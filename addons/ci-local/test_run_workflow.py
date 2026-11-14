@@ -348,11 +348,18 @@ class NeedsTest(unittest.TestCase):
             (workspace / rw.WORKFLOW_DIR).mkdir(parents=True)
             temp.mkdir()
             marks.mkdir()
-            (workspace / rw.WORKFLOW_DIR / "needs.yml").write_text(self.WORKFLOW, encoding="utf-8")
-            env = {"GITHUB_WORKSPACE": str(workspace), "RUNNER_TEMP": str(temp), "MARKS": str(marks)}
+            (workspace / rw.WORKFLOW_DIR / "needs.yml").write_text(
+                self.WORKFLOW, encoding="utf-8"
+            )
+            env = {
+                "GITHUB_WORKSPACE": str(workspace),
+                "RUNNER_TEMP": str(temp),
+                "MARKS": str(marks),
+            }
             output = io.StringIO()
-            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(output), \
-                    contextlib.redirect_stderr(output):
+            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(
+                output
+            ), contextlib.redirect_stderr(output):
                 code = rw.main(["run-all"])
             self.assertEqual(code, 1)
             order = (marks / "order").read_text(encoding="utf-8").split()
