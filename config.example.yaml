@@ -383,6 +383,7 @@ applications:
   # PostgreSQL monitoring
   # Connects via lib/pq. Supports TCP and Unix socket.
   # For Unix socket: set host to socket directory, port to 0.
+  # Over TCP, host is a name or an IP address; IPv6 as "::1" or "[::1]".
   #
   # Quick setup — create a read-only monitoring user:
   #   sudo -u postgres psql
@@ -411,6 +412,7 @@ applications:
   # MySQL / MariaDB monitoring
   # Connects via go-sql-driver/mysql. Supports TCP and Unix socket.
   # For Unix socket: set host to the socket path (e.g. /var/run/mysqld/mysqld.sock), port to 0.
+  # Over TCP, host is a name or an IP address; IPv6 as "::1" or "[::1]".
   #
   # Quick setup — create a read-only monitoring user:
   #   sudo mysql

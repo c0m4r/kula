@@ -872,6 +872,47 @@ func TestGameScoreURL(t *testing.T) {
 	}
 }
 
+// A database host that is an IP address in brackets, as a URL writes one,
+// loads as the bare address: the drivers bracket an IPv6 address themselves
+// when they join it with the port. A MySQL socket path (port 0) and anything
+// that is not an address keep their brackets.
+func TestLoadUnbracketsDatabaseHosts(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings string
+		mysql, pg      string
+	}{
+		{"bracketed IPv6", "mysql:\n    host: \"[::1]\"\n  postgres:\n    host: \"[::1]\"\n", "::1", "::1"},
+		{"bare IPv6", "mysql:\n    host: \"::1\"\n  postgres:\n    host: \"::1\"\n", "::1", "::1"},
+		{"bracketed IPv6 with a zone", "mysql:\n    host: \"[fe80::1%eth0]\"\n", "fe80::1%eth0", "localhost"},
+		{"bracketed IPv4", "mysql:\n    host: \"[192.0.2.1]\"\n", "192.0.2.1", "localhost"},
+		{"IPv4", "mysql:\n    host: 192.0.2.1\n  postgres:\n    host: 192.0.2.1\n", "192.0.2.1", "192.0.2.1"},
+		{"a name", "mysql:\n    host: db.example.com\n  postgres:\n    host: db.example.com\n", "db.example.com", "db.example.com"},
+		{"a name in brackets", "mysql:\n    host: \"[db.example.com]\"\n", "[db.example.com]", "localhost"},
+		{"a MySQL socket path", "mysql:\n    host: \"[::1]\"\n    port: 0\n", "[::1]", "localhost"},
+		{"a PostgreSQL host list", "postgres:\n    host: \"[::1],db.example.com,[2001:db8::5],/run/postgresql\"\n", "localhost",
+			"::1,db.example.com,2001:db8::5,/run/postgresql"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			yaml := fmt.Sprintf("storage:\n  directory: %s\napplications:\n  %s", dir, tc.settings)
+			if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Applications.Mysql.Host; got != tc.mysql {
+				t.Errorf("applications.mysql.host = %q, want %q", got, tc.mysql)
+			}
+			if got := cfg.Applications.Postgres.Host; got != tc.pg {
+				t.Errorf("applications.postgres.host = %q, want %q", got, tc.pg)
+			}
+		})
+	}
+}
+
 // MySQL TLS settings that would protect the connection less than they read
 // are refused: an unknown mode, a CA file no mode uses, TLS on a Unix socket,
 // verify-ca without its CA, verify-full without a name to check. A disabled

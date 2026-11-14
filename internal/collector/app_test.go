@@ -507,6 +507,38 @@ func TestMysqlDSN(t *testing.T) {
 	}
 }
 
+// TestMysqlAddressFromConfig: the address dialled and the label logged for
+// each way of writing the host in the config file. "[::1]" worked in 0.21.0,
+// which joined host and port by hand, and must not be bracketed twice.
+func TestMysqlAddressFromConfig(t *testing.T) {
+	for host, want := range map[string]string{
+		`"[::1]"`:         "[::1]:3306",
+		`"::1"`:           "[::1]:3306",
+		"db.example":      "db.example:3306",
+		"192.0.2.1":       "192.0.2.1:3306",
+		`"[2001:db8::5]"`: "[2001:db8::5]:3306",
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yaml")
+		yaml := "storage:\n  directory: " + dir + "\napplications:\n  mysql:\n    host: " + host + "\n    port: 3306\n"
+		if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := config.LoadRequired(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		my := cfg.Applications.Mysql
+		mc := newMysqlCollector(my.Host, my.Port, my.User, my.Password, my.DBName, my.SSLMode, my.SSLRootCert, false, time.Second)
+		if mc.config.Net != "tcp" || mc.config.Addr != want || mc.label != want {
+			t.Errorf("host %s: dials %s %q, logged as %q; want tcp %q for both", host, mc.config.Net, mc.config.Addr, mc.label, want)
+		}
+		if _, _, err := net.SplitHostPort(mc.config.Addr); err != nil {
+			t.Errorf("host %s: address %q does not split: %v", host, mc.config.Addr, err)
+		}
+	}
+}
+
 func TestMysqlCollectorMath(t *testing.T) {
 	mc := &mysqlCollector{
 		prev: mysqlRaw{

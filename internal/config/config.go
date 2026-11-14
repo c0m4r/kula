@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -359,7 +360,8 @@ type ContainersConfig struct {
 // PostgresConfig controls PostgreSQL database monitoring.
 // Connects via database/sql + lib/pq. Supports both TCP and Unix socket.
 // For Unix socket connections, set host to the socket directory
-// (e.g. /var/run/postgresql) and leave port as 0.
+// (e.g. /var/run/postgresql) and leave port as 0. An IPv6 address may be
+// written with or without brackets; Load removes them.
 type PostgresConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Host     string `yaml:"host"`
@@ -373,7 +375,8 @@ type PostgresConfig struct {
 // MysqlConfig controls MySQL database monitoring.
 // Connects via database/sql + go-sql-driver/mysql. Supports both TCP and Unix socket.
 // For Unix socket connections, set host to the socket path (e.g. /var/run/mysqld/mysqld.sock)
-// and leave port as 0.
+// and leave port as 0. Over TCP, an IPv6 address may be written with or without
+// brackets; Load removes them.
 type MysqlConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Host     string `yaml:"host"`
@@ -670,6 +673,8 @@ func load(path string, mustExist bool) (*Config, error) {
 		return nil, err
 	}
 
+	cfg.normalizeDatabaseHosts()
+
 	if err := cfg.validateMysqlTLS(); err != nil {
 		return nil, err
 	}
@@ -685,6 +690,38 @@ func load(path string, mustExist bool) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// normalizeDatabaseHosts drops the square brackets around an IP address in
+// the database hosts. "[::1]" is how a URL writes ::1, and the drivers add
+// brackets of their own when they join host and port, so a bracketed host
+// would reach them as "[[::1]]". Done here, the connection, its log label, the
+// certificate name check and the sandbox grant all see the bare address. A
+// MySQL host with port 0 is a socket path and is left as it is; a PostgreSQL
+// host may be a comma-separated list.
+func (c *Config) normalizeDatabaseHosts() {
+	if my := &c.Applications.Mysql; my.Port != 0 {
+		my.Host = unbracketIP(my.Host)
+	}
+	pg := &c.Applications.Postgres
+	hosts := strings.Split(pg.Host, ",")
+	for i, host := range hosts {
+		hosts[i] = unbracketIP(host)
+	}
+	pg.Host = strings.Join(hosts, ",")
+}
+
+// unbracketIP returns the address inside host when host is an IP address in
+// square brackets, and host unchanged otherwise.
+func unbracketIP(host string) string {
+	if inner, ok := strings.CutPrefix(host, "["); ok {
+		if inner, ok := strings.CutSuffix(inner, "]"); ok {
+			if _, err := netip.ParseAddr(inner); err == nil {
+				return inner
+			}
+		}
+	}
+	return host
 }
 
 // validateMysqlTLS refuses MySQL TLS settings that would protect the

@@ -153,6 +153,31 @@ func TestMysqlGrants(t *testing.T) {
 	}
 }
 
+// TestBracketedDatabaseHostGrants: a database host written as "[::1]" in the
+// config file is the address ::1, which needs TCP to the port and no DNS.
+func TestBracketedDatabaseHostGrants(t *testing.T) {
+	useResolverFixtures(t, fixtureHosts, "")
+	t.Setenv("PGHOSTADDR", "")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := "storage:\n  directory: " + dir + "\napplications:\n" +
+		"  mysql:\n    enabled: true\n    host: \"[::1]\"\n    port: 3306\n" +
+		"  postgres:\n    enabled: true\n    host: \"[2001:db8::5]\"\n    port: 5432\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadRequired(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := &ruleset{}
+	rs.addMysql(cfg.Applications.Mysql)
+	rs.addPostgres(cfg.Applications.Postgres)
+	if got, want := grantsOf(rs), (grants{tcp: []uint16{3306, 5432}}); !got.equal(want) || len(rs.errs) > 0 {
+		t.Errorf("grants = %+v, errors %v; want %+v", got, rs.errs, want)
+	}
+}
+
 // TestUnixSocketGrants: a socket in a directory of its own is granted through
 // the directory, one in a shared or world-writable directory as the file.
 func TestUnixSocketGrants(t *testing.T) {

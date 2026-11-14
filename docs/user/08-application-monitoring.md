@@ -140,7 +140,8 @@ subtitle.
 ## PostgreSQL
 
 Connects via the `lib/pq` driver over TCP or a Unix socket (for a Unix socket, set `host` to
-the socket directory and `port` to `0`).
+the socket directory and `port` to `0`). Over TCP, `host` is a name or an IP address; an IPv6
+address may be written with or without brackets (`::1` or `[::1]`).
 
 **Create a read-only monitoring role:**
 
@@ -227,7 +228,8 @@ Kula at PostgreSQL directly where you can.
 ## MySQL / MariaDB
 
 Connects via `go-sql-driver/mysql` over TCP or a Unix socket (set `host` to the socket path
-and `port` to `0` for a socket).
+and `port` to `0` for a socket). Over TCP, `host` is a name or an IP address; an IPv6 address
+may be written with or without brackets (`::1` or `[::1]`).
 
 **Create a read-only monitoring user:**
 
