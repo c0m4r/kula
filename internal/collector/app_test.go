@@ -693,6 +693,39 @@ func TestMysqlRatesNeedABaseline(t *testing.T) {
 	}
 }
 
+// TestCustomSocketPathTooLong: a socket path longer than a Unix socket can be
+// bound at is refused with the path, its length, the limit and the setting to
+// change, not the kernel's bare "invalid argument"; one at the limit listens.
+func TestCustomSocketPathTooLong(t *testing.T) {
+	t.Chdir(t.TempDir()) // relative paths: their length does not depend on TMPDIR
+	cfg := map[string][]config.CustomMetricConfig{"fans": {{Name: "fan1", Unit: "RPM", Max: 5000}}}
+	socketPath := func(length int) string {
+		dir := strings.Repeat("d", length-len("/kula.sock"))
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		return filepath.Join(dir, "kula.sock")
+	}
+
+	cc, err := newCustomCollector(context.Background(), socketPath(107), cfg, time.Minute, false)
+	if err != nil {
+		t.Fatalf("a 107-byte socket path: %v", err)
+	}
+	cc.Close()
+
+	long := socketPath(108)
+	if cc, err := newCustomCollector(context.Background(), long, cfg, time.Minute, false); err == nil {
+		cc.Close()
+		t.Fatal("a 108-byte socket path was accepted")
+	} else {
+		for _, want := range []string{long, "108 bytes", "107", "storage.directory", "at most 97 bytes"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %q", err, want)
+			}
+		}
+	}
+}
+
 func TestCustomCollector(t *testing.T) {
 	sockPath := "/tmp/kula_test.sock"
 	defer func() { _ = os.Remove(sockPath) }()

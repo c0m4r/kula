@@ -185,6 +185,11 @@ Tier files must be regular files: Kula refuses to open one that is a symbolic li
 and rebuilds a seek index that is one, so restore a tier by copying it into place, not by
 linking to it. The storage directory itself may be a link.
 
+With [custom metrics](09-custom-metrics.md) configured, Kula listens on
+`<storage.directory>/kula.sock`. A Unix socket path holds at most 107 bytes, so keep the
+storage directory's path to 97 bytes or fewer; with a longer one, custom metrics do not start,
+and the log says why.
+
 Every record carries a checksum. A power loss or kernel crash can leave the last records
 before it only partly written; such a record fails its checksum and is skipped instead of
 showing, or being rolled up, with wrong values. Records written before 0.22.0 have no checksum

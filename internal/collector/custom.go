@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +41,9 @@ const (
 	// customReadBuffer is a connection's initial read buffer; it grows up to
 	// the 64 KB line limit only for a longer line.
 	customReadBuffer = 4 << 10
+	// maxUnixSocketPath is the longest path a Unix socket can be bound at:
+	// sun_path holds 108 bytes, the last of them the terminating NUL.
+	maxUnixSocketPath = 107
 )
 
 const (
@@ -126,6 +130,14 @@ type customMessage struct {
 // staleAfter must be > 0; callers resolve a zero config value to a default
 // (see defaultCustomStaleAfter) before constructing.
 func newCustomCollector(ctx context.Context, sockPath string, configs map[string][]config.CustomMetricConfig, staleAfter time.Duration, debug bool) (*customCollector, error) {
+	// The kernel refuses a longer path with a bare EINVAL ("bind: invalid
+	// argument"), which names neither the cause nor the setting.
+	if len(sockPath) > maxUnixSocketPath {
+		name := filepath.Base(sockPath)
+		return nil, fmt.Errorf("custom metrics socket path %s is %d bytes long, over the %d a Unix socket path can have: "+
+			"set storage.directory to a path of at most %d bytes (the socket is created in it as %s)",
+			sockPath, len(sockPath), maxUnixSocketPath, maxUnixSocketPath-len(name)-1, name)
+	}
 	// A socket another process still serves is live, not stale: a connection
 	// to it succeeds. Removing it would silently cut that process (a running
 	// `kula serve`) off from every client, so refuse instead.
