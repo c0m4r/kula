@@ -184,6 +184,10 @@ chmod 644 "${PKG_DIR}/usr/share/bash-completion/completions/kula"
 chmod 644 "${PKG_DIR}/usr/share/man/man1/kula.1.gz"
 chmod 644 "${PKG_DIR}/lib/systemd/system/kula.service"
 find "${PKG_DIR}/usr/share/kula" -type f -exec chmod 644 {} +
+# The helper scripts are run directly, as the rpm and AUR packages ship them
+if [ -d "${PKG_DIR}/usr/share/kula/scripts" ]; then
+    find "${PKG_DIR}/usr/share/kula/scripts" -type f -exec chmod 755 {} +
+fi
 
 echo "Building Debian package..."
 dpkg-deb --root-owner-group --build "${PKG_DIR}"

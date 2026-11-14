@@ -144,8 +144,10 @@ package() {
       install -Dm644 addons/kula.1 "\$pkgdir/usr/share/man/man1/kula.1"
   fi
 
-  # Copy scripts directory
+  # Copy scripts directory (into /usr/share/kula/scripts: without the parent
+  # directory, cp -r would make the scripts themselves /usr/share/kula)
   if [ -d "scripts" ]; then
+      install -dm755 "\$pkgdir/usr/share/kula"
       cp -r scripts "\$pkgdir/usr/share/kula/"
   fi
 
@@ -214,8 +216,10 @@ package() {
       install -Dm644 addons/kula.1 "$pkgdir/usr/share/man/man1/kula.1"
   fi
 
-  # Copy scripts directory
+  # Copy scripts directory (into /usr/share/kula/scripts: without the parent
+  # directory, cp -r would make the scripts themselves /usr/share/kula)
   if [ -d "scripts" ]; then
+      install -dm755 "$pkgdir/usr/share/kula"
       cp -r scripts "$pkgdir/usr/share/kula/"
   fi
 
