@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1103,11 +1104,25 @@ func normalizeOrigin(raw string) (string, error) {
 	if strings.Contains(host, ":") {
 		host = "[" + host + "]"
 	}
-	defaultPort := map[string]string{"http": "80", "https": "443"}[scheme]
-	if port := u.Port(); port != "" && port != defaultPort {
-		host += ":" + port
+	if port := u.Port(); port != "" {
+		p, err := parsePort(port)
+		if err != nil {
+			return "", err
+		}
+		if defaultPort := map[string]uint64{"http": 80, "https": 443}[scheme]; p != defaultPort {
+			host += ":" + strconv.FormatUint(p, 10)
+		}
 	}
 	return scheme + "://" + host, nil
+}
+
+// parsePort reads a port number of an origin or a Host, 1 to 65535.
+func parsePort(port string) (uint64, error) {
+	p, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || p == 0 {
+		return 0, fmt.Errorf("port %q is not a number from 1 to 65535", port)
+	}
+	return p, nil
 }
 
 // normalizeAllowedHosts rewrites each web.security.allowed_hosts entry into
@@ -1137,7 +1152,15 @@ func normalizeAllowedHost(raw string) (string, error) {
 	if strings.Contains(host, "*") {
 		return "", fmt.Errorf(`wildcards are not supported; list each name, or use "*" alone to answer any Host`)
 	}
-	if name, _, err := net.SplitHostPort(host); err == nil {
+	if strings.IndexFunc(host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return "", fmt.Errorf("contains whitespace or a control character")
+	}
+	if name, port, err := net.SplitHostPort(host); err == nil {
+		if port != "" {
+			if _, err := parsePort(port); err != nil {
+				return "", err
+			}
+		}
 		host = name
 	}
 	host = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"), ".")
@@ -1148,6 +1171,15 @@ func normalizeAllowedHost(raw string) (string, error) {
 		if r > unicode.MaxASCII {
 			return "", fmt.Errorf("browsers send an internationalized host in its punycode (xn--) form; use that")
 		}
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return host, nil
+	}
+	if strings.Contains(host, ":") {
+		return "", fmt.Errorf("is neither a host name nor an IP address")
+	}
+	if slices.Contains(strings.Split(host, "."), "") {
+		return "", fmt.Errorf("has an empty label (a leading dot, or two dots in a row)")
 	}
 	return host, nil
 }

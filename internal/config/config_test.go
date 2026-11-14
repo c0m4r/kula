@@ -364,6 +364,11 @@ func TestNormalizeOrigin(t *testing.T) {
 		{"http://[::1]:8080", "http://[::1]:8080"},
 		{"http://[::1]:80", "http://[::1]"},
 		{"http://192.0.2.1", "http://192.0.2.1"},
+		{"https://app.example.com:1", "https://app.example.com:1"},
+		{"https://app.example.com:65535", "https://app.example.com:65535"},
+		// Browsers send the port as a plain number.
+		{"https://app.example.com:08443", "https://app.example.com:8443"},
+		{"https://app.example.com:0443", "https://app.example.com"},
 		// App webviews and extensions send their own schemes, as 0.21.0 accepted.
 		{"tauri://localhost", "tauri://localhost"},
 		{"Chrome-Extension://ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP/", "chrome-extension://abcdefghijklmnopabcdefghijklmnop"},
@@ -380,6 +385,8 @@ func TestNormalizeOrigin(t *testing.T) {
 		"https://user@app.example.com", "https:app.example.com", "https://bücher.example",
 		"ws://app.example.com", "wss://app.example.com", "file:///srv/kula", "app.example.com:8443", "app://",
 		"tauri://localhost/index.html", "chrome-extension://*",
+		"https://app.example.com:0", "https://app.example.com:65536", "https://app.example.com:99999",
+		"http://[::1]:0", "tauri://localhost:70000",
 	} {
 		if got, err := normalizeOrigin(in); err == nil {
 			t.Errorf("normalizeOrigin(%q) = %q, want an error", in, got)
@@ -419,6 +426,17 @@ func TestNormalizeAllowedHost(t *testing.T) {
 		{"[::1]:27960", "::1"},
 		{"[fe80::1]", "fe80::1"},
 		{"192.0.2.1", "192.0.2.1"},
+		{"192.0.2.1:80", "192.0.2.1"},
+		{"127.1", "127.1"},
+		{"::1", "::1"},
+		{"[::1]", "::1"},
+		{"[fe80::1%eth0]:27960", "fe80::1%eth0"},
+		{"::ffff:192.0.2.1", "::ffff:192.0.2.1"},
+		{"myserver", "myserver"},
+		{"myserver.", "myserver"},
+		{"my_server.lan", "my_server.lan"},
+		{"kula.example.com:1", "kula.example.com"},
+		{"kula.example.com:65535", "kula.example.com"},
 		{"*", "*"},
 	} {
 		got, err := normalizeAllowedHost(tc.in)
@@ -429,6 +447,10 @@ func TestNormalizeAllowedHost(t *testing.T) {
 	for _, in := range []string{
 		"", " ", ".", "https://kula.example.com", "kula.example.com/", "kula.example.com/path",
 		"user@kula.example.com", "*.example.com", "kula*", "bücher.example",
+		// No Host header can match these.
+		"kula example", "kula\texample.com", "kula\x00.example.com", ".example.com", "kula..example.com",
+		"kula.example.com..", "kula.example.com:abc", "kula.example.com:0", "kula.example.com:65536",
+		"kula.example.com:+80", "[::1]:99999", "kula:example:com",
 	} {
 		if got, err := normalizeAllowedHost(in); err == nil {
 			t.Errorf("normalizeAllowedHost(%q) = %q, want an error", in, got)

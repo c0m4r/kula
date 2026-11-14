@@ -166,7 +166,8 @@ web:
     # Allow cross-origin browser access from these exact origins
     # (scheme://host[:port], http(s) or an app/extension origin such as
     # tauri://localhost or chrome-extension://<id>; case, a trailing slash and
-    # a default port are normalized, a path or wildcard is refused at startup).
+    # a default port are normalized, a path, a wildcard or a port outside
+    # 1-65535 is refused at startup).
     # When non-empty:
     #   - CORS response headers are sent for matching origins
     #   - listed origins also pass origin_validation
@@ -187,7 +188,9 @@ web:
     # name you reach Kula by, e.g. through internal DNS or a reverse proxy that
     # forwards Host. "*" answers any Host (not recommended). With auth
     # enabled, only /metrics without a token is checked; no effect on a Unix
-    # socket. Ports and a trailing dot are ignored.
+    # socket. Ports and a trailing dot are ignored; an entry no Host can match
+    # (whitespace, an empty label such as .example.com, a port that is not a
+    # number from 1 to 65535) is refused at startup.
     # allowed_hosts:
     #   - kula.example.com
 

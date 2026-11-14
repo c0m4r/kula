@@ -284,10 +284,10 @@ matching origins, those origins pass `origin_validation`, and session cookies sw
 entry is an origin as a browser sends it, `scheme://host[:port]`: an `http`/`https` page, or an
 app webview or browser extension with its own scheme (`tauri://localhost`,
 `chrome-extension://<id>`). Case, a trailing slash and a default port are normalized at
-startup, and an entry with a path, a wildcard or no scheme stops it with an error. Keep
-`origin_validation` on alongside `allowed_origins`: with it off, those cross-site cookies reach
-a WebSocket that accepts any origin, so any page a signed-in user visits can read the live
-stream (Kula warns about this at startup). See
+startup, and an entry with a path, a wildcard, no scheme or a port outside 1–65535 stops it
+with an error. Keep `origin_validation` on alongside `allowed_origins`: with it off, those
+cross-site cookies reach a WebSocket that accepts any origin, so any page a signed-in user
+visits can read the live stream (Kula warns about this at startup). See
 [Security Model](../dev/08-security.md).
 
 `allowed_hosts` guards against DNS rebinding while auth is disabled: a web page can point its
@@ -309,8 +309,10 @@ Any other name gets `403 {"error": "host not allowed: …"}`, logged once per na
 and `/status` stay open to probes, and so does `/metrics` when it has a bearer token. **Add the
 name you reach Kula by** if it is a regular DNS name, such as `kula.example.com` from internal
 DNS or a reverse proxy that forwards `Host` (see [Reverse Proxy](13-reverse-proxy.md)). Entries
-are host names or IP addresses; case, a port and a trailing dot are ignored, and a scheme, path
-or wildcard stops startup. `"*"` answers any `Host` and turns the protection off (Kula warns at
+are host names or IP addresses, an IPv6 address with or without brackets; case, a port and a
+trailing dot are ignored. An entry no `Host` can match stops startup: one with a scheme, path,
+wildcard, whitespace, an empty label (`.example.com`, `a..b`) or a port that is not a number
+from 1 to 65535. `"*"` answers any `Host` and turns the protection off (Kula warns at
 startup when auth is disabled). With `auth.enabled: true` a rebinding page has no session to
 send, so the check applies only to a `/metrics` without a bearer token, which auth does not
 cover; a Prometheus server that scrapes it by a regular DNS name needs that name listed, or a
