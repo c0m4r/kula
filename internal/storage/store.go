@@ -909,6 +909,7 @@ func (s *Store) QueryRangeFromTier(from, to time.Time, targetPoints, tier int) (
 	// Tier handles and their configuration are immutable after construction.
 	if len(s.tiers) == 0 {
 		return &HistoryResult{
+			Samples:           []*AggregatedSample{},
 			RequestedFrom:     from,
 			RequestedTo:       to,
 			ValidAggregations: validHistoryAggregations(nil),
@@ -993,6 +994,7 @@ func (s *Store) QueryRangeFromTier(from, to time.Time, targetPoints, tier int) (
 	// No data found in any tier
 	res := fmtRes(s.configs[0].Resolution)
 	return &HistoryResult{
+		Samples:           []*AggregatedSample{},
 		Tier:              0,
 		Resolution:        res,
 		SourceResolution:  res,

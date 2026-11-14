@@ -224,12 +224,21 @@ func TestHistoryResponsesMatchDashboardContract(t *testing.T) {
 	add("raw view across a collection outage", raw, at(100.377), at(400.377), 534,
 		historyContractExpect{Live: true, Aggregations: dataOnly, Gaps: 1},
 		func(r *HistoryResult) { metadata("outage", r, 0, "1s", true, dataOnly) })
+	// An empty window answers "samples":[], never null.
 	add("empty window inside retained raw history", raw, at(210.5), at(290.5), 534,
 		historyContractExpect{Live: true, Aggregations: dataOnly},
 		func(r *HistoryResult) {
 			metadata("empty", r, 0, "1s", false, dataOnly)
-			if len(r.Samples) != 0 {
-				t.Fatalf("empty: %d samples", len(r.Samples))
+			if r.Samples == nil || len(r.Samples) != 0 {
+				t.Fatalf("empty: samples %#v, want an empty list", r.Samples)
+			}
+		})
+	add("window before the store's history", raw, at(-86400.5), at(-86100.5), 534,
+		historyContractExpect{Live: true, Aggregations: dataOnly},
+		func(r *HistoryResult) {
+			if r.Tier != 0 || r.Resolution != "1s" || r.Complete || r.Samples == nil || len(r.Samples) != 0 {
+				t.Fatalf("before history: tier=%d resolution=%s complete=%v samples %#v, want an empty tier-0 list",
+					r.Tier, r.Resolution, r.Complete, r.Samples)
 			}
 		})
 	add("tier-1 legacy and current buckets", coarse, base.Add(250*time.Millisecond),

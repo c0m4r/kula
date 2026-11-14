@@ -153,7 +153,8 @@ and [DMTF SMBIOS specification, section 7.18](https://www.dmtf.org/sites/default
   actual_from, actual_to, complete, exact_complete, valid_aggregations }`. When `sections` is supplied, the same compatible envelope
   also includes the canonical ordered `sections` list, and each sample's Data/Min/Max tree
   contains only its timestamp plus those sections. Omitting the parameter preserves the full
-  response for existing clients.
+  response for existing clients. A window the store holds nothing of answers `"samples": []`,
+  never `null`.
 
   Each item in `samples` contains `ts`, `dur`, `data`, optional trusted `min`/`max`, and
   query-only presentation metadata: `bucket_start`, `bucket_end`, `sample_count`, and

@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,24 @@ func TestWriteHistoryJSONMatchesWriteJSON(t *testing.T) {
 	writeHistoryJSON(rec, bad)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("NaN sample: status %d, want 500", rec.Code)
+	}
+}
+
+// A window the store holds nothing of answers "samples":[], whole or by
+// section, not null.
+func TestHandleHistoryAnswersAnEmptyWindowWithAnEmptyList(t *testing.T) {
+	store := newTestStoreWithSample(t)
+	defer func() { _ = store.Close() }()
+	s := newTestServer(t, store)
+	for _, query := range []string{
+		"from=2020-01-01T00:00:00Z&to=2020-01-02T00:00:00Z",
+		"from=2020-01-01T00:00:00Z&to=2020-01-02T00:00:00Z&sections=cpu",
+	} {
+		rec := httptest.NewRecorder()
+		s.handleHistory(rec, httptest.NewRequest(http.MethodGet, "/api/history?"+query, nil))
+		if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Body.String(), `{"samples":[],`) {
+			t.Errorf("%s: %d %.120q, want 200 starting {\"samples\":[],", query, rec.Code, rec.Body.String())
+		}
 	}
 }
 

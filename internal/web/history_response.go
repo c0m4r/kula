@@ -62,7 +62,9 @@ func (s *Server) releaseHistorySlot() {
 func writeHistoryJSON(w http.ResponseWriter, payload any) {
 	switch p := payload.(type) {
 	case *storage.HistoryResult:
-		if p.Samples == nil { // "samples":null, and nothing to stream
+		// The store answers an empty window with an empty list; a nil one
+		// encodes as writeJSON would encode it, as null.
+		if p.Samples == nil {
 			writeJSON(w, payload)
 			return
 		}

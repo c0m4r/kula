@@ -55,8 +55,8 @@ for (const scenario of fixture.scenarios) {
         const { request, expect, response } = scenario;
         const from = Date.parse(request.from);
         const to = Date.parse(request.to);
-        const samples = response.samples ?? [];
-        assert.ok(Array.isArray(samples), 'samples must be an array or null');
+        const samples = response.samples;
+        assert.ok(Array.isArray(samples), 'samples must be an array, empty when the window holds none');
         assert.ok(samples.length <= request.points, 'response exceeds the requested point budget');
 
         const view = responseView(response);

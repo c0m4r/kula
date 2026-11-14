@@ -97,6 +97,9 @@ func (s *Store) readHistory(tier *Tier, from, to time.Time, targetPoints int, re
 		result.Samples = pending
 		step = resolution
 	}
+	if result.Samples == nil {
+		result.Samples = []*AggregatedSample{} // an empty window is "samples":[], not null
+	}
 	if raw && reducing && step == resolution && !densityReduction {
 		// The native-step reduction exists only to clip the right boundary; the
 		// output is still a sequence of raw observations, which carry no stored
