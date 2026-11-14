@@ -10,6 +10,47 @@ import (
 	"time"
 )
 
+// TestMain runs the tests with HOME at an empty directory of their own, and
+// fails if one of them wrote there. A config without a storage directory
+// falls back from /var/lib/kula to ~/.kula and creates it, so a test that
+// loads one must give it a directory of its own (see ownStorage).
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "kula-config-test-home-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := os.Setenv("HOME", home); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	if len(entries) > 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		fmt.Fprintf(os.Stderr, "FAIL: the tests wrote %q into HOME: a test that loads a config "+
+			"without a storage directory must give it one of its own (ownStorage)\n", names)
+		code = 1
+	}
+	_ = os.RemoveAll(home)
+	os.Exit(code)
+}
+
+// ownStorage gives a test that loads a config without a storage directory one
+// of its own, through KULA_DIRECTORY: the default, /var/lib/kula, falls back
+// to ~/.kula, creating it and writing a probe file there.
+func ownStorage(t *testing.T) {
+	t.Helper()
+	t.Setenv("KULA_DIRECTORY", t.TempDir())
+}
+
 func TestParseSize(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -96,6 +137,7 @@ func TestDefaultConfig(t *testing.T) {
 // Host details stay opt-in, so a config file that predates the option keeps
 // them off, and only an explicit true turns them on.
 func TestLoadShowSystemDetails(t *testing.T) {
+	ownStorage(t)
 	for _, test := range []struct {
 		name    string
 		yaml    string
@@ -230,6 +272,7 @@ func TestLoadRejectsBrokenWebLimits(t *testing.T) {
 // its line, instead of being ignored. Ignored, a misspelled setting fails open:
 // `web.auth.enable: true` started Kula with authentication off.
 func TestLoadRefusesUnknownSettings(t *testing.T) {
+	ownStorage(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	typo := fmt.Sprintf("storage:\n  directory: %s\nweb:\n  auth:\n    enable: true\n", dir)
@@ -418,6 +461,7 @@ func TestLoadNormalizesAllowedHosts(t *testing.T) {
 }
 
 func TestLoadMissingFile(t *testing.T) {
+	ownStorage(t)
 	cfg, err := Load("/nonexistent/path/config.yaml")
 	if err != nil {
 		t.Fatalf("Load() with missing file should return defaults, got error: %v", err)
@@ -451,6 +495,7 @@ func TestLoadRequiredUnreadableFile(t *testing.T) {
 }
 
 func TestLoadRequiredPresentFile(t *testing.T) {
+	ownStorage(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte("web:\n  port: 9090\n"), 0644); err != nil {
@@ -524,6 +569,7 @@ func TestLoadInvalidYAML(t *testing.T) {
 }
 
 func TestLoadEnvOverrides(t *testing.T) {
+	ownStorage(t)
 	t.Setenv("KULA_LISTEN", "10.0.0.1")
 	t.Setenv("KULA_PORT", "1234")
 
@@ -726,6 +772,7 @@ func TestNormalizeBasePath(t *testing.T) {
 }
 
 func TestLoadBasePathEnvOverride(t *testing.T) {
+	ownStorage(t)
 	t.Setenv("KULA_BASE_PATH", "/kula/")
 	cfg, err := Load("/nonexistent/path/config.yaml")
 	if err != nil {
@@ -818,6 +865,7 @@ func TestValidateBackup(t *testing.T) {
 }
 
 func TestGameScoreURL(t *testing.T) {
+	ownStorage(t)
 	dir := t.TempDir()
 	tests := []struct {
 		name   string

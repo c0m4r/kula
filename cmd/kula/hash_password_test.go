@@ -21,7 +21,9 @@ func runHashPasswordCommand(t *testing.T, stdin string, args ...string) (int, st
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHashPasswordCommand$")
 	cmd.Dir = t.TempDir() // no config.yaml: built-in defaults
-	cmd.Env = append(os.Environ(), "KULA_TEST_HASH_ARGS="+strings.Join(args, "\x1f"))
+	// ... but a storage directory of its own: the default falls back from
+	// /var/lib/kula to ~/.kula, creating it.
+	cmd.Env = append(os.Environ(), "KULA_TEST_HASH_ARGS="+strings.Join(args, "\x1f"), "KULA_DIRECTORY="+t.TempDir())
 	cmd.Stdin = strings.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
