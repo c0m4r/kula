@@ -12,6 +12,7 @@ import os
 import sys
 import json
 from datetime import datetime, timezone
+from typing import Any
 
 MIN_RELEASE_AGE_DAYS = 14
 
@@ -27,10 +28,10 @@ def release_age_days(stamp: str) -> float | None:
     return (datetime.now(timezone.utc) - released).total_seconds() / 86400
 
 
-def module_objects(stream: str) -> list[dict]:
+def module_objects(stream: str) -> list[dict[str, Any]]:
     """The JSON objects `go list -json` prints one after another."""
     decoder = json.JSONDecoder()
-    objects = []
+    objects: list[dict[str, Any]] = []
     index = 0
     while True:
         while index < len(stream) and stream[index].isspace():

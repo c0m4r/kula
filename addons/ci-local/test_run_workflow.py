@@ -165,10 +165,10 @@ class FlagTest(unittest.TestCase):
                 self.assertIs(
                     rw.evaluate_flag(value, "continue-on-error", context), want
                 )
-        for value in ("maybe", 1):
-            with self.subTest(value=value):
+        for bad in ("maybe", 1):
+            with self.subTest(value=bad):
                 with self.assertRaises(rw.Unsupported):
-                    rw.evaluate_flag(value, "continue-on-error", context)
+                    rw.evaluate_flag(bad, "continue-on-error", context)
 
     def test_timeout_minutes(self) -> None:
         context = make_context()

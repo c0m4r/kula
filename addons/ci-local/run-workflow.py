@@ -48,7 +48,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple
 
 WORKFLOW_DIR = ".github/workflows"
 
@@ -315,7 +315,8 @@ class Expression:
 def unquote(raw: str) -> str:
     if raw.startswith("'"):
         return raw[1:-1].replace("''", "'")
-    return json.loads(raw)
+    value: str = json.loads(raw)
+    return value
 
 
 def truthy(value: Any) -> bool:
@@ -442,7 +443,7 @@ class EvalContext:
             "strategy": {"fail-fast": True, "job-index": 0, "job-total": 1},
         }
         self.job_status = "success"
-        self.warned: set = set()
+        self.warned: Set[str] = set()
 
     def lookup(self, parts: Sequence[Any], source: str) -> Any:
         if not parts:
@@ -480,7 +481,7 @@ EXPR_RE = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 def interpolate(text: str, context: EvalContext) -> str:
     """Replace every ${{ ... }} in text with its evaluated value."""
 
-    def replace(match: re.Match) -> str:
+    def replace(match: re.Match[str]) -> str:
         expression = match.group(1).strip()
         if not expression:
             return ""
@@ -1003,7 +1004,7 @@ def run_script(
         bufsize=1,
         start_new_session=True,
     )
-    tail: deque = deque(maxlen=40)
+    tail: Deque[str] = deque(maxlen=40)
     killed = False
 
     def kill() -> None:
@@ -1110,7 +1111,7 @@ def job_needs(job: Dict[str, Any]) -> List[str]:
 def jobs_in_needs_order(jobs: Dict[str, Any]) -> List[str]:
     """Job ids in file order, except that each follows the jobs it needs."""
     order: List[str] = []
-    visiting: set = set()
+    visiting: Set[str] = set()
 
     def visit(job_id: str) -> None:
         if job_id in order:

@@ -71,7 +71,12 @@ _KIND_BYTE = re.compile(rb"[\x02\x03]")
 # ---------------------------------------------------------------------------
 
 
-def parse_header(buf: bytes) -> Tuple[bytes, int, int, int, int, int, int, int, int]:
+# magic, flags, codec_ver, max_data, write_off, count, oldest_nano,
+# newest_nano, oldest_off
+Header = Tuple[bytes, int, int, int, int, int, int, int, int]
+
+
+def parse_header(buf: bytes) -> Header:
     """Parse a 64-byte tier header.
 
     Returns: magic, flags, codec_ver, max_data, write_off, count,
@@ -1023,10 +1028,12 @@ class Ring:
         self.newest_nano = newest_nano
 
     def _u32(self, pos: int) -> int:
-        return struct.unpack_from("<I", self.buf, HEADER_SIZE + pos)[0]
+        value: int = struct.unpack_from("<I", self.buf, HEADER_SIZE + pos)[0]
+        return value
 
     def _byte(self, pos: int) -> int:
-        return self.buf[HEADER_SIZE + pos]
+        value: int = self.buf[HEADER_SIZE + pos]
+        return value
 
     def valid_len(self, data_len: int) -> bool:
         """validRecordLen: no zero sentinel, within the ring and the cap."""
@@ -1066,7 +1073,8 @@ class Ring:
         with memoryview(self.buf) as view:
             crc = zlib.crc32(struct.pack("<I", record_len - 4))
             crc = zlib.crc32(view[start:end], crc)
-        return crc == struct.unpack_from("<I", self.buf, end)[0]
+        stored: int = struct.unpack_from("<I", self.buf, end)[0]
+        return crc == stored
 
     def resync_step(self, pos: int, window_end: int) -> int:
         """resyncStep: how far to advance from pos, which starts no record."""
@@ -1171,7 +1179,7 @@ def tier_records(filepath: str) -> List[Tuple[int, int]]:
             return [rec for start, size, resync in segments for rec in ring.walk(start, size, resync)]
 
 
-def ring_layout(buf: Any, header: Tuple, file_size: int) -> Tuple[bool, int]:
+def ring_layout(buf: Any, header: Header, file_size: int) -> Tuple[bool, int]:
     """readHeader's wrap state: (wrapped, offset of the oldest record).
 
     A file larger than [0, write_off) has wrapped. Its old pass starts at the
@@ -1196,7 +1204,7 @@ def ring_layout(buf: Any, header: Tuple, file_size: int) -> Tuple[bool, int]:
     return True, candidate
 
 
-def check_geometry(header: Tuple) -> None:
+def check_geometry(header: Header) -> None:
     """readHeader's checks on the ring size and write offset.
 
     Raises ValueError for a header the Go reader refuses to open.
@@ -1210,7 +1218,7 @@ def check_geometry(header: Tuple) -> None:
         )
 
 
-def open_ring(buf: Any, header: Tuple, file_size: int) -> Tuple[Ring, List[Tuple[int, int, bool]]]:
+def open_ring(buf: Any, header: Header, file_size: int) -> Tuple[Ring, List[Tuple[int, int, bool]]]:
     """The walker and segments for a parsed header."""
     check_geometry(header)
     _, _, codec_ver, max_data, write_off, _, _, newest_nano, _ = header
