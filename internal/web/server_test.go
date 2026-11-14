@@ -171,6 +171,25 @@ func TestCreateUnixListenerRequiresAbsolute(t *testing.T) {
 	}
 }
 
+// A path longer than sun_path holds fails in bind with "invalid argument",
+// which names neither the setting nor the limit.
+func TestCreateUnixListenerRefusesAPathTooLong(t *testing.T) {
+	sock := "/" + strings.Repeat("d", maxUnixSocketPath-len("/kula.sock")) + "/kula.sock"
+	if len(sock) != maxUnixSocketPath+1 {
+		t.Fatalf("fixture path is %d bytes, want %d", len(sock), maxUnixSocketPath+1)
+	}
+	ln, err := createUnixListener(sock, "0660")
+	if err == nil {
+		_ = ln.Close()
+		t.Fatal("createUnixListener accepted a path longer than a Unix socket path can be")
+	}
+	for _, want := range []string{"unix_socket", "108 bytes long", "107"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
 func TestCreateUnixListenerRemovesStale(t *testing.T) {
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "kula.sock")

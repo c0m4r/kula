@@ -248,7 +248,8 @@ Key points:
   prefix — for reverse proxies that forward the prefix intact. See
   [Reverse Proxy & TLS](13-reverse-proxy.md).
 - **`unix_socket`** replaces the TCP listener — ideal behind a local nginx. If the socket's
-  permissions cannot be set to `unix_socket_mode`, Kula removes it and does not start.
+  permissions cannot be set to `unix_socket_mode`, Kula removes it and does not start. Its path
+  can be at most 107 bytes long.
 - **`max_websocket_conns`** and **`max_websocket_conns_per_ip`** cap live dashboard
   connections; each must be at least 1 while the web server is enabled.
 - **`trust_proxy`** believes two headers from a reverse proxy: `X-Forwarded-Proto: https`

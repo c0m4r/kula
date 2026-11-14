@@ -772,6 +772,10 @@ func createUnixListener(path, mode string) (net.Listener, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("unix_socket must be an absolute path, got %q", path)
 	}
+	// Past this length bind fails with a bare "invalid argument".
+	if len(path) > maxUnixSocketPath {
+		return nil, fmt.Errorf("unix_socket %s is %d bytes long, over the %d a Unix socket path can have", path, len(path), maxUnixSocketPath)
+	}
 
 	if err := removeStaleUnixSocket(path); err != nil {
 		return nil, err
@@ -800,6 +804,10 @@ func createUnixListener(path, mode string) (net.Listener, error) {
 
 	return ln, nil
 }
+
+// maxUnixSocketPath is the longest path a Unix socket can be bound at:
+// sun_path holds 108 bytes, the last of them the terminating NUL.
+const maxUnixSocketPath = 107
 
 // chmodUnixSocket sets the socket file's mode; tests replace it to fail.
 var chmodUnixSocket = os.Chmod
