@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -289,5 +290,68 @@ func TestHostsFromFiles(t *testing.T) {
 	}
 	if !hostsFromFiles(filepath.Join(dir, "missing")) {
 		t.Error("hostsFromFiles(missing) = false, want true (Go's default order)")
+	}
+}
+
+// TestSummaryListsOnlyGrants: the paths and listener the sandbox's log line
+// lists are the ones granted. A storage directory or web.unix_socket the
+// sandbox leaves out with a warning, or a config file that does not exist,
+// is not among them.
+func TestSummaryListsOnlyGrants(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	file := filepath.Join(dir, "a-file")
+	runDir := filepath.Join(dir, "run")
+	for _, path := range []string{configPath, file} {
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(runDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	storage := filepath.Join(dir, "storage")
+	noApps, noOllama := config.ApplicationsConfig{}, config.OllamaConfig{}
+	failed := func(rs *ruleset) string { return fmt.Sprint(errors.Join(rs.errs...)) }
+
+	rs := &ruleset{}
+	web := config.WebConfig{Enabled: true, UnixSocket: filepath.Join(runDir, "kula.sock")}
+	got, err := rs.addServe(configPath, storage, web, noApps, noOllama)
+	if want := "paths: /proc[ro] /sys[ro] " + configPath + "[ro] " + storage + "[rw], web: unix:" + web.UnixSocket; err != nil || got != want || len(rs.errs) > 0 {
+		t.Errorf("serve, everything granted: %q, %v, failed grants: %s; want %q", got, err, failed(rs), want)
+	}
+
+	rs = &ruleset{}
+	web = config.WebConfig{Enabled: true, UnixSocket: filepath.Join(file, "kula.sock")}
+	got, err = rs.addServe(filepath.Join(dir, "missing.yaml"), filepath.Join(file, "storage"), web, noApps, noOllama)
+	if want := "paths: /proc[ro] /sys[ro], net: no listener"; err != nil || got != want {
+		t.Errorf("serve, storage and socket left out: %q, %v; want %q", got, err, want)
+	}
+	if msg := failed(rs); !strings.Contains(msg, "storage.directory: ") || !strings.Contains(msg, "web.unix_socket: ") {
+		t.Errorf("failed grants: %s; want storage.directory and web.unix_socket", msg)
+	}
+
+	rs = &ruleset{}
+	got, err = rs.addServe(configPath, storage, config.WebConfig{Enabled: true, Port: 27960}, noApps, noOllama)
+	if want := "paths: /proc[ro] /sys[ro] " + configPath + "[ro] " + storage + "[rw], net: bind TCP/27960"; err != nil || got != want {
+		t.Errorf("serve on TCP: %q, %v; want %q", got, err, want)
+	}
+
+	for _, tc := range []struct {
+		name, storage, want, wantErr string
+	}{
+		{"granted", storage, "paths: /proc[ro] /sys[ro] " + storage + "[ro], net: no listener", ""},
+		{"not created yet", filepath.Join(dir, "later"), "paths: /proc[ro] /sys[ro], net: no listener", ""},
+		{"a file", file, "paths: /proc[ro] /sys[ro], net: no listener", "storage.directory: "},
+		{"through a file", filepath.Join(file, "storage"), "paths: /proc[ro] /sys[ro], net: no listener", "storage.directory: "},
+	} {
+		rs := &ruleset{}
+		got, err := rs.addTUI(tc.storage, noApps)
+		if err != nil || got != tc.want {
+			t.Errorf("TUI, storage %s: %q, %v; want %q", tc.name, got, err, tc.want)
+		}
+		if msg := failed(rs); (tc.wantErr == "") != (len(rs.errs) == 0) || !strings.Contains(msg, tc.wantErr) {
+			t.Errorf("TUI, storage %s: failed grants: %s; want %q", tc.name, msg, tc.wantErr)
+		}
 	}
 }

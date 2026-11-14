@@ -50,8 +50,9 @@ above (it has no custom-metrics socket and no Ollama proxy), the storage directo
 (read files, list directories) for the History view, and `/dev/tty` (read, and the terminal
 ioctls), which Bubble Tea opens when standard input is not a terminal. It grants no write, no
 socket creation, no TCP bind and no execution. A storage directory that does not exist when the
-TUI starts is not granted, and stays unreadable until the TUI restarts. Failures are handled as
-for `kula serve`: the TUI starts, confined as far as the kernel allows.
+TUI starts is not granted, and stays unreadable until the TUI restarts; a path there that is not
+a directory is left out with a warning. Failures are handled as for `kula serve`: the TUI
+starts, confined as far as the kernel allows.
 
 ## Kernel requirements & graceful degradation
 
@@ -71,6 +72,10 @@ The startup line names the kernel's ABI, what it confines and what it does not, 
 ```
 Landlock sandbox enforced (ABI v10 confines files, TCP, signals, abstract Unix sockets, Unix sockets, UDP; paths: ...)
 ```
+
+After that it lists the paths, the listener and the connections granted: a config file that
+does not exist, or a storage directory or `web.unix_socket` left out with a warning, is not
+among them.
 
 Without Landlock (a kernel before 5.13, or Landlock not enabled at boot) Kula logs that it skips
 the sandbox and runs unconfined. A go-landlock upgrade that knows a newer ABI does not raise

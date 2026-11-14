@@ -531,21 +531,35 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 	if rs.unsupported("") {
 		return nil
 	}
+	granted, err := rs.addServe(configPath, storageDir, webCfg, appCfg, ollamaCfg)
+	if err != nil {
+		return err
+	}
+	return rs.restrict("", granted)
+}
 
+// addServe gathers the grants of `kula serve` (see Enforce) and returns the
+// paths and the listener granted, as the log line lists them. A grant left
+// out with a warning is not among them.
+func (rs *ruleset) addServe(configPath string, storageDir string, webCfg config.WebConfig, appCfg config.ApplicationsConfig, ollamaCfg config.OllamaConfig) (string, error) {
 	// Resolve paths to absolute to satisfy Landlock requirements
 	absConfigPath, err := filepath.Abs(configPath)
 	if err != nil {
-		return fmt.Errorf("sandbox: resolving config path: %w", err)
+		return "", fmt.Errorf("sandbox: resolving config path: %w", err)
 	}
 
 	absStorageDir, err := filepath.Abs(storageDir)
 	if err != nil {
-		return fmt.Errorf("sandbox: resolving storage dir: %w", err)
+		return "", fmt.Errorf("sandbox: resolving storage dir: %w", err)
 	}
 
 	rs.addSystemReads()
-	// Config file: read-only
+	paths := []string{"/proc[ro]", "/sys[ro]"}
+	// Config file: read-only. Without one, Kula runs on its defaults.
 	rs.add(landlock.ROFiles(absConfigPath).IgnoreIfMissing())
+	if _, err := os.Stat(absConfigPath); err == nil {
+		paths = append(paths, absConfigPath+"[ro]")
+	}
 	// The storage directory must exist to be granted.
 	if err := os.MkdirAll(absStorageDir, 0750); err != nil {
 		rs.fail("storage.directory", err)
@@ -553,16 +567,17 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 		// Data storage: read-write. Connecting to a socket there lets the
 		// custom-metrics collector tell a live kula.sock from a stale one.
 		rs.add(landlock.RWDirs(absStorageDir).WithResolveUnix())
+		paths = append(paths, absStorageDir+"[rw]")
 	}
 
 	webStatus := ", net: disabled"
 	if webCfg.Enabled {
+		webStatus = ", net: no listener"
 		if webCfg.UnixSocket != "" {
 			absSock, err := filepath.Abs(webCfg.UnixSocket)
 			if err != nil {
-				return fmt.Errorf("sandbox: resolving web unix_socket: %w", err)
+				return "", fmt.Errorf("sandbox: resolving web unix_socket: %w", err)
 			}
-			webStatus = ", web: unix:" + absSock
 			sockDir := filepath.Dir(absSock)
 			if info, err := os.Stat(sockDir); err != nil {
 				rs.fail("web.unix_socket", fmt.Errorf("%s: its directory: %w", absSock, err))
@@ -574,6 +589,7 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 				// Before removing a socket left there, the server connects to
 				// it to make sure no other process still serves it.
 				rs.addUnixSocket("web.unix_socket", "web", absSock, false)
+				webStatus = ", web: unix:" + absSock
 			}
 		} else if webCfg.Port > 0 {
 			if webCfg.Port > 65535 {
@@ -592,8 +608,7 @@ func Enforce(configPath string, storageDir string, webCfg config.WebConfig, appC
 	rs.addDNS()
 	rs.loadSystemRoots(appCfg, ollamaCfg)
 
-	return rs.restrict("", fmt.Sprintf("paths: /proc[ro] /sys[ro] %s[ro] %s[rw]%s",
-		absConfigPath, absStorageDir, webStatus))
+	return "paths: " + strings.Join(paths, " ") + webStatus, nil
 }
 
 // EnforceTUI applies the `kula tui` Landlock restrictions to the current
@@ -611,26 +626,40 @@ func EnforceTUI(storageDir string, appCfg config.ApplicationsConfig) error {
 	if rs.unsupported(" for the TUI") {
 		return nil
 	}
+	granted, err := rs.addTUI(storageDir, appCfg)
+	if err != nil {
+		return err
+	}
+	return rs.restrict(" for the TUI", granted)
+}
 
+// addTUI gathers the grants of `kula tui` (see EnforceTUI) and returns the
+// paths granted, as the log line lists them.
+func (rs *ruleset) addTUI(storageDir string, appCfg config.ApplicationsConfig) (string, error) {
 	absStorageDir, err := filepath.Abs(storageDir)
 	if err != nil {
-		return fmt.Errorf("sandbox: resolving storage dir: %w", err)
-	}
-
-	if _, err := os.Stat(absStorageDir); errors.Is(err, fs.ErrNotExist) {
-		log.Printf("Warning: sandbox: storage directory %s does not exist; the History view can read it only after the TUI restarts", absStorageDir)
+		return "", fmt.Errorf("sandbox: resolving storage dir: %w", err)
 	}
 
 	rs.addSystemReads()
-	rs.add(
-		landlock.PathAccess(accessRead, absStorageDir).IgnoreIfMissing(),
-		landlock.PathAccess(accessTerminal, "/dev/tty").IgnoreIfMissing(),
-	)
+	paths := []string{"/proc[ro]", "/sys[ro]"}
+	switch info, err := os.Stat(absStorageDir); {
+	case errors.Is(err, fs.ErrNotExist):
+		log.Printf("Warning: sandbox: storage directory %s does not exist; the History view can read it only after the TUI restarts", absStorageDir)
+	case err != nil:
+		rs.fail("storage.directory", err)
+	case !info.IsDir():
+		rs.fail("storage.directory", fmt.Errorf("%s is not a directory", absStorageDir))
+	default:
+		rs.add(landlock.PathAccess(accessRead, absStorageDir))
+		paths = append(paths, absStorageDir+"[ro]")
+	}
+	rs.add(landlock.PathAccess(accessTerminal, "/dev/tty").IgnoreIfMissing())
 	rs.addApplications(appCfg)
 	rs.addDNS()
 	rs.loadSystemRoots(appCfg, config.OllamaConfig{})
 
-	return rs.restrict(" for the TUI", fmt.Sprintf("paths: /proc[ro] /sys[ro] %s[ro], net: no listener", absStorageDir))
+	return "paths: " + strings.Join(paths, " ") + ", net: no listener", nil
 }
 
 // pickContainerSocket mirrors the container collector's choice: the first
