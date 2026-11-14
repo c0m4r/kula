@@ -236,11 +236,8 @@ export function destroyAppCharts() {
         // legacy combined I/O cards (pre-split)
         'card-containers-net', 'card-containers-diskio',
     ];
-    Object.entries(state.containerCharts || {}).forEach(([key, chart]) => {
+    Object.values(state.containerCharts || {}).forEach(chart => {
         if (chart) chart.destroy();
-        // Prefer explicit card ids; fall back to legacy card-${key} for safety.
-        document.getElementById(`card-containers-${key}`)?.remove();
-        document.getElementById(`card-${key}`)?.remove();
     });
     containerCardIds.forEach(id => document.getElementById(id)?.remove());
     state.containerCharts = {};
