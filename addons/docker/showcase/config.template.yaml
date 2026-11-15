@@ -1,0 +1,130 @@
+# Kula showcase configuration: every feature on. ./showcase.sh up renders
+# config.yaml from this template, filling in the @...@ values from .env.
+# config.example.yaml documents every setting.
+
+global:
+  show_system_info: true
+  # Storage, network, connected-device and sensor inventory on the system info page
+  show_system_details: true
+  show_version: true
+  default_theme: auto
+  easter_egg: true
+
+collection:
+  interval: 1s
+  mounts_detection: auto
+
+storage:
+  directory: /app/data
+  # Smaller than the defaults: the showcase backs them up every two minutes.
+  tiers:
+    - resolution: 1s
+      max_size: 50MB
+    - resolution: 1m
+      max_size: 30MB
+    - resolution: 5m
+      max_size: 20MB
+
+# Snapshots into /app/data/backup/<timestamp>/ every two minutes, kept 30 minutes
+backup:
+  enabled: true
+  cron: "*/2 * * * *"
+  maxtier: 3
+  retention: 30m
+  compress: true
+
+web:
+  enabled: true
+  ui: true
+  # Reached directly at http://127.0.0.1:27970/kula/, and through the Caddy
+  # proxy at https://localhost:27971/kula/. Only local clients reach the
+  # direct port, so trusting the proxy's X-Forwarded-* headers is safe.
+  listen: "127.0.0.1"
+  port: 27970
+  base_path: "/kula"
+  trust_proxy: true
+  enable_compression: true
+  minify_assets: true
+
+  logging:
+    enabled: true
+    level: "access"
+
+  prometheus_metrics:
+    enabled: true
+    token: "@PROMETHEUS_TOKEN@"
+
+  # Two accounts; ./showcase.sh info prints their passwords.
+  auth:
+    enabled: true
+    username: admin
+    password_hash: "@ADMIN_HASH@"
+    password_salt: "@ADMIN_SALT@"
+    session_timeout: 24h
+    session_max_lifetime: 168h
+    users:
+      - username: viewer
+        password_hash: "@VIEWER_HASH@"
+        password_salt: "@VIEWER_SALT@"
+
+applications:
+  # The services listen on ports published on 127.0.0.1, so their requests
+  # arrive from the Docker network's gateway, which their configs allow.
+  nginx:
+    enabled: true
+    status_url: "http://127.0.0.1:27973/status"
+
+  apache2:
+    enabled: true
+    status_url: "http://127.0.0.1:27974/server-status?auto"
+
+  # Socket mode names the containers; without the socket, cgroups mode would
+  # give the same metrics under container IDs.
+  containers:
+    enabled: true
+    socket_path: "/var/run/docker.sock"
+
+  # Fed by the custom-metrics service through /app/data/kula.sock
+  custom:
+    room:
+      - name: temperature
+        unit: °C
+        max: 40
+      - name: humidity
+        unit: "%"
+        max: 100
+    queue:
+      - name: depth
+        unit: jobs
+        max: 200
+      - name: consumers
+        unit: workers
+        max: 10
+  custom_stale_after: 10s
+
+  # Passwords come from KULA_POSTGRES_PASSWORD and KULA_MYSQL_PASSWORD.
+  postgres:
+    enabled: true
+    host: "127.0.0.1"
+    port: 27975
+    user: "kula_monitor"
+    dbname: "postgres"
+    sslmode: "disable"
+
+  mysql:
+    enabled: true
+    host: "127.0.0.1"
+    port: 27976
+    user: "kula_monitor"
+    dbname: ""
+    sslmode: "disable"
+
+tui:
+  refresh_rate: 1s
+
+# On with ./showcase.sh up --ai
+ollama:
+  enabled: @OLLAMA_ENABLED@
+  url: "http://127.0.0.1:27977"
+  model: "@OLLAMA_MODEL@"
+  timeout: "300s"

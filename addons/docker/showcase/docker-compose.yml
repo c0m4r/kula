@@ -1,0 +1,245 @@
+# Kula showcase: every Kula feature at once, against real services that
+# generate load. Start it with ./showcase.sh up, which writes the secrets
+# (.env) and config.yaml this file needs; see README.md.
+#
+# Everything listens on 127.0.0.1 only, on ports 27970-27977.
+
+name: kula-showcase
+
+services:
+  kula:
+    image: ${KULA_IMAGE:-c0m4r/kula:latest}
+    pid: host
+    network_mode: host
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    # The Docker socket's group, so the containers module can name containers.
+    # Whoever uses this socket is root on the host: see README.md.
+    group_add: ["${DOCKER_GID:?run ./showcase.sh up first}"]
+    environment:
+      KULA_POSTGRES_PASSWORD: ${KULA_POSTGRES_PASSWORD:?run ./showcase.sh up first}
+      KULA_MYSQL_PASSWORD: ${KULA_MYSQL_PASSWORD:?run ./showcase.sh up first}
+    volumes:
+      - /proc:/proc:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - kula_data:/app/data
+      - type: bind
+        source: ${DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+    command: ["serve", "--config", "/app/config.yaml"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:27970/kula/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mariadb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # applications.nginx: stub_status on /status
+  nginx:
+    image: nginx:1.30-alpine
+    ports: ["127.0.0.1:27973:80"]
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+  # applications.apache2: mod_status on /server-status
+  apache:
+    image: httpd:2.4-alpine
+    ports: ["127.0.0.1:27974:80"]
+    volumes:
+      - ./apache/kula-status.conf:/usr/local/apache2/conf/extra/kula-status.conf:ro
+    command: ["httpd-foreground", "-c", "Include conf/extra/kula-status.conf"]
+    restart: unless-stopped
+
+  # applications.postgres: the kula_monitor role is created at first start
+  postgres:
+    image: postgres:18-alpine
+    ports: ["127.0.0.1:27975:5432"]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./showcase.sh up first}
+      KULA_POSTGRES_PASSWORD: ${KULA_POSTGRES_PASSWORD}
+    volumes:
+      - ./postgres/init-kula-monitor.sh:/docker-entrypoint-initdb.d/10-kula-monitor.sh:ro
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # applications.mysql: the kula_monitor user is created at first start; a
+  # one-second long_query_time lets the load below register slow queries
+  mariadb:
+    image: mariadb:11.8
+    ports: ["127.0.0.1:27976:3306"]
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?run ./showcase.sh up first}
+      MARIADB_DATABASE: shop
+      MARIADB_USER: shop
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      KULA_MYSQL_PASSWORD: ${KULA_MYSQL_PASSWORD}
+    command: ["--long-query-time=1"]
+    volumes:
+      - ./mariadb/init-kula-monitor.sh:/docker-entrypoint-initdb.d/10-kula-monitor.sh:ro
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # Load, so the application charts move.
+  web-traffic:
+    image: python:3.14-alpine
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./workload:/workload:ro
+    command: ["python", "-u", "/workload/web_traffic.py", "nginx", "apache"]
+    depends_on: [nginx, apache]
+    restart: unless-stopped
+
+  pg-load:
+    image: postgres:18-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./workload:/workload:ro
+    command: ["sh", "/workload/pg_load.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql-load:
+    image: mariadb:11.8
+    environment:
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+    volumes:
+      - ./workload:/workload:ro
+    entrypoint: ["bash", "/workload/mysql_load.sh"]
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # applications.custom: pushes two chart groups into <storage>/kula.sock,
+  # as Kula's own uid and gid, which the socket's 0660 mode admits.
+  custom-metrics:
+    image: python:3.14-alpine
+    user: "100:101"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./workload:/workload:ro
+      - kula_data:/kula:ro
+    command: ["python", "-u", "/workload/custom_metrics.py", "/kula/kula.sock"]
+    depends_on: [kula]
+    restart: unless-stopped
+
+  # web.prometheus_metrics: scrapes /kula/metrics with the bearer token
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    network_mode: host
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+      - --web.listen-address=127.0.0.1:27972
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./secrets/prometheus_token:/etc/prometheus/kula_token:ro
+      - prometheus_data:/prometheus
+    depends_on: [kula]
+    restart: unless-stopped
+
+  # web.base_path and web.trust_proxy: HTTPS in front of Kula
+  proxy:
+    image: caddy:2.11-alpine
+    network_mode: host
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [kula]
+    restart: unless-stopped
+
+  # ollama: the AI assistant, with ./showcase.sh up --ai
+  ollama:
+    profiles: [ai]
+    image: ollama/ollama:0.40.12
+    ports: ["127.0.0.1:27977:11434"]
+    # Answers run on the CPU: showcase.sh leaves the host half of its CPUs.
+    cpus: ${OLLAMA_CPUS:-1}
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  ollama-pull:
+    profiles: [ai]
+    image: ollama/ollama:0.40.12
+    environment:
+      OLLAMA_HOST: ollama:11434
+    command: ["pull", "${OLLAMA_MODEL:-qwen3:1.7b}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  # ./showcase.sh test
+  tester:
+    profiles: [test]
+    image: python:3.14-alpine
+    network_mode: host
+    user: "100:101"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      KULA_ADMIN_PASSWORD: ${KULA_ADMIN_PASSWORD}
+      KULA_VIEWER_PASSWORD: ${KULA_VIEWER_PASSWORD}
+      PROMETHEUS_TOKEN: ${PROMETHEUS_TOKEN}
+      SHOWCASE_AI: ${SHOWCASE_AI:-0}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:1.7b}
+      SHOWCASE_LOGINS: ${SHOWCASE_LOGINS:-0}
+      CADDY_ROOT_CA: /secrets/caddy_root.crt
+    volumes:
+      - ./test:/test:ro
+      - ./secrets:/secrets:ro
+      - kula_data:/kula:ro
+    command: ["python", "-u", "/test/showcase_test.py"]
+
+volumes:
+  kula_data:
+  postgres_data:
+  mariadb_data:
+  prometheus_data:
+  caddy_data:
+  caddy_config:
+  ollama_data:

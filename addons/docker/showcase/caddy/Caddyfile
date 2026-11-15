@@ -1,0 +1,19 @@
+{
+	# A certificate from Caddy's own local CA, which stays out of the host's
+	# trust store: the browser warns once.
+	skip_install_trust
+	auto_https disable_redirects
+	admin off
+}
+
+https://localhost:27971, https://127.0.0.1:27971 {
+	bind 127.0.0.1
+	tls internal
+
+	redir / /kula/
+
+	# Forwards the /kula prefix intact (web.base_path), with the Host the
+	# browser sent, X-Forwarded-For and X-Forwarded-Proto (web.trust_proxy),
+	# and WebSocket upgrades.
+	reverse_proxy /kula* 127.0.0.1:27970
+}

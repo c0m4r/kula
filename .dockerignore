@@ -23,6 +23,7 @@ build_rpm
 parts
 stage
 prime
+addons/docker/showcase
 addons/ansible/hosts
 addons/ansible/roles/kula/files/kula*
 **/node_modules
