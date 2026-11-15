@@ -89,7 +89,11 @@ of the image, so the ephemeral run above leaves the filesystem writable.)
 
 - **Your own config:** mount it read-only over `/app/config.yaml`. It holds the password hash and
   tokens, so make it readable by the container's group only:
-  `sudo chown root:101 config.yaml && sudo chmod 0640 config.yaml`.
+  `sudo chown root:101 config.yaml && sudo chmod 0640 config.yaml`. In the image,
+  `/var/lib/kula` (the `storage.directory` of `config.example.yaml`) is a link to `/app/data`,
+  so a config copied from the example stores into the volume as it is. Images up to 0.22.0 lack
+  that link: there, set `storage.directory: /app/data` or pass `-e KULA_DIRECTORY=/app/data`, or
+  Kula fails to start under `--read-only`.
 - **A host directory for data** instead of a volume must be writable by uid 100:
   `sudo chown 100:101 /path/to/data && sudo chmod 0750 /path/to/data`.
 - With `--pid host`, uid 100 is uid 100 on the host too: if a host account has that uid, Kula
@@ -113,7 +117,9 @@ docker run -d --name kula --pid host --network host \
 that line instead.
 
 A `docker-compose.yml` is provided in [`addons/docker/`](../../addons/docker/docker-compose.yml);
-it sets `read_only`, `cap_drop: [ALL]` and `no-new-privileges`, and mounts `./config.yaml`. Its
+it sets `read_only`, `cap_drop: [ALL]` and `no-new-privileges`, mounts `./config.yaml`, and sets
+`KULA_DIRECTORY=/app/data` so a config copied from `config.example.yaml` stores into the volume
+even with an image up to 0.22.0. Its
 utmp and logind session mounts are commented out: uncomment whichever the host has.
 Images are published on [Docker Hub](https://hub.docker.com/r/c0m4r/kula) and GHCR.
 

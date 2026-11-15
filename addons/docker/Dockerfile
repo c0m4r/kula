@@ -41,9 +41,13 @@ RUN sed -i 's|directory: /var/lib/kula|directory: /app/data|' /app/config.yaml &
 
 # Root owns the binary and the config, so Kula cannot rewrite either; it reads
 # the config through its group. Only the data directory is Kula's.
+# /var/lib/kula, config.example.yaml's storage.directory, leads to /app/data,
+# so a config copied from it and mounted over /app/config.yaml stores into
+# the data volume too.
 RUN chown root:root /app /app/kula && chmod 0755 /app /app/kula && \
     chown root:kula /app/config.yaml && chmod 0640 /app/config.yaml && \
-    install -d -o kula -g kula -m 0750 /app/data
+    install -d -o kula -g kula -m 0750 /app/data && \
+    ln -s /app/data /var/lib/kula
 
 # Switch to unprivileged user
 USER kula

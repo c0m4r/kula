@@ -12,6 +12,13 @@ services:
     security_opt: [no-new-privileges:true]
     read_only: true
 
+    # The mounted config.yaml replaces the image's own. Its storage.directory
+    # (/var/lib/kula in config.example.yaml) links to /app/data only in images
+    # after 0.22.0; in older ones it is outside the data volume, where the
+    # read-only container cannot write.
+    environment:
+      KULA_DIRECTORY: /app/data
+
     volumes:
       # To monitor the host system, we need access to host's /proc
       - /proc:/proc:ro

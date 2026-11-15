@@ -123,11 +123,14 @@ The image is a two-stage build ([`addons/docker/Dockerfile`](../../addons/docker
   one has no `linux/riscv64`) and no Go runs under emulation. The runtime stage still runs
   `RUN` steps for the target, so a multi-arch push needs QEMU binfmt handlers on the builder
   host.
-- **Runtime:** pinned `alpine:3.24.3` (by digest) with an unprivileged `kula:kula` user. Its uid
+- **Runtime:** pinned `alpine:3.24.4` (by digest) with an unprivileged `kula:kula` user. Its uid
   100 and gid 101 are pinned to what `adduser -S` gave earlier images, so their data volumes
   stay writable; changing them would leave every existing volume owned by someone else. Root
   owns `/app`, the binary and `/app/config.yaml` (`root:kula 0640`), so Kula cannot replace
-  them; only `/app/data` (`kula:kula 0750`) is Kula's.
+  them; only `/app/data` (`kula:kula 0750`) is Kula's. `/var/lib/kula` is a symlink to
+  `/app/data`: a user's config copied from `config.example.yaml` and mounted over the image's
+  still stores into the data volume. `/app/data` stays the real directory because every
+  published image and every documented mount uses it.
 
 The build context is the repository root (`build.sh` and the push scripts send `.`), and
 [`.dockerignore`](../../.dockerignore) keeps out what the build does not need: `.git`,
