@@ -14,6 +14,7 @@ runtime dependency.
 | Full gate — required before a change is done | `./addons/check.sh` |
 | Browser frontend regressions (needs node + Chromium) | `./addons/test-frontend-regressions.sh` |
 | GitHub Actions workflows locally, in Docker | `./addons/ci-local.sh [run WORKFLOW [JOB]]` |
+| Every feature against real services, in Docker | `addons/docker/showcase/showcase.sh up [--build] [--ai]`, then `test`, `down` |
 | Native fuzzing over every `Fuzz*` target | `./addons/fuzz.sh [duration] [filter]` |
 | Storage engine benchmarks | `./addons/benchmark.sh` |
 | Rebuild the vendored Chart.js bundle (needs node + npm) | `./addons/build-chartjs.sh [--update]` |

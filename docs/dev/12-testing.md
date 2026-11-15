@@ -317,6 +317,23 @@ to SIGKILL after five seconds, so a process that ignores the signal cannot hold 
 open. [`addons/ci-local.sh`](../../addons/ci-local.sh) reproduces that job locally, browser
 included: `./addons/ci-local.sh run frontend`.
 
+## Feature showcase (Docker)
+
+[`addons/docker/showcase/`](../../addons/docker/showcase/README.md) runs Kula in Docker with
+every feature on, against nginx, Apache, PostgreSQL, MariaDB, the Docker socket, a custom
+metrics producer, Prometheus, a Caddy HTTPS proxy and, optionally, Ollama, all under generated
+load, then checks each feature over the wire:
+
+```bash
+cd addons/docker/showcase
+./showcase.sh up --build   # this checkout, built as kula:showcase
+./showcase.sh test         # PASS/FAIL per feature; waits up to ~2 minutes for a backup
+./showcase.sh down
+```
+
+It needs only Docker with Compose. Each test run logs in once per account, so up to five runs
+fit in Kula's five-minute login limit.
+
 ## Runtime security tests
 
 [`internal/web/runtime_security_test.go`](../../internal/web/runtime_security_test.go) spins up a

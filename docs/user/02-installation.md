@@ -123,6 +123,10 @@ even with an image up to 0.22.0. Its
 utmp and logind session mounts are commented out: uncomment whichever the host has.
 Images are published on [Docker Hub](https://hub.docker.com/r/c0m4r/kula) and GHCR.
 
+To see every feature at once, [`addons/docker/showcase/`](../../addons/docker/showcase/README.md)
+runs Kula against nginx, Apache, PostgreSQL, MariaDB, Prometheus, an HTTPS reverse proxy and,
+optionally, Ollama, all under generated load, on `127.0.0.1` only.
+
 ---
 
 ## Debian / Ubuntu (.deb)
