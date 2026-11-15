@@ -33,8 +33,13 @@ LOGINS = os.environ.get("SHOWCASE_LOGINS") == "1"
 
 # Caddy issues the proxy's certificate from its own local CA; showcase.sh
 # copies that CA's root certificate out of the proxy container.
-TLS = ssl.create_default_context(cafile=os.environ["CADDY_ROOT_CA"])
-TLS.minimum_version = ssl.TLSVersion.TLSv1_2
+def tls_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context(cafile=os.environ["CADDY_ROOT_CA"])
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    return ctx
+
+
+TLS = tls_context()
 
 RATE_LIMITED = (
     "Kula's login limit: 5 attempts per account and address in 5 minutes, "
