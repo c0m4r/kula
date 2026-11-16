@@ -1566,10 +1566,16 @@ func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, template
 		return
 	}
 
+	// The AI panel's markup and modules go only on a page that may use them.
+	// Behind auth the public page cannot leave them out without telling every
+	// visitor whether the assistant is enabled, so it always carries them;
+	// without auth /api/config tells anyone anyway.
+	aiPanel := s.cfg.Auth.Enabled || (s.ollama != nil && s.ollama.cfg.Enabled)
 	data := struct {
 		Nonce        string
 		SRI          map[string]string
 		AuthEnabled  bool
+		AIPanel      bool
 		LangForce    bool
 		EasterEgg    bool
 		BasePath     string
@@ -1579,6 +1585,7 @@ func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, template
 		Nonce:        nonce,
 		SRI:          s.sriHashes,
 		AuthEnabled:  s.cfg.Auth.Enabled,
+		AIPanel:      aiPanel,
 		LangForce:    s.cfg.Lang.Force,
 		EasterEgg:    s.global.EasterEgg,
 		BasePath:     s.cfg.BasePath,

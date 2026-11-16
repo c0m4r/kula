@@ -44,7 +44,6 @@ import { applyStoredTvMode, initTvMode } from './tv-mode.js';
 import { initSplitModule } from './split.js';
 import { arrangeCards, initCardLayout } from './card-layout.js';
 import { initRearrange } from './rearrange.js';
-import { initOllama } from './ollama.js';
 import { chartsGridForTitle, sectionHeadForTitle } from './section-utils.js';
 import {
     applyServerSettings,
@@ -498,11 +497,18 @@ async function init() {
     // Split buttons (must be after setupChartActions to avoid being removed)
     initSplitModule(redrawChartsFromBuffer);
 
-    // Initialize Ollama AI panel (no-op when disabled)
-    // The panel is activated after /api/config is fetched (see auth.js fetchConfig).
-    // We hook into the kula-config-ready event dispatched by auth.js.
+    // The AI panel is activated after /api/config is fetched (see auth.js
+    // fetchConfig), which dispatches kula-config-ready. Its modules load only
+    // when the assistant is enabled: the page preloads them, with their
+    // integrity, only when it may use them (see AIPanel in server.go).
+    let ollamaModule = null;
     document.addEventListener('kula-config-ready', (e) => {
-        initOllama(e.detail || {});
+        const cfg = e.detail || {};
+        if (cfg.ollama_enabled) {
+            ollamaModule ??= import('./ollama.js');
+            ollamaModule.then((m) => m.initOllama(cfg))
+                .catch((err) => console.error('[AI] the assistant did not load:', err));
+        }
         // Server-side appearance/accessibility defaults; stored overrides win.
         applyServerSettings(e.detail || {});
     });

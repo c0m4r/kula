@@ -53,10 +53,12 @@
     <link rel="modulepreload" href="js/app/focus-mode.js" integrity="{{sri `js/app/focus-mode.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/rearrange.js" integrity="{{sri `js/app/rearrange.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/split.js" integrity="{{sri `js/app/split.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    {{if .AIPanel}}
     <link rel="modulepreload" href="js/app/ai-stream.js" integrity="{{sri `js/app/ai-stream.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/ai-chart-csv.js" integrity="{{sri `js/app/ai-chart-csv.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/ai-markdown.js" integrity="{{sri `js/app/ai-markdown.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/ollama.js" integrity="{{sri `js/app/ollama.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    {{end}}
     <link rel="modulepreload" href="js/app/main.js" integrity="{{sri `js/app/main.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
 
 </head>
@@ -134,7 +136,7 @@
                 <!-- Focus mode -->
                 <button id="btn-focus" class="btn-icon" data-i18n-title="focus_mode" title="Focus mode">🎯</button>
                 <!-- AI Assistant -->
-                <button id="btn-ai" class="btn-icon hidden" data-i18n-title="ai_assistant" data-i18n-aria-label="ai_assistant" title="AI Assistant" aria-label="AI Assistant" aria-controls="ai-panel" aria-expanded="false">🤖</button>
+                {{if .AIPanel}}<button id="btn-ai" class="btn-icon hidden" data-i18n-title="ai_assistant" data-i18n-aria-label="ai_assistant" title="AI Assistant" aria-label="AI Assistant" aria-controls="ai-panel" aria-expanded="false">🤖</button>{{end}}
                 <!-- Game easter egg -->
                 {{if .EasterEgg}}<a href="game.html" class="btn-icon btn-game" data-i18n-title="space_invaders" title="Space Invaders"
                     id="btn-game">🎮</a>{{end}}
@@ -673,6 +675,7 @@
         </button>
     </div>
 
+    {{if .AIPanel}}
     <!-- AI Assistant Panel -->
     <div id="ai-panel" class="ai-panel hidden" role="dialog" aria-modal="false" aria-labelledby="ai-panel-name">
         <div class="ai-panel-header">
@@ -718,6 +721,7 @@
         </div>
         <div id="ai-resize-grip" data-i18n-title="ai_resize" title="Resize" aria-hidden="true"></div>
     </div>
+    {{end}}
 
     <!-- Main Entry Point -->
     <script type="module" nonce="{{.Nonce}}" src="js/app/main.js" integrity="{{sri `js/app/main.js`}}"

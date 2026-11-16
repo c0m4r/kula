@@ -1600,6 +1600,9 @@ const aiConfig = { ollama_enabled: true, ollama_model: 'fixture-model' };
 for (let load = 0; load < 2; load++) {
     document.dispatchEvent(new CustomEvent('kula-config-ready', { detail: aiConfig }));
 }
+// The panel's modules load on demand; let the dashboard's import settle.
+await import('./js/app/ollama.js');
+await new Promise(resolve => setTimeout(resolve, 0));
 document.getElementById('btn-ai').click();
 check(!document.getElementById('ai-panel').classList.contains('hidden'),
     'AI panel controls were wired once per config load');

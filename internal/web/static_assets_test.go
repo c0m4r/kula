@@ -142,8 +142,11 @@ func TestChartJSScriptsDeferred(t *testing.T) {
 // first-party script it loads or preloads must carry the hash of the bytes
 // served for it.
 func TestPagesLoadEveryScriptWithIntegrity(t *testing.T) {
+	// With the assistant enabled, so the page carries its modules: main.js
+	// imports them only then (TestAIPanelOnlyOnPagesThatMayUseIt).
 	s := NewServer(config.WebConfig{UI: true, MinifyAssets: true, Security: config.SecurityConfig{Headers: true}},
-		config.GlobalConfig{EasterEgg: true}, nil, nil, t.TempDir(), config.OllamaConfig{})
+		config.GlobalConfig{EasterEgg: true}, nil, nil, t.TempDir(),
+		config.OllamaConfig{Enabled: true, URL: "http://localhost:11434", Model: "llama3", Timeout: "5s"})
 	pages, err := fs.Glob(staticFS, "static/*.html")
 	if err != nil || len(pages) == 0 {
 		t.Fatalf("Glob(static/*.html) = %v, %v", pages, err)
@@ -524,5 +527,54 @@ func TestGzipSkipsOllamaUnderBasePath(t *testing.T) {
 				t.Errorf("base %q %s: gzipped = %v, want %v", base, path, got, gzipped)
 			}
 		}
+	}
+}
+
+// TestAIPanelOnlyOnPagesThatMayUseIt: the AI panel's markup and modules are
+// left out of a page whose server has the assistant off, but only when auth
+// is off too. Behind auth the public page cannot leave them out without
+// telling every visitor whether the assistant is enabled.
+func TestAIPanelOnlyOnPagesThatMayUseIt(t *testing.T) {
+	enabled := config.OllamaConfig{Enabled: true, URL: "http://localhost:11434", Model: "llama3", Timeout: "5s"}
+	for _, tc := range []struct {
+		name   string
+		auth   bool
+		ollama config.OllamaConfig
+		want   bool
+	}{
+		{"assistant off, no auth", false, config.OllamaConfig{}, false},
+		{"assistant on, no auth", false, enabled, true},
+		{"assistant off, auth", true, config.OllamaConfig{}, true},
+		{"assistant on, auth", true, enabled, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			web := config.WebConfig{UI: true, Auth: config.AuthConfig{Enabled: tc.auth}}
+			s := NewServer(web, config.GlobalConfig{}, nil, nil, t.TempDir(), tc.ollama)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req = req.WithContext(context.WithValue(req.Context(), nonceKey, "nonce"))
+			rec := httptest.NewRecorder()
+			s.renderTemplate(rec, req, "index.html")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("index.html rendered with status %d", rec.Code)
+			}
+			page := rec.Body.String()
+			for _, part := range []string{
+				`id="ai-panel"`, `id="btn-ai"`,
+				`href="js/app/ollama.js"`, `href="js/app/ai-stream.js"`,
+				`href="js/app/ai-markdown.js"`, `href="js/app/ai-chart-csv.js"`,
+			} {
+				if got := strings.Contains(page, part); got != tc.want {
+					t.Errorf("page has %s = %v, want %v", part, got, tc.want)
+				}
+			}
+		})
+	}
+	// main.js must not import the panel statically, or every page loads it.
+	main, err := fs.ReadFile(staticFS, "static/js/app/main.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if regexp.MustCompile(`from\s*["']\./ollama\.js["']`).Match(main) {
+		t.Error("main.js imports ollama.js statically")
 	}
 }
