@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 (a release that needs action when upgrading opens with Upgrade notes)
 
+## [0.22.1] - Unreleased
+
+### Changed
+
+- ai: rework the assistant panel
+- web: load the AI panel only when the assistant may be used
+
 ## [0.22.0] - 2026-11-14
 
 ### Upgrade notes
