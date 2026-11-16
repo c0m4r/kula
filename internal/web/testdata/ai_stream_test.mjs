@@ -10,8 +10,11 @@ async function importSource(relativePath) {
     return import(`data:text/javascript;base64,${encoded}`);
 }
 
-const { AI_MAX_ANSWER, AI_REQUEST_LIMITS, appendAnswer, chatRequestBody, createFrameRenderer, createSSEReader } =
-    await importSource('../static/js/app/ai-stream.js');
+const {
+    AI_MAX_ANSWER, AI_REQUEST_LIMITS, appendAnswer, chatErrorKey, chatRequestBody, createFrameRenderer, createSSEReader,
+    modelTurns, parseToolCall,
+} = await importSource('../static/js/app/ai-stream.js');
+const { chartCSV, timeFormatter } = await importSource('../static/js/app/ai-chart-csv.js');
 
 // What the server's writeSSE sends.
 const frame = (event, payload) => `${event ? `event: ${event}\n` : ''}data: ${JSON.stringify(payload)}\n\n`;
@@ -190,4 +193,95 @@ test('a long conversation drops its oldest turns to fit the server\'s body cap',
     assert.deepEqual(messages, history.slice(-messages.length).map(({ role, content }) => ({
         role, content: content.slice(0, role === 'assistant' ? AI_REQUEST_LIMITS.assistant : AI_REQUEST_LIMITS.user),
     })), 'not the newest turns, in order');
+});
+
+test('only answered questions go back to the model, so turns alternate', () => {
+    const turns = modelTurns([
+        { role: 'user', content: 'one' },
+        { role: 'assistant', content: 'first answer' },
+        { role: 'user', content: 'fails' },
+        { role: 'assistant', content: '', error: 'ai_error_backend' },
+        { role: 'user', content: 'stopped early' },
+        { role: 'assistant', content: '', stopped: true },
+        { role: 'user', content: 'cut mid-way' },
+        { role: 'assistant', content: 'partial', error: 'ai_error_backend' },
+        { role: 'user', content: 'stopped late' },
+        { role: 'assistant', content: 'half an answer', stopped: true },
+        { role: 'user', content: 'unanswered' },
+    ]);
+    assert.deepEqual(turns, [
+        { role: 'user', content: 'one' },
+        { role: 'assistant', content: 'first answer' },
+        { role: 'user', content: 'stopped late' },
+        { role: 'assistant', content: 'half an answer' },
+    ]);
+});
+
+test('a failed chat names a message for its cause', () => {
+    assert.equal(chatErrorKey({ network: true }), 'ai_error_network');
+    assert.equal(chatErrorKey({ stream: true }), 'ai_error_backend');
+    assert.equal(chatErrorKey({ status: 429, code: 'rate_limited' }), 'ai_error_rate_limited');
+    assert.equal(chatErrorKey({ status: 429, code: 'busy' }), 'ai_error_busy');
+    assert.equal(chatErrorKey({ status: 429 }), 'ai_error_rate_limited');
+    assert.equal(chatErrorKey({ status: 503, code: 'disabled' }), 'ai_error_disabled');
+    assert.equal(chatErrorKey({ status: 401 }), 'ai_error_signed_out');
+    assert.equal(chatErrorKey({ status: 403 }), 'ai_error_signed_out');
+    assert.equal(chatErrorKey({ status: 502 }), 'ai_error_backend');
+    assert.equal(chatErrorKey({ status: 400, code: 'bad_request' }), 'ai_request_failed');
+});
+
+test('a tool call reads as resource and range, or as no detail', () => {
+    assert.deepEqual(parseToolCall('{"resource":"cpu","from":"-6h","to":""}'), { resource: 'cpu', from: '-6h', to: '' });
+    assert.deepEqual(parseToolCall(''), { resource: '', from: '', to: '' });
+    assert.deepEqual(parseToolCall('not json'), { resource: '', from: '', to: '' });
+    assert.deepEqual(parseToolCall('{"resource":7,"from":["x"]}'), { resource: '', from: '', to: '' });
+    assert.equal(parseToolCall(JSON.stringify({ resource: 'r'.repeat(500) })).resource.length, 64);
+});
+
+// 2026-03-10 is a Tuesday; UTC keeps the expectations independent of the host's zone.
+const at = (iso) => Date.parse(iso);
+
+test('a chart CSV of few samples has one row per sample, with seconds for a live chart', () => {
+    const t0 = at('2026-03-10T22:14:00Z');
+    const out = chartCSV([
+        { label: 'User', points: [0, 1, 2].map((i) => ({ x: t0 + i * 1000, y: 10 + i })) },
+        { label: 'Sys "k"', points: [{ x: t0, y: 1.5 }, { x: t0 + 2000, y: null }] },
+    ], { timeZone: 'utc', notes: ['System has 8 logical CPU cores'] });
+    const lines = out.csv.trim().split('\n');
+    assert.deepEqual(lines, [
+        '# Range: 2026-03-10 22:14:00 to 2026-03-10 22:14:02 (UTC)',
+        '# One row per sample, 3 rows',
+        '# System has 8 logical CPU cores',
+        'Time,"User","Sys ""k"""',
+        '22:14:00,10,1.50',
+        '22:14:01,11,',
+        '22:14:02,12,',
+    ]);
+    assert.equal(out.series, 2);
+    assert.equal(out.from, t0);
+});
+
+test('a long chart is bucketed into mean and max, so a one-sample spike survives', () => {
+    const t0 = at('2026-03-10T00:00:00Z');
+    const points = [];
+    for (let i = 0; i < 1000; i++) points.push({ x: t0 + i * 60000, y: i === 517 ? 99 : 5 });
+    const out = chartCSV([{ label: 'CPU', points }], { timeZone: 'utc', maxRows: 50 });
+    const lines = out.csv.trim().split('\n');
+    assert.match(lines[0], /^# Range: 2026-03-10 00:00:00 to 2026-03-10 16:39:00 \(UTC\)$/);
+    assert.match(lines[1], /^# Each row: mean and max over 1199 s/);
+    assert.equal(lines[2], 'Time,"CPU mean","CPU max"');
+    assert.equal(out.rows, 50);
+    assert.ok(lines.some((l) => l.endsWith(',99')), 'the spike was dropped');
+    assert.ok(lines.slice(3).every((l) => /^\d\d:\d\d,/.test(l)), 'rows minutes apart carry no seconds or date');
+});
+
+test('chart times carry the date only when the range crosses a day', () => {
+    const fmt = timeFormatter(at('2026-03-09T23:00:00Z'), at('2026-03-10T01:00:00Z'), 120000, 'utc');
+    assert.equal(fmt(at('2026-03-10T00:30:00Z')), '2026-03-10 00:30');
+    const sameDay = timeFormatter(at('2026-03-10T01:00:00Z'), at('2026-03-10T02:00:00Z'), 1000, 'utc');
+    assert.equal(sameDay(at('2026-03-10T01:30:05Z')), '01:30:05');
+});
+
+test('a chart with no points has no CSV', () => {
+    assert.equal(chartCSV([{ label: 'x', points: [] }, { label: 'y', points: [{ x: 1, y: null }] }]), null);
 });

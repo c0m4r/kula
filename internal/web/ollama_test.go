@@ -111,7 +111,7 @@ func TestSanitisePrompt(t *testing.T) {
 
 func TestBuildOllamaSystemPrompt_NoContext(t *testing.T) {
 	srv := &Server{store: nil} // store nil handles panics if handled properly, wait store needs to be initialized.
-	prompt := srv.buildOllamaSystemPrompt("", "")
+	prompt := srv.buildOllamaSystemPrompt("", "", false)
 	if !strings.Contains(strings.ToLower(prompt), "linux monitoring") {
 		t.Errorf("system prompt missing expected header, got: %q", prompt)
 	}
@@ -120,9 +120,46 @@ func TestBuildOllamaSystemPrompt_NoContext(t *testing.T) {
 func TestBuildOllamaSystemPrompt_WithContext(t *testing.T) {
 	srv := &Server{}
 	csv := "chart: CPU\nTime,Usage\n10:00,50%"
-	prompt := srv.buildOllamaSystemPrompt(csv, "")
+	prompt := srv.buildOllamaSystemPrompt(csv, "", true)
 	if !strings.Contains(prompt, "50%") {
 		t.Errorf("expected context CSV in system prompt, got: %q", prompt)
+	}
+}
+
+// TestSystemPromptTellsTheModelItsTools: the model learns the server's time
+// and zone, the markdown the panel renders, and what history it can fetch:
+// get_metrics's resources and nothing else, or, without the tool, none.
+func TestSystemPromptTellsTheModelItsTools(t *testing.T) {
+	srv := &Server{}
+	const clock = "2006-01-02 15:04"
+	before := time.Now().Format(clock)
+	withTools := srv.buildOllamaSystemPrompt("snapshot", "", true)
+	without := srv.buildOllamaSystemPrompt("snapshot", "", false)
+	after := time.Now()
+	for _, prompt := range []string{withTools, without} {
+		if !strings.HasPrefix(prompt, "U r linux monitoring expert.\n") || !strings.Contains(prompt, "No look for problems if no any.\n") {
+			t.Errorf("the prompt lost its opening lines:\n%s", prompt)
+		}
+		_, rest, _ := strings.Cut(prompt, "Server time now: ")
+		told, _, _ := strings.Cut(rest, ".\n")
+		if len(told) < len(clock) || told[:len(clock)] < before || told[:len(clock)] > after.Format(clock) ||
+			told[len(clock):] != after.Format(" MST (UTC-07:00)") {
+			t.Errorf("the prompt does not tell the server time with its zone (%q):\n%s", told, prompt)
+		}
+		// Last, so that the rest stays a prefix a backend can reuse.
+		if !strings.HasSuffix(prompt, "Server time now: "+told+".\n") {
+			t.Errorf("the server time is not the prompt's last line:\n%s", prompt)
+		}
+		if !strings.Contains(prompt, "markdown") || !strings.Contains(prompt, "No links, no images, no HTML.") {
+			t.Errorf("the prompt does not state the markdown the panel renders:\n%s", prompt)
+		}
+	}
+	if !strings.Contains(withTools, "get_metrics give history only for "+strings.Join(metricsToolResources, ", ")+".") ||
+		!strings.Contains(withTools, "No history of apps, containers, sensors.") || strings.Contains(withTools, "No history tool") {
+		t.Errorf("with the tool, the prompt does not say what it covers:\n%s", withTools)
+	}
+	if strings.Contains(without, "get_metrics") || !strings.Contains(without, "No history tool.") {
+		t.Errorf("without the tool, the prompt does not say there is none:\n%s", without)
 	}
 }
 
@@ -136,7 +173,7 @@ func TestOllamaStreamChat_Integration(t *testing.T) {
 	msgs := []ollamaMessage{{Role: "user", Content: "check system"}}
 
 	rec := httptest.NewRecorder()
-	err := client.streamChat(context.Background(), cfg.Model, msgs, nil, nil, rec, rec, false)
+	err := client.streamChat(context.Background(), cfg.Model, msgs, nil, nil, nil, rec, rec, false)
 	if err != nil {
 		t.Fatalf("streamChat error: %v", err)
 	}
@@ -163,7 +200,7 @@ func TestOllamaProxyDoesNotFollowRedirects(t *testing.T) {
 	cfg := config.OllamaConfig{Enabled: true, URL: redirecting.URL, Model: "llama3", Timeout: "5s"}
 	client := newOllamaClient(cfg)
 	rec := httptest.NewRecorder()
-	err := client.streamChat(context.Background(), cfg.Model, []ollamaMessage{{Role: "user", Content: "hi"}}, nil, nil, rec, rec, false)
+	err := client.streamChat(context.Background(), cfg.Model, []ollamaMessage{{Role: "user", Content: "hi"}}, nil, nil, nil, rec, rec, false)
 	if err == nil || !strings.Contains(err.Error(), "not followed") || !strings.Contains(err.Error(), target.URL) {
 		t.Errorf("streamChat error = %v, want the refused redirect named", err)
 	}
@@ -209,7 +246,7 @@ func TestOllamaConnectsOnlyToLoopback(t *testing.T) {
 		t.Errorf("model list: %v, want the address refused", err)
 	}
 	rec := httptest.NewRecorder()
-	err := client.streamChat(context.Background(), "llama3", []ollamaMessage{{Role: "user", Content: "hi"}}, nil, nil, rec, rec, false)
+	err := client.streamChat(context.Background(), "llama3", []ollamaMessage{{Role: "user", Content: "hi"}}, nil, nil, nil, rec, rec, false)
 	if err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Errorf("chat: %v, want the address refused", err)
 	}
@@ -229,7 +266,7 @@ func TestOllamaStreamChat_Unreachable(t *testing.T) {
 	cfg := config.OllamaConfig{Enabled: true, URL: "http://127.0.0.1:1", Model: "llama3", Timeout: "1s"}
 	client := newOllamaClient(cfg)
 	rec := httptest.NewRecorder()
-	err := client.streamChat(context.Background(), cfg.Model, nil, nil, nil, rec, rec, false)
+	err := client.streamChat(context.Background(), cfg.Model, nil, nil, nil, nil, rec, rec, false)
 	if err == nil {
 		t.Error("expected error connecting to unreachable server, got nil")
 	}
@@ -288,6 +325,16 @@ func TestHandleOllamaChat_ModelOverride(t *testing.T) {
 
 	if !strings.Contains(rr.Body.String(), "override ok") {
 		t.Errorf("expected streamed response, got: %q", rr.Body.String())
+	}
+
+	// The stream names the model the chat runs on first: the one asked for
+	// when the backend lists it, the configured one otherwise.
+	for asked, want := range map[string]string{"mistral:latest": "mistral:latest", "some/unlisted:1b": "llama3", "": "llama3"} {
+		rr := httptest.NewRecorder()
+		srv.handleOllamaChat(rr, httptest.NewRequest(http.MethodPost, "/api/ollama/chat", strings.NewReader(`{"prompt":"x","model":"`+asked+`"}`)))
+		if events := sseStream(t, rr.Body.String()); len(events) == 0 || events[0] != (sseEvent{"model", want}) {
+			t.Errorf("model %q: stream starts %v, want the model event %q", asked, events, want)
+		}
 	}
 }
 
@@ -624,7 +671,7 @@ func TestOllamaStreamChat_ToolLoop(t *testing.T) {
 		cur := atomic.AddInt32(&round, 1)
 		w.Header().Set("Content-Type", "application/json")
 		if cur == 1 {
-			// Round 1: emit a single chunk containing a tool call.
+			// Round 1: emit a single chunk containing two tool calls.
 			chunk := map[string]interface{}{
 				"message": map[string]interface{}{
 					"content": "",
@@ -632,6 +679,11 @@ func TestOllamaStreamChat_ToolLoop(t *testing.T) {
 						"function": map[string]interface{}{
 							"name":      "get_metrics",
 							"arguments": json.RawMessage(`{"resource":"cpu"}`),
+						},
+					}, {
+						"function": map[string]interface{}{
+							"name":      "get_metrics",
+							"arguments": json.RawMessage(`{"resource":"memory","from":"-6h","to":"-1h"}`),
 						},
 					}},
 				},
@@ -654,27 +706,55 @@ func TestOllamaStreamChat_ToolLoop(t *testing.T) {
 	cfg := config.OllamaConfig{Enabled: true, URL: mock.URL, Model: "llama3", Timeout: "5s"}
 	client := newOllamaClient(cfg)
 
+	// Each call is announced just before it runs, with what it fetches.
+	rec := httptest.NewRecorder()
 	var toolCalls int32
 	executor := func(name string, args json.RawMessage) string {
-		atomic.AddInt32(&toolCalls, 1)
+		n := atomic.AddInt32(&toolCalls, 1)
+		if announced := strings.Count(rec.Body.String(), "event: tool_call\n"); announced != int(n) {
+			t.Errorf("tool call %d ran after %d tool_call event(s)", n, announced)
+		}
 		return "Time,CPU%\n10:00,42.0\n"
 	}
 
 	tools := []ollamaToolDef{metricsToolDef()}
-	rec := httptest.NewRecorder()
-	err := client.streamChat(context.Background(), cfg.Model, []ollamaMessage{{Role: "user", Content: "how's cpu?"}}, tools, executor, rec, rec, false)
+	err := client.streamChat(context.Background(), cfg.Model, []ollamaMessage{{Role: "user", Content: "how's cpu?"}}, tools, executor, nil, rec, rec, false)
 	if err != nil {
 		t.Fatalf("streamChat: %v", err)
 	}
-	if got := atomic.LoadInt32(&toolCalls); got != 1 {
-		t.Errorf("expected 1 tool invocation, got %d", got)
+	if got := atomic.LoadInt32(&toolCalls); got != 2 {
+		t.Errorf("expected 2 tool invocations, got %d", got)
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "cpu fine") {
-		t.Errorf("expected final-round text in output, got %q", body)
+	calls := sseData(t, rec.Body.String(), "tool_call")
+	want := []string{`{"resource":"cpu","from":"","to":""}`, `{"resource":"memory","from":"-6h","to":"-1h"}`}
+	if fmt.Sprint(calls) != fmt.Sprint(want) {
+		t.Errorf("tool_call events %q, want %q", calls, want)
 	}
-	if !strings.Contains(body, "event: tool_call") {
-		t.Errorf("expected tool_call SSE event in output, got %q", body)
+	if _, text := sseEvents(t, rec.Body.String()); text != "cpu fine" {
+		t.Errorf("expected final-round text in output, got %q", text)
+	}
+}
+
+// TestToolCallEventNamesWhatACallFetches: the event names a resource only
+// when get_metrics offers it, and the model's bounds without control or
+// format characters, clamped; arguments that are no object give empty fields.
+func TestToolCallEventNamesWhatACallFetches(t *testing.T) {
+	long := strings.Repeat("é", ollamaMaxEventField+10)
+	for _, tt := range []struct{ args, want string }{
+		{`{"resource":"disk_space","from":"-24h"}`, `{"resource":"disk_space","from":"-24h","to":""}`},
+		{`{"resource":"containers","from":"-1h","to":"now"}`, `{"resource":"","from":"-1h","to":"now"}`},
+		{`{"resource":"cpu","from":"-1h\r\nevent: error\u0000\u202e\u200b\u0085","to":"\u001b[31m"}`, `{"resource":"cpu","from":"-1hevent: error","to":"[31m"}`},
+		{`{"resource":"cpu","from":"` + long + `"}`, `{"resource":"cpu","from":"` + long[:2*ollamaMaxEventField] + `","to":""}`},
+		{`{"resource":"cpu","from":5}`, `{"resource":"","from":"","to":""}`},
+		{`"{\"resource\":\"cpu\"}"`, `{"resource":"","from":"","to":""}`},
+		{`{"resource":`, `{"resource":"","from":"","to":""}`},
+		{``, `{"resource":"","from":"","to":""}`},
+		{`null`, `{"resource":"","from":"","to":""}`},
+	} {
+		got := toolCallEvent(ollamaToolCall{Function: ollamaCallFunc{Name: "get_metrics", Arguments: json.RawMessage(tt.args)}})
+		if got != tt.want {
+			t.Errorf("arguments %s: event %s, want %s", tt.args, got, tt.want)
+		}
 	}
 }
 
@@ -776,7 +856,7 @@ func TestToolCallsPerRoundAreCapped(t *testing.T) {
 			executor := func(string, json.RawMessage) string { runs.Add(1); return "ok" }
 			rec := httptest.NewRecorder()
 			err := oc.streamChat(context.Background(), "m1", []ollamaMessage{{Role: "user", Content: "x"}},
-				[]ollamaToolDef{metricsToolDef()}, executor, rec, rec, false)
+				[]ollamaToolDef{metricsToolDef()}, executor, nil, rec, rec, false)
 			if err != nil {
 				t.Fatalf("streamChat: %v", err)
 			}
@@ -787,34 +867,59 @@ func TestToolCallsPerRoundAreCapped(t *testing.T) {
 	}
 }
 
-// sseEvents parses a chat stream the way the dashboard does: events end at a
+// sseEvent is one event of a chat stream, its data decoded.
+type sseEvent struct{ event, data string }
+
+// sseStream parses a chat stream the way the dashboard does: events end at a
 // blank line, and each data payload is a JSON string.
-func sseEvents(t *testing.T, stream string) (events []string, text string) {
+func sseStream(t *testing.T, stream string) []sseEvent {
 	t.Helper()
 	if strings.Contains(stream, "\r") {
 		t.Errorf("a raw CR reached the stream: %q", stream)
 	}
+	var events []sseEvent
 	for _, block := range strings.Split(strings.TrimSuffix(stream, "\n\n"), "\n\n") {
-		event := "message"
-		var data string
+		e := sseEvent{event: "message"}
 		for _, line := range strings.Split(block, "\n") {
 			switch {
 			case strings.HasPrefix(line, "event: "):
-				event = strings.TrimPrefix(line, "event: ")
+				e.event = strings.TrimPrefix(line, "event: ")
 			case strings.HasPrefix(line, "data: "):
-				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &data); err != nil {
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &e.data); err != nil {
 					t.Errorf("data line %q is not a JSON string: %v", line, err)
 				}
 			default:
 				t.Errorf("stray line %q in the stream", line)
 			}
 		}
-		events = append(events, event)
-		if event == "message" {
-			text += data
+		events = append(events, e)
+	}
+	return events
+}
+
+// sseEvents is sseStream's event names, and the answer text of its unnamed
+// events.
+func sseEvents(t *testing.T, stream string) (events []string, text string) {
+	t.Helper()
+	for _, e := range sseStream(t, stream) {
+		events = append(events, e.event)
+		if e.event == "message" {
+			text += e.data
 		}
 	}
 	return events, text
+}
+
+// sseData is the data of each event of the stream named event.
+func sseData(t *testing.T, stream, event string) []string {
+	t.Helper()
+	var data []string
+	for _, e := range sseStream(t, stream) {
+		if e.event == event {
+			data = append(data, e.data)
+		}
+	}
+	return data
 }
 
 // TestChatStreamFramesModelOutputAsJSON: model output reaches the client as
@@ -835,8 +940,8 @@ func TestChatStreamFramesModelOutputAsJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.handleOllamaChat(rr, httptest.NewRequest(http.MethodPost, "/api/ollama/chat", strings.NewReader(`{"prompt":"x"}`)))
 	events, text := sseEvents(t, rr.Body.String())
-	if fmt.Sprint(events) != "[message done]" || text != output {
-		t.Errorf("ollama: events %v, text %q; want one message %q, then done", events, text, output)
+	if fmt.Sprint(events) != "[model message done]" || text != output {
+		t.Errorf("ollama: events %v, text %q; want the model, one message %q, then done", events, text, output)
 	}
 
 	rec := httptest.NewRecorder()
@@ -927,19 +1032,93 @@ func mkSample(cpuUsage float64) *storage.AggregatedSample {
 }
 
 func TestFormatMetricsData_Unknown(t *testing.T) {
-	out := formatMetricsData("not-a-thing", nil)
+	now := time.Now()
+	out := formatMetricsData("not-a-thing", now.Add(-time.Hour), now, "", nil)
 	if !strings.Contains(out, "unknown resource type") {
 		t.Errorf("unexpected output: %q", out)
+	}
+	if out := (&Server{}).executeGetMetrics(json.RawMessage(`{"resource":"containers"}`)); !strings.Contains(out, "unknown resource type") {
+		t.Errorf("an unknown resource reached the query: %q", out)
 	}
 }
 
 func TestFormatMetricsData_CPU(t *testing.T) {
-	out := formatMetricsData("cpu", []*storage.AggregatedSample{mkSample(42)})
-	if !strings.HasPrefix(out, "Time,CPU%\n") {
-		t.Errorf("expected CPU header, got %q", out)
+	s := mkSample(42)
+	from, to := s.Timestamp.Add(-time.Hour), s.Timestamp
+	out := formatMetricsData("cpu", from, to, "36s", []*storage.AggregatedSample{s})
+	layout := metricsTimeLayout(from.Local(), to.Local(), time.Now())
+	want := metricsHeader("cpu", from.Local(), to.Local(), time.Now(), layout, "36s") +
+		"Time,CPU%\n" + s.Timestamp.Local().Format(layout) + ",42.0\n"
+	if out != want || !strings.HasPrefix(out, "# cpu ") {
+		t.Errorf("CPU data\n%s\nwant\n%s", out, want)
 	}
-	if !strings.Contains(out, "42.0") {
-		t.Errorf("expected sample value in output, got %q", out)
+}
+
+// TestMetricsTimestampsFitTheRange: get_metrics timestamps carry as much of
+// the date as the range needs (they used to be a time of day for any range
+// up to 31 days), and the answer starts with a line naming the resource,
+// the range with its zone, and the step.
+func TestMetricsTimestampsFitTheRange(t *testing.T) {
+	cet := time.FixedZone("CET", 3600)
+	at := func(month time.Month, day, hour int) time.Time {
+		return time.Date(2026, month, day, hour, 14, 3, 0, cet)
+	}
+	now := at(11, 16, 22)
+	for _, tt := range []struct {
+		name     string
+		from, to time.Time
+		want     string
+	}{
+		{"one day", at(11, 16, 0), at(11, 16, 23), "15:04:05"},
+		{"across midnight", at(11, 15, 23), at(11, 16, 1), "01-02 15:04:05"},
+		{"a past day", at(11, 2, 8), at(11, 2, 9), "15:04:05"},
+		{"this year", at(10, 20, 22), at(11, 16, 22), "01-02 15:04:05"},
+		{"across new year", time.Date(2025, 12, 28, 0, 0, 0, 0, cet), time.Date(2026, 1, 2, 0, 0, 0, 0, cet), "2006-01-02 15:04"},
+		{"last year", time.Date(2025, 12, 1, 0, 0, 0, 0, cet), time.Date(2025, 12, 5, 0, 0, 0, 0, cet), "2006-01-02 15:04"},
+	} {
+		if got := metricsTimeLayout(tt.from, tt.to, now); got != tt.want {
+			t.Errorf("%s: layout %q, want %q", tt.name, got, tt.want)
+		}
+	}
+
+	for _, tt := range []struct {
+		name     string
+		from, to time.Time
+		step     string
+		want     string
+	}{
+		{"today", at(11, 16, 21), now, "36s", "# cpu 21:14:03–22:14:03 CET, step 36s\n"},
+		{"a past day names its date", at(11, 2, 8), at(11, 2, 9), "36s", "# cpu 2026-11-02 08:14:03–09:14:03 CET, step 36s\n"},
+		{"days", at(11, 9, 22), now, "2h", "# cpu 11-09 22:14:03–11-16 22:14:03 CET, step 2h\n"},
+		{"no step", at(11, 16, 21), now, "", "# cpu 21:14:03–22:14:03 CET\n"},
+		{"a DST change", at(10, 24, 22).In(time.FixedZone("CEST", 7200)), at(10, 26, 22), "1h", "# cpu 10-24 23:14:03 CEST–10-26 22:14:03 CET, step 1h\n"},
+	} {
+		if got := metricsHeader("cpu", tt.from, tt.to, now, metricsTimeLayout(tt.from, tt.to, now), tt.step); got != tt.want {
+			t.Errorf("%s: header %q, want %q", tt.name, got, tt.want)
+		}
+	}
+
+	// Without a step from the query, the samples' median gap is told.
+	var samples []*storage.AggregatedSample
+	for _, offset := range []time.Duration{0, 36 * time.Second, 72 * time.Second, 109 * time.Second, 300 * time.Second} {
+		samples = append(samples, &storage.AggregatedSample{Timestamp: now.Add(offset), Data: &collector.Sample{}})
+	}
+	if got := medianGap(samples); got != "37s" {
+		t.Errorf("median gap %q, want 37s", got)
+	}
+	if got := medianGap(samples[:1]); got != "" {
+		t.Errorf("median gap of one sample %q, want none", got)
+	}
+	for gap, want := range map[time.Duration]string{
+		36 * time.Hour: "36h", 90 * time.Minute: "1h30m", time.Minute: "1m", time.Hour + 5*time.Second: "1h0m5s", 500 * time.Millisecond: "500ms",
+	} {
+		pair := []*storage.AggregatedSample{{Timestamp: now}, {Timestamp: now.Add(gap)}}
+		if got := medianGap(pair); got != want {
+			t.Errorf("gap %s told as %q, want %q", gap, got, want)
+		}
+	}
+	if out := formatMetricsData("load", now.Add(-time.Hour), now, "", samples); !strings.Contains(strings.SplitN(out, "\n", 2)[0], ", step 37s") {
+		t.Errorf("the header does not tell the median gap:\n%s", out)
 	}
 }
 
@@ -952,8 +1131,8 @@ func TestFormatMetricsData_NetworkTruncation(t *testing.T) {
 		Timestamp: time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC),
 		Data:      &collector.Sample{Network: collector.NetworkStats{Interfaces: ifaces}},
 	}
-	out := formatMetricsData("network", []*storage.AggregatedSample{s})
-	rows := strings.Count(out, "\n") - 1 // subtract header
+	out := formatMetricsData("network", s.Timestamp.Add(-time.Hour), s.Timestamp, "1s", []*storage.AggregatedSample{s})
+	rows := strings.Count(out, "\n") - 2 // subtract the comment line and the header
 	if rows != ollamaToolMaxItems {
 		t.Errorf("expected %d rows, got %d; output:\n%s", ollamaToolMaxItems, rows, out)
 	}
@@ -1031,5 +1210,333 @@ func TestChatRateLimiterPurgeStaleReclaims(t *testing.T) {
 	}
 	if _, ok := rl.requests["fresh-ip"]; !ok {
 		t.Error("fresh entry should have been retained")
+	}
+}
+
+// ---- Models without tool support, thinking, error codes, context time ------
+
+// TestLacksToolSupport: only a 400 saying the model does not support tools
+// is taken for one, in the wording of Ollama and its OpenAI-compatible API,
+// in any case.
+func TestLacksToolSupport(t *testing.T) {
+	for _, tt := range []struct {
+		status int
+		body   string
+		want   bool
+	}{
+		{400, `{"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}`, true},
+		{400, `{"error":{"message":"registry.ollama.ai/library/gemma3:4b does not support tools","type":"api_error","param":null,"code":null}}`, true},
+		{400, `{"error":"Model gemma3 Does Not Support Tools"}`, true},
+		{400, `{"error":"model \"gemma3\" not found, try pulling it first"}`, false},
+		{400, `{"error":"registry.ollama.ai/library/gemma3:4b does not support thinking"}`, false},
+		{400, ``, false},
+		{404, `{"error":"gemma3 does not support tools"}`, false},
+		{500, `gemma3 does not support tools`, false},
+	} {
+		if got := lacksToolSupport(tt.status, tt.body); got != tt.want {
+			t.Errorf("lacksToolSupport(%d, %s) = %v, want %v", tt.status, tt.body, got, tt.want)
+		}
+	}
+}
+
+// refusingBackend is a fake AI backend of either flavour that answers a chat
+// carrying tools with 400 and refusal, as a backend answers for a model
+// without tool support, and any other chat with "plain answer". It records
+// the chats that reach it.
+type refusingBackend struct {
+	*httptest.Server
+	mu    sync.Mutex
+	chats []ollamaChatRequest
+}
+
+func newRefusingBackend(t *testing.T, api, refusal string) *refusingBackend {
+	t.Helper()
+	b := &refusingBackend{}
+	path := map[string]string{"ollama": "/api/chat", "openai": "/v1/chat/completions"}[api]
+	b.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			http.NotFound(w, r)
+			return
+		}
+		var body ollamaChatRequest
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		b.mu.Lock()
+		b.chats = append(b.chats, body)
+		b.mu.Unlock()
+		switch {
+		case len(body.Tools) > 0:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, refusal)
+		case api == "openai":
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"plain answer\"}}]}\n\ndata: [DONE]\n\n")
+		default:
+			_, _ = fmt.Fprintln(w, `{"message":{"content":"plain answer"},"done":true}`)
+		}
+	}))
+	t.Cleanup(b.Close)
+	return b
+}
+
+// take returns the chats that reached the backend since the last take.
+func (b *refusingBackend) take() []ollamaChatRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	chats := b.chats
+	b.chats = nil
+	return chats
+}
+
+// TestChatsRunWithoutToolsForAModelThatHasNone: a backend refusing the tools
+// of a chat because the model cannot call them (it used to fail every
+// question of such a model) gets the round again without them, with the
+// system prompt for a chat without tools; the client is told, and the model
+// is remembered, so its next chat carries no tools from the start. Any other
+// 400 fails the chat as before. Both API flavours.
+func TestChatsRunWithoutToolsForAModelThatHasNone(t *testing.T) {
+	var logged bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(orig)
+
+	store := newTestStoreWithSample(t)
+	defer func() { _ = store.Close() }()
+	refusals := map[string]string{
+		"ollama": `{"error":"registry.ollama.ai/library/gemma3:4b does not support tools"}`,
+		"openai": `{"error":{"message":"registry.ollama.ai/library/gemma3:4b does not support tools","type":"api_error","param":null,"code":null}}`,
+	}
+	for api, refusal := range refusals {
+		t.Run(api, func(t *testing.T) {
+			logged.Reset()
+			newServer := func(url string) *Server {
+				oc := newOllamaClient(config.OllamaConfig{Enabled: true, URL: url, Model: "gemma3:4b", Timeout: "5s"})
+				oc.detectedAPI = api
+				srv := &Server{ollama: oc, store: store}
+				srv.cfg.Logging = config.LogConfig{Enabled: true, Level: "debug"}
+				return srv
+			}
+			chat := func(srv *Server) string {
+				rr := httptest.NewRecorder()
+				srv.handleOllamaChat(rr, httptest.NewRequest(http.MethodPost, "/api/ollama/chat", strings.NewReader(`{"prompt":"how is it?"}`)))
+				return rr.Body.String()
+			}
+			backend := newRefusingBackend(t, api, refusal)
+			srv := newServer(backend.URL)
+
+			events, text := sseEvents(t, chat(srv))
+			if fmt.Sprint(events) != "[model notools message done]" || text != "plain answer" {
+				t.Errorf("first chat: events %v, text %q; want the model, notools, the answer, done", events, text)
+			}
+			chats := backend.take()
+			if len(chats) != 2 || len(chats[0].Tools) == 0 || len(chats[1].Tools) != 0 {
+				t.Fatalf("first chat reached the backend %d time(s), want with tools, then once without", len(chats))
+			}
+			if system := chats[0].Messages[0].Content; !strings.Contains(system, "Tool get_metrics") {
+				t.Errorf("the chat with tools does not tell the model of them:\n%s", system)
+			}
+			if system := chats[1].Messages[0].Content; strings.Contains(system, "get_metrics") || !strings.Contains(system, "No history tool.") {
+				t.Errorf("the retry without tools kept the system prompt for tools:\n%s", system)
+			}
+			if fmt.Sprint(chats[0].Messages[1:]) != fmt.Sprint(chats[1].Messages[1:]) {
+				t.Errorf("the retry changed the conversation: %v, then %v", chats[0].Messages[1:], chats[1].Messages[1:])
+			}
+
+			events, text = sseEvents(t, chat(srv))
+			if fmt.Sprint(events) != "[model notools message done]" || text != "plain answer" {
+				t.Errorf("second chat: events %v, text %q; want the model, notools, the answer, done", events, text)
+			}
+			if chats := backend.take(); len(chats) != 1 || len(chats[0].Tools) != 0 || !strings.Contains(chats[0].Messages[0].Content, "No history tool.") {
+				t.Errorf("a model remembered as tool-less got %d chat(s), the first with tools or their prompt", len(chats))
+			}
+			if n := strings.Count(logged.String(), `[Ollama] model "gemma3:4b" does not support tools`); n != 1 {
+				t.Errorf("the tool-less model was logged %d times, want once:\n%s", n, logged.String())
+			}
+			if !strings.Contains(logged.String(), "tools=true toolless_remembered=false") || !strings.Contains(logged.String(), "tools=false toolless_remembered=true") {
+				t.Errorf("the debug log does not tell whether the model is remembered as tool-less:\n%s", logged.String())
+			}
+
+			// Another 400 is an error, and nothing is remembered.
+			other := newRefusingBackend(t, api, `{"error":"model requires more system memory than is available"}`)
+			srv = newServer(other.URL)
+			for i := 0; i < 2; i++ {
+				if events, _ := sseEvents(t, chat(srv)); fmt.Sprint(events) != "[model error done]" {
+					t.Errorf("chat %d refused with another 400: events %v, want the model, error, done", i+1, events)
+				}
+				if chats := other.take(); len(chats) != 1 || len(chats[0].Tools) == 0 {
+					t.Errorf("chat %d refused with another 400 reached the backend %d time(s), want once with tools", i+1, len(chats))
+				}
+			}
+		})
+	}
+}
+
+// TestToollessModelsAreForgotten: the memory of models without tools is
+// bounded, starting over when full, and forgets a model the backend no
+// longer lists, but not the configured one, which a listing may spell
+// otherwise.
+func TestToollessModelsAreForgotten(t *testing.T) {
+	ro := newRecordingOllama(t) // lists llama3:latest and mistral:latest
+	oc := newOllamaClient(config.OllamaConfig{Enabled: true, URL: ro.URL, Model: "llama3", Timeout: "5s"})
+	for _, m := range []string{"llama3", "mistral:latest", "removed:1b"} {
+		if !oc.rememberToolless(m) {
+			t.Errorf("%s was already remembered", m)
+		}
+	}
+	if oc.rememberToolless("llama3") {
+		t.Error("a model was remembered twice")
+	}
+	if _, err := oc.fetchModels(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	for m, want := range map[string]bool{"llama3": true, "mistral:latest": true, "removed:1b": false} {
+		if got := oc.lacksTools(m); got != want {
+			t.Errorf("after a listing, %s remembered as tool-less: %v, want %v", m, got, want)
+		}
+	}
+
+	oc = newOllamaClient(config.OllamaConfig{Enabled: true, URL: ro.URL, Model: "llama3", Timeout: "5s"})
+	for i := 0; i < ollamaMaxToolless; i++ {
+		oc.rememberToolless(fmt.Sprintf("m%d", i))
+	}
+	if n := len(oc.toolless); n != ollamaMaxToolless {
+		t.Fatalf("%d models remembered, want %d", n, ollamaMaxToolless)
+	}
+	oc.rememberToolless("one-more")
+	if n := len(oc.toolless); n != 1 || !oc.lacksTools("one-more") {
+		t.Errorf("the full memory did not start over: %d model(s)", n)
+	}
+}
+
+// TestThinkingIsStreamedApart: a thinking model's reasoning reaches the
+// client as thinking events, never as answer text: Ollama's
+// message.thinking, and the OpenAI-compatible reasoning_content, or
+// reasoning when that is absent.
+func TestThinkingIsStreamedApart(t *testing.T) {
+	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintln(w, `{"message":{"thinking":"load is "},"done":false}`)
+		_, _ = fmt.Fprintln(w, `{"message":{"thinking":"high"},"done":false}`)
+		_, _ = fmt.Fprintln(w, `{"message":{"content":"All fine."},"done":true}`)
+	}))
+	defer native.Close()
+	srv := &Server{ollama: newOllamaClient(config.OllamaConfig{Enabled: true, URL: native.URL, Model: "qwen3:4b", Timeout: "5s"})}
+	rr := httptest.NewRecorder()
+	srv.handleOllamaChat(rr, httptest.NewRequest(http.MethodPost, "/api/ollama/chat", strings.NewReader(`{"prompt":"x"}`)))
+	events, text := sseEvents(t, rr.Body.String())
+	if fmt.Sprint(events) != "[model thinking thinking message done]" || text != "All fine." {
+		t.Errorf("ollama: events %v, text %q", events, text)
+	}
+	if thinking := sseData(t, rr.Body.String(), "thinking"); fmt.Sprint(thinking) != "[load is  high]" {
+		t.Errorf("ollama: thinking %q", thinking)
+	}
+
+	openai := openAICompatServer(t,
+		`{"choices":[{"delta":{"reasoning_content":"first"}}]}`,
+		`{"choices":[{"delta":{"reasoning":"second"}}]}`,
+		`{"choices":[{"delta":{"reasoning_content":"third","reasoning":"not twice"}}]}`,
+		`{"choices":[{"delta":{"content":"All fine."}}]}`)
+	defer openai.Close()
+	rec := httptest.NewRecorder()
+	if _, err := newOpenAICompatClient(openai.URL).doStreamRound(context.Background(), "m1", nil, nil, rec, rec, false); err != nil {
+		t.Fatal(err)
+	}
+	events, text = sseEvents(t, rec.Body.String())
+	if fmt.Sprint(events) != "[thinking thinking thinking message]" || text != "All fine." {
+		t.Errorf("openai: events %v, text %q", events, text)
+	}
+	if thinking := sseData(t, rec.Body.String(), "thinking"); fmt.Sprint(thinking) != "[first second third]" {
+		t.Errorf("openai: thinking %q", thinking)
+	}
+}
+
+// TestAIErrorsCarryACode: an AI endpoint's request refused before any stream
+// gets its error text and a stable code the dashboard can translate.
+func TestAIErrorsCarryACode(t *testing.T) {
+	orig := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(orig)
+
+	down := httptest.NewServer(http.NotFoundHandler())
+	down.Close()
+	enabled := func() *ollamaClient {
+		return newOllamaClient(config.OllamaConfig{Enabled: true, URL: down.URL, Model: "llama3", Timeout: "1s"})
+	}
+	refuseAll := func() *chatRateLimiter { return &chatRateLimiter{limit: 0, requests: map[string][]time.Time{}} }
+	busy := enabled()
+	for busy.startChat() {
+	}
+
+	type call struct {
+		handler func(*Server, http.ResponseWriter, *http.Request)
+		method  string
+		path    string
+		body    string
+	}
+	chat := call{(*Server).handleOllamaChat, http.MethodPost, "/api/ollama/chat", `{"prompt":"x"}`}
+	models := call{(*Server).handleOllamaModels, http.MethodGet, "/api/ollama/models", ""}
+	snapshot := call{(*Server).handleOllamaContext, http.MethodGet, "/api/ollama/context", ""}
+	badBody := chat
+	badBody.body = `{"prompt":`
+	for _, tt := range []struct {
+		name   string
+		srv    *Server
+		call   call
+		status int
+		error  string
+		code   string
+	}{
+		{"chat disabled", &Server{}, chat, 503, "ollama is not enabled", "disabled"},
+		{"models disabled", &Server{}, models, 503, "ollama is not enabled", "disabled"},
+		{"context disabled", &Server{}, snapshot, 503, "ollama is not enabled", "disabled"},
+		{"chat rate limited", &Server{ollama: enabled(), ollamaLimiter: refuseAll()}, chat, 429, "rate limit exceeded", "rate_limited"},
+		{"models rate limited", &Server{ollama: enabled(), ollamaMetaLim: refuseAll()}, models, 429, "rate limit exceeded", "rate_limited"},
+		{"context rate limited", &Server{ollama: enabled(), ollamaMetaLim: refuseAll()}, snapshot, 429, "rate limit exceeded", "rate_limited"},
+		{"chat body", &Server{ollama: enabled()}, badBody, 400, "invalid request body", "bad_request"},
+		{"chats busy", &Server{ollama: busy}, chat, 429, "too many AI chats in progress", "busy"},
+		{"backend down", &Server{ollama: enabled()}, models, 502, "AI backend unavailable", "backend_unavailable"},
+	} {
+		rr := httptest.NewRecorder()
+		tt.call.handler(tt.srv, rr, httptest.NewRequest(tt.call.method, tt.call.path, strings.NewReader(tt.call.body)))
+		var got map[string]string
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil || rr.Code != tt.status ||
+			got["error"] != tt.error || got["code"] != tt.code || len(got) != 2 || rr.Header().Get("Content-Type") != "application/json" {
+			t.Errorf("%s: %d %q, want %d {error: %q, code: %q}", tt.name, rr.Code, rr.Body.String(), tt.status, tt.error, tt.code)
+		}
+	}
+}
+
+// TestContextNamesItsSampleTime: the snapshot a session pins says when its
+// sample was taken, in the text for the model and as ts for the dashboard.
+func TestContextNamesItsSampleTime(t *testing.T) {
+	store := newTestStoreWithSample(t)
+	defer func() { _ = store.Close() }()
+	latest, err := store.QueryLatest()
+	if err != nil || latest == nil {
+		t.Fatalf("latest sample: %v %v", latest, err)
+	}
+	srv := &Server{ollama: newOllamaClient(config.OllamaConfig{Enabled: true, URL: "http://127.0.0.1:1", Model: "llama3", Timeout: "1s"}), store: store}
+	rr := httptest.NewRecorder()
+	srv.handleOllamaContext(rr, httptest.NewRequest(http.MethodGet, "/api/ollama/context", nil))
+	var out struct {
+		Context string `json:"context"`
+		TS      string `json:"ts"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode %q: %v", rr.Body.String(), err)
+	}
+	ts, err := time.Parse(time.RFC3339, out.TS)
+	if err != nil || !ts.Equal(latest.Timestamp.Truncate(time.Second)) {
+		t.Errorf("ts %q (%v), want the sample's time %s", out.TS, err, latest.Timestamp.Format(time.RFC3339))
+	}
+	wantStart := "Sample time: " + latest.Timestamp.Local().Format(collector.AITimeLayout) + "\nHost: testhost\n"
+	if !strings.HasPrefix(out.Context, wantStart) || !strings.Contains(out.Context, "CPU cores:    4 logical") {
+		t.Errorf("context does not start with the sample time and host:\n%s", out.Context)
+	}
+
+	// Without a sample there is no time to tell.
+	srv.store = nil
+	rr = httptest.NewRecorder()
+	srv.handleOllamaContext(rr, httptest.NewRequest(http.MethodGet, "/api/ollama/context", nil))
+	if strings.Contains(rr.Body.String(), `"ts"`) {
+		t.Errorf("context without a sample names a time: %s", rr.Body.String())
 	}
 }

@@ -68,6 +68,61 @@ export function chatRequestBody({ prompt, history, context, lang, model }, limit
 }
 
 /**
+ * modelTurns returns what a session's transcript contributes to the next
+ * request: each question that got an answer, then that answer. A question
+ * whose answer failed, or was stopped or came back before any text, is left
+ * out with its answer, so the turns alternate user, assistant.
+ */
+export function modelTurns(messages) {
+    const turns = [];
+    for (let i = 0; i < messages.length; i++) {
+        const m = messages[i];
+        if (m.role !== 'user') continue;
+        const next = messages[i + 1];
+        if (next?.role === 'assistant' && !next.error && next.content) {
+            turns.push({ role: 'user', content: m.content }, { role: 'assistant', content: next.content });
+            i++;
+        }
+    }
+    return turns;
+}
+
+/**
+ * chatErrorKey names the locale string for a failed chat: a network failure,
+ * an error event in the stream (the backend failed), or a refused request
+ * with its HTTP status and the server's error code.
+ */
+export function chatErrorKey({ network = false, stream = false, status = 0, code = '' } = {}) {
+    if (network) return 'ai_error_network';
+    if (stream) return 'ai_error_backend';
+    switch (code) {
+    case 'rate_limited': return 'ai_error_rate_limited';
+    case 'busy': return 'ai_error_busy';
+    case 'disabled': return 'ai_error_disabled';
+    default:
+    }
+    if (status === 401 || status === 403) return 'ai_error_signed_out';
+    if (status === 429) return 'ai_error_rate_limited';
+    if (status === 502 || status === 503 || status === 504) return 'ai_error_backend';
+    return 'ai_request_failed';
+}
+
+/**
+ * parseToolCall reads a tool_call event's data, the JSON text of
+ * { resource, from, to }. Anything else reads as a call with no detail.
+ */
+export function parseToolCall(data) {
+    let call = null;
+    try {
+        call = typeof data === 'string' && data ? JSON.parse(data) : null;
+    } catch {
+        call = null;
+    }
+    const field = (v) => (typeof v === 'string' ? v.slice(0, 64) : '');
+    return { resource: field(call?.resource), from: field(call?.from), to: field(call?.to) };
+}
+
+/**
  * appendAnswer adds a streamed chunk to the answer so far, keeping at most
  * max code units (a surrogate pair is never split). truncated reports that
  * something was left out.

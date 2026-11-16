@@ -113,8 +113,10 @@ those charts the same way (`applySpanGaps()`).
 | `settings.js` | Dark/light theme and the Customization menu (appearance, accessibility, chart data/tooltips/Min–Max bands, Local/UTC) with persisted preferences |
 | `alerts.js` | Alert evaluation (clock sync, low entropy, overload) + dropdown |
 | `i18n.js` | Fetches translations from `/api/i18n` and applies to the DOM |
-| `ollama.js` | AI assistant panel; SSE streaming from `/api/ollama/chat` |
-| `ai-stream.js` | Import-free helpers of the AI panel: builds the chat request within the server's limits, reads the chat's Server-Sent Events (whose data payloads are JSON strings), caps the answer at 32 KiB and coalesces its repaints into animation frames |
+| `ollama.js` | AI assistant panel: sessions, each owning its streaming answer (SSE from `/api/ollama/chat`), Stop, Retry, chart analysis, the snapshot and chart context bar |
+| `ai-stream.js` | Import-free helpers of the AI panel: builds the chat request within the server's limits, picks the turns sent back (answered questions only, so turns alternate), maps a failed chat to its message, reads the chat's Server-Sent Events (whose data payloads are JSON strings), caps the answer at 32 KiB and coalesces its repaints into animation frames |
+| `ai-chart-csv.js` | Import-free: a chart's visible series as the CSV a chart analysis sends, with its range, zone and per-bucket mean and max |
+| `ai-markdown.js` | Import-free markdown renderer of AI answers; code is kept verbatim, links are not clickable |
 
 Modules keep preferences in `localStorage` only through `prefs.js`. When site data is blocked,
 every access to `localStorage` throws, and a full quota makes writes throw. `readPref()` and

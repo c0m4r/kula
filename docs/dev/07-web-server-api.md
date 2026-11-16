@@ -281,17 +281,65 @@ requires: one invalid byte would fail the whole scrape. See
 - `handleOllamaChat` — streams a chat completion as SSE, running an agentic tool-calling loop
   where the model can call `get_metrics` (≤5 rounds, ≤8 calls each), backed by `Collector.FormatForAI()`.
   Every `data:` payload is a JSON string (`writeSSE`), so no character of the model's output can
-  end a line: unnamed events carry text, `tool_call` and `done` an empty string, `error` a message.
+  end a line. The events, in the order they can come:
+
+  | Event | `data` | When |
+  |---|---|---|
+  | `model` | the model the chat runs on (`chatModel`: the one asked for if the backend lists it, else the configured one) | first, as the stream opens |
+  | `notools` | `""` | at most once: the chat runs without `get_metrics` because the model has no tool support |
+  | `thinking` | reasoning text: Ollama's `message.thinking`; OpenAI-compatible `delta.reasoning_content`, else `delta.reasoning` | as it streams; never part of the answer |
+  | unnamed (`message`) | answer text | as it streams |
+  | `tool_call` | JSON text `{"resource":"cpu","from":"-6h","to":""}`, parsed with `JSON.parse` | once per call, just before it runs |
+  | `error` | the fixed `ollamaChatFailed` message; the detail goes to the log | when the chat fails |
+  | `done` | `""` | last, always |
+
+  In a `tool_call` event, `resource` is the model's value only when it is one of the tool's
+  resources, else `""`; `from` and `to` are the model's own text without control or format
+  characters, at most 64 runes each. Arguments that are not such an object give empty fields.
+  Thinking text counts against the 10 MB response cap like answer text.
+
+  A backend answers a chat carrying tools for a model without tool support with `400` and
+  "… does not support tools" (`lacksToolSupport`). The round is then sent once more without
+  tools, with the system prompt for a chat without them, a `notools` event goes out, and the
+  model is remembered on the `ollamaClient` (at most 64 models; the memory starts over when
+  full, and forgets a model a later listing no longer has, except the configured one), so its
+  next chats send no tools from the start and emit `notools` right after `model`. Any other
+  `400` fails the chat as before.
+
+  The system prompt keeps its terse style. Beyond the analysis instructions it states the
+  markdown the panel renders, what `get_metrics` covers (or, without tools, that there is no
+  history tool), and last, so that the rest stays a reusable prompt prefix, the server time to
+  the minute with its zone. `get_metrics` answers CSV led by one comment line, as in
+  `# cpu 21:14:03–22:14:03 CET, step 36s` (the step from the query result, or the samples'
+  median gap); its timestamps are `15:04:05` when the range lies within one day (the comment
+  then names the date, if not today), `01-02 15:04:05` within the current year, and
+  `2006-01-02 15:04` otherwise.
 - `handleOllamaModels` — lists locally available models.
-- `handleOllamaContext` — returns the latest sample formatted for the model (`FormatForAI()`),
-  which the dashboard pins as a new session's context; a chart session sends the chart's CSV
-  instead.
+- `handleOllamaContext` — returns `{"context": "...", "ts": "..."}`: the latest sample formatted
+  for the model (`FormatForAI()`, which starts with the sample time, zone and host and names
+  the CPU core count), which the dashboard pins as a new session's context, and `ts`, that
+  sample's time in RFC 3339 (left out when there is no sample). A chart session sends the
+  chart's CSV instead.
 
 All three apply per-IP rate limiting and response-size caps; the chat path additionally caps the
 request body, forwards only clamped user and assistant turns, and runs only a model the backend
 lists (or the configured one). Every request to the backend goes through `ollamaTransport`,
 which connects only to loopback addresses, and follows no redirect. See
 [AI Assistant](../user/10-ai-assistant.md) and [Security Model](08-security.md).
+
+Their JSON errors before a stream starts (`aiError`) carry a stable `code` beside the `error`
+text, for the dashboard to show in its own language:
+
+| `code` | Status | `error` | Endpoints |
+|---|---|---|---|
+| `disabled` | 503 | `ollama is not enabled` | all three |
+| `rate_limited` | 429 | `rate limit exceeded` | all three (per-IP limiter) |
+| `busy` | 429 | `too many AI chats in progress` | chat |
+| `bad_request` | 400 | `invalid request body` | chat |
+| `backend_unavailable` | 502 | `AI backend unavailable` | models |
+
+Answers of the shared middleware (authentication, CSRF) and the `405` for another method carry
+no `code`.
 
 ## Templates, SRI & embedding
 

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"kula/internal/config"
@@ -66,7 +68,58 @@ const (
 	ollamaMaxToolCalls = 8
 	// ollamaToolMaxItems caps per-category rows in tool result CSV.
 	ollamaToolMaxItems = 10
+	// ollamaMaxToolless is the number of models remembered as having no tool
+	// support; the memory starts over when it is full.
+	ollamaMaxToolless = 64
+	// ollamaMaxEventField is the maximum length, in runes, of each bound a
+	// tool_call event names.
+	ollamaMaxEventField = 64
 )
+
+// Codes of the AI endpoints' JSON errors, beside the error text: the
+// dashboard tells the user what happened in its own language from them.
+const (
+	aiCodeDisabled           = "disabled"
+	aiCodeRateLimited        = "rate_limited"
+	aiCodeBusy               = "busy"
+	aiCodeBadRequest         = "bad_request"
+	aiCodeBackendUnavailable = "backend_unavailable"
+)
+
+// aiError answers an AI endpoint's request that fails before any stream
+// starts: jsonError's {"error": msg}, with a stable code beside it.
+func aiError(w http.ResponseWriter, code, msg string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	b, _ := json.Marshal(map[string]string{"error": msg, "code": code})
+	// Writes JSON (not text/html); the XSS rule doesn't apply.
+	// nosemgrep: no-direct-write-to-responsewriter
+	_, _ = w.Write(b)
+}
+
+// errToolsUnsupported marks a round the backend refused because the model
+// cannot call tools; streamChat runs it again without them.
+var errToolsUnsupported = errors.New("model does not support tools")
+
+// lacksToolSupport reports whether a backend's answer to a round refuses the
+// tools it was sent: Ollama answers 400 `{"error":"… does not support
+// tools"}`, its OpenAI-compatible API and others 400 with the same words.
+func lacksToolSupport(status int, body string) bool {
+	return status == http.StatusBadRequest && strings.Contains(strings.ToLower(body), "does not support tools")
+}
+
+// roundStatusError is the error of a round the backend answered with status
+// other than 200, with the start of its answer for the log. A refusal of the
+// tools sent wraps errToolsUnsupported.
+func roundStatusError(backend string, resp *http.Response, sentTools bool) error {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	body := strings.TrimSpace(string(b))
+	err := fmt.Errorf("%s returned %d%s: %s", backend, resp.StatusCode, redirectNotFollowed(resp), body)
+	if sentTools && lacksToolSupport(resp.StatusCode, body) {
+		return fmt.Errorf("%w: %w", errToolsUnsupported, err)
+	}
+	return err
+}
 
 // chatRateLimiter is a per-IP sliding-window rate limiter. The limit is set at
 // construction time so a single type can back both the chat endpoint and the
@@ -144,7 +197,30 @@ type ollamaClient struct {
 	detectedAPI string          // "ollama" or "openai"; empty until first successful probe
 	models      map[string]bool // the backend's last model listing; nil until one succeeds
 	modelsErr   string          // why the last listing failed, as logged; "" after a success
+	toolless    map[string]bool // models the backend refused tools for, ollamaMaxToolless at most
 	chats       chan struct{}   // one token per chat in progress, ollamaMaxChats at most
+}
+
+// lacksTools reports whether model is remembered as having no tool support.
+func (oc *ollamaClient) lacksTools(model string) bool {
+	oc.mu.RLock()
+	defer oc.mu.RUnlock()
+	return oc.toolless[model]
+}
+
+// rememberToolless records that model cannot call tools, so its next chats
+// carry none from the start. It reports whether model was new to the memory.
+func (oc *ollamaClient) rememberToolless(model string) bool {
+	oc.mu.Lock()
+	defer oc.mu.Unlock()
+	if oc.toolless[model] {
+		return false
+	}
+	if oc.toolless == nil || len(oc.toolless) >= ollamaMaxToolless {
+		oc.toolless = make(map[string]bool)
+	}
+	oc.toolless[model] = true
+	return true
 }
 
 // startChat takes a chat slot, or reports that all ollamaMaxChats are in use.
@@ -238,8 +314,12 @@ type openAIToolCallDelta struct {
 type openAIStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string                `json:"content"`
-			ToolCalls []openAIToolCallDelta `json:"tool_calls"`
+			Content string `json:"content"`
+			// A reasoning model's thinking: reasoning_content (DeepSeek, vLLM,
+			// llama.cpp), or reasoning (Ollama, OpenRouter).
+			ReasoningContent string                `json:"reasoning_content"`
+			Reasoning        string                `json:"reasoning"`
+			ToolCalls        []openAIToolCallDelta `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
@@ -264,6 +344,7 @@ type ollamaMessage struct {
 type ollamaChunk struct {
 	Message struct {
 		Content   string           `json:"content"`
+		Thinking  string           `json:"thinking"` // a thinking model's reasoning
 		ToolCalls []ollamaToolCall `json:"tool_calls"`
 	} `json:"message"`
 	Done bool `json:"done"`
@@ -359,19 +440,19 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.ollama == nil || !s.ollama.cfg.Enabled {
-		jsonError(w, "ollama is not enabled", http.StatusServiceUnavailable)
+		aiError(w, aiCodeDisabled, "ollama is not enabled", http.StatusServiceUnavailable)
 		return
 	}
 
 	ip := getClientIP(r, s.cfg.TrustProxy)
 	if s.ollamaLimiter != nil && !s.ollamaLimiter.Allow(ip) {
-		jsonError(w, "rate limit exceeded", http.StatusTooManyRequests)
+		aiError(w, aiCodeRateLimited, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, ollamaMaxBody)
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
+		aiError(w, aiCodeBadRequest, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -380,7 +461,7 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	// slot is taken once the request is read: a client sending its body
 	// slowly holds none.
 	if !s.ollama.startChat() {
-		jsonError(w, "too many AI chats in progress", http.StatusTooManyRequests)
+		aiError(w, aiCodeBusy, "too many AI chats in progress", http.StatusTooManyRequests)
 		return
 	}
 	defer s.ollama.endChat()
@@ -389,9 +470,34 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	if userPrompt == "" {
 		userPrompt = "Analyse the current server metrics and summarise the system health."
 	}
+	debugLog := s.cfg.Logging.Enabled && s.cfg.Logging.Level == "debug"
+
+	// The client may pick another model (the dashboard's model selector), but
+	// only one the backend lists: anything else runs on the configured model.
+	model := s.ollama.chatModel(r.Context(), req.Model, debugLog)
+
+	// Wire up tools when storage is available, unless the backend refused
+	// them for this model before.
+	toolless := s.ollama.lacksTools(model)
+	var tools []ollamaToolDef
+	var toolExecutor func(string, json.RawMessage) string
+	if s.store != nil && !toolless {
+		tools = []ollamaToolDef{metricsToolDef()}
+		toolExecutor = func(name string, args json.RawMessage) string {
+			switch name {
+			case "get_metrics":
+				return s.executeGetMetrics(args)
+			default:
+				return fmt.Sprintf("unknown tool: %s", name)
+			}
+		}
+	}
 
 	// Build message list: system prompt + prior turns + current user turn.
-	systemContent := s.buildOllamaSystemPrompt(req.Context, req.Lang)
+	// A round that finds the model cannot call tools is run again with the
+	// system prompt for a chat without them.
+	systemContent := s.buildOllamaSystemPrompt(req.Context, req.Lang, len(tools) > 0)
+	withoutTools := func() string { return s.buildOllamaSystemPrompt(req.Context, req.Lang, false) }
 	messages := []ollamaMessage{
 		{Role: "system", Content: systemContent},
 	}
@@ -404,30 +510,10 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	if last.Role != "user" || last.Content != userPrompt {
 		messages = append(messages, ollamaMessage{Role: "user", Content: userPrompt})
 	}
-	debugLog := s.cfg.Logging.Enabled && s.cfg.Logging.Level == "debug"
-
-	// The client may pick another model (the dashboard's model selector), but
-	// only one the backend lists: anything else runs on the configured model.
-	model := s.ollama.chatModel(r.Context(), req.Model, debugLog)
 
 	if debugLog {
-		log.Printf("[DEBUG] [Ollama] chat: ip=%s model=%s api=%s prompt_len=%d history=%d",
-			ip, model, s.ollama.effectiveAPIType(), utf8.RuneCountInString(userPrompt), len(history))
-	}
-
-	// Wire up tools when storage is available.
-	var tools []ollamaToolDef
-	var toolExecutor func(string, json.RawMessage) string
-	if s.store != nil {
-		tools = []ollamaToolDef{metricsToolDef()}
-		toolExecutor = func(name string, args json.RawMessage) string {
-			switch name {
-			case "get_metrics":
-				return s.executeGetMetrics(args)
-			default:
-				return fmt.Sprintf("unknown tool: %s", name)
-			}
-		}
+		log.Printf("[DEBUG] [Ollama] chat: ip=%s model=%s api=%s tools=%t toolless_remembered=%t prompt_len=%d history=%d",
+			ip, model, s.ollama.effectiveAPIType(), len(tools) > 0, toolless, utf8.RuneCountInString(userPrompt), len(history))
 	}
 
 	// Stream Ollama response back as SSE.
@@ -448,9 +534,15 @@ func (s *Server) handleOllamaChat(w http.ResponseWriter, r *http.Request) {
 	// Flush headers immediately so the browser opens the stream before Ollama
 	// responds. Without this, tool-call rounds that produce no early text
 	// content would leave the browser with no SSE connection established.
+	// The first event names the model the chat runs on, which may not be the
+	// one asked for; a model known to lack tools is said so at once.
+	writeSSE(w, "model", model)
+	if toolless && s.store != nil {
+		writeSSE(w, "notools", "")
+	}
 	flusher.Flush()
 
-	err := s.ollama.streamChat(r.Context(), model, messages, tools, toolExecutor, w, flusher, debugLog)
+	err := s.ollama.streamChat(r.Context(), model, messages, tools, toolExecutor, withoutTools, w, flusher, debugLog)
 	if err != nil {
 		// The detail (the backend's address, its answer) is for the operator;
 		// the client, who may be anyone with auth off, learns only that it failed.
@@ -482,12 +574,18 @@ func writeSSE(w io.Writer, event, payload string) {
 
 // streamChat runs the agentic tool-calling loop: it calls doStreamRound up to
 // ollamaMaxToolRounds times, executing any requested tools between rounds.
+//
+// A round the backend refuses because the model cannot call tools is run
+// once more without them, the model is remembered as tool-less, and the
+// client is sent a notools event. withoutTools, when not nil, gives the
+// system prompt (messages[0]) for that run.
 func (oc *ollamaClient) streamChat(
 	ctx context.Context,
 	model string,
 	messages []ollamaMessage,
 	tools []ollamaToolDef,
 	toolExecutor func(string, json.RawMessage) string,
+	withoutTools func() string,
 	w io.Writer,
 	flusher http.Flusher,
 	debugLog bool,
@@ -495,6 +593,22 @@ func (oc *ollamaClient) streamChat(
 	msgs := messages
 	for round := 0; round < ollamaMaxToolRounds; round++ {
 		toolCalls, err := oc.doStreamRound(ctx, model, msgs, tools, w, flusher, debugLog)
+		if errors.Is(err, errToolsUnsupported) {
+			if oc.rememberToolless(model) {
+				log.Printf("[Ollama] model %q does not support tools; its chats run without get_metrics", model)
+			}
+			if debugLog {
+				log.Printf("[DEBUG] [Ollama] %q; retrying round %d without tools", err.Error(), round+1)
+			}
+			writeSSE(w, "notools", "")
+			flusher.Flush()
+			tools = nil
+			if withoutTools != nil && len(msgs) > 0 && msgs[0].Role == "system" {
+				msgs = slices.Clone(msgs)
+				msgs[0].Content = withoutTools()
+			}
+			toolCalls, err = oc.doStreamRound(ctx, model, msgs, nil, w, flusher, debugLog)
+		}
 		if err != nil {
 			return err
 		}
@@ -502,15 +616,14 @@ func (oc *ollamaClient) streamChat(
 			break
 		}
 
-		// Notify the client that tool execution is in progress.
-		writeSSE(w, "tool_call", "")
-		flusher.Flush()
-
 		// Append the assistant's tool-call turn (no text content).
 		msgs = append(msgs, ollamaMessage{Role: "assistant", ToolCalls: toolCalls})
 
-		// Execute each requested tool and append the results.
+		// Execute each requested tool and append the results, telling the
+		// client before each what it fetches.
 		for _, tc := range toolCalls {
+			writeSSE(w, "tool_call", toolCallEvent(tc))
+			flusher.Flush()
 			result := toolExecutor(tc.Function.Name, tc.Function.Arguments)
 			if debugLog {
 				log.Printf("[DEBUG] [Ollama] tool %q result (%d bytes)", tc.Function.Name, len(result))
@@ -523,6 +636,40 @@ func (oc *ollamaClient) streamChat(
 		}
 	}
 	return nil
+}
+
+// toolCallEvent is the data of a tool_call event, a JSON object of the
+// resource and bounds a call asks for, which the dashboard shows. The
+// resource is named only when get_metrics offers it; the bounds are the
+// model's text, without control or format characters and clamped. Arguments
+// that are no such object give empty fields.
+func toolCallEvent(tc ollamaToolCall) string {
+	var args getMetricsArgs
+	if json.Unmarshal(tc.Function.Arguments, &args) != nil {
+		args = getMetricsArgs{}
+	}
+	if !slices.Contains(metricsToolResources, args.Resource) {
+		args.Resource = ""
+	}
+	args.From = eventField(args.From)
+	args.To = eventField(args.To)
+	b, _ := json.Marshal(args) // strings always encode
+	return string(b)
+}
+
+// eventField drops control and format characters (bidi overrides, zero
+// widths) from s and keeps at most ollamaMaxEventField runes.
+func eventField(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+	if utf8.RuneCountInString(s) > ollamaMaxEventField {
+		s = string([]rune(s)[:ollamaMaxEventField])
+	}
+	return s
 }
 
 // doStreamRound performs one HTTP round-trip to the configured AI backend, streaming
@@ -580,14 +727,13 @@ func (oc *ollamaClient) doStreamRound(
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("ollama returned %d%s: %s", resp.StatusCode, redirectNotFollowed(resp), strings.TrimSpace(string(b)))
+		return nil, roundStatusError("ollama", resp, len(tools) > 0)
 	}
 
 	scanner := bufio.NewScanner(io.LimitReader(resp.Body, ollamaMaxResponse)) // [M6]
 	scanner.Buffer(make([]byte, 64*1024), 64*1024)
 
-	var fullResponse strings.Builder
+	var fullResponse, fullThinking strings.Builder
 	var toolCalls []ollamaToolCall
 
 	for scanner.Scan() {
@@ -617,6 +763,13 @@ func (oc *ollamaClient) doStreamRound(
 			calls = calls[:room]
 		}
 		toolCalls = append(toolCalls, calls...)
+		if chunk.Message.Thinking != "" {
+			if debugLog {
+				fullThinking.WriteString(chunk.Message.Thinking)
+			}
+			writeSSE(w, "thinking", chunk.Message.Thinking)
+			flusher.Flush()
+		}
 		if chunk.Message.Content != "" {
 			if debugLog {
 				fullResponse.WriteString(chunk.Message.Content)
@@ -629,6 +782,9 @@ func (oc *ollamaClient) doStreamRound(
 		}
 	}
 
+	if debugLog && fullThinking.Len() > 0 {
+		log.Printf("[DEBUG] [Ollama] Thinking:\n%s", fullThinking.String())
+	}
 	if debugLog && fullResponse.Len() > 0 {
 		log.Printf("[DEBUG] [Ollama] Output response:\n%s", fullResponse.String())
 	}
@@ -687,8 +843,7 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("api returned %d%s: %s", resp.StatusCode, redirectNotFollowed(resp), strings.TrimSpace(string(b)))
+		return nil, roundStatusError("api", resp, len(tools) > 0)
 	}
 
 	scanner := bufio.NewScanner(io.LimitReader(resp.Body, ollamaMaxResponse))
@@ -703,7 +858,7 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 	accumMap := make(map[int]*toolCallAccum)
 	dropped := 0 // fragments of calls over the per-round cap
 
-	var fullResponse strings.Builder
+	var fullResponse, fullThinking strings.Builder
 	var finishReason string
 
 	for scanner.Scan() {
@@ -757,6 +912,17 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 			}
 			a.args.WriteString(tc.Function.Arguments)
 		}
+		thinking := choice.Delta.ReasoningContent
+		if thinking == "" {
+			thinking = choice.Delta.Reasoning
+		}
+		if thinking != "" {
+			if debugLog {
+				fullThinking.WriteString(thinking)
+			}
+			writeSSE(w, "thinking", thinking)
+			flusher.Flush()
+		}
 		if choice.Delta.Content != "" {
 			if debugLog {
 				fullResponse.WriteString(choice.Delta.Content)
@@ -766,6 +932,9 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 		}
 	}
 
+	if debugLog && fullThinking.Len() > 0 {
+		log.Printf("[DEBUG] [Ollama/OpenAI] thinking:\n%s", fullThinking.String())
+	}
 	if debugLog && fullResponse.Len() > 0 {
 		log.Printf("[DEBUG] [Ollama/OpenAI] output response:\n%s", fullResponse.String())
 	}
@@ -804,19 +973,19 @@ func (oc *ollamaClient) doStreamRoundOpenAI(
 // handleOllamaModels returns the list of models available in the Ollama instance.
 func (s *Server) handleOllamaModels(w http.ResponseWriter, r *http.Request) {
 	if s.ollama == nil || !s.ollama.cfg.Enabled {
-		jsonError(w, "ollama is not enabled", http.StatusServiceUnavailable)
+		aiError(w, aiCodeDisabled, "ollama is not enabled", http.StatusServiceUnavailable)
 		return
 	}
 	ip := getClientIP(r, s.cfg.TrustProxy)
 	if s.ollamaMetaLim != nil && !s.ollamaMetaLim.Allow(ip) {
-		jsonError(w, "rate limit exceeded", http.StatusTooManyRequests)
+		aiError(w, aiCodeRateLimited, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
 	debugLog := s.cfg.Logging.Enabled && s.cfg.Logging.Level == "debug"
 	models, err := s.ollama.fetchModels(r.Context(), debugLog)
 	if err != nil {
 		s.ollama.logModelsError(err)
-		jsonError(w, "AI backend unavailable", http.StatusBadGateway)
+		aiError(w, aiCodeBackendUnavailable, "AI backend unavailable", http.StatusBadGateway)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -870,13 +1039,21 @@ func (oc *ollamaClient) fetchModels(ctx context.Context, debugLog bool) ([]strin
 }
 
 // setModelsLocked records the backend's model listing, the models a chat may
-// ask for. Caller must hold oc.mu for writing.
+// ask for, and forgets that a model lacks tools once the listing no longer
+// has it (it may come back as another model of that name). The configured
+// model is kept: a chat may run on it under a name the listing spells
+// otherwise ("llama3" for "llama3:latest"). Caller must hold oc.mu for writing.
 func (oc *ollamaClient) setModelsLocked(names []string) {
 	oc.models = make(map[string]bool, len(names))
 	for _, name := range names {
 		oc.models[name] = true
 	}
 	oc.modelsErr = ""
+	for name := range oc.toolless {
+		if !oc.models[name] && name != oc.cfg.Model {
+			delete(oc.toolless, name)
+		}
+	}
 }
 
 // logModelsError logs why the model list is unavailable, escaped, once until
@@ -1030,8 +1207,9 @@ func (oc *ollamaClient) fetchModelsOpenAI(ctx context.Context, debugLog bool) ([
 // ctx is either "current" (live QueryLatest), "chart:…" (CSV data), or a
 // pre-formatted metrics snapshot string cached by the frontend. Both come
 // from the client: ctx is clamped to ollamaMaxContext runes, and a lang that
-// is not a language tag is ignored.
-func (s *Server) buildOllamaSystemPrompt(ctx, lang string) string {
+// is not a language tag is ignored. withTools tells the model whether it has
+// the get_metrics tool, and what that does not cover.
+func (s *Server) buildOllamaSystemPrompt(ctx, lang string, withTools bool) string {
 	ctx = clampText(ctx, ollamaMaxContext)
 	if !ollamaLangRe.MatchString(lang) {
 		lang = ""
@@ -1043,6 +1221,13 @@ func (s *Server) buildOllamaSystemPrompt(ctx, lang string) string {
 	sb.WriteString("Be concise and keep it brief.\n")
 	sb.WriteString("Use ✅ ok ⚠️ warn 🚨 crit\n")
 	sb.WriteString("No look for problems if no any.\n")
+	sb.WriteString("Answer in markdown: **bold**, *italic*, `code`, ``` code blocks, lists, tables, # headings. No links, no images, no HTML.\n")
+	if withTools {
+		fmt.Fprintf(&sb, "Tool get_metrics give history only for %s. No history of apps, containers, sensors.\n",
+			strings.Join(metricsToolResources, ", "))
+	} else {
+		sb.WriteString("No history tool. Answer only from snapshot or chart data given.\n")
+	}
 	if lang != "" && lang != "en" {
 		fmt.Fprintf(&sb, "Respond in the user's language: %s.\n", lang)
 	}
@@ -1072,34 +1257,52 @@ func (s *Server) buildOllamaSystemPrompt(ctx, lang string) string {
 		sb.WriteString("\n")
 	}
 
+	// The time comes last, and to the minute: a backend reuses its work on
+	// the part of a prompt that did not change since the previous turn, and
+	// the time is the only line here that changes within a session.
+	fmt.Fprintf(&sb, "\nServer time now: %s.\n", time.Now().Format(ollamaPromptTimeLayout))
 	return sb.String()
 }
+
+// ollamaPromptTimeLayout is collector.AITimeLayout to the minute.
+const ollamaPromptTimeLayout = "2006-01-02 15:04 MST (UTC-07:00)"
 
 // handleOllamaContext returns the current metrics formatted for use as a
 // session context snapshot. The frontend calls this once when a session starts
 // and re-sends the result as the "context" field on every subsequent turn,
 // so the model always sees the same snapshot rather than stale-vs-new values.
+// ts is the time of the sample the snapshot was made from, so the dashboard
+// can show its age; it is left out when there is no sample.
 func (s *Server) handleOllamaContext(w http.ResponseWriter, r *http.Request) {
 	if s.ollama == nil || !s.ollama.cfg.Enabled {
-		jsonError(w, "ollama is not enabled", http.StatusServiceUnavailable)
+		aiError(w, aiCodeDisabled, "ollama is not enabled", http.StatusServiceUnavailable)
 		return
 	}
 	ip := getClientIP(r, s.cfg.TrustProxy)
 	if s.ollamaMetaLim != nil && !s.ollamaMetaLim.Allow(ip) {
-		jsonError(w, "rate limit exceeded", http.StatusTooManyRequests)
+		aiError(w, aiCodeRateLimited, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
-	var contextText string
+	var out struct {
+		Context string `json:"context"`
+		TS      string `json:"ts,omitempty"`
+	}
 	if s.store != nil {
 		if agg, _ := s.store.QueryLatest(); agg != nil && agg.Data != nil {
-			contextText = agg.Data.FormatForAI()
+			out.Context = agg.Data.FormatForAI()
+			if !agg.Timestamp.IsZero() {
+				out.TS = agg.Timestamp.Local().Format(time.RFC3339)
+			}
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"context": contextText})
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 // ---- Tool definitions --------------------------------------------------------
+
+// metricsToolResources are the resources get_metrics offers.
+var metricsToolResources = []string{"cpu", "memory", "swap", "load", "network", "disk_io", "disk_space", "gpu"}
 
 // metricsToolDef returns the get_metrics tool schema.
 func metricsToolDef() ollamaToolDef {
@@ -1114,7 +1317,7 @@ func metricsToolDef() ollamaToolDef {
 					"resource": {
 						Type:        "string",
 						Description: "The resource type to fetch.",
-						Enum:        []string{"cpu", "memory", "swap", "load", "network", "disk_io", "disk_space", "gpu"},
+						Enum:        slices.Clone(metricsToolResources),
 					},
 					"from": {
 						Type:        "string",
@@ -1144,6 +1347,9 @@ func (s *Server) executeGetMetrics(argsJSON json.RawMessage) string {
 	var args getMetricsArgs
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
 		return fmt.Sprintf("error: invalid arguments: %v", err)
+	}
+	if !slices.Contains(metricsToolResources, args.Resource) {
+		return fmt.Sprintf("unknown resource type: %s\n", args.Resource)
 	}
 
 	now := time.Now()
@@ -1191,13 +1397,28 @@ func (s *Server) executeGetMetrics(argsJSON json.RawMessage) string {
 		return "no data available for the requested time range"
 	}
 
-	return formatMetricsData(args.Resource, result.Samples)
+	return formatMetricsData(args.Resource, from, to, result.Resolution, result.Samples)
 }
 
 // formatMetricsData converts storage samples for a given resource into a CSV
-// string suitable for LLM consumption.
-func formatMetricsData(resource string, samples []*storage.AggregatedSample) string {
+// string suitable for LLM consumption. A comment line names the resource,
+// the range [from, to] and the step between samples first: step is the
+// query's, or the samples' median gap when it is "". Timestamps are local,
+// with as much of the date as the range needs to be read unambiguously.
+func formatMetricsData(resource string, from, to time.Time, step string, samples []*storage.AggregatedSample) string {
+	if !slices.Contains(metricsToolResources, resource) {
+		return fmt.Sprintf("unknown resource type: %s\n", resource)
+	}
+	now := time.Now()
+	from, to = from.In(now.Location()), to.In(now.Location())
+	layout := metricsTimeLayout(from, to, now)
+	stamp := func(s *storage.AggregatedSample) string { return s.Timestamp.In(now.Location()).Format(layout) }
+	if step == "" {
+		step = medianGap(samples)
+	}
+
 	var sb strings.Builder
+	sb.WriteString(metricsHeader(resource, from, to, now, layout, step))
 	switch resource {
 	case "cpu":
 		sb.WriteString("Time,CPU%\n")
@@ -1205,7 +1426,7 @@ func formatMetricsData(resource string, samples []*storage.AggregatedSample) str
 			if s.Data == nil {
 				continue
 			}
-			fmt.Fprintf(&sb, "%s,%.1f\n", s.Timestamp.Format("15:04:05"), s.Data.CPU.Total.Usage)
+			fmt.Fprintf(&sb, "%s,%.1f\n", stamp(s), s.Data.CPU.Total.Usage)
 		}
 	case "memory":
 		sb.WriteString("Time,Used%,Used_GiB,Total_GiB\n")
@@ -1214,7 +1435,7 @@ func formatMetricsData(resource string, samples []*storage.AggregatedSample) str
 				continue
 			}
 			fmt.Fprintf(&sb, "%s,%.1f,%.2f,%.2f\n",
-				s.Timestamp.Format("15:04:05"),
+				stamp(s),
 				s.Data.Memory.UsedPercent,
 				float64(s.Data.Memory.Used)/(1<<30),
 				float64(s.Data.Memory.Total)/(1<<30))
@@ -1225,7 +1446,7 @@ func formatMetricsData(resource string, samples []*storage.AggregatedSample) str
 			if s.Data == nil {
 				continue
 			}
-			fmt.Fprintf(&sb, "%s,%.1f\n", s.Timestamp.Format("15:04:05"), s.Data.Swap.UsedPercent)
+			fmt.Fprintf(&sb, "%s,%.1f\n", stamp(s), s.Data.Swap.UsedPercent)
 		}
 	case "load":
 		sb.WriteString("Time,Load1,Load5,Load15\n")
@@ -1234,7 +1455,7 @@ func formatMetricsData(resource string, samples []*storage.AggregatedSample) str
 				continue
 			}
 			fmt.Fprintf(&sb, "%s,%.2f,%.2f,%.2f\n",
-				s.Timestamp.Format("15:04:05"),
+				stamp(s),
 				s.Data.LoadAvg.Load1, s.Data.LoadAvg.Load5, s.Data.LoadAvg.Load15)
 		}
 	case "network":
@@ -1249,7 +1470,7 @@ func formatMetricsData(resource string, samples []*storage.AggregatedSample) str
 			}
 			for _, iface := range s.Data.Network.Interfaces[:shown] {
 				fmt.Fprintf(&sb, "%s,%s,%.2f,%.2f\n",
-					s.Timestamp.Format("15:04:05"),
+					stamp(s),
 					iface.Name, iface.RxMbps, iface.TxMbps)
 			}
 		}
@@ -1265,7 +1486,7 @@ func formatMetricsData(resource string, samples []*storage.AggregatedSample) str
 			}
 			for _, d := range s.Data.Disks.Devices[:shown] {
 				fmt.Fprintf(&sb, "%s,%s,%.2f,%.2f,%.1f\n",
-					s.Timestamp.Format("15:04:05"),
+					stamp(s),
 					d.Name, d.ReadBytesPS/1e6, d.WriteBytesPS/1e6, d.Utilization)
 			}
 		}
@@ -1281,7 +1502,7 @@ func formatMetricsData(resource string, samples []*storage.AggregatedSample) str
 			}
 			for _, fs := range s.Data.Disks.FileSystems[:shown] {
 				fmt.Fprintf(&sb, "%s,%s,%.1f,%.2f,%.2f\n",
-					s.Timestamp.Format("15:04:05"),
+					stamp(s),
 					fs.MountPoint, fs.UsedPct,
 					float64(fs.Used)/(1<<30),
 					float64(fs.Total)/(1<<30))
@@ -1299,7 +1520,7 @@ func formatMetricsData(resource string, samples []*storage.AggregatedSample) str
 			}
 			for _, g := range s.Data.GPU[:shown] {
 				fmt.Fprintf(&sb, "%s,%s,%.1f,%.1f\n",
-					s.Timestamp.Format("15:04:05"),
+					stamp(s),
 					g.Name, g.LoadPct, g.VRAMUsedPct)
 			}
 		}
@@ -1307,4 +1528,85 @@ func formatMetricsData(resource string, samples []*storage.AggregatedSample) str
 		return fmt.Sprintf("unknown resource type: %s\n", resource)
 	}
 	return sb.String()
+}
+
+// Timestamp layouts of a get_metrics answer, from the most to the least
+// precise: a range is at most 31 days, so the date matters more than seconds.
+const (
+	metricsLayoutTime = "15:04:05"
+	metricsLayoutDate = "01-02 15:04:05"
+	metricsLayoutYear = "2006-01-02 15:04"
+)
+
+// metricsTimeLayout is the timestamp layout for [from, to]: the time of day
+// when both fall on one day, the date too when they fall in the year of now,
+// and the year too otherwise. All three are in the same location.
+func metricsTimeLayout(from, to, now time.Time) string {
+	switch {
+	case sameDay(from, to):
+		return metricsLayoutTime
+	case from.Year() == to.Year() && to.Year() == now.Year():
+		return metricsLayoutDate
+	default:
+		return metricsLayoutYear
+	}
+}
+
+// metricsHeader is the comment line a get_metrics answer starts with, as in
+// "# cpu 21:14:03–22:14:03 CET, step 36s". A range of one day other than
+// today names its date, which its timestamps leave out.
+func metricsHeader(resource string, from, to, now time.Time, layout, step string) string {
+	var sb strings.Builder
+	sb.WriteString("# " + resource + " ")
+	if layout == metricsLayoutTime && !sameDay(to, now) {
+		sb.WriteString(from.Format("2006-01-02 "))
+	}
+	sb.WriteString(from.Format(layout))
+	if fromZone, toZone := from.Format("MST"), to.Format("MST"); fromZone != toZone {
+		sb.WriteString(" " + fromZone) // the range spans a DST change
+	}
+	sb.WriteString("–" + to.Format(layout) + " " + to.Format("MST"))
+	if step != "" {
+		sb.WriteString(", step " + step)
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// sameDay reports whether a and b fall on one calendar day of a's location.
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.In(a.Location()).Date()
+	return ay == by && am == bm && ad == bd
+}
+
+// medianGap is the median time between consecutive samples, "" for fewer
+// than two.
+func medianGap(samples []*storage.AggregatedSample) string {
+	var gaps []time.Duration
+	for i := 1; i < len(samples); i++ {
+		if samples[i] == nil || samples[i-1] == nil {
+			continue
+		}
+		if d := samples[i].Timestamp.Sub(samples[i-1].Timestamp); d > 0 {
+			gaps = append(gaps, d)
+		}
+	}
+	if len(gaps) == 0 {
+		return ""
+	}
+	slices.Sort(gaps)
+	gap := gaps[len(gaps)/2]
+	if gap < time.Second {
+		return gap.String()
+	}
+	// "36h", not "36h0m0s", as the query's own steps are written.
+	s := gap.Round(time.Second).String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }

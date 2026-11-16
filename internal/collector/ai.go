@@ -3,28 +3,48 @@ package collector
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // aiMaxItems is the maximum number of entries shown per category in FormatForAI.
 const aiMaxItems = 10
 
+// AITimeLayout is how a time is told to the model: with the zone's
+// abbreviation and its offset, since an abbreviation alone can be ambiguous.
+const AITimeLayout = "2006-01-02 15:04:05 MST (UTC-07:00)"
+
 // FormatForAI formats the current sample into a concise text block
 // for the LLM system prompt.
 func (s *Sample) FormatForAI() string {
+	return s.formatForAI(time.Local)
+}
+
+// formatForAI is FormatForAI with the sample time told in loc. A session
+// pins its snapshot, so the time tells the model how old it is.
+func (s *Sample) formatForAI(loc *time.Location) string {
 	if s == nil {
 		return "No metric data available yet. Ask the user to wait for the first sample.\n"
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Current server metrics snapshot:\n")
+	if !s.Timestamp.IsZero() {
+		fmt.Fprintf(&sb, "Sample time: %s\n", s.Timestamp.In(loc).Format(AITimeLayout))
+	}
+	if s.System.Hostname != "" {
+		fmt.Fprintf(&sb, "Host: %s\n", s.System.Hostname)
+	}
+	fmt.Fprintf(&sb, "Server metrics snapshot:\n")
 	fmt.Fprintf(&sb, "  CPU usage:    %.1f%%\n", s.CPU.Total.Usage)
+	if s.CPU.NumCores > 0 {
+		fmt.Fprintf(&sb, "  CPU cores:    %d logical\n", s.CPU.NumCores)
+	}
+	fmt.Fprintf(&sb, "  Load avg:     %.2f / %.2f / %.2f (1m/5m/15m)\n",
+		s.LoadAvg.Load1, s.LoadAvg.Load5, s.LoadAvg.Load15)
 	fmt.Fprintf(&sb, "  Memory:       %.1f%% used (%s / %s)\n",
 		s.Memory.UsedPercent, fmtBytesAI(s.Memory.Used), fmtBytesAI(s.Memory.Total))
 	if s.Swap.Total > 0 {
 		fmt.Fprintf(&sb, "  Swap:         %.1f%% used\n", s.Swap.UsedPercent)
 	}
-	fmt.Fprintf(&sb, "  Load avg:     %.2f / %.2f / %.2f (1m/5m/15m)\n",
-		s.LoadAvg.Load1, s.LoadAvg.Load5, s.LoadAvg.Load15)
 	fmt.Fprintf(&sb, "  Processes:    %d total, %d running, %d zombie\n",
 		s.Process.Total, s.Process.Running, s.Process.Zombie)
 

@@ -54,6 +54,8 @@
     <link rel="modulepreload" href="js/app/rearrange.js" integrity="{{sri `js/app/rearrange.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/split.js" integrity="{{sri `js/app/split.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/ai-stream.js" integrity="{{sri `js/app/ai-stream.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/ai-chart-csv.js" integrity="{{sri `js/app/ai-chart-csv.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
+    <link rel="modulepreload" href="js/app/ai-markdown.js" integrity="{{sri `js/app/ai-markdown.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/ollama.js" integrity="{{sri `js/app/ollama.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
     <link rel="modulepreload" href="js/app/main.js" integrity="{{sri `js/app/main.js`}}" nonce="{{.Nonce}}" crossorigin="anonymous">
 
@@ -132,7 +134,7 @@
                 <!-- Focus mode -->
                 <button id="btn-focus" class="btn-icon" data-i18n-title="focus_mode" title="Focus mode">🎯</button>
                 <!-- AI Assistant -->
-                <button id="btn-ai" class="btn-icon hidden" data-i18n-title="ai_assistant" title="AI Assistant">🤖</button>
+                <button id="btn-ai" class="btn-icon hidden" data-i18n-title="ai_assistant" data-i18n-aria-label="ai_assistant" title="AI Assistant" aria-label="AI Assistant" aria-controls="ai-panel" aria-expanded="false">🤖</button>
                 <!-- Game easter egg -->
                 {{if .EasterEgg}}<a href="game.html" class="btn-icon btn-game" data-i18n-title="space_invaders" title="Space Invaders"
                     id="btn-game">🎮</a>{{end}}
@@ -672,32 +674,49 @@
     </div>
 
     <!-- AI Assistant Panel -->
-    <div id="ai-panel" class="ai-panel hidden">
+    <div id="ai-panel" class="ai-panel hidden" role="dialog" aria-modal="false" aria-labelledby="ai-panel-name">
         <div class="ai-panel-header">
             <div class="ai-panel-title">
-                <span class="ai-panel-icon">🤖</span>
-                <select id="ai-model-select" class="ai-model-select"></select>
+                <span class="ai-panel-icon" aria-hidden="true">🤖</span>
+                <span id="ai-panel-name" class="ai-panel-name" data-i18n="ai_assistant">AI Assistant</span>
+                <select id="ai-model-select" class="ai-model-select" data-i18n-title="ai_model" data-i18n-aria-label="ai_model" title="Model" aria-label="Model"></select>
             </div>
             <div class="ai-panel-actions">
-                <button id="btn-ai-clear" class="btn-ai-action" data-i18n-title="ai_clear_conversation" title="Clear conversation">🗑</button>
-                <button id="btn-ai-close" class="btn-ai-action" data-i18n-title="ai_close" title="Close">✕</button>
+                <button type="button" id="btn-ai-close" class="btn-ai-action" data-i18n-title="ai_close" data-i18n-aria-label="ai_close" title="Close" aria-label="Close"><span aria-hidden="true">✕</span></button>
             </div>
         </div>
         <div class="ai-sessions-bar">
-            <select id="ai-session-select" class="ai-session-select" data-i18n-title="ai_switch_session" title="Switch session"></select>
-            <button id="btn-ai-session-new" class="btn-ai-icon" data-i18n-title="ai_new_session" title="New session">+</button>
-            <button id="btn-ai-session-delete" class="btn-ai-icon" data-i18n-title="ai_delete_session" title="Delete session">−</button>
+            <select id="ai-session-select" class="ai-session-select" data-i18n-title="ai_switch_session" data-i18n-aria-label="ai_switch_session" title="Switch session" aria-label="Switch session"></select>
+            <button type="button" id="btn-ai-session-new" class="btn-ai-icon" data-i18n-title="ai_new_session" data-i18n-aria-label="ai_new_session" title="New session" aria-label="New session"><span aria-hidden="true">+</span></button>
+            <button type="button" id="btn-ai-session-delete" class="btn-ai-icon" data-i18n-title="ai_delete_session" data-i18n-aria-label="ai_delete_session" title="Delete session" aria-label="Delete session"><span aria-hidden="true">−</span></button>
         </div>
-        <div id="ai-status-banner" class="ai-status-banner hidden">
-            <span class="ai-status-spinner"></span>
-            <span data-i18n="ai_unavailable">AI assistant unavailable, retrying…</span>
+        <div id="ai-session-confirm" class="ai-session-confirm hidden" role="group" aria-labelledby="ai-session-confirm-text">
+            <span id="ai-session-confirm-text" data-i18n="ai_confirm_delete_session">Delete this session?</span>
+            <button type="button" id="btn-ai-delete-confirm" class="btn-ai-text btn-ai-danger" data-i18n="ai_delete">Delete</button>
+            <button type="button" id="btn-ai-delete-cancel" class="btn-ai-text" data-i18n="cancel">Cancel</button>
         </div>
-        <div id="ai-messages" class="ai-messages"></div>
+        <div id="ai-context-bar" class="ai-context-bar hidden">
+            <span id="ai-context-text" class="ai-context-text"></span>
+            <button type="button" id="btn-ai-context-action" class="btn-ai-text hidden"></button>
+        </div>
+        <div id="ai-status-banner" class="ai-status-banner hidden" role="status">
+            <span class="ai-status-spinner" aria-hidden="true"></span>
+            <span id="ai-status-text" class="ai-status-text"></span>
+            <a id="ai-status-help" class="ai-status-help" target="_blank" rel="noopener noreferrer"></a>
+        </div>
+        <div class="ai-messages-wrap">
+            <div id="ai-messages" class="ai-messages" role="log" aria-busy="false" tabindex="0" data-i18n-aria-label="ai_conversation" aria-label="Conversation"></div>
+            <button type="button" id="btn-ai-latest" class="btn-ai-latest hidden" data-i18n="ai_jump_latest">↓ Latest</button>
+        </div>
         <div class="ai-input-row">
-            <textarea id="ai-input" class="ai-input" data-i18n-placeholder="ai_input_placeholder" placeholder="Ask about the metrics… (Enter to send)" rows="2" maxlength="2000"></textarea>
-            <button id="btn-ai-send" class="btn-ai-send" data-i18n="ai_analyse">Analyse</button>
+            <textarea id="ai-input" class="ai-input" data-i18n-placeholder="ai_input_hint" placeholder="Ask about the metrics… (Enter to send, Shift+Enter for a new line)" data-i18n-aria-label="ai_question" aria-label="Question" rows="2" maxlength="2000"></textarea>
+            <button type="button" id="btn-ai-send" class="btn-ai-send">Send</button>
         </div>
-        <div id="ai-resize-grip" data-i18n-title="ai_resize" title="Resize"></div>
+        <div class="ai-input-footer">
+            <span class="ai-disclaimer" data-i18n="ai_disclaimer">Answers come from a local model and can be wrong. Conversations last until the tab is closed.</span>
+            <span id="ai-input-counter" class="ai-input-counter hidden"></span>
+        </div>
+        <div id="ai-resize-grip" data-i18n-title="ai_resize" title="Resize" aria-hidden="true"></div>
     </div>
 
     <!-- Main Entry Point -->
