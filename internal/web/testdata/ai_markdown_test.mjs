@@ -38,7 +38,10 @@ const ATTRIBUTES = {
     type: (v) => v === 'button',
     open: (v) => v === undefined,
 };
-const TAG = /<(\/?)([a-z]+)((?: [a-z-]+(?:="[^"]*")?)*)>/y;
+// What lies between a tag's < and >. The tag's end is found as the next >:
+// the renderer escapes every > in text and attribute values, so a value
+// holding one leaves a quote open here and fails.
+const TAG_BODY = /^(\/?)([a-z]+)((?: [a-z-]+(?:="[^"]*")?)*)$/;
 const ATTRIBUTE = / ([a-z-]+)(?:="([^"]*)")?/g;
 
 /**
@@ -58,8 +61,8 @@ function assertMarkup(html) {
             assert.doesNotMatch(text, /[\uE000\uE001]/, `a placeholder is left in ${JSON.stringify(text.slice(0, 80))}`);
         }
         if (lt === -1) break;
-        TAG.lastIndex = lt;
-        const m = TAG.exec(html);
+        const gt = html.indexOf('>', lt);
+        const m = gt === -1 ? null : TAG_BODY.exec(html.slice(lt + 1, gt));
         assert.ok(m, `markup the renderer does not write: ${JSON.stringify(html.slice(lt, lt + 80))}`);
         const [, closing, name, attributes] = m;
         assert.ok(TAGS.has(name), `element <${name}>`);
@@ -72,7 +75,7 @@ function assertMarkup(html) {
             }
             if (!VOID.has(name)) open.push(name);
         }
-        at = TAG.lastIndex;
+        at = gt + 1;
     }
     assert.deepEqual(open, [], 'elements left open');
 }
@@ -91,6 +94,20 @@ function check(name, fn) {
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" };
 const decode = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e) => ENTITIES[e]);
+
+/** textOf returns the text of markup assertMarkup accepted: what lies between its tags, decoded. */
+function textOf(html) {
+    let text = '';
+    let at = 0;
+    while (at < html.length) {
+        const lt = html.indexOf('<', at);
+        const gt = lt === -1 ? -1 : html.indexOf('>', lt);
+        text += html.slice(at, lt === -1 ? html.length : lt);
+        if (gt === -1) break;
+        at = gt + 1;
+    }
+    return decode(text);
+}
 
 /** codeBlocks returns each fenced block's language and its text as the copy button copies it. */
 const codeBlocks = (html) => [...html.matchAll(/<pre dir="ltr"><code(?: class="language-([^"]+)")?>([^<]*)<\/code><\/pre>/g)]
@@ -368,7 +385,7 @@ check('HTML in the answer is escaped wherever it appears', (render) => {
             assert.doesNotMatch(html, /<(?:script|img|svg|style|a|!--)[\s>/]|\son\w+\s*=\s*"/i, text);
         }
         // The payload is shown as written.
-        assert.ok(decode(render(payload).replace(/<[^>]*>/g, '')).includes(payload), payload);
+        assert.ok(textOf(render(payload)).includes(payload), payload);
         // A code block holds the payload exactly, ready to copy.
         assert.deepEqual(codeBlocks(render(fenced('html', payload))), [{ language: 'html', text: payload }]);
     }
