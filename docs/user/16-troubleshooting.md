@@ -111,4 +111,15 @@ Change `web.port` / `KULA_PORT`, or switch to a Unix socket with `web.unix_socke
 3. `curl localhost:27960/health` — confirm the server is up.
 4. Raise `web.logging.level` to `debug` and watch the logs.
 5. Run [`kula-scan`](../dev/13-kula-scan.md) against the instance to verify the security
-   posture of your deployment.
+   posture of your deployment. The packages, tarballs and Docker image do not include it: each
+   release ships it per architecture as `kula-scan-linux-<version>-<arch>.gz` (`amd64`,
+   `arm64`, `riscv64`), listed in the release's `CHECKSUMS.sha256.txt`. Take the release that
+   matches `kula --version`:
+
+   ```bash
+   wget https://github.com/c0m4r/kula/releases/download/<version>/kula-scan-linux-<version>-amd64.gz
+   wget https://github.com/c0m4r/kula/releases/download/<version>/CHECKSUMS.sha256.txt
+   sha256sum -c --ignore-missing CHECKSUMS.sha256.txt && gunzip -c kula-scan-linux-<version>-amd64.gz > kula-scan
+   chmod +x kula-scan
+   ./kula-scan http://localhost:27960
+   ```
