@@ -255,6 +255,113 @@ func TestHostCheckSkipsOverAUnixSocket(t *testing.T) {
 	}
 }
 
+// ---- the scanner's own Host name refused ---------------------------------------
+
+// refusingKula serves Kula with auth off as buildHandler stacks it: the
+// security headers are set before the host check refuses a request.
+func refusingKula() http.Handler {
+	return secureHeaders(withHostCheck(authOff(), authOffGuard))
+}
+
+// scanUnderForeignName scans handler by its address under the name
+// kula.example.com, which Kula's host check refuses.
+func scanUnderForeignName(t *testing.T, handler http.Handler, args ...string) (int, Report, string) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	address := ts.Listener.Addr().String()
+	_, port, _ := net.SplitHostPort(address)
+	all := append([]string{"-json", "-connect", address}, args...)
+	code, stdout, stderr := runCaptured(t, append(all, "http://kula.example.com:"+port+"/")...)
+	return code, decodeReport(t, stdout), stderr
+}
+
+func TestScannersOwnHostRefused(t *testing.T) {
+	code, report, stderr := scanUnderForeignName(t, refusingKula())
+	if code != exitInconclusive {
+		t.Errorf("exit %d, want 3; stderr:\n%s", code, stderr)
+	}
+	if ids := reportedIDs(report); len(ids) < 2 || ids[0] != "DISC-001" || ids[1] != "DISC-003" {
+		t.Fatalf("reported %v, want DISC-001 then DISC-003", ids)
+	}
+	f, _ := byID(report.Findings, "DISC-003")
+	for _, want := range []string{"kula.example.com", "IP address", "-connect", "allowed_hosts"} {
+		if f.Status != StatusError || !strings.Contains(f.Detail, want) {
+			t.Errorf("DISC-003 = %s %q, want an ERROR saying %q", f.Status, f.Detail, want)
+		}
+	}
+
+	// The checks that read the refusal as their own result are skipped.
+	for _, id := range []string{"CSRF-001", "CSRF-002", "CORS-001", "CORS-003", "TRAV-001", "PROM-001", "WS-000", "WS-002",
+		"INPUT-001", "INPUT-003", "REDIR-001"} {
+		f, ok := byID(report.Findings, id)
+		if !ok || f.Status != StatusSkip || !strings.Contains(f.Detail, "DISC-003") {
+			t.Errorf("%s = %s %q, want a SKIP naming DISC-003", id, f.Status, f.Detail)
+		}
+	}
+	// The ones that judge something still run.
+	for _, id := range []string{"HDR-001", "HDR-003", "HDR-004", "HOST-001"} {
+		wantStatus(t, report.Findings, id, StatusPass)
+	}
+	wantStatus(t, report.Findings, "AUTH-000", StatusWarn)
+	if f, _ := byID(report.Findings, "HOST-001"); !strings.Contains(f.Detail, "own name kula.example.com") {
+		t.Errorf("HOST-001 does not say the scanner's own name is refused too: %q", f.Detail)
+	}
+	if !strings.Contains(stderr, "inconclusive") || !strings.Contains(stderr, "DISC-003") {
+		t.Errorf("no closing line explains the exit:\n%s", stderr)
+	}
+
+	// Scanned by its address, nothing is refused.
+	code, report, _ = scanJSON(t, refusingKula(), "-only", "discovery,host,csrf")
+	if _, ok := byID(report.Findings, "DISC-003"); ok || code == exitInconclusive {
+		t.Errorf("by address: exit %d with %v", code, reportedIDs(report))
+	}
+	wantStatus(t, report.Findings, "HOST-001", StatusPass)
+}
+
+func TestRefusedHostNameAndSelection(t *testing.T) {
+	// The refusal skipped what was asked for: DISC-003 says why.
+	code, report, _ := scanUnderForeignName(t, refusingKula(), "-only", "csrf")
+	if got := strings.Join(reportedIDs(report), ","); got != "DISC-001,DISC-003,CSRF-001,CSRF-002,CSRF-003,CSRF-004" || code != exitInconclusive {
+		t.Errorf("-only csrf: exit %d, reported %s", code, got)
+	}
+	// It skipped nothing asked for.
+	code, report, _ = scanUnderForeignName(t, refusingKula(), "-only", "headers")
+	if _, ok := byID(report.Findings, "DISC-003"); ok || code != exitClean {
+		t.Errorf("-only headers: exit %d, reported %v", code, reportedIDs(report))
+	}
+	// -skip names it.
+	code, report, _ = scanUnderForeignName(t, refusingKula(), "-only", "csrf", "-skip", "disc-003")
+	if _, ok := byID(report.Findings, "DISC-003"); ok || code != exitClean {
+		t.Errorf("-skip disc-003: exit %d, reported %v", code, reportedIDs(report))
+	}
+}
+
+// TestTokenlessMetricsUnderARefusedName: with auth on Kula checks the Host
+// name of a /metrics served without a token only, so its refusal says so.
+func TestTokenlessMetricsUnderARefusedName(t *testing.T) {
+	ts := httptest.NewServer(withHostCheck(openMetrics(), metricsGuard))
+	defer ts.Close()
+	address := ts.Listener.Addr().String()
+	_, port, _ := net.SplitHostPort(address)
+	s, err := NewScanner(Options{Target: "http://kula.example.com:" + port, Connect: address, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, refused := byID(s.discover(), "DISC-003"); refused || s.hostRefused || !s.authEnabled {
+		t.Fatalf("with auth on, only /metrics is refused: DISC-003 %v, authEnabled %v", refused, s.authEnabled)
+	}
+	prom := runMetricsChecks(s)
+	f, _ := byID(prom, "PROM-001")
+	if f.Status != StatusWarn || f.Expectation != "metrics-token" || !strings.Contains(f.Detail, "without a bearer token") {
+		t.Errorf("PROM-001 = %s expectation %q %q, want a WARN against metrics-token", f.Status, f.Expectation, f.Detail)
+	}
+	wantStatus(t, prom, "PROM-003", StatusSkip)
+	if f, _ := byID(runHostCheck(s), "HOST-001"); f.Status != StatusPass || !strings.Contains(f.Detail, "own name") {
+		t.Errorf("HOST-001 = %s %q, want a PASS noting the own name is refused too", f.Status, f.Detail)
+	}
+}
+
 func TestHostCheckUndeliveredIsAnError(t *testing.T) {
 	s, err := NewScanner(Options{Target: "http://" + closedAddress(t), Timeout: 5 * time.Second})
 	if err != nil {

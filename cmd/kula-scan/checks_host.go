@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -23,6 +24,75 @@ import (
 
 func hostChecks() []check {
 	return []check{{ids: []string{"HOST-001"}, run: runHostCheck}}
+}
+
+// ---- the scanner's own Host name refused (DISC-003) --------------------------
+
+// hostRefusedFinding is DISC-003: Kula refuses the Host name the scanner
+// sends, as discovery saw on path (answered r). The how-to is in the detail
+// as well, since the text report prints no remediation for an ERROR.
+func (s *Scanner) hostRefusedFinding(path string, r httpResult) Finding {
+	how := fmt.Sprintf("Rescan by IP address, or with -connect <ip:port> and a URL naming a host Kula allows (localhost, an address), or add %s to web.security.allowed_hosts.", s.base.Hostname())
+	return finding("DISC-003", SevInfo, StatusError,
+		fmt.Sprintf("Kula's DNS-rebinding check refuses the Host name the scanner sends (%s): with auth off, Kula answers only local names (addresses, localhost, single-label names, local-only domains such as .lan or .internal) and web.security.allowed_hosts, and every route but /health and /status answers this refusal. "+
+			"The checks that read the API, the UI page or the WebSocket would take it for their own safeguard holding, so they are skipped: Kula's safeguards behind them were not judged. %s",
+			s.base.Host, how)).
+		withEvidence("GET %s: HTTP %d %s", path, r.status, truncate(strings.TrimSpace(r.body), 120)).
+		withRemediation(how)
+}
+
+// refusedHostReason is the SKIP detail of a check not run under a refused
+// Host name.
+func (s *Scanner) refusedHostReason() string {
+	return "Kula's DNS-rebinding check refuses the Host name " + s.base.Host +
+		" (DISC-003), which this check would read as its own result; rescan by IP address or by a name Kula allows."
+}
+
+// runsUnderRefusedHost reports whether check c still judges something when
+// Kula refuses the scanner's Host name. Kula refuses it only with auth off,
+// and then on every route but /health and /status (host_check.go), after its
+// security headers are set and before any other handler runs. So these
+// remain meaningful: the header checks, which read headers the refusal
+// carries too; the auth check, since a refused /api/auth/status itself shows
+// auth is off; TLS, below HTTP; HOST-001, which sends foreign names anyway;
+// and the slow-request and idle-connection probes, whose requests never
+// complete, with /health as their liveness probe. Every other check reads an
+// answer the refusal replaces, and would report it as its own safeguard (a
+// 403 from CSRF-001, CSRF-002 or WS-002) or as a missing one.
+func runsUnderRefusedHost(c check) bool {
+	switch c.entry().Category {
+	case "headers", "auth", "tls", "host":
+		return true
+	}
+	return slices.Contains(c.ids, "DOS-SLOWLORIS") || slices.Contains(c.ids, "DOS-CONNFLOOD")
+}
+
+// explicitlySkipped reports whether -skip names id or its category.
+func explicitlySkipped(sel *selection, id string) bool {
+	return sel != nil && (sel.skip[strings.ToLower(id)] || sel.skip[catalogEntryFor(id).Category])
+}
+
+// metricsHostRefusal judges /metrics answered with Kula's refusal of the
+// scanner's Host name. With auth on, Kula checks the Host of /metrics only
+// when it is served without a token, so the refusal shows exactly that. With
+// auth off it checks every route, a /metrics that is not enabled included,
+// so the refusal shows nothing about /metrics.
+func (s *Scanner) metricsHostRefusal(r httpResult) []Finding {
+	if !s.authEnabled {
+		return []Finding{
+			finding("PROM-001", SevInfo, StatusSkip, s.refusedHostReason()),
+			finding("PROM-003", SevInfo, StatusSkip, s.refusedHostReason()),
+		}
+	}
+	return []Finding{
+		finding("PROM-001", SevMedium, StatusWarn,
+			"/metrics refused this Host name with Kula's DNS-rebinding check, which Kula applies with auth on only to a /metrics served without a bearer token: anyone who reaches it by IP address or a local name reads the hostname and detailed system metrics without one.").
+			withEvidence("GET /metrics: HTTP %d %s", r.status, truncate(strings.TrimSpace(r.body), 120)).
+			withRemediation("Set web.prometheus_metrics.token, or restrict /metrics at the network/proxy layer.").
+			expecting("metrics-token"),
+		finding("PROM-003", SevInfo, StatusSkip,
+			"/metrics is served without a token (Kula checks the Host name of a token-less /metrics only), so no token is required."),
+	}
 }
 
 // foreignHost is a Host value a public DNS server could answer for, and the

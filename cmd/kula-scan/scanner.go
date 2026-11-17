@@ -210,6 +210,10 @@ type Scanner struct {
 	authEnabled bool
 	ollama      bool
 	version     string // Kula's version, when /api/config discloses it
+	// hostRefused: Kula's DNS-rebinding check refuses the Host name the
+	// scanner sends (DISC-003), so the checks that would read that refusal
+	// as their own result are skipped (runsUnderRefusedHost).
+	hostRefused bool
 
 	// Populated by ensureSession() when credentials are supplied and valid.
 	session     string       // kula_session cookie value
@@ -791,7 +795,9 @@ func (s *Scanner) wsDial(path string, headers http.Header) (*websocket.Conn, *ht
 // whether auth is enabled, and which optional features (Ollama) are active.
 // The findings it returns describe the target rather than judging it. A
 // target that does not answer, or answers but is not Kula, gets a DISC-001
-// ERROR and leaves s.reachable or s.kula false: the scan stops there.
+// ERROR and leaves s.reachable or s.kula false: the scan stops there. Kula
+// refusing the scanner's Host name gets a DISC-003 ERROR and sets
+// s.hostRefused.
 func (s *Scanner) discover() []Finding {
 	var out []Finding
 
@@ -850,9 +856,17 @@ func (s *Scanner) discover() []Finding {
 		detail += "; version " + s.version
 	}
 	if hostRefused {
-		detail += "; the API refuses this Host name (Kula's DNS-rebinding check), so API checks see that refusal: scan by address or by a name in web.security.allowed_hosts"
+		detail += "; Kula refuses this Host name (its DNS-rebinding check; see DISC-003)"
 	}
 	out = append(out, finding("DISC-001", SevInfo, StatusPass, detail))
+	if hostRefused {
+		s.hostRefused = true
+		path, refusal := "/api/auth/status", status
+		if !hostCheckRefusal(status) {
+			path, refusal = "/api/config", cfg
+		}
+		out = append(out, s.hostRefusedFinding(path, refusal))
+	}
 
 	// Plaintext transport with auth enabled means credentials cross the wire in
 	// the clear unless a TLS-terminating proxy sits in front.
@@ -966,6 +980,10 @@ func allChecks() []check {
 // was scanned at all, is always reported. Findings are judged against the
 // -expect posture as each check returns them.
 //
+// When Kula refuses the scanner's Host name (DISC-003), only the checks
+// runsUnderRefusedHost names run; the others are skipped and say why, and
+// DISC-003 is reported when it skipped any of them, unless -skip names it.
+//
 // Cancelling ctx interrupts the run: requests in flight abort, no further
 // check starts, the findings of the check that was cut short are dropped,
 // and s.interrupted and s.notRun record it. The session is logged out in
@@ -997,9 +1015,26 @@ func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 		return nil
 	}
 	s.applyExpectations(discovered)
+
+	// Under a refused Host name, the checks that would read the refusal as
+	// their own result do not run.
+	refusedSkips := 0
+	if s.hostRefused {
+		for _, c := range checks {
+			if s.modeEnabled(c.entry().Mode) && !runsUnderRefusedHost(c) {
+				refusedSkips++
+			}
+		}
+		runnable -= refusedSkips
+	}
+
 	var findings []Finding
 	for _, f := range discovered {
-		if f.ID == "DISC-001" || sel.selected(f.ID) {
+		keep := f.ID == "DISC-001" || sel.selected(f.ID)
+		if f.ID == "DISC-003" {
+			keep = (keep || refusedSkips > 0) && !explicitlySkipped(sel, f.ID)
+		}
+		if keep {
 			findings = append(findings, f)
 		}
 	}
@@ -1031,6 +1066,9 @@ func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 		case mode == ModeAggressive && !s.aggressive:
 			findings = append(findings, skippedFindings(c,
 				"disruptive check not run; pass -aggressive to enable (it has side effects on the live target).")...)
+			continue
+		case s.hostRefused && !runsUnderRefusedHost(c):
+			findings = append(findings, skippedFindings(c, s.refusedHostReason())...)
 			continue
 		}
 		started++

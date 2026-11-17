@@ -1211,6 +1211,9 @@ func runMetricsChecks(s *Scanner) []Finding {
 		return []Finding{finding("PROM-001", SevInfo, StatusError,
 			"could not query /metrics: "+r.err.Error())}
 	}
+	if hostCheckRefusal(r) {
+		return s.metricsHostRefusal(r)
+	}
 
 	switch r.status {
 	case http.StatusNotFound:
