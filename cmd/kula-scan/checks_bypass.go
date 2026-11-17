@@ -15,7 +15,7 @@ import (
 // ---- open redirect (safe, non-aggressive) -----------------------------------
 
 func redirectChecks() []check {
-	return []check{{id: "REDIR-001", category: "redirect", run: runOpenRedirectCheck}}
+	return []check{{ids: []string{"REDIR-001"}, run: runOpenRedirectCheck}}
 }
 
 // sameHostname reports whether the Location host refers to the same host as the
@@ -68,10 +68,10 @@ func runOpenRedirectCheck(s *Scanner) []Finding {
 	}
 
 	if len(bad) == 0 {
-		return []Finding{finding("REDIR-001", "redirect", "No open redirect", SevMedium, StatusPass,
+		return []Finding{finding("REDIR-001", SevMedium, StatusPass,
 			"crafted paths do not produce a redirect to a foreign host.")}
 	}
-	return []Finding{finding("REDIR-001", "redirect", "Open redirect", SevHigh, StatusFail,
+	return []Finding{finding("REDIR-001", SevHigh, StatusFail,
 		"a crafted path made the server emit a redirect to an attacker-controlled host (phishing / token leakage vector).").
 		withEvidence("%s", strings.Join(bad, " | ")).
 		withRemediation("Only ever redirect to validated, same-host, absolute-path targets; reject '//', '\\', and scheme-bearing inputs.")}
@@ -80,7 +80,7 @@ func runOpenRedirectCheck(s *Scanner) []Finding {
 // ---- X-Forwarded-For rate-limit bypass (aggressive) -------------------------
 
 func bypassChecks() []check {
-	return []check{{id: "BYPASS-XFF", category: "bypass", aggressive: true, run: runXFFBypassCheck}}
+	return []check{{ids: []string{"BYPASS-XFF"}, run: runXFFBypassCheck}}
 }
 
 func (s *Scanner) randIP() string {
@@ -93,7 +93,7 @@ func (s *Scanner) randIP() string {
 // fresh key and the throttle never fires — a brute-force bypass.
 func runXFFBypassCheck(s *Scanner) []Finding {
 	if !s.authEnabled {
-		return []Finding{finding("BYPASS-XFF", "bypass", "X-Forwarded-For rate-limit bypass", SevInfo, StatusSkip,
+		return []Finding{finding("BYPASS-XFF", SevInfo, StatusSkip,
 			"auth is disabled; the login rate limiter is not a relevant control here.")}
 	}
 
@@ -117,16 +117,16 @@ func runXFFBypassCheck(s *Scanner) []Finding {
 
 	switch {
 	case reached >= burst-1:
-		return []Finding{finding("BYPASS-XFF", "bypass", "X-Forwarded-For rate-limit bypass", SevHigh, StatusFail,
+		return []Finding{finding("BYPASS-XFF", SevHigh, StatusFail,
 			"rotating a spoofed X-Forwarded-For defeated the login rate limiter — an attacker can brute-force credentials unthrottled.").
 			withEvidence("%d/%d spoofed-IP attempts reached the credential check without throttling", reached, burst).
 			withRemediation("Disable web.trust_proxy unless a trusted reverse proxy actually sets X-Forwarded-For; otherwise the header is attacker-controlled.")}
 	case reached <= 6:
-		return []Finding{finding("BYPASS-XFF", "bypass", "X-Forwarded-For rate-limit bypass", SevHigh, StatusPass,
+		return []Finding{finding("BYPASS-XFF", SevHigh, StatusPass,
 			"spoofing X-Forwarded-For did not bypass the login throttle (the limiter keys on the real connection, not the header).").
 			withEvidence("only %d/%d spoofed-IP attempts got through before throttling", reached, burst)}
 	default:
-		return []Finding{finding("BYPASS-XFF", "bypass", "X-Forwarded-For rate-limit bypass", SevMedium, StatusWarn,
+		return []Finding{finding("BYPASS-XFF", SevMedium, StatusWarn,
 			"results were ambiguous; the login limiter may have been partially consumed before this probe.").
 			withEvidence("%d/%d spoofed-IP attempts reached the credential check", reached, burst).
 			withRemediation("Re-run in isolation (-only bypass) to confirm.")}

@@ -59,12 +59,13 @@ func TestPrintableEscapesTerminalControls(t *testing.T) {
 
 func TestTextReportEscapesTargetBytes(t *testing.T) {
 	findings := []Finding{
-		finding("AUTH-001", "auth", "Protected API requires auth", SevHigh, StatusFail, "detail "+osc52).
+		finding("AUTH-001", SevHigh, StatusFail, "detail "+osc52).
 			withEvidence("Server: x%s", rewrite),
-		finding("HDR-009", "headers", "title \u009b2J", SevInfo, StatusWarn, "").
+		finding("HDR-009", SevInfo, StatusWarn, "").
 			withEvidence("Location: \u202eelpmaxe.live").
 			withRemediation("fix \x07"),
 	}
+	findings[1].Title = "title \u009b2J"
 	report := newReport("https://target.example\x1b]0;PWNED\x07", findings)
 
 	for _, noColor := range []bool{true, false} {

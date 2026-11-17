@@ -400,8 +400,8 @@ func TestInsecureTargetFails(t *testing.T) {
 
 func TestExitCodeThreshold(t *testing.T) {
 	findings := []Finding{
-		finding("A", "x", "medium fail", SevMedium, StatusFail, ""),
-		finding("B", "x", "pass", SevInfo, StatusPass, ""),
+		finding("A", SevMedium, StatusFail, ""),
+		finding("B", SevInfo, StatusPass, ""),
 	}
 	r := newReport("t", findings)
 	if r.Summary.Fail != 1 || r.Summary.Pass != 1 {

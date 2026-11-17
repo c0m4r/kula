@@ -110,13 +110,15 @@ type Finding struct {
 	Remediation string   `json:"remediation,omitempty"`
 }
 
-// finding is a small constructor that keeps the string mirrors of the enum
-// fields (used for JSON output) in sync with the typed values.
-func finding(id, category, title string, sev Severity, st Status, detail string) Finding {
+// finding builds the finding id with its category and title from the catalog,
+// and keeps the string mirrors of the enum fields (used for JSON output) in
+// sync with the typed values. What varies with the outcome goes in detail.
+func finding(id string, sev Severity, st Status, detail string) Finding {
+	entry := catalogEntryFor(id)
 	return Finding{
 		ID:          id,
-		Category:    category,
-		Title:       title,
+		Category:    entry.Category,
+		Title:       entry.Title,
 		Severity:    sev,
 		SeverityStr: sev.String(),
 		Status:      st,
@@ -136,17 +138,18 @@ func (f Finding) withRemediation(s string) Finding {
 	return f
 }
 
-// check is one named, categorised probe.
-//   - aggressive checks have side effects on the target (rate-limit lockout,
-//     connection floods) and only run with -aggressive.
-//   - fuzz checks perform blind fault injection (malformed/extreme inputs) and
-//     only run with -fuzz.
+// check is one probe in the registry. ids lists every finding ID it can emit;
+// their catalog entries give the check its category and its Mode (all of them
+// agree, which TestRegistryDeclaresEveryCatalogID checks).
 type check struct {
-	id         string
-	category   string
-	aggressive bool
-	fuzz       bool
-	run        func(s *Scanner) []Finding
+	ids []string
+	run func(s *Scanner) []Finding
+}
+
+// entry returns the catalog entry of the check's first finding ID, which
+// carries the category and mode of all of them.
+func (c check) entry() catalogEntry {
+	return catalogEntryFor(c.ids[0])
 }
 
 // Scanner holds connection state and shared HTTP/WS/raw helpers used by every
@@ -521,7 +524,7 @@ func (s *Scanner) discover() []Finding {
 	// auth/status is always unauthenticated and reveals the auth posture.
 	r := s.do(http.MethodGet, "/api/auth/status", nil, "")
 	if r.err != nil {
-		out = append(out, finding("DISC-001", "discovery", "Target reachable", SevInfo, StatusError,
+		out = append(out, finding("DISC-001", SevInfo, StatusError,
 			fmt.Sprintf("could not reach %s: %v", s.rawBase, r.err)).
 			withRemediation("Check the target URL, port, and that kula's web server is enabled."))
 		return out
@@ -548,14 +551,14 @@ func (s *Scanner) discover() []Finding {
 	if s.authEnabled {
 		authState = "enabled"
 	}
-	out = append(out, finding("DISC-001", "discovery", "Target fingerprint", SevInfo, StatusPass,
+	out = append(out, finding("DISC-001", SevInfo, StatusPass,
 		fmt.Sprintf("reachable at %s (%s); authentication %s; ollama %v",
 			s.urlFor(""), s.base.Scheme, authState, s.ollama)))
 
 	// Plaintext transport with auth enabled means credentials cross the wire in
 	// the clear unless a TLS-terminating proxy sits in front.
 	if s.authEnabled && !s.https {
-		out = append(out, finding("DISC-002", "discovery", "Credentials over plaintext HTTP", SevMedium, StatusWarn,
+		out = append(out, finding("DISC-002", SevMedium, StatusWarn,
 			"authentication is enabled but the target was reached over plain HTTP; login credentials and session cookies are exposed unless a TLS-terminating reverse proxy sits in front.").
 			withRemediation("Serve kula behind HTTPS (reverse proxy + trust_proxy, or terminate TLS) so the Secure cookie flag and HSTS apply."))
 	}
@@ -648,23 +651,34 @@ func (s *Scanner) Run(only map[string]bool) []Finding {
 	}
 
 	for _, c := range allChecks() {
-		if len(only) > 0 && !only[c.category] {
+		entry := c.entry()
+		if len(only) > 0 && !only[entry.Category] {
 			continue
 		}
-		if c.fuzz && !s.fuzz {
-			findings = append(findings, finding(c.id, c.category, "Skipped (fuzz)", SevInfo, StatusSkip,
-				"blind fault-injection check not run; pass -fuzz to enable (it sends malformed/extreme input to the live target)."))
+		if entry.Mode == ModeFuzz && !s.fuzz {
+			findings = append(findings, skippedFindings(c,
+				"blind fault-injection check not run; pass -fuzz to enable (it sends malformed/extreme input to the live target).")...)
 			continue
 		}
-		if c.aggressive && !s.aggressive {
-			findings = append(findings, finding(c.id, c.category, "Skipped (aggressive)", SevInfo, StatusSkip,
-				"disruptive check not run; pass -aggressive to enable (it has side effects on the live target)."))
+		if entry.Mode == ModeAggressive && !s.aggressive {
+			findings = append(findings, skippedFindings(c,
+				"disruptive check not run; pass -aggressive to enable (it has side effects on the live target).")...)
 			continue
 		}
 		findings = append(findings, c.run(s)...)
 	}
 	s.logout()
 	return findings
+}
+
+// skippedFindings reports a check that was not run: one SKIP finding per ID it
+// would have emitted, each with its catalog title.
+func skippedFindings(c check, detail string) []Finding {
+	out := make([]Finding, 0, len(c.ids))
+	for _, id := range c.ids {
+		out = append(out, finding(id, SevInfo, StatusSkip, detail))
+	}
+	return out
 }
 
 // logout ends the session ensureSession opened, so a run leaves no session

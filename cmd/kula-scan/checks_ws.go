@@ -10,9 +10,8 @@ import (
 
 func wsChecks() []check {
 	return []check{{
-		id:       "WS",
-		category: "ws",
-		run:      runWSChecks,
+		ids: []string{"WS-000", "WS-001", "WS-002"},
+		run: runWSChecks,
 	}}
 }
 
@@ -28,14 +27,14 @@ func runWSChecks(s *Scanner) []Finding {
 		}
 		switch {
 		case err == nil:
-			out = append(out, finding("WS-001", "ws", "Unauthenticated WebSocket blocked", SevHigh, StatusFail,
+			out = append(out, finding("WS-001", SevHigh, StatusFail,
 				"an unauthenticated WebSocket upgrade succeeded; live metrics stream to anyone.").
 				withRemediation("Ensure /ws sits behind AuthMiddleware when auth is enabled."))
 		case resp != nil && resp.StatusCode == http.StatusUnauthorized:
-			out = append(out, finding("WS-001", "ws", "Unauthenticated WebSocket blocked", SevHigh, StatusPass,
+			out = append(out, finding("WS-001", SevHigh, StatusPass,
 				"the WebSocket upgrade is rejected with 401 without a session."))
 		default:
-			out = append(out, finding("WS-001", "ws", "Unauthenticated WebSocket blocked", SevMedium, StatusWarn,
+			out = append(out, finding("WS-001", SevMedium, StatusWarn,
 				"the unauthenticated upgrade was rejected, but not with 401.").withEvidence("status=%s", statusOf(resp)))
 		}
 	}
@@ -54,7 +53,7 @@ func runWSChecks(s *Scanner) []Finding {
 	}
 
 	if !canTestOrigin {
-		out = append(out, finding("WS-002", "ws", "Cross-origin WebSocket blocked (CSWSH)", SevInfo, StatusSkip,
+		out = append(out, finding("WS-002", SevInfo, StatusSkip,
 			"auth is enabled and no session is available; supply -username/-password to test the WebSocket origin gate."))
 		return out
 	}
@@ -67,14 +66,14 @@ func runWSChecks(s *Scanner) []Finding {
 	}
 	switch {
 	case err == nil:
-		out = append(out, finding("WS-002", "ws", "Cross-origin WebSocket blocked (CSWSH)", SevHigh, StatusFail,
+		out = append(out, finding("WS-002", SevHigh, StatusFail,
 			"a cross-origin WebSocket upgrade from https://evil.example succeeded; a malicious page can hijack the live stream.").
 			withRemediation("Keep web.security.origin_validation enabled so CheckOrigin rejects foreign origins."))
 	case resp != nil && resp.StatusCode == http.StatusForbidden:
-		out = append(out, finding("WS-002", "ws", "Cross-origin WebSocket blocked (CSWSH)", SevHigh, StatusPass,
+		out = append(out, finding("WS-002", SevHigh, StatusPass,
 			"a cross-origin WebSocket upgrade is rejected with 403."))
 	default:
-		out = append(out, finding("WS-002", "ws", "Cross-origin WebSocket blocked (CSWSH)", SevMedium, StatusWarn,
+		out = append(out, finding("WS-002", SevMedium, StatusWarn,
 			"the cross-origin upgrade was rejected, but not with 403.").withEvidence("status=%s", statusOf(resp)))
 	}
 
@@ -87,10 +86,10 @@ func runWSChecks(s *Scanner) []Finding {
 		_ = cc.Close()
 	}
 	if err == nil {
-		out = append(out, finding("WS-000", "ws", "Same-origin WebSocket allowed", SevInfo, StatusPass,
+		out = append(out, finding("WS-000", SevInfo, StatusPass,
 			"a legitimate same-origin upgrade succeeds (the gate is selective, not blanket-deny)."))
 	} else {
-		out = append(out, finding("WS-000", "ws", "Same-origin WebSocket allowed", SevInfo, StatusWarn,
+		out = append(out, finding("WS-000", SevInfo, StatusWarn,
 			"a same-origin upgrade was rejected; the gate may be over-broad or the stream disabled.").
 			withEvidence("err=%v", err))
 	}

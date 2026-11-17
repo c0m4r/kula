@@ -51,6 +51,7 @@ func run(args []string) int {
 		asJSON     = fs.Bool("json", false, "emit findings as JSON")
 		noColor    = fs.Bool("no-color", false, "disable ANSI colors")
 		verbose    = fs.Bool("v", false, "verbose: print each request/response")
+		list       = fs.Bool("list", false, "print every finding ID with its category, mode and title, then exit")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -58,6 +59,14 @@ func run(args []string) int {
 			return 0
 		}
 		return 2
+	}
+
+	if *list {
+		if err := writeCatalog(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 2
+		}
+		return 0
 	}
 
 	tgt := *target
@@ -210,6 +219,7 @@ Flags:
   -json               emit findings as JSON
   -no-color           disable ANSI colors
   -v                  verbose request/response logging
+  -list               print every finding ID with its category, mode and title, then exit
 
 Exit status: 0 = no failing safeguard at/above -fail-on; 1 = one or more failures; 2 = usage error.
 `)

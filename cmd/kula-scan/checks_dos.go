@@ -27,10 +27,10 @@ import (
 
 func dosChecks() []check {
 	return []check{
-		{id: "DOS-SLOWLORIS", category: "dos", aggressive: true, run: runSlowlorisCheck},
-		{id: "DOS-HEADERBOMB", category: "dos", aggressive: true, run: runHeaderBombCheck},
-		{id: "DOS-CONNFLOOD", category: "dos", aggressive: true, run: runConnFloodCheck},
-		{id: "WS-MSGBOMB", category: "ws", aggressive: true, run: runWSMsgBombCheck},
+		{ids: []string{"DOS-SLOWLORIS"}, run: runSlowlorisCheck},
+		{ids: []string{"DOS-HEADERBOMB"}, run: runHeaderBombCheck},
+		{ids: []string{"DOS-CONNFLOOD"}, run: runConnFloodCheck},
+		{ids: []string{"WS-MSGBOMB"}, run: runWSMsgBombCheck},
 	}
 }
 
@@ -64,7 +64,7 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 		opened = append(opened, c)
 	}
 	if len(opened) == 0 {
-		return []Finding{finding("DOS-SLOWLORIS", "dos", "Slow-request (Slowloris) reaping", SevInfo, StatusError,
+		return []Finding{finding("DOS-SLOWLORIS", SevInfo, StatusError,
 			"could not open any connections to the target.")}
 	}
 
@@ -112,21 +112,21 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 
 	switch {
 	case !healthOK:
-		return []Finding{finding("DOS-SLOWLORIS", "dos", "Slow-request (Slowloris) reaping", SevHigh, StatusFail,
+		return []Finding{finding("DOS-SLOWLORIS", SevHigh, StatusFail,
 			fmt.Sprintf("while %d slow connections were held open, a normal request to /health failed — the server was starved.", len(opened))).
 			withEvidence("health status=%d err=%v", health.status, health.err).
 			withRemediation("Set http.Server.ReadTimeout so half-open requests are dropped, and front Kula with a reverse proxy.")}
 	case reapedN == len(opened):
-		return []Finding{finding("DOS-SLOWLORIS", "dos", "Slow-request (Slowloris) reaping", SevMedium, StatusPass,
+		return []Finding{finding("DOS-SLOWLORIS", SevMedium, StatusPass,
 			"the server reaped all stalled half-open requests and stayed responsive (ReadTimeout enforced).").
 			withEvidence("%d/%d slow connections dropped within %s", reapedN, len(opened), elapsed)}
 	case reapedN == 0:
-		return []Finding{finding("DOS-SLOWLORIS", "dos", "Slow-request (Slowloris) reaping", SevHigh, StatusFail,
+		return []Finding{finding("DOS-SLOWLORIS", SevHigh, StatusFail,
 			fmt.Sprintf("none of %d half-open requests were dropped within %s; the server holds slow connections indefinitely (Slowloris DoS).", len(opened), s.dosWait)).
 			withEvidence("0/%d reaped within %s", len(opened), s.dosWait).
 			withRemediation("Set http.Server.ReadTimeout (Kula's default is 30s); ensure it is not disabled.")}
 	default:
-		return []Finding{finding("DOS-SLOWLORIS", "dos", "Slow-request (Slowloris) reaping", SevMedium, StatusWarn,
+		return []Finding{finding("DOS-SLOWLORIS", SevMedium, StatusWarn,
 			fmt.Sprintf("only %d of %d stalled connections were reaped within %s.", reapedN, len(opened), s.dosWait)).
 			withEvidence("%d/%d reaped", reapedN, len(opened)).
 			withRemediation("Verify http.Server.ReadTimeout covers the whole request read.")}
@@ -139,7 +139,7 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 func runHeaderBombCheck(s *Scanner) []Finding {
 	conn, err := s.dialRaw()
 	if err != nil {
-		return []Finding{finding("DOS-HEADERBOMB", "dos", "Oversized request headers rejected", SevInfo, StatusError,
+		return []Finding{finding("DOS-HEADERBOMB", SevInfo, StatusError,
 			"could not connect to the target: "+err.Error())}
 	}
 	defer func() { _ = conn.Close() }()
@@ -162,22 +162,22 @@ func runHeaderBombCheck(s *Scanner) []Finding {
 	if err != nil {
 		// Server closed/reset the connection without a full response — it refused
 		// the oversized headers. That is the safe outcome.
-		return []Finding{finding("DOS-HEADERBOMB", "dos", "Oversized request headers rejected", SevMedium, StatusPass,
+		return []Finding{finding("DOS-HEADERBOMB", SevMedium, StatusPass,
 			"the server refused a 2 MiB header block (connection reset before completion).")}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusRequestHeaderFieldsTooLarge, http.StatusBadRequest, http.StatusRequestEntityTooLarge:
-		return []Finding{finding("DOS-HEADERBOMB", "dos", "Oversized request headers rejected", SevMedium, StatusPass,
+		return []Finding{finding("DOS-HEADERBOMB", SevMedium, StatusPass,
 			"a 2 MiB header block is rejected (MaxHeaderBytes enforced).").withEvidence("status=%d", resp.StatusCode)}
 	case http.StatusOK:
-		return []Finding{finding("DOS-HEADERBOMB", "dos", "Oversized request headers rejected", SevHigh, StatusFail,
+		return []Finding{finding("DOS-HEADERBOMB", SevHigh, StatusFail,
 			"the server accepted a 2 MiB header block; large headers can be used for memory exhaustion.").
 			withEvidence("status=200").
 			withRemediation("Set http.Server.MaxHeaderBytes (Go defaults to 1 MiB; do not raise it without reason).")}
 	default:
-		return []Finding{finding("DOS-HEADERBOMB", "dos", "Oversized request headers rejected", SevMedium, StatusPass,
+		return []Finding{finding("DOS-HEADERBOMB", SevMedium, StatusPass,
 			"the oversized header request was not served normally.").withEvidence("status=%d", resp.StatusCode)}
 	}
 }
@@ -203,7 +203,7 @@ func runConnFloodCheck(s *Scanner) []Finding {
 		opened = append(opened, c)
 	}
 	if len(opened) == 0 {
-		return []Finding{finding("DOS-CONNFLOOD", "dos", "Idle-connection flood resilience", SevInfo, StatusError,
+		return []Finding{finding("DOS-CONNFLOOD", SevInfo, StatusError,
 			"could not open any connections to the target.")}
 	}
 
@@ -211,7 +211,7 @@ func runConnFloodCheck(s *Scanner) []Finding {
 	healthOK := health.err == nil && (health.status == http.StatusOK || health.status == http.StatusNotFound)
 
 	if !healthOK {
-		return []Finding{finding("DOS-CONNFLOOD", "dos", "Idle-connection flood resilience", SevHigh, StatusFail,
+		return []Finding{finding("DOS-CONNFLOOD", SevHigh, StatusFail,
 			fmt.Sprintf("a normal request failed while %d idle connections were held open.", len(opened))).
 			withEvidence("opened=%d health status=%d err=%v", len(opened), health.status, health.err).
 			withRemediation("Front Kula with a reverse proxy that bounds concurrent connections, and keep read/idle timeouts enabled.")}
@@ -235,11 +235,11 @@ func runConnFloodCheck(s *Scanner) []Finding {
 	}
 
 	if reaped == len(opened) {
-		return []Finding{finding("DOS-CONNFLOOD", "dos", "Idle-connection flood resilience", SevLow, StatusPass,
+		return []Finding{finding("DOS-CONNFLOOD", SevLow, StatusPass,
 			"the server stayed responsive under an idle-connection flood and reaped the idle sockets (timeouts enforced).").
 			withEvidence("%d idle connections opened, all reaped, /health OK", len(opened))}
 	}
-	return []Finding{finding("DOS-CONNFLOOD", "dos", "Idle-connection flood resilience", SevMedium, StatusWarn,
+	return []Finding{finding("DOS-CONNFLOOD", SevMedium, StatusWarn,
 		fmt.Sprintf("the server stayed responsive, but %d/%d idle connections were still open after %s.", len(opened)-reaped, len(opened), s.dosWait)).
 		withEvidence("%d/%d idle sockets reaped", reaped, len(opened)).
 		withRemediation("Ensure http.Server.IdleTimeout/ReadTimeout are set so idle sockets cannot accumulate.")}
@@ -252,7 +252,7 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 	var hdr http.Header
 	if s.authEnabled {
 		if !s.ensureSession() {
-			return []Finding{finding("WS-MSGBOMB", "ws", "WebSocket message size limit", SevInfo, StatusSkip,
+			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusSkip,
 				"auth is enabled and no session is available; supply -username/-password to test the WebSocket read limit.")}
 		}
 		hdr = http.Header{}
@@ -264,7 +264,7 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 
 	conn, _, err := s.wsDial("/ws", hdr)
 	if err != nil || conn == nil {
-		return []Finding{finding("WS-MSGBOMB", "ws", "WebSocket message size limit", SevInfo, StatusSkip,
+		return []Finding{finding("WS-MSGBOMB", SevInfo, StatusSkip,
 			"could not establish a WebSocket connection to test the read limit.")}
 	}
 	defer func() { _ = conn.Close() }()
@@ -278,7 +278,7 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 	if err := conn.WriteMessage(websocket.TextMessage, bomb); err != nil {
 		// Write failed because the server already tore the connection down — the
 		// limit is enforced.
-		return []Finding{finding("WS-MSGBOMB", "ws", "WebSocket message size limit", SevLow, StatusPass,
+		return []Finding{finding("WS-MSGBOMB", SevLow, StatusPass,
 			"the server dropped the connection when an oversized message was sent (read limit enforced).")}
 	}
 
@@ -290,15 +290,15 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 		if _, _, err := conn.ReadMessage(); err != nil {
 			if errors.Is(err, websocket.ErrReadLimit) {
 				// wsDial caps what the scanner reads; Kula's frames are far smaller.
-				return []Finding{finding("WS-MSGBOMB", "ws", "WebSocket message size limit", SevInfo, StatusError,
+				return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
 					"the server sent a WebSocket message over 1 MiB, which the scanner does not read; this is not Kula's live stream.")}
 			}
-			return []Finding{finding("WS-MSGBOMB", "ws", "WebSocket message size limit", SevLow, StatusPass,
+			return []Finding{finding("WS-MSGBOMB", SevLow, StatusPass,
 				"the server closed the connection after an oversized client message (SetReadLimit enforced).").
 				withEvidence("close: %v", err)}
 		}
 		if time.Now().After(deadline) {
-			return []Finding{finding("WS-MSGBOMB", "ws", "WebSocket message size limit", SevMedium, StatusWarn,
+			return []Finding{finding("WS-MSGBOMB", SevMedium, StatusWarn,
 				"the connection stayed open after a 64 KiB client message; the read limit may not be enforced.").
 				withRemediation("Call conn.SetReadLimit on the WebSocket to bound inbound message size.")}
 		}

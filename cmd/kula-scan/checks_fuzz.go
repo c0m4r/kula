@@ -25,13 +25,13 @@ import (
 
 func fuzzChecks() []check {
 	return []check{
-		{id: "FUZZ-QUERY", category: "fuzz", fuzz: true, run: runFuzzQuery},
-		{id: "FUZZ-PATH", category: "fuzz", fuzz: true, run: runFuzzPath},
-		{id: "FUZZ-BODY", category: "fuzz", fuzz: true, run: runFuzzBody},
-		{id: "FUZZ-METHODS", category: "fuzz", fuzz: true, run: runFuzzMethods},
-		{id: "FUZZ-SMUGGLE", category: "fuzz", fuzz: true, run: runFuzzSmuggle},
-		{id: "FUZZ-WS", category: "fuzz", fuzz: true, run: runFuzzWS},
-		{id: "FUZZ-LIVENESS", category: "fuzz", fuzz: true, run: runFuzzLiveness},
+		{ids: []string{"FUZZ-QUERY"}, run: runFuzzQuery},
+		{ids: []string{"FUZZ-PATH"}, run: runFuzzPath},
+		{ids: []string{"FUZZ-BODY"}, run: runFuzzBody},
+		{ids: []string{"FUZZ-METHODS"}, run: runFuzzMethods},
+		{ids: []string{"FUZZ-SMUGGLE"}, run: runFuzzSmuggle},
+		{ids: []string{"FUZZ-WS"}, run: runFuzzWS},
+		{ids: []string{"FUZZ-LIVENESS"}, run: runFuzzLiveness},
 	}
 }
 
@@ -111,7 +111,7 @@ func reflectedXSS(r httpResult, canary string) bool {
 
 // runFuzzLoop drives gen for fuzzIter iterations, collecting up to maxHits
 // anomalies, and renders a single aggregated finding.
-func (s *Scanner) runFuzzLoop(id, title string, headers map[string]string, gen func() (method, path, body, canary string)) Finding {
+func (s *Scanner) runFuzzLoop(id string, headers map[string]string, gen func() (method, path, body, canary string)) Finding {
 	const maxHits = 8
 	var hits []fuzzHit
 	for i := 0; i < s.fuzzIter && len(hits) < maxHits; i++ {
@@ -125,13 +125,13 @@ func (s *Scanner) runFuzzLoop(id, title string, headers map[string]string, gen f
 			hits = append(hits, fuzzHit{"reflected input (possible XSS)", reqDesc(m, p, b)})
 		}
 	}
-	return fuzzFinding(id, title, s.fuzzIter, s.seed, hits)
+	return fuzzFinding(id, s.fuzzIter, s.seed, hits)
 }
 
 // fuzzFinding turns a hit list into a PASS (robust) or FAIL (anomalies) finding.
-func fuzzFinding(id, title string, iter int, seed int64, hits []fuzzHit) Finding {
+func fuzzFinding(id string, iter int, seed int64, hits []fuzzHit) Finding {
 	if len(hits) == 0 {
-		return finding(id, "fuzz", title, SevInfo, StatusPass,
+		return finding(id, SevInfo, StatusPass,
 			fmt.Sprintf("no anomalies over %d randomized requests.", iter)).
 			withEvidence("seed=%d", seed)
 	}
@@ -139,7 +139,7 @@ func fuzzFinding(id, title string, iter int, seed int64, hits []fuzzHit) Finding
 	for _, h := range hits {
 		ev = append(ev, h.kind+" ← "+h.req)
 	}
-	return finding(id, "fuzz", title, SevHigh, StatusFail,
+	return finding(id, SevHigh, StatusFail,
 		fmt.Sprintf("found %d anomal(y/ies) the server should never produce on hostile input.", len(hits))).
 		withEvidence("seed=%d | %s", seed, strings.Join(ev, " | ")).
 		withRemediation("Return 4xx for malformed input; never 5xx, panic, or hang. Reproduce with -seed and the listed requests.")
@@ -149,7 +149,7 @@ func fuzzFinding(id, title string, iter int, seed int64, hits []fuzzHit) Finding
 func runFuzzQuery(s *Scanner) []Finding {
 	hdr, ok := s.apiHeaders()
 	if !ok {
-		return []Finding{finding("FUZZ-QUERY", "fuzz", "Query-parameter fuzzing", SevInfo, StatusSkip,
+		return []Finding{finding("FUZZ-QUERY", SevInfo, StatusSkip,
 			"auth is enabled and no session is available; supply -username/-password to fuzz the API.")}
 	}
 	gen := func() (string, string, string, string) {
@@ -167,7 +167,7 @@ func runFuzzQuery(s *Scanner) []Finding {
 		q.Set("lang", s.fuzzToken())
 		return http.MethodGet, "/api/i18n?" + q.Encode(), "", ""
 	}
-	return []Finding{s.runFuzzLoop("FUZZ-QUERY", "Query-parameter fuzzing (/api/history, /api/i18n)", hdr, gen)}
+	return []Finding{s.runFuzzLoop("FUZZ-QUERY", hdr, gen)}
 }
 
 // runFuzzPath fuzzes the request path with a canary so any reflection into the
@@ -185,7 +185,7 @@ func runFuzzPath(s *Scanner) []Finding {
 		}
 		return http.MethodGet, p, "", canary
 	}
-	return []Finding{s.runFuzzLoop("FUZZ-PATH", "Path fuzzing", nil, gen)}
+	return []Finding{s.runFuzzLoop("FUZZ-PATH", nil, gen)}
 }
 
 // runFuzzBody sends a curated set of malformed JSON bodies to the JSON POST
@@ -195,7 +195,7 @@ func runFuzzPath(s *Scanner) []Finding {
 // the Ollama chat only with Ollama enabled; with neither the probe is skipped.
 func runFuzzBody(s *Scanner) []Finding {
 	if !s.authEnabled && !s.ollama {
-		return []Finding{finding("FUZZ-BODY", "fuzz", "Malformed JSON body handling", SevInfo, StatusSkip,
+		return []Finding{finding("FUZZ-BODY", SevInfo, StatusSkip,
 			"auth and Ollama are disabled; the instance has no endpoint that parses a JSON body.")}
 	}
 	bodies := []string{
@@ -225,7 +225,7 @@ func runFuzzBody(s *Scanner) []Finding {
 	if s.ollama {
 		post("/api/ollama/chat")
 	}
-	return []Finding{fuzzFinding("FUZZ-BODY", "Malformed JSON body handling", len(bodies), s.seed, hits)}
+	return []Finding{fuzzFinding("FUZZ-BODY", len(bodies), s.seed, hits)}
 }
 
 // runFuzzMethods sends a matrix of HTTP methods at every known route. A 5xx or a
@@ -251,7 +251,7 @@ func runFuzzMethods(s *Scanner) []Finding {
 			}
 		}
 	}
-	return []Finding{fuzzFinding("FUZZ-METHODS", "HTTP method matrix", len(routes)*len(methods), s.seed, hits)}
+	return []Finding{fuzzFinding("FUZZ-METHODS", len(routes)*len(methods), s.seed, hits)}
 }
 
 // runFuzzSmuggle sends requests with conflicting/duplicate framing headers. The
@@ -280,10 +280,10 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 		}
 	}
 	if len(hits) == 0 {
-		return []Finding{finding("FUZZ-SMUGGLE", "fuzz", "Request smuggling / desync", SevMedium, StatusPass,
+		return []Finding{finding("FUZZ-SMUGGLE", SevMedium, StatusPass,
 			"ambiguous Content-Length / Transfer-Encoding framing is rejected (no desync, no 5xx).")}
 	}
-	f := fuzzFinding("FUZZ-SMUGGLE", "Request smuggling / desync", len(raws), s.seed, hits)
+	f := fuzzFinding("FUZZ-SMUGGLE", len(raws), s.seed, hits)
 	return []Finding{f}
 }
 
@@ -294,7 +294,7 @@ func runFuzzWS(s *Scanner) []Finding {
 	var hdr http.Header
 	if s.authEnabled {
 		if !s.ensureSession() {
-			return []Finding{finding("FUZZ-WS", "fuzz", "WebSocket protocol fuzzing", SevInfo, StatusSkip,
+			return []Finding{finding("FUZZ-WS", SevInfo, StatusSkip,
 				"auth is enabled and no session is available to open a WebSocket.")}
 		}
 		hdr = http.Header{}
@@ -347,17 +347,17 @@ func runFuzzWS(s *Scanner) []Finding {
 
 	switch {
 	case !healthOK:
-		return []Finding{finding("FUZZ-WS", "fuzz", "WebSocket protocol fuzzing", SevCritical, StatusFail,
+		return []Finding{finding("FUZZ-WS", SevCritical, StatusFail,
 			"after a burst of malformed WebSocket frames, HTTP /health stopped responding — the server was destabilized.").
 			withEvidence("health err=%v status=%d", live.err, live.status).
 			withRemediation("Ensure the WebSocket read loop tolerates any client input without panicking or blocking the server.")}
 	case !wsOK:
-		return []Finding{finding("FUZZ-WS", "fuzz", "WebSocket protocol fuzzing", SevHigh, StatusWarn,
+		return []Finding{finding("FUZZ-WS", SevHigh, StatusWarn,
 			"HTTP still works, but a fresh WebSocket upgrade failed after the fuzz burst (possible connection-slot leak).").
 			withEvidence("ws dial err=%v", err).
 			withRemediation("Verify failed/garbage connections are always unregistered and their slots released.")}
 	default:
-		return []Finding{finding("FUZZ-WS", "fuzz", "WebSocket protocol fuzzing", SevInfo, StatusPass,
+		return []Finding{finding("FUZZ-WS", SevInfo, StatusPass,
 			"the server tolerated malformed/binary frames and rapid churn; HTTP and new WebSocket upgrades still work.")}
 	}
 }
@@ -369,13 +369,13 @@ func runFuzzLiveness(s *Scanner) []Finding {
 	for i := 0; i < 3; i++ {
 		r := s.do(http.MethodGet, "/health", nil, "")
 		if r.err == nil && (r.status == http.StatusOK || r.status == http.StatusNotFound) {
-			return []Finding{finding("FUZZ-LIVENESS", "fuzz", "Server survived the fuzz run", SevCritical, StatusPass,
+			return []Finding{finding("FUZZ-LIVENESS", SevCritical, StatusPass,
 				"the instance is still reachable and serving after the full fault-injection barrage.")}
 		}
 		lastErr = r.err
 		time.Sleep(500 * time.Millisecond)
 	}
-	return []Finding{finding("FUZZ-LIVENESS", "fuzz", "Server survived the fuzz run", SevCritical, StatusFail,
+	return []Finding{finding("FUZZ-LIVENESS", SevCritical, StatusFail,
 		"the instance stopped responding to /health after fuzzing — fault injection may have crashed or hung it.").
 		withEvidence("last err=%v", lastErr).
 		withRemediation("Investigate the preceding fuzz findings; a monitoring daemon must never be crashable by remote input.")}

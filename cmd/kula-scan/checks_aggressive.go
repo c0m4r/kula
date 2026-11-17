@@ -14,10 +14,10 @@ import (
 
 func aggressiveChecks() []check {
 	return []check{
-		{id: "INPUT-AGG", category: "input", aggressive: true, run: runOversizedBodyCheck},
-		{id: "RATE-OLLAMA", category: "rate", aggressive: true, run: runOllamaRateCheck},
-		{id: "WS-FLOOD", category: "ws", aggressive: true, run: runWSFloodCheck},
-		{id: "RATE-LOGIN", category: "rate", aggressive: true, run: runLoginRateCheck},
+		{ids: []string{"INPUT-AGG"}, run: runOversizedBodyCheck},
+		{ids: []string{"RATE-OLLAMA"}, run: runOllamaRateCheck},
+		{ids: []string{"WS-FLOOD"}, run: runWSFloodCheck},
+		{ids: []string{"RATE-LOGIN"}, run: runLoginRateCheck},
 	}
 }
 
@@ -26,7 +26,7 @@ func aggressiveChecks() []check {
 // disabled: Kula then answers /api/login with 404 and reads no body.
 func runOversizedBodyCheck(s *Scanner) []Finding {
 	if !s.authEnabled {
-		return []Finding{finding("INPUT-AGG", "input", "Login body size cap", SevInfo, StatusSkip,
+		return []Finding{finding("INPUT-AGG", SevInfo, StatusSkip,
 			"auth is disabled; the instance has no login endpoint to send a body to.")}
 	}
 	big := strings.Repeat("A", 8*1024)
@@ -37,18 +37,18 @@ func runOversizedBodyCheck(s *Scanner) []Finding {
 	}
 	resp := s.do(http.MethodPost, "/api/login", hdr, body)
 	if resp.err != nil {
-		return []Finding{finding("INPUT-AGG", "input", "Login body size cap", SevInfo, StatusError,
+		return []Finding{finding("INPUT-AGG", SevInfo, StatusError,
 			"could not send oversized login body: "+resp.err.Error())}
 	}
 	switch resp.status {
 	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
-		return []Finding{finding("INPUT-AGG", "input", "Login body size cap", SevLow, StatusPass,
+		return []Finding{finding("INPUT-AGG", SevLow, StatusPass,
 			"an 8 KiB login body is rejected (the 4 KiB MaxBytesReader cap holds).").withEvidence("status=%d", resp.status)}
 	case http.StatusTooManyRequests:
-		return []Finding{finding("INPUT-AGG", "input", "Login body size cap", SevInfo, StatusSkip,
+		return []Finding{finding("INPUT-AGG", SevInfo, StatusSkip,
 			"login was already rate-limited; re-run later to test the body cap.")}
 	default:
-		return []Finding{finding("INPUT-AGG", "input", "Login body size cap", SevMedium, StatusWarn,
+		return []Finding{finding("INPUT-AGG", SevMedium, StatusWarn,
 			"an oversized login body was not rejected with 400/413").withEvidence("status=%d", resp.status).
 			withRemediation("Wrap the login body in http.MaxBytesReader to bound memory use.")}
 	}
@@ -60,7 +60,7 @@ func runOversizedBodyCheck(s *Scanner) []Finding {
 // endpoint to throttle.
 func runLoginRateCheck(s *Scanner) []Finding {
 	if !s.authEnabled {
-		return []Finding{finding("RATE-LOGIN", "rate", "Login brute-force rate limiting", SevInfo, StatusSkip,
+		return []Finding{finding("RATE-LOGIN", SevInfo, StatusSkip,
 			"auth is disabled; the instance has no login endpoint to brute-force.")}
 	}
 	const burst = 8
@@ -75,11 +75,11 @@ func runLoginRateCheck(s *Scanner) []Finding {
 		}
 	}
 	if limited > 0 {
-		return []Finding{finding("RATE-LOGIN", "rate", "Login brute-force rate limiting", SevHigh, StatusPass,
+		return []Finding{finding("RATE-LOGIN", SevHigh, StatusPass,
 			"the login endpoint starts returning 429 within a burst of failed attempts (brute force is throttled).").
 			withEvidence("%d/%d attempts were rate-limited", limited, burst)}
 	}
-	return []Finding{finding("RATE-LOGIN", "rate", "Login brute-force rate limiting", SevHigh, StatusFail,
+	return []Finding{finding("RATE-LOGIN", SevHigh, StatusFail,
 		"a burst of failed logins was never rate-limited; the login endpoint is brute-forceable.").
 		withEvidence("0/%d attempts returned 429", burst).
 		withRemediation("Confirm the per-IP/per-username login limiter is active (see web auth RateLimiter).")}
@@ -89,12 +89,12 @@ func runLoginRateCheck(s *Scanner) []Finding {
 // Ollama is not enabled on the target.
 func runOllamaRateCheck(s *Scanner) []Finding {
 	if !s.ollama {
-		return []Finding{finding("RATE-OLLAMA", "rate", "Ollama rate limiting", SevInfo, StatusSkip,
+		return []Finding{finding("RATE-OLLAMA", SevInfo, StatusSkip,
 			"Ollama integration is not enabled on this instance.")}
 	}
 	hdr, ok := s.apiHeaders()
 	if !ok {
-		return []Finding{finding("RATE-OLLAMA", "rate", "Ollama rate limiting", SevInfo, StatusSkip,
+		return []Finding{finding("RATE-OLLAMA", SevInfo, StatusSkip,
 			"auth is enabled and no session is available to reach the Ollama endpoints.")}
 	}
 	const burst = 70 // ollamaMetaRateLimit is 60/min
@@ -106,10 +106,10 @@ func runOllamaRateCheck(s *Scanner) []Finding {
 		}
 	}
 	if limited > 0 {
-		return []Finding{finding("RATE-OLLAMA", "rate", "Ollama rate limiting", SevMedium, StatusPass,
+		return []Finding{finding("RATE-OLLAMA", SevMedium, StatusPass,
 			"the Ollama meta endpoint starts returning 429 under a burst.").withEvidence("%d/%d rate-limited", limited, burst)}
 	}
-	return []Finding{finding("RATE-OLLAMA", "rate", "Ollama rate limiting", SevMedium, StatusWarn,
+	return []Finding{finding("RATE-OLLAMA", SevMedium, StatusWarn,
 		"a burst of Ollama requests was never rate-limited.").withEvidence("0/%d returned 429", burst).
 		withRemediation("Confirm the per-IP Ollama rate limiter is active.")}
 }
@@ -121,7 +121,7 @@ func runWSFloodCheck(s *Scanner) []Finding {
 	var hdr http.Header
 	if s.authEnabled {
 		if !s.ensureSession() {
-			return []Finding{finding("WS-FLOOD", "ws", "WebSocket per-IP connection limit", SevInfo, StatusSkip,
+			return []Finding{finding("WS-FLOOD", SevInfo, StatusSkip,
 				"auth is enabled and no session is available to open WebSocket connections.")}
 		}
 		hdr = http.Header{}
@@ -151,11 +151,11 @@ func runWSFloodCheck(s *Scanner) []Finding {
 	}
 
 	if limited > 0 {
-		return []Finding{finding("WS-FLOOD", "ws", "WebSocket per-IP connection limit", SevMedium, StatusPass,
+		return []Finding{finding("WS-FLOOD", SevMedium, StatusPass,
 			"opening more than the per-IP limit of WebSocket connections is rejected with 429.").
 			withEvidence("%d/%d upgrades rejected with 429, %d held open", limited, attempts, len(open))}
 	}
-	return []Finding{finding("WS-FLOOD", "ws", "WebSocket per-IP connection limit", SevMedium, StatusWarn,
+	return []Finding{finding("WS-FLOOD", SevMedium, StatusWarn,
 		"all WebSocket upgrades succeeded; no per-IP connection cap was observed.").
 		withEvidence("%d connections opened without a 429", len(open)).
 		withRemediation("Set web.max_websocket_conns_per_ip to bound connections per client.")}
