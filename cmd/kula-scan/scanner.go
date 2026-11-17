@@ -942,7 +942,8 @@ func allChecks() []check {
 // Cancelling ctx interrupts the run: requests in flight abort, no further
 // check starts, the findings of the check that was cut short are dropped,
 // and s.interrupted and s.notRun record it. The session is logged out in
-// any case.
+// any case; when the auth check ran, that closing logout is also the AUTH-010
+// probe (closeSession).
 func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 	s.ctx = ctx
 

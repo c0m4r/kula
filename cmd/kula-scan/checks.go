@@ -140,9 +140,12 @@ func nosniffFinding(responses []probed) Finding {
 		return finding("HDR-001", SevMedium, StatusFail,
 			"X-Content-Type-Options: nosniff is missing on "+strings.Join(missing, ", ")+unreachedNote(unreached)).
 			withRemediation("Enable web.security.headers in config.yaml; Kula sets nosniff on every response.")
+	case len(unreached) > 0:
+		return finding("HDR-001", SevMedium, StatusPass,
+			"every response fetched carries X-Content-Type-Options: nosniff"+unreachedNote(unreached)+".")
 	default:
 		return finding("HDR-001", SevMedium, StatusPass,
-			"the UI page, a static asset and an API response all carry X-Content-Type-Options: nosniff"+unreachedNote(unreached)+".")
+			"the UI page, a static asset and an API response all carry X-Content-Type-Options: nosniff.")
 	}
 }
 
@@ -953,15 +956,15 @@ func (s *Scanner) csrfTokenFinding(id, token, sent string) Finding {
 // wrongCSRFToken returns a token that differs from the session's real one
 // only in its last character, so a check that compares no more than the
 // length or a prefix still has to refuse it.
-func wrongCSRFToken(real string) string {
-	if real == "" {
+func wrongCSRFToken(token string) string {
+	if token == "" {
 		return "kula-scan-" + randToken(16)
 	}
 	last := byte('0')
-	if real[len(real)-1] == last {
+	if token[len(token)-1] == last {
 		last = '1'
 	}
-	return real[:len(real)-1] + string(last)
+	return token[:len(token)-1] + string(last)
 }
 
 // ============================== cors =========================================

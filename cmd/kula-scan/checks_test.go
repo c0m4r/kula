@@ -245,7 +245,7 @@ func historyHandler(maxPoints int) http.HandlerFunc {
 				}
 			}
 		}
-		to, from := time.Now(), time.Time{}
+		to := time.Now()
 		if raw := q.Get("to"); raw != "" {
 			t, err := time.Parse(time.RFC3339, raw)
 			if err != nil {
@@ -254,7 +254,7 @@ func historyHandler(maxPoints int) http.HandlerFunc {
 			}
 			to = t
 		}
-		from = to.Add(-5 * time.Minute)
+		from := to.Add(-5 * time.Minute)
 		if raw := q.Get("from"); raw != "" {
 			f, err := time.Parse(time.RFC3339, raw)
 			if err != nil {
