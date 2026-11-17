@@ -26,7 +26,7 @@ that is unreachable or not Kula, 3 inconclusive (an ERROR), 130 interrupted.
 | `catalog.go` | `catalog`: every finding ID with its category, mode, title and description; `-list` |
 | `expect.go` | `expectKeys` and `applyExpectations` (`-expect`) |
 | `selection.go` | `-only`, `-skip`, `-ignore` |
-| `scanner.go` | `Scanner`, `NewScanner`, the transport helpers, `discover`, `ensureSession`, `allChecks`, `Run`, the closing logout |
+| `scanner.go` | `Scanner`, `NewScanner`, the transport helpers, `discover`, `ensureSession`, `assistantEnabled`, `allChecks`, `Run`, the closing logout |
 | `headers.go` | `-H` parsing, the refused names, adding the headers to every request |
 | `util.go` | `printable` (terminal-safe text), small helpers |
 | `report.go`, `report_format.go` | `Report`, the text and JSON formats, `exitCode`, `exitReason`, `-o` |
@@ -107,7 +107,9 @@ What makes the scanner usable as a gate is that its statuses mean the same thing
   limiter only with origin validation off. A probe that ends the session (a CSRF token gate that
   accepts a logout) calls `markSessionLost`, so later checks skip instead of misreporting.
 - **No chat starts.** Nothing posts a body that decodes to `/api/ollama/chat`: one that decodes
-  takes a chat slot and calls the model. The chat probes send JSON that never decodes.
+  takes a chat slot and calls the model. The chat probes send JSON that never decodes. Whether
+  the assistant is on comes from `assistantEnabled()`: discovery's read of `/api/config` with
+  auth off, and behind auth one read with the run's session, which never logs in itself.
 - **Every connection goes through the scanner's helpers** (`do`, `doContext`, `rawTCP`,
   `rawExchange`, `rawRequest`, `hostRequest`, `dialRaw`, `dialTLS`, `wsDial`), so `-connect`,
   `-unix`, `-H`, the base path, `-timeout` and the interrupt apply. Never `http.Get` or a client
@@ -130,8 +132,9 @@ TLS probes (`tryHandshake`) offer one version or suite set per handshake and sen
 
 ## Run order and the login budget
 
-`allChecks()` runs the categories in catalog order, then orders the end of the run by the login
-budget, which the comment there spells out and the README's
+The catalog's order is what `-list` and `-h` show, not the run order. `allChecks()` runs the
+default checks by category, then most aggressive checks, then the fuzz checks, and orders the end
+of the run by the login and chat budgets, which the comment there spells out and the README's
 [Run order and login budget](../../cmd/kula-scan/README.md#run-order-and-login-budget) explains:
 every probe that posts to `/api/login` runs before `RATE-LOGIN` and `BYPASS-XFF`, which exhaust
 the address's 15 attempts on purpose; `RATE-CHAT` runs after `FUZZ-BODY`; `FUZZ-LIVENESS` is
@@ -156,7 +159,8 @@ nothing reached the code; WARN under half; else PASS).
 ## Adding a check
 
 1. Add the ID to `catalog` in its category, with mode, a title that holds for every outcome and
-   a one-line description of what it verifies. A new category goes where it runs.
+   a one-line description of what it verifies. `-list`, `-h` and the SARIF rules follow the
+   catalog's order.
 2. Declare it in the `ids` of exactly one check, in its category's registry function, and put a
    new check where it belongs in `allChecks()` (login budget, limiters it spends).
 3. Follow the judging rules: PASS only on an answer, ERROR when the requests failed, a WARN with
@@ -165,8 +169,10 @@ nothing reached the code; WARN under half; else PASS).
 4. Test it against a mock that holds the safeguard and one that does not: `secureMock` and
    `insecureMock` (`checks_test.go`), or `kulaMock` (`fuzz_mock_test.go`), which emulates
    `internal/web`'s routes, method checks, gates, limiters and body decoding.
-5. Add it to the integration test's expectation tables, the exact WARN and SKIP sets of each
-   posture it runs in (see [Testing](12-testing.md#black-box-scanning-kula-scan)).
+5. Run `TestScanJudgesTheRealKula` (`integration_test.go`). Every catalog ID it does not name
+   must PASS against the real Kula, so a check that warns, skips or goes unreported in some
+   posture needs a line in that posture's table; the lists at the top of the file say why each
+   ID is there (see [Testing](12-testing.md#black-box-scanning-kula-scan)).
 6. Document it in the README's category table, and in `-expect`'s table when it adds a key.
 
 A new safeguard, route or limit on the server side needs the same: a check here and its line in
@@ -176,9 +182,10 @@ the integration test, or the scanner silently stops covering the surface.
 
 Every check is unit-tested against mock servers in this package (`go test ./cmd/kula-scan`):
 the secure and insecure mocks, `kulaMock` for the fuzz and limit probes, and targeted tests for
-each transport path, report format, exit status and the interrupt. The integration test boots
-the real `kula serve` and runs the scanner against it; the showcase runs it against a deployment
-behind a base path and Caddy. Both are described in
-[Testing](12-testing.md#black-box-scanning-kula-scan).
+each transport path, report format, exit status and the interrupt. `TestScanJudgesTheRealKula`
+builds and boots the real `kula serve` in ten postures and asserts every finding's status;
+`KULA_SCAN_SLOW=1` adds the two probes that wait out Kula's read timeout, and `go test -short`
+skips it. The Docker showcase scans a full deployment under its base path and through Caddy.
+Both are described in [Testing](12-testing.md#black-box-scanning-kula-scan).
 
 Next: [Adding a Metric Type](14-adding-metrics.md).

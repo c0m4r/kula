@@ -184,9 +184,11 @@ the root `kula` package, for its version).
 - Every probe that posts to `/api/login` runs before `RATE-LOGIN` and `BYPASS-XFF`, which exhaust
   the login limiter; `FUZZ-LIVENESS` runs last. The comment in `allChecks()` is the budget and
   `TestLoginBudgetOrder` the order; a probe that spends logins updates both.
-- A new server safeguard, route or limit needs its scanner check and its line in the expectation
-  tables of `<<integration-test-file>>`, which boots the real `kula serve`. A new deliberate 5xx
-  needs an entry in `deliberate5xx` (`checks_fuzz.go`), or `-fuzz` reports it as an anomaly.
+- A new server safeguard, route or limit needs its scanner check. `TestScanJudgesTheRealKula`
+  (`integration_test.go`) boots the real `kula serve` per posture and requires every ID its
+  tables do not name to PASS (`go test -short` skips it; `KULA_SCAN_SLOW=1` adds the slow DoS
+  probes). A new deliberate 5xx needs an entry in `deliberate5xx` (`checks_fuzz.go`), or `-fuzz`
+  reports it as an anomaly.
 
 ### Build and lint
 

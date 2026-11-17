@@ -242,7 +242,7 @@ rewrite earlier lines or set your clipboard.
 | `target` | The URL scanned, with its base path |
 | `started`, `duration_ms` | UTC start (RFC 3339, whole seconds) and duration |
 | `options` | `aggressive`, `fuzz`, `seed` (with `-fuzz`), `only`, `skip`, `ignore`, `expect`, `fail_on`, and `connect`, `unix`, `headers` (names only) when given |
-| `target_info` | What discovery learnt: `https`, `auth_enabled`, `ollama`, `version` (when `/api/config` discloses it) |
+| `target_info` | What discovery learnt: `https`, `auth_enabled`, `ollama`, `version` (when `/api/config` discloses it). Behind auth, `ollama` and `version` are what the run's session read of `/api/config`, and stay unset when the run opened no session |
 | `findings[]` | `id`, `category`, `title`, `severity`, `status`, `detail`, `evidence`, `remediation`, `expectation` (the declared key it was judged against), `ignored` |
 | `summary` | Counts: `pass`, `fail`, `warn`, `skip`, `error`, `ignored` (an ignored finding counts only there) |
 | `interrupted`, `not_run`, `exit_code` | Whether a signal cut the run short, how many checks did not run, and the exit status |
@@ -283,8 +283,10 @@ Mode: **default** runs on every scan; **aggressive** needs `-aggressive`; **fuzz
 ### discovery
 
 `GET /health` (`kula is healthy`), `/api/auth/status` (`auth_required`) and `/api/config`
-(`ollama_enabled`, `version`; open only with auth off). A target that does not answer, or is not
-Kula, is a `DISC-001` ERROR and the scan stops (exit 2; the detail suggests the base path).
+(`ollama_enabled`, `version`; open only with auth off). Behind auth, the run's session reads
+`/api/config` once instead, which tells the AI probes whether the assistant is on. A target that
+does not answer, or is not Kula, is a `DISC-001` ERROR and the scan stops (exit 2; the detail
+suggests the base path).
 `DISC-002` warns when auth is on over plain HTTP (`-expect tls`). `DISC-003` is the refused
 `Host` name above.
 
@@ -324,9 +326,10 @@ every `Content-Security-Policy` header, and a restriction any enforced policy ma
 
 No `Content-Security-Policy` at all fails `HDR-003` and warns on the other four.
 
-`HDR-002` passes on `X-Frame-Options: DENY`. Without it, it is a WARN for
-`-expect frame-protection` when the other security headers are there (`frame_protection: false`),
-and a FAIL when they are missing too (`web.security.headers: false`).
+`HDR-002` passes when the UI page carries `X-Frame-Options: DENY`. Missing while the other
+security headers are sent (`web.security.frame_protection: false`), it is a WARN for
+`-expect frame-protection`; missing with them (`web.security.headers: false`), or set to any
+other value, it is a FAIL.
 
 `AUTH-001` sends, without a session: `GET /api/current`, `/api/history`, `/api/config`,
 `/api/i18n?lang=en`, `/api/system-info`, `/api/ollama/models`, `/api/ollama/context`, a
@@ -378,7 +381,7 @@ reaching it is a WARN.
 | `FUZZ-QUERY` | `-fuzz-iter` requests to `/api/history` (`from`, `to`, `points`, `tier`, `sections`, valid, nearly valid and hostile) and `/api/i18n` (`lang`); half through the HTTP client, half written raw with bad escapes, control and high bytes and odd separators. Needs the API. |
 | `FUZZ-PATH` | `-fuzz-iter` hostile paths with a reflection canary, half escaped, half raw. |
 | `FUZZ-BODY` | At most 6 malformed JSON bodies to `/api/login` (with auth on) and 6 to the AI chat (when enabled; with the session behind auth), each series stopping at a 429. Every chat body is one the chat's decoder refuses, so no chat starts. |
-| `FUZZ-METHODS` | Unusual methods (`PUT`, `DELETE`, `PATCH`, `TRACE`, `CONNECT`, `PROPFIND`, `MKCOL`, `BREW`, `FOObar`), `HEAD` and `OPTIONS` on 17 routes, and `POST` on the read-only API routes: 195 requests, past the auth and CSRF gates. A read-only API route accepting `POST`, `PUT`, `DELETE` or `PATCH`, or login, logout or the chat accepting anything but `POST` and `OPTIONS`, is an anomaly. `POST` is never sent to those three. Outside `/api/` Kula serves its page, assets, `/health` and `/status` to any method; those 2xx are information only. |
+| `FUZZ-METHODS` | Unusual methods (`PUT`, `DELETE`, `PATCH`, `TRACE`, `PROPFIND`, `MKCOL`, `BREW`, `FOObar`), `HEAD` and `OPTIONS` on 17 routes, and `POST` on the 8 read-only API routes: 178 requests, past the auth and CSRF gates. A read-only API route accepting `POST`, `PUT`, `DELETE` or `PATCH`, or login, logout or the chat accepting anything but `POST` and `OPTIONS`, is an anomaly. `POST` is never sent to those three, nor `CONNECT` to any route (a reverse proxy answers it itself). Outside `/api/` Kula serves its page, assets, `/health` and `/status` to any method; those 2xx are information only. |
 | `FUZZ-SMUGGLE` | Three ambiguously framed `POST /api/login` over raw sockets: two `Content-Length`s, `Content-Length` with chunked `Transfer-Encoding`, two `Transfer-Encoding`s. Each must be refused, or handled without a 2xx or a 500; the detail says what each was answered. |
 | `FUZZ-WS` | Six same-origin WebSocket connections in turn (with the session behind auth), up to 8 malformed, binary and pause/resume frames on each; then HTTP and a new upgrade must still work. Opening no connection is not a pass. |
 | `FUZZ-LIVENESS` | `GET /health` (up to 3 tries) after everything else, the lockout probes included. |
@@ -417,13 +420,16 @@ a model chat: every chat body it sends fails Kula's decoder.
   for a minute (without starting a chat), holds 12 slow and 64 idle connections up to
   `-dos-wait`, sends a 2 MiB header block and loads the store with 8 widest-window history
   queries at once.
+- With the AI assistant on, `RATE-OLLAMA`'s 70 requests for the model list make Kula ask its
+  configured backend for it about 60 times.
 - A full `-aggressive -fuzz` run takes about a minute, most of it the two `-dos-wait` waits.
 
 Run `-aggressive` against staging, or accept the lockout on production.
 
 ### Run order and login budget
 
-Checks run grouped by category, except at the end, which the login budget orders. Every
+The default checks run first, by category, then most aggressive checks, then the fuzz checks;
+the login and chat budgets order the end of the run. Every
 `POST /api/login` that passes the CSRF gate counts against the address's 15 attempts in five
 minutes, whatever its body; one whose body decodes also counts against that account's 5. The
 probes that spend attempts run first, so each still reaches the code it tests:
@@ -459,5 +465,7 @@ before routing. That is 13 (at most 15) before `RATE-LOGIN`, and every judgement
 ## Development
 
 Architecture, the catalog and registry, the judging rules a new check must follow, and the tests
-(including the integration test that runs this scanner against the real `kula serve`) are in
-[kula-scan (developer notes)](../../docs/dev/13-kula-scan.md).
+are in [kula-scan (developer notes)](../../docs/dev/13-kula-scan.md). Among them,
+[`integration_test.go`](integration_test.go) runs this scanner against the real `kula serve` in
+ten postures, and the [Docker showcase](../../addons/docker/showcase/README.md) scans a full
+deployment directly and through a TLS proxy.

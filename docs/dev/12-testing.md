@@ -340,12 +340,13 @@ load, then checks each feature over the wire:
 ```bash
 cd addons/docker/showcase
 ./showcase.sh up --build   # this checkout, built as kula:showcase
-./showcase.sh test         # PASS/FAIL per feature; waits up to ~2 minutes for a backup
+./showcase.sh test         # PASS/FAIL per feature, then kula-scan; up to ~6 minutes
 ./showcase.sh down
 ```
 
-It needs only Docker with Compose. Each test run logs in once per account, so up to five runs
-fit in Kula's five-minute login limit.
+It needs only Docker with Compose. A test run ends with `kula-scan -aggressive`
+([below](#black-box-scanning-kula-scan)), which locks login out from its address for five
+minutes: run `test` again after that.
 
 ## Runtime security tests
 
@@ -362,24 +363,39 @@ three levels:
 
 - **Unit tests** in `cmd/kula-scan` judge every check against mock servers that hold or break
   each safeguard, and cover the transport, report formats and exit statuses.
-- **Integration test.** `<<integration-test-file>>` builds `kula`, boots the real `kula serve`
-  in several postures, runs the scanner against each and asserts its exit status and the exact
-  set of WARN and SKIP findings. A server change that weakens a safeguard, or a scanner change
-  that misjudges one, fails it. It runs with the rest of `go test ./...` and is skipped under
-  `go test -short`. The two slow DoS probes, `DOS-SLOWLORIS` and `DOS-CONNFLOOD`, which wait out
-  `-dos-wait`, run only when `<<slow-dos-env>>` is set:
+- **Integration test.** `TestScanJudgesTheRealKula`
+  ([`integration_test.go`](../../cmd/kula-scan/integration_test.go)) builds this checkout's
+  `kula` (so it needs the `go` command), hashes a random password with `kula hash-password`, and
+  boots `kula serve` on 127.0.0.1 per posture, each with its own config, storage and
+  `KULA_DIRECTORY`. It runs the scanner in-process with `-json` against each and asserts the exit
+  status and, for every catalog ID, FAIL, WARN, ERROR, SKIP or not reported; any ID a table does
+  not name must PASS. It also reads each instance's log: nothing panicked, and with the AI
+  assistant on, no scan started a chat. The postures: auth off, and under a `Host` name Kula
+  refuses (exit 3, `DISC-003`); auth on with a metrics token and the assistant, with `-fuzz`, and
+  with `-aggressive -fuzz`; auth off with `-aggressive -fuzz`; `web.base_path` (and its root,
+  which is not Kula: exit 2); `web.unix_socket` with `-unix`; refused credentials (exit 3), a
+  mistyped `-only` and an unreachable port (exit 2); and three weakened servers the scan must
+  notice, origin validation off, `allowed_hosts: ["*"]` and security headers off, the first two
+  also with the matching `-expect`. It runs with `go test ./cmd/kula-scan` and so in
+  `./addons/check.sh` (about 2.5 s with a warm build cache), and `go test -short` skips it.
+  `KULA_SCAN_SLOW=1` adds `DOS-SLOWLORIS` and `DOS-CONNFLOOD`, which wait out Kula's 30 s read
+  timeout (about a minute more):
 
   ```bash
-  go test -race -run <<integration-test-name>> ./cmd/kula-scan
-  <<slow-dos-env>>=1 go test -race -run <<integration-test-name>> ./cmd/kula-scan
+  go test -race -run TestScanJudgesTheRealKula -v ./cmd/kula-scan
+  KULA_SCAN_SLOW=1 go test -race -run TestScanJudgesTheRealKula ./cmd/kula-scan
   ```
 
-- **Showcase.** `./showcase.sh test` ([Feature showcase](#feature-showcase-docker)) also runs the
-  scanner against the showcase's Kula, under its base path and through Caddy over HTTPS
-  (`<<showcase-step>>`).
+- **Showcase.** `./showcase.sh test` ([Feature showcase](#feature-showcase-docker)) ends by
+  building the scanner as its own image, `kula-scan:showcase`, and scanning the showcase's Kula
+  with `-aggressive -fuzz`, directly under its base path and through Caddy over HTTPS. It keeps
+  the reports in `reports/`, and `test/scan_test.py` checks each scan's exit status and its FAIL
+  and WARN findings; the expected ones and why are in the
+  [showcase README](../../addons/docker/showcase/README.md#the-test).
 
-A new safeguard, route or limit in `internal/web` needs its scanner check and its line in the
-integration test's expectation tables ([Adding a check](13-kula-scan.md#adding-a-check)).
+A new safeguard, route or limit in `internal/web` needs its scanner check, and a line in the
+integration test's tables wherever it does not PASS against a sound Kula
+([Adding a check](13-kula-scan.md#adding-a-check)).
 
 ## Python helpers
 
