@@ -967,6 +967,7 @@ func allChecks() []check {
 	checks = append(checks, wsChecks()...)
 	checks = append(checks, inputChecks()...)
 	checks = append(checks, redirectChecks()...)
+	checks = append(checks, integrityChecks()...)
 	checks = append(checks, tlsChecks()...)
 	checks = append(checks, aggressiveChecks()...)
 	checks = append(checks, dosChecks()...)

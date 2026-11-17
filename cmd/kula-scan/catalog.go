@@ -164,6 +164,11 @@ var catalog = []catalogEntry{
 	{"REDIR-001", "redirect", ModeDefault, "No open redirect",
 		"Crafted paths do not produce a redirect whose Location, read as a browser reads it, names a foreign host."},
 
+	{"SRI-001", "integrity", ModeDefault, "Scripts carry integrity",
+		"Every external script and modulepreload link of the UI page is same-origin with a sha256, sha384 or sha512 integrity hash, and every inline script carries the CSP nonce."},
+	{"SRI-002", "integrity", ModeDefault, "Served scripts match their integrity",
+		"Each same-origin script the UI page names hashes, as served and content-decoded, to its strongest integrity hash."},
+
 	{"TLS-001", "tls", ModeDefault, "TLS protocol version",
 		"Over HTTPS, handshakes capped at TLS 1.1 and at TLS 1.0 are refused."},
 	{"TLS-002", "tls", ModeDefault, "TLS cipher strength",
