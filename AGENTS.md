@@ -18,6 +18,7 @@ runtime dependency.
 | Native fuzzing over every `Fuzz*` target | `./addons/fuzz.sh [duration] [filter]` |
 | Storage engine benchmarks | `./addons/benchmark.sh` |
 | Rebuild the vendored Chart.js bundle (needs node + npm) | `./addons/build-chartjs.sh [--update]` |
+| Readable diff of the Chart.js bundle between two revisions | `addons/chartjs/diff-bundle.sh [OLD [NEW]]` |
 | Packaging helpers still leave a tree that vets and passes the web tests | `./addons/packaging/check_helpers.sh` |
 
 `./addons/check.sh` runs, in order: `govulncheck` → `gofmt -l .` → `go vet ./...` →
@@ -151,8 +152,9 @@ per-application reducer branches.
   build swaps the bundle for the upstream UMD trio with
   `addons/packaging/replace_chartjs.sh`, which rewrites the template, the fixtures and those
   tests accordingly — the "never hand-edit" rule applies to this repo, not to that helper.
-- npm is used only through `addons/build-chartjs.sh` (or by hand in `addons/chartjs/`, whose
-  `.npmrc` applies the same guards): `ignore-scripts=true`, `min-release-age=14`, exact pins.
+- npm is used only through `addons/build-chartjs.sh` and `addons/chartjs/diff-bundle.sh` (or by
+  hand in `addons/chartjs/`, whose `.npmrc` applies the same guards): `ignore-scripts=true`,
+  `min-release-age=14`, exact pins.
   `verify-lock.js` rejects a lockfile older than v2 (no `packages` map), a direct dependency
   of any kind that is not an exact pin or not locked, and any locked package whose `resolved`
   and sha512 `integrity` are not exactly the registry's `dist.tarball` and `dist.integrity`

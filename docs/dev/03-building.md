@@ -134,6 +134,17 @@ platforms:
 registry and crafted lockfiles. Run npm by hand in `addons/chartjs/` only; its `.npmrc` applies
 the same guards.
 
+The minified bundle does not diff usefully: esbuild names minified symbols by how often they are
+used, so any upstream change renames symbols throughout the file. To review an update,
+`addons/chartjs/diff-bundle.sh` builds the bundle unminified from `addons/chartjs/` at two
+revisions, under the same guards, and diffs the builds:
+
+```bash
+addons/chartjs/diff-bundle.sh                # HEAD vs the work tree
+addons/chartjs/diff-bundle.sh HEAD~1 HEAD    # what the last commit changed in the bundle
+addons/chartjs/diff-bundle.sh 0.22.0 --stat  # options go to git diff
+```
+
 Rebuilding from the lockfile reproduces `chartjs-bundle.min.js` byte for byte, and CI holds it
 to that: the `chartjs-bundle` job of `ci.yml` runs the `verify-lock.js` tests, rebuilds the
 bundle with `./addons/build-chartjs.sh` and fails when the committed file differs, so a change
