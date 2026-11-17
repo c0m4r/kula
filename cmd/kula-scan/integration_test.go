@@ -173,12 +173,8 @@ func realPostures(slow bool) []realPosture {
 					return argv(asAdmin, authOnExpect, []string{"-aggressive", "-fuzz"}, slowSkip, k.url)
 				},
 				want: realScanWant{
-					warn: []string{"DISC-002"},
-					// RATE-OLLAMA: discovery reads ollama_enabled from
-					// /api/config, which auth hides from a client without a
-					// session, so the check skips although the assistant is
-					// on.
-					skip:   idsOf(realTLSOnly, []string{"HOST-001", "RATE-OLLAMA"}),
+					warn:   []string{"DISC-002"},
+					skip:   idsOf(realTLSOnly, []string{"HOST-001"}),
 					silent: idsOf(authOnSilent, slowSilent),
 				},
 			}},

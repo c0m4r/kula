@@ -50,10 +50,15 @@ func (m *kulaMock) counts() [2]int {
 // never a hit.
 func TestFuzzMethodsReachTheHandlers(t *testing.T) {
 	n := len(methodMatrix())
-	// 17 routes get 9 unusual methods, HEAD and OPTIONS; the 8 read-only API
-	// routes get POST too.
-	if n != 17*11+8 {
-		t.Fatalf("the matrix has %d requests, want %d", n, 17*11+8)
+	// 17 routes get 8 unusual methods, HEAD and OPTIONS; the 8 read-only API
+	// routes get POST too. CONNECT is left out: a proxy answers it itself.
+	if n != 17*10+8 {
+		t.Fatalf("the matrix has %d requests, want %d", n, 17*10+8)
+	}
+	for _, p := range methodMatrix() {
+		if p.method == http.MethodConnect {
+			t.Fatalf("the matrix sends CONNECT to %s", p.path)
+		}
 	}
 	for _, auth := range []bool{true, false} {
 		m := newKulaMock(auth, true)
@@ -64,12 +69,12 @@ func TestFuzzMethodsReachTheHandlers(t *testing.T) {
 			t.Errorf("auth %v: FUZZ-METHODS = %s: %s; want a PASS starting %q", auth, f.Status, f.Detail, want)
 		}
 		// 8 read-only routes × POST, PUT, DELETE, PATCH, and 3 POST-only
-		// routes × 10 methods (all but POST and OPTIONS).
-		if !strings.Contains(f.Detail, "Method enforcement: 62 requests with a method their API route does not serve") {
+		// routes × 9 methods (all but POST and OPTIONS).
+		if !strings.Contains(f.Detail, "Method enforcement: 59 requests with a method their API route does not serve") {
 			t.Errorf("auth %v: FUZZ-METHODS does not say the API routes enforced their methods: %s", auth, f.Detail)
 		}
-		// /, /style.css, /health and /status × the 9 unusual methods.
-		if !strings.Contains(f.Detail, "For information: 36 requests outside /api/ with a method other than GET, HEAD or OPTIONS were answered 2xx") {
+		// /, /style.css, /health and /status × the 8 unusual methods.
+		if !strings.Contains(f.Detail, "For information: 32 requests outside /api/ with a method other than GET, HEAD or OPTIONS were answered 2xx") {
 			t.Errorf("auth %v: FUZZ-METHODS does not count the non-API 2xx answers: %s", auth, f.Detail)
 		}
 		deleted := false

@@ -1010,9 +1010,12 @@ var methodRoutes = []struct {
 	{"/api/ollama/chat", routePostOnly},
 }
 
-// unusualMethods are sent to every route, with HEAD and OPTIONS.
+// unusualMethods are sent to every route, with HEAD and OPTIONS. CONNECT is
+// not among them: a client sends it with the host as its target, not the
+// route's path, and a reverse proxy answers it itself (Caddy with an empty
+// 200 over HTTP/2), which says nothing of the route behind it.
 var unusualMethods = []string{
-	http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodTrace, http.MethodConnect,
+	http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodTrace,
 	"PROPFIND", "MKCOL", "BREW", "FOObar",
 }
 
