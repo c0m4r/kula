@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -57,35 +59,81 @@ func runOversizedBodyCheck(s *Scanner) []Finding {
 	}
 }
 
+// tally counts the outcomes of a burst of requests: the answers by status,
+// and the requests that got none, with the first error. A probe judges a
+// safeguard only on answers: requests that failed prove nothing either way.
+type tally struct {
+	total    int
+	statuses map[int]int
+	failed   int
+	firstErr error
+}
+
+func (t *tally) add(r httpResult) {
+	t.total++
+	if r.err != nil {
+		if t.failed == 0 {
+			t.firstErr = r.err
+		}
+		t.failed++
+		return
+	}
+	if t.statuses == nil {
+		t.statuses = map[int]int{}
+	}
+	t.statuses[r.status]++
+}
+
+// String renders the tally for evidence: "5× HTTP 401, 3× HTTP 429, 1 failed (…)".
+func (t *tally) String() string {
+	var parts []string
+	for _, code := range slices.Sorted(maps.Keys(t.statuses)) {
+		parts = append(parts, fmt.Sprintf("%d× HTTP %d", t.statuses[code], code))
+	}
+	if t.failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed (%v)", t.failed, t.firstErr))
+	}
+	if len(parts) == 0 {
+		return "no requests sent"
+	}
+	return strings.Join(parts, ", ")
+}
+
 // runLoginRateCheck fires a burst of bad logins from this IP and expects the
 // rate limiter to start answering 429. NOTE: this locks out login from the
 // scanner's IP for ~5 minutes. SKIP when auth is disabled: there is no login
-// endpoint to throttle.
+// endpoint to throttle. A 429 is the pass; every attempt reaching the
+// credential check (401) is the finding; anything else says nothing of the
+// limiter and leaves the check an ERROR.
 func runLoginRateCheck(s *Scanner) []Finding {
 	if !s.authEnabled {
 		return []Finding{finding("RATE-LOGIN", SevInfo, StatusSkip,
 			"auth is disabled; the instance has no login endpoint to brute-force.")}
 	}
 	const burst = 8
-	limited := 0
-	for i := 0; i < burst; i++ {
-		r := s.loginRaw("ratelimit-probe", "wrong-"+randToken(4))
-		if r.err != nil {
-			continue
-		}
-		if r.status == http.StatusTooManyRequests {
-			limited++
-		}
+	var t tally
+	for i := 0; i < burst && s.ctx.Err() == nil; i++ {
+		t.add(s.loginRaw("ratelimit-probe", "wrong-"+randToken(4)))
 	}
-	if limited > 0 {
+	limited, reached := t.statuses[http.StatusTooManyRequests], t.statuses[http.StatusUnauthorized]
+	switch {
+	case limited > 0:
 		return []Finding{finding("RATE-LOGIN", SevHigh, StatusPass,
 			"the login endpoint starts returning 429 within a burst of failed attempts (brute force is throttled).").
-			withEvidence("%d/%d attempts were rate-limited", limited, burst)}
+			withEvidence("%d/%d attempts were rate-limited: %s", limited, burst, &t)}
+	case reached == burst:
+		return []Finding{finding("RATE-LOGIN", SevHigh, StatusFail,
+			"a burst of failed logins was never rate-limited; the login endpoint is brute-forceable.").
+			withEvidence("0/%d attempts returned 429: %s", burst, &t).
+			withRemediation("Confirm the per-IP/per-username login limiter is active (see web auth RateLimiter).")}
+	case t.failed == t.total:
+		return []Finding{finding("RATE-LOGIN", SevInfo, StatusError,
+			fmt.Sprintf("every login attempt of the burst failed, so the limiter was not exercised: %v", t.firstErr))}
+	default:
+		return []Finding{finding("RATE-LOGIN", SevInfo, StatusError,
+			fmt.Sprintf("no attempt was rate-limited, but only %d of %d reached the credential check (HTTP 401), so the burst says nothing of the limiter.", reached, burst)).
+			withEvidence("%s", &t)}
 	}
-	return []Finding{finding("RATE-LOGIN", SevHigh, StatusFail,
-		"a burst of failed logins was never rate-limited; the login endpoint is brute-forceable.").
-		withEvidence("0/%d attempts returned 429", burst).
-		withRemediation("Confirm the per-IP/per-username login limiter is active (see web auth RateLimiter).")}
 }
 
 // runOllamaRateCheck floods the Ollama meta endpoint and expects 429s. SKIP when
@@ -101,20 +149,24 @@ func runOllamaRateCheck(s *Scanner) []Finding {
 			"auth is enabled and no session is available to reach the Ollama endpoints.")}
 	}
 	const burst = 70 // ollamaMetaRateLimit is 60/min
-	limited := 0
-	for i := 0; i < burst; i++ {
-		r := s.do(http.MethodGet, "/api/ollama/models", hdr, "")
-		if r.err == nil && r.status == http.StatusTooManyRequests {
-			limited++
-		}
+	var t tally
+	for i := 0; i < burst && s.ctx.Err() == nil; i++ {
+		t.add(s.do(http.MethodGet, "/api/ollama/models", hdr, ""))
 	}
-	if limited > 0 {
+	limited := t.statuses[http.StatusTooManyRequests]
+	switch {
+	case limited > 0:
 		return []Finding{finding("RATE-OLLAMA", SevMedium, StatusPass,
-			"the Ollama meta endpoint starts returning 429 under a burst.").withEvidence("%d/%d rate-limited", limited, burst)}
+			"the Ollama meta endpoint starts returning 429 under a burst.").withEvidence("%d/%d rate-limited: %s", limited, burst, &t)}
+	case t.failed == 0:
+		return []Finding{finding("RATE-OLLAMA", SevMedium, StatusWarn,
+			"a burst of Ollama requests was never rate-limited.").withEvidence("0/%d returned 429: %s", burst, &t).
+			withRemediation("Confirm the per-IP Ollama rate limiter is active.")}
+	default:
+		return []Finding{finding("RATE-OLLAMA", SevInfo, StatusError,
+			fmt.Sprintf("%d of %d requests of the burst failed and none of the others was rate-limited, so the burst says nothing of the limiter.", t.failed, burst)).
+			withEvidence("%s", &t)}
 	}
-	return []Finding{finding("RATE-OLLAMA", SevMedium, StatusWarn,
-		"a burst of Ollama requests was never rate-limited.").withEvidence("0/%d returned 429", burst).
-		withRemediation("Confirm the per-IP Ollama rate limiter is active.")}
 }
 
 // wsLimitAnswered says which of Kula's two WebSocket caps refused an upgrade

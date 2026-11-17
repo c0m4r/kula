@@ -300,6 +300,141 @@ func TestWSFloodWithoutAConnectionIsAnError(t *testing.T) {
 	}
 }
 
+// ---- RATE-LOGIN / BYPASS-XFF / RATE-OLLAMA ---------------------------------------------
+
+// answerTarget answers the n-th request (from 1) to path with the status
+// answer(n), and 404 to anything else.
+func answerTarget(t *testing.T, path string, answer func(n int64) int) *httptest.Server {
+	t.Helper()
+	var n atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(answer(n.Add(1)))
+		_, _ = w.Write([]byte(`{"error":"answer"}`))
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// throttledAfter answers 401 to the first n attempts and 429 to the rest,
+// as Kula's per-account login limiter does for five.
+func throttledAfter(n int64) func(int64) int {
+	return func(i int64) int {
+		if i > n {
+			return http.StatusTooManyRequests
+		}
+		return http.StatusUnauthorized
+	}
+}
+
+func always(status int) func(int64) int {
+	return func(int64) int { return status }
+}
+
+// authScanner returns a scanner for target that believes auth is on.
+func authScanner(t *testing.T, target string) *Scanner {
+	t.Helper()
+	s := dosScanner(t, target, 5*time.Second, time.Second)
+	s.authEnabled = true
+	return s
+}
+
+func TestLoginRateJudgesOnlyAnswers(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		want   Status
+	}{
+		{"throttled", answerTarget(t, "/api/login", throttledAfter(5)).URL, StatusPass},
+		{"never throttled", answerTarget(t, "/api/login", always(http.StatusUnauthorized)).URL, StatusFail},
+		{"refused by origin", answerTarget(t, "/api/login", always(http.StatusForbidden)).URL, StatusError},
+		{"closed port", "http://" + closedAddress(t), StatusError},
+		{"hang-up", "http://" + hangUpListener(t, 0), StatusError},
+	}
+	for _, c := range cases {
+		if f, _ := byID(runLoginRateCheck(authScanner(t, c.target)), "RATE-LOGIN"); f.Status != c.want {
+			t.Errorf("%s: RATE-LOGIN = %s %q | %q, want %s", c.name, f.Status, f.Detail, f.Evidence, c.want)
+		}
+	}
+}
+
+func TestXFFBypassJudgesOnlyAnswers(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		want   Status
+	}{
+		{"throttled", answerTarget(t, "/api/login", throttledAfter(5)).URL, StatusPass},
+		{"never throttled", answerTarget(t, "/api/login", always(http.StatusUnauthorized)).URL, StatusFail},
+		{"refused by origin", answerTarget(t, "/api/login", always(http.StatusForbidden)).URL, StatusError},
+		{"half throttled, half refused", answerTarget(t, "/api/login", func(n int64) int {
+			if n%2 == 0 {
+				return http.StatusForbidden
+			}
+			return http.StatusUnauthorized
+		}).URL, StatusError},
+		{"closed port", "http://" + closedAddress(t), StatusError},
+		{"hang-up", "http://" + hangUpListener(t, 0), StatusError},
+	}
+	for _, c := range cases {
+		if f, _ := byID(runXFFBypassCheck(authScanner(t, c.target)), "BYPASS-XFF"); f.Status != c.want {
+			t.Errorf("%s: BYPASS-XFF = %s %q | %q, want %s", c.name, f.Status, f.Detail, f.Evidence, c.want)
+		}
+	}
+}
+
+func TestOllamaRateJudgesOnlyAnswers(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		want   Status
+	}{
+		{"throttled", answerTarget(t, "/api/ollama/models", func(n int64) int {
+			if n > 60 {
+				return http.StatusTooManyRequests
+			}
+			return http.StatusOK
+		}).URL, StatusPass},
+		{"never throttled", answerTarget(t, "/api/ollama/models", always(http.StatusOK)).URL, StatusWarn},
+		{"closed port", "http://" + closedAddress(t), StatusError},
+	}
+	for _, c := range cases {
+		s := dosScanner(t, c.target, 5*time.Second, time.Second)
+		s.ollama = true
+		if f, _ := byID(runOllamaRateCheck(s), "RATE-OLLAMA"); f.Status != c.want {
+			t.Errorf("%s: RATE-OLLAMA = %s %q | %q, want %s", c.name, f.Status, f.Detail, f.Evidence, c.want)
+		}
+	}
+}
+
+// ---- WS-000 / WS-001 / WS-002 -----------------------------------------------------------
+
+// TestWSUpgradesWithoutAnAnswerAreErrors: an upgrade the target never
+// answered is no rejection.
+func TestWSUpgradesWithoutAnAnswerAreErrors(t *testing.T) {
+	for name, target := range map[string]string{
+		"closed port": "http://" + closedAddress(t),
+		"hang-up":     "http://" + hangUpListener(t, 0),
+	} {
+		s := authScanner(t, target)
+		findings := runWSChecks(s)
+		wantStatus(t, findings, "WS-001", StatusError)
+		wantStatus(t, findings, "WS-002", StatusSkip) // no session to test the origin gate with
+
+		s.authEnabled = false
+		findings = runWSChecks(s)
+		for _, id := range []string{"WS-000", "WS-002"} {
+			if f, _ := byID(findings, id); f.Status != StatusError {
+				t.Errorf("%s: %s = %s %q, want ERROR", name, id, f.Status, f.Detail)
+			}
+		}
+	}
+}
+
 // TestDoSProbesWithoutAConnectionAreErrors: probes that open no connection
 // report an ERROR that says why, never a PASS.
 func TestDoSProbesWithoutAConnectionAreErrors(t *testing.T) {

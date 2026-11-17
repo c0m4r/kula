@@ -30,7 +30,10 @@ func runWSChecks(s *Scanner) []Finding {
 			out = append(out, finding("WS-001", SevHigh, StatusFail,
 				"an unauthenticated WebSocket upgrade succeeded; live metrics stream to anyone.").
 				withRemediation("Ensure /ws sits behind AuthMiddleware when auth is enabled."))
-		case resp != nil && resp.StatusCode == http.StatusUnauthorized:
+		case resp == nil:
+			out = append(out, finding("WS-001", SevInfo, StatusError,
+				"could not attempt an unauthenticated WebSocket upgrade: "+err.Error()))
+		case resp.StatusCode == http.StatusUnauthorized:
 			out = append(out, finding("WS-001", SevHigh, StatusPass,
 				"the WebSocket upgrade is rejected with 401 without a session."))
 		default:
@@ -69,7 +72,10 @@ func runWSChecks(s *Scanner) []Finding {
 		out = append(out, finding("WS-002", SevHigh, StatusFail,
 			"a cross-origin WebSocket upgrade from https://evil.example succeeded; a malicious page can hijack the live stream.").
 			withRemediation("Keep web.security.origin_validation enabled so CheckOrigin rejects foreign origins."))
-	case resp != nil && resp.StatusCode == http.StatusForbidden:
+	case resp == nil:
+		out = append(out, finding("WS-002", SevInfo, StatusError,
+			"could not attempt a cross-origin WebSocket upgrade: "+err.Error()))
+	case resp.StatusCode == http.StatusForbidden:
 		out = append(out, finding("WS-002", SevHigh, StatusPass,
 			"a cross-origin WebSocket upgrade is rejected with 403."))
 	default:
@@ -81,17 +87,21 @@ func runWSChecks(s *Scanner) []Finding {
 	// proving the gate is selective rather than blanket-rejecting everything.
 	same := cloneHeader(hdr)
 	same.Set("Origin", sameOrigin)
-	cc, _, err := s.wsDial("/ws", same)
+	cc, resp, err := s.wsDial("/ws", same)
 	if cc != nil {
 		_ = cc.Close()
 	}
-	if err == nil {
+	switch {
+	case err == nil:
 		out = append(out, finding("WS-000", SevInfo, StatusPass,
 			"a legitimate same-origin upgrade succeeds (the gate is selective, not blanket-deny)."))
-	} else {
+	case resp == nil:
+		out = append(out, finding("WS-000", SevInfo, StatusError,
+			"could not attempt a same-origin WebSocket upgrade: "+err.Error()))
+	default:
 		out = append(out, finding("WS-000", SevInfo, StatusWarn,
 			"a same-origin upgrade was rejected; the gate may be over-broad or the stream disabled.").
-			withEvidence("err=%v", err))
+			withEvidence("status=%s; err=%v", statusOf(resp), err))
 	}
 
 	return out

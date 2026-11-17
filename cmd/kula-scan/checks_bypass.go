@@ -158,7 +158,9 @@ func (s *Scanner) randIP() string {
 // runXFFBypassCheck fires a burst of failed logins, each carrying a different
 // spoofed X-Forwarded-For. If Kula keys its login rate limiter on that header
 // (trust_proxy enabled with no real proxy in front), every request lands on a
-// fresh key and the throttle never fires — a brute-force bypass.
+// fresh key and the throttle never fires — a brute-force bypass. The pass
+// needs the throttle seen firing (a 429): attempts that failed, or got another
+// answer, prove nothing either way.
 func runXFFBypassCheck(s *Scanner) []Finding {
 	if !s.authEnabled {
 		return []Finding{finding("BYPASS-XFF", SevInfo, StatusSkip,
@@ -167,36 +169,40 @@ func runXFFBypassCheck(s *Scanner) []Finding {
 
 	const burst = 12
 	origin := s.base.Scheme + "://" + s.base.Host
-	reached := 0 // requests that reached the credential check (401) rather than being throttled (429)
-	for i := 0; i < burst; i++ {
+	var t tally
+	for i := 0; i < burst && s.ctx.Err() == nil; i++ {
 		hdr := map[string]string{
 			"Content-Type":    "application/json",
 			"Origin":          origin,
 			"X-Forwarded-For": s.randIP(),
 		}
-		r := s.do(http.MethodPost, "/api/login", hdr, `{"username":"xff-probe","password":"nope"}`)
-		if r.err != nil {
-			continue
-		}
-		if r.status == http.StatusUnauthorized {
-			reached++
-		}
+		t.add(s.do(http.MethodPost, "/api/login", hdr, `{"username":"xff-probe","password":"nope"}`))
 	}
+	// reached: requests that reached the credential check (401) rather than
+	// being throttled (429).
+	reached, limited := t.statuses[http.StatusUnauthorized], t.statuses[http.StatusTooManyRequests]
 
 	switch {
+	case t.failed == t.total:
+		return []Finding{finding("BYPASS-XFF", SevInfo, StatusError,
+			fmt.Sprintf("every login attempt of the burst failed, so the limiter was not exercised: %v", t.firstErr))}
 	case reached >= burst-1:
 		return []Finding{finding("BYPASS-XFF", SevHigh, StatusFail,
 			"rotating a spoofed X-Forwarded-For defeated the login rate limiter — an attacker can brute-force credentials unthrottled.").
-			withEvidence("%d/%d spoofed-IP attempts reached the credential check without throttling", reached, burst).
+			withEvidence("%d/%d spoofed-IP attempts reached the credential check without throttling: %s", reached, burst, &t).
 			withRemediation("Disable web.trust_proxy unless a trusted reverse proxy actually sets X-Forwarded-For; otherwise the header is attacker-controlled.")}
-	case reached <= 6:
+	case limited > 0 && reached <= 6:
 		return []Finding{finding("BYPASS-XFF", SevHigh, StatusPass,
 			"spoofing X-Forwarded-For did not bypass the login throttle (the limiter keys on the real connection, not the header).").
-			withEvidence("only %d/%d spoofed-IP attempts got through before throttling", reached, burst)}
+			withEvidence("only %d/%d spoofed-IP attempts got through before throttling: %s", reached, burst, &t)}
+	case limited == 0 || t.failed > 0:
+		return []Finding{finding("BYPASS-XFF", SevInfo, StatusError,
+			fmt.Sprintf("the burst was inconclusive: %d of %d spoofed-IP attempts reached the credential check, and the rest were not all throttled with 429 (some failed or got another answer).", reached, burst)).
+			withEvidence("%s", &t)}
 	default:
 		return []Finding{finding("BYPASS-XFF", SevMedium, StatusWarn,
 			"results were ambiguous; the login limiter may have been partially consumed before this probe.").
-			withEvidence("%d/%d spoofed-IP attempts reached the credential check", reached, burst).
+			withEvidence("%d/%d spoofed-IP attempts reached the credential check: %s", reached, burst, &t).
 			withRemediation("Re-run in isolation (-only bypass) to confirm.")}
 	}
 }
