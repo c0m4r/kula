@@ -51,28 +51,19 @@ func runHeaderChecks(s *Scanner) []Finding {
 	status := probed{"/api/auth/status", s.do(http.MethodGet, "/api/auth/status", nil, "")}
 	index := probed{"/", r}
 
-	want := func(id, header, expect string, sev Severity) Finding {
-		got := h.Get(header)
-		if expect == "" {
-			if got != "" {
-				return finding(id, sev, StatusPass, header+" is set").withEvidence("%s: %s", header, got)
-			}
-			return finding(id, sev, StatusFail, header+" is missing").
-				withRemediation("Enable web.security.headers in config.yaml.")
+	present := func(id, header string, sev Severity) Finding {
+		if got := h.Get(header); got != "" {
+			return finding(id, sev, StatusPass, header+" is set").withEvidence("%s: %s", header, got)
 		}
-		if strings.EqualFold(strings.TrimSpace(got), expect) {
-			return finding(id, sev, StatusPass, header+" is correctly set").withEvidence("%s: %s", header, got)
-		}
-		return finding(id, sev, StatusFail, header+" missing or wrong (want "+expect+")").
-			withEvidence("%s: %q", header, got).
-			withRemediation("Enable web.security.headers (and web.security.frame_protection) in config.yaml.")
+		return finding(id, sev, StatusFail, header+" is missing").
+			withRemediation("Enable web.security.headers in config.yaml.")
 	}
 
 	out = append(out,
 		nosniffFinding([]probed{index, asset, status}),
-		want("HDR-002", "X-Frame-Options", "DENY", SevMedium),
-		want("HDR-005", "Referrer-Policy", "", SevLow),
-		want("HDR-006", "Permissions-Policy", "", SevLow),
+		frameOptionsFinding(h),
+		present("HDR-005", "Referrer-Policy", SevLow),
+		present("HDR-006", "Permissions-Policy", SevLow),
 	)
 
 	csp := strings.Join(h.Values("Content-Security-Policy"), ", ")
@@ -117,6 +108,40 @@ func runHeaderChecks(s *Scanner) []Finding {
 	out = append(out, noStoreFinding(cached))
 
 	return out
+}
+
+// frameOptionsFinding judges HDR-002 on the UI page's headers h. Kula sends
+// X-Frame-Options: DENY with its other security headers (web.security.headers)
+// unless web.security.frame_protection, a documented opt-out, is off. Missing
+// while those others are all present, it is that choice: a WARN against
+// -expect frame-protection, as HDR-007 judges the CSP's frame-ancestors.
+// Missing with them, or set to anything but DENY, it is a FAIL.
+func frameOptionsFinding(h http.Header) Finding {
+	got := h.Get("X-Frame-Options")
+	switch {
+	case strings.EqualFold(strings.TrimSpace(got), "DENY"):
+		return finding("HDR-002", SevMedium, StatusPass, "X-Frame-Options is correctly set").withEvidence("X-Frame-Options: %s", got)
+	case got == "" && frameIndependentHeadersSent(h):
+		return finding("HDR-002", SevMedium, StatusWarn,
+			"X-Frame-Options is missing while the other security headers are sent: web.security.frame_protection is off, so only a CSP frame-ancestors (HDR-007) could forbid framing.").
+			withRemediation("Enable web.security.frame_protection (on by default) unless the dashboard must be shown in a frame.").
+			expecting("frame-protection")
+	}
+	return finding("HDR-002", SevMedium, StatusFail, "X-Frame-Options missing or wrong (want DENY)").
+		withEvidence("X-Frame-Options: %q", got).
+		withRemediation("Enable web.security.headers (and web.security.frame_protection) in config.yaml.")
+}
+
+// frameIndependentHeadersSent reports whether h carries every header Kula's
+// securityMiddleware sends with web.security.headers whatever
+// web.security.frame_protection says (HSTS aside, which needs TLS).
+func frameIndependentHeadersSent(h http.Header) bool {
+	for _, name := range []string{"X-Content-Type-Options", "Content-Security-Policy", "Referrer-Policy", "Permissions-Policy"} {
+		if h.Get(name) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // nosniffFinding judges HDR-001 over every response in responses: each must

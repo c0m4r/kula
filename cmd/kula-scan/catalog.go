@@ -61,7 +61,7 @@ var catalog = []catalogEntry{
 	{"HDR-001", "headers", ModeDefault, "X-Content-Type-Options nosniff",
 		"The UI page, a static asset and an API response carry X-Content-Type-Options: nosniff."},
 	{"HDR-002", "headers", ModeDefault, "X-Frame-Options DENY (clickjacking)",
-		"Responses carry X-Frame-Options: DENY."},
+		"The UI page carries X-Frame-Options: DENY; without it, but with the other security headers (web.security.frame_protection off), it warns."},
 	{"HDR-003", "headers", ModeDefault, "Content-Security-Policy hardened",
 		"A Content-Security-Policy restricts default-src to 'self' and admits scripts only by nonce: no 'unsafe-inline', 'unsafe-eval', wildcard or bare scheme source."},
 	{"HDR-004", "headers", ModeDefault, "CSP nonce freshness",
