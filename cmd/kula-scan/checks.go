@@ -520,7 +520,17 @@ func runTraversalChecks(s *Scanner) []Finding {
 	bp := s.base.Path // "" or "/something"
 
 	// Positive control: a real static asset is served, so negatives are meaningful.
-	if code, _ := s.rawTCP("GET " + bp + "/style.css HTTP/1.1"); code != http.StatusOK {
+	code, _, err := s.rawTCP("GET " + bp + "/style.css HTTP/1.1")
+	if err != nil {
+		// A raw request reaches nothing, so no probe below can tell a thing.
+		detail := "could not deliver a raw-socket request to the target: " + err.Error()
+		return []Finding{
+			finding("TRAV-000", SevInfo, StatusError, detail),
+			finding("TRAV-001", SevInfo, StatusError, detail+"; no traversal payload was sent."),
+			finding("TRAV-002", SevInfo, StatusError, detail+"; no directory listing was requested."),
+		}
+	}
+	if code != http.StatusOK {
 		out = append(out, finding("TRAV-000", SevInfo, StatusWarn,
 			"GET /style.css did not return 200; traversal results may be inconclusive (UI may be disabled).").
 			withEvidence("status=%d", code))
@@ -540,8 +550,13 @@ func runTraversalChecks(s *Scanner) []Finding {
 	}
 
 	var hits []string
+	var lost undelivered
 	for _, p := range payloads {
-		code, body := s.rawTCP(p)
+		code, body, err := s.rawTCP(p)
+		if err != nil {
+			lost.add(err)
+			continue
+		}
 		if code != http.StatusOK {
 			continue
 		}
@@ -551,31 +566,45 @@ func runTraversalChecks(s *Scanner) []Finding {
 			}
 		}
 	}
-	if len(hits) == 0 {
-		out = append(out, finding("TRAV-001", SevHigh, StatusPass,
-			"none of the encoded / dot-dot / backslash traversal payloads returned file content from outside the static dir."))
-	} else {
+	switch {
+	case len(hits) > 0:
 		out = append(out, finding("TRAV-001", SevCritical, StatusFail,
 			"a traversal payload leaked file content from outside the embedded static directory.").
 			withEvidence("%s", strings.Join(hits, "; ")).
 			withRemediation("Reject paths that escape the static root; never read user-controlled paths off disk."))
+	case lost.n > 0:
+		out = append(out, finding("TRAV-001", SevInfo, StatusError,
+			lost.detail(len(payloads), "traversal payloads")+"; the others read no file outside the static dir, which says nothing of those."))
+	default:
+		out = append(out, finding("TRAV-001", SevHigh, StatusPass,
+			"none of the encoded / dot-dot / backslash traversal payloads returned file content from outside the static dir."))
 	}
 
 	// Directory listing must not be exposed.
+	dirs := []string{"/js/", "/fonts/"}
 	var listed []string
-	for _, d := range []string{"/js/", "/fonts/"} {
-		code, body := s.rawTCP("GET " + bp + d + " HTTP/1.1")
+	lost = undelivered{}
+	for _, d := range dirs {
+		code, body, err := s.rawTCP("GET " + bp + d + " HTTP/1.1")
+		if err != nil {
+			lost.add(err)
+			continue
+		}
 		if code == http.StatusOK && (strings.Contains(body, "<a href") || strings.Contains(body, "Index of")) {
 			listed = append(listed, d)
 		}
 	}
-	if len(listed) == 0 {
-		out = append(out, finding("TRAV-002", SevMedium, StatusPass,
-			"static directories do not return a browsable index."))
-	} else {
+	switch {
+	case len(listed) > 0:
 		out = append(out, finding("TRAV-002", SevMedium, StatusFail,
 			"a static directory returned a browsable listing: "+strings.Join(listed, ", ")).
 			withRemediation("Return 403/404 for directory requests; never serve an autoindex."))
+	case lost.n > 0:
+		out = append(out, finding("TRAV-002", SevInfo, StatusError,
+			lost.detail(len(dirs), "directory requests")+"."))
+	default:
+		out = append(out, finding("TRAV-002", SevMedium, StatusPass,
+			"static directories do not return a browsable index."))
 	}
 
 	return out

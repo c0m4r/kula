@@ -590,20 +590,44 @@ func (c *runConn) Close() error {
 
 // rawTCP opens a raw connection (TLS when the target is https) and writes a
 // literal HTTP/1.1 request line, so the path is sent verbatim without any
-// client-side URL normalisation. This is how traversal payloads are delivered.
-// It returns the status code and body; a status of 0 means the server rejected
-// the request at the protocol layer (an acceptable, safe outcome).
-func (s *Scanner) rawTCP(requestLine string) (int, string) {
+// client-side URL normalisation, followed by the Host line, the -H headers
+// and Connection: close. This is how traversal payloads are delivered.
+//
+// It returns the status code and body. An error means the request was not
+// delivered: the connection or the write failed, and the target has said
+// nothing. A status of 0 without an error means the target took the request
+// and closed the connection without a parsable response: it rejected the
+// request at the protocol layer (an acceptable, safe outcome).
+func (s *Scanner) rawTCP(requestLine string) (int, string, error) {
+	return s.rawExchange(fmt.Sprintf("%s\r\nHost: %s\r\n%sConnection: close\r\n\r\n", requestLine, s.base.Host, s.rawHeaderLines(nil)))
+}
+
+// rawExchange writes a fully caller-supplied raw HTTP request (request line,
+// headers, and body verbatim) and returns the response status and body. It is
+// used by the request-smuggling probes that need conflicting/duplicate framing
+// headers the net/http client refuses to send; a caller adds the -H headers
+// with rawHeaderLines. As with rawTCP, an error means the request was not
+// delivered, and a status of 0 without one that the target closed or
+// rejected the connection at the protocol layer.
+func (s *Scanner) rawExchange(raw string) (int, string, error) {
 	conn, err := s.dialRaw()
 	if err != nil {
-		return 0, ""
+		return 0, "", err
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(s.timeout))
 
-	if _, err := fmt.Fprintf(conn, "%s\r\nHost: %s\r\n%sConnection: close\r\n\r\n", requestLine, s.base.Host, s.rawHeaderLines(nil)); err != nil {
-		return 0, ""
+	if _, err := io.WriteString(conn, raw); err != nil {
+		return 0, "", err
 	}
+	status, body := readRawResponse(conn)
+	return status, body, nil
+}
+
+// readRawResponse reads the response to a request written on conn: its
+// status and body, or status 0 when the target closed the connection, or
+// stopped answering, without a parsable response.
+func readRawResponse(conn net.Conn) (int, string) {
 	resp, err := readResponse(conn)
 	if err != nil {
 		return 0, ""
@@ -613,29 +637,26 @@ func (s *Scanner) rawTCP(requestLine string) (int, string) {
 	return resp.StatusCode, string(body)
 }
 
-// rawExchange writes a fully caller-supplied raw HTTP request (request line,
-// headers, and body verbatim) and returns the response status and body. It is
-// used by the request-smuggling probes that need conflicting/duplicate framing
-// headers the net/http client refuses to send. A status of 0 means the server
-// closed or rejected the connection at the protocol layer.
-func (s *Scanner) rawExchange(raw string) (int, string) {
-	conn, err := s.dialRaw()
-	if err != nil {
-		return 0, ""
-	}
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(s.timeout))
+// undelivered counts the raw requests of a probe that never reached the
+// target (rawTCP or rawExchange returned an error), keeping the first error.
+// Such a request proves nothing either way: a probe that lost any reports
+// an ERROR rather than a PASS.
+type undelivered struct {
+	n     int
+	first error
+}
 
-	if _, err := conn.Write([]byte(raw)); err != nil {
-		return 0, ""
+func (u *undelivered) add(err error) {
+	if u.n == 0 {
+		u.first = err
 	}
-	resp, err := readResponse(conn)
-	if err != nil {
-		return 0, ""
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
-	return resp.StatusCode, string(body)
+	u.n++
+}
+
+// detail says how many of total requests, named by what, were not
+// delivered, and why.
+func (u *undelivered) detail(total int, what string) string {
+	return fmt.Sprintf("%d of %d %s could not be delivered over a raw socket (%v)", u.n, total, what, u.first)
 }
 
 // Bounds on what a target can make the scanner hold. Kula's responses are far

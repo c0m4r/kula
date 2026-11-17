@@ -272,8 +272,13 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 	hostLine := "\r\nHost: " + host + "\r\n"
 	extra := s.rawHeaderLines(nil)
 	var hits []fuzzHit
+	var lost undelivered
 	for _, raw := range raws {
-		status, _ := s.rawExchange(strings.Replace(raw, hostLine, hostLine+extra, 1))
+		status, _, err := s.rawExchange(strings.Replace(raw, hostLine, hostLine+extra, 1))
+		if err != nil {
+			lost.add(err)
+			continue
+		}
 		switch {
 		case status == 500:
 			// A 400/501 rejection is the correct, safe response; only a 500 means
@@ -282,6 +287,9 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 		case status >= 200 && status < 300:
 			hits = append(hits, fuzzHit{"accepted ambiguous framing (smuggling risk)", truncate(strings.ReplaceAll(raw, "\r\n", "\\n"), 90)})
 		}
+	}
+	if len(hits) == 0 && lost.n > 0 {
+		return []Finding{finding("FUZZ-SMUGGLE", SevInfo, StatusError, lost.detail(len(raws), "smuggling requests")+".")}
 	}
 	if len(hits) == 0 {
 		return []Finding{finding("FUZZ-SMUGGLE", SevMedium, StatusPass,

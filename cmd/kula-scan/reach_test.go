@@ -535,3 +535,112 @@ func TestBadExtraHeadersAreUsageErrors(t *testing.T) {
 		}
 	}
 }
+
+// closedAddress returns an address nothing listens on.
+func closedAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	_ = listener.Close()
+	return address
+}
+
+// hangUpListener reads each request, then closes the connection without an
+// answer, as a server rejecting it at the protocol layer does. With
+// answerFirst > 0 it instead answers that many requests 200 and stops
+// listening before it answers the last of them.
+func hangUpListener(t *testing.T, answerFirst int) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for served := 1; ; served++ {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			_, _ = conn.Read(make([]byte, 4096))
+			if answerFirst > 0 {
+				if served == answerFirst {
+					_ = listener.Close()
+				}
+				_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nbody{}"))
+			}
+			_ = conn.Close()
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func TestRawHelpersTellUndeliveredFromRejected(t *testing.T) {
+	closed, err := NewScanner(Options{Target: "http://" + closedAddress(t), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _, err := closed.rawTCP("GET / HTTP/1.1"); err == nil || status != 0 {
+		t.Errorf("rawTCP to a closed port: status %d, error %v; want an error", status, err)
+	}
+	if status, _, err := closed.rawExchange("GET / HTTP/1.1\r\nHost: x\r\n\r\n"); err == nil || status != 0 {
+		t.Errorf("rawExchange to a closed port: status %d, error %v; want an error", status, err)
+	}
+
+	hangUp, err := NewScanner(Options{Target: "http://" + hangUpListener(t, 0), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _, err := hangUp.rawTCP("GET / HTTP/1.1"); err != nil || status != 0 {
+		t.Errorf("rawTCP to a target that hangs up: status %d, error %v; want status 0 and no error", status, err)
+	}
+	if status, _, err := hangUp.rawExchange("GET / HTTP/1.1\r\nHost: x\r\n\r\n"); err != nil || status != 0 {
+		t.Errorf("rawExchange to a target that hangs up: status %d, error %v; want status 0 and no error", status, err)
+	}
+}
+
+// TestUndeliveredProbesAreErrors: raw-socket probes that could not send
+// their requests report an ERROR, never a PASS.
+func TestUndeliveredProbesAreErrors(t *testing.T) {
+	s, err := NewScanner(Options{Target: "http://" + closedAddress(t), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	traversal := runTraversalChecks(s)
+	for _, id := range []string{"TRAV-000", "TRAV-001", "TRAV-002"} {
+		wantStatus(t, traversal, id, StatusError)
+	}
+	if f, _ := byID(traversal, "TRAV-001"); !strings.Contains(f.Detail, "could not deliver") {
+		t.Errorf("TRAV-001 does not say why: %q", f.Detail)
+	}
+	wantStatus(t, runFuzzSmuggle(s), "FUZZ-SMUGGLE", StatusError)
+
+	// The control request is delivered, then the target goes away.
+	s, err = NewScanner(Options{Target: "http://" + hangUpListener(t, 1), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	traversal = runTraversalChecks(s)
+	if _, ok := byID(traversal, "TRAV-000"); ok {
+		t.Errorf("the control answered 200, yet TRAV-000 is reported: %+v", traversal)
+	}
+	wantStatus(t, traversal, "TRAV-001", StatusError)
+	wantStatus(t, traversal, "TRAV-002", StatusError)
+	if f, _ := byID(traversal, "TRAV-001"); !strings.Contains(f.Detail, "8 of 8 traversal payloads could not be delivered") {
+		t.Errorf("TRAV-001 does not count the payloads not delivered: %q", f.Detail)
+	}
+
+	// A target that takes each request and hangs up rejected them all.
+	s, err = NewScanner(Options{Target: "http://" + hangUpListener(t, 0), Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	traversal = runTraversalChecks(s)
+	wantStatus(t, traversal, "TRAV-000", StatusWarn)
+	wantStatus(t, traversal, "TRAV-001", StatusPass)
+	wantStatus(t, traversal, "TRAV-002", StatusPass)
+}
