@@ -80,6 +80,33 @@ func awaitReaping(conns []net.Conn, wait time.Duration) int {
 	return int(reaped.Load())
 }
 
+// proxyHint is added to the detail of a slow-connection probe whose
+// connections outlived -dos-wait when the target's response h names a server
+// or a proxy. Kula sends neither header, so a reverse proxy likely answers,
+// and its own header and idle timeouts, not Kula's, decide when a stalled
+// connection is dropped.
+func (s *Scanner) proxyHint(h http.Header) string {
+	var named []string
+	for _, name := range []string{"Server", "Via"} {
+		if v := h.Get(name); v != "" {
+			named = append(named, name+": "+truncate(v, 60))
+		}
+	}
+	if len(named) == 0 {
+		return ""
+	}
+	hint := fmt.Sprintf(" The responses carry %s, so a reverse proxy may sit in front of Kula: its own header and idle timeouts then apply (nginx waits 60s by default), and a longer -dos-wait shows whether it drops the connections",
+		strings.Join(named, " and "))
+	if s.dosWait < proxyDoSWait {
+		hint += fmt.Sprintf(" (e.g. -dos-wait %.0fs)", proxyDoSWait.Seconds())
+	}
+	return hint + "."
+}
+
+// proxyDoSWait is the -dos-wait proxyHint suggests: past nginx's default 60s
+// client_header_timeout.
+const proxyDoSWait = 75 * time.Second
+
 // runSlowlorisCheck opens several connections that send a partial request and
 // never finish it (a Slowloris). It asserts two things: the server keeps
 // answering legitimate requests while the slow connections are held, and it
@@ -143,12 +170,12 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 			withEvidence("%d/%d slow connections dropped within %s", reapedN, len(opened), elapsed)}
 	case reapedN == 0:
 		return []Finding{finding("DOS-SLOWLORIS", SevHigh, StatusFail,
-			fmt.Sprintf("none of %d half-open requests were dropped within %s; the server holds slow connections indefinitely (Slowloris DoS).", len(opened), s.dosWait)).
+			fmt.Sprintf("none of %d half-open requests were dropped within %s; the server holds slow connections indefinitely (Slowloris DoS).", len(opened), s.dosWait)+s.proxyHint(health.header)).
 			withEvidence("0/%d reaped within %s", len(opened), s.dosWait).
 			withRemediation("Set http.Server.ReadTimeout (Kula's default is 30s); ensure it is not disabled.")}
 	default:
 		return []Finding{finding("DOS-SLOWLORIS", SevMedium, StatusWarn,
-			fmt.Sprintf("only %d of %d stalled connections were reaped within %s.", reapedN, len(opened), s.dosWait)).
+			fmt.Sprintf("only %d of %d stalled connections were reaped within %s.", reapedN, len(opened), s.dosWait)+s.proxyHint(health.header)).
 			withEvidence("%d/%d reaped", reapedN, len(opened)).
 			withRemediation("Verify http.Server.ReadTimeout covers the whole request read.")}
 	}
@@ -294,7 +321,7 @@ func runConnFloodCheck(s *Scanner) []Finding {
 			withEvidence("%d idle connections opened, all reaped, /health OK", len(opened))}
 	}
 	return []Finding{finding("DOS-CONNFLOOD", SevMedium, StatusWarn,
-		fmt.Sprintf("the server stayed responsive, but %d/%d idle connections were still open after %s.", len(opened)-reaped, len(opened), s.dosWait)).
+		fmt.Sprintf("the server stayed responsive, but %d/%d idle connections were still open after %s.", len(opened)-reaped, len(opened), s.dosWait)+s.proxyHint(health.header)).
 		withEvidence("%d/%d idle sockets reaped", reaped, len(opened)).
 		withRemediation("Ensure http.Server.IdleTimeout/ReadTimeout are set so idle sockets cannot accumulate.")}
 }

@@ -129,6 +129,9 @@ func TestConnFloodWaitsOnceForAll(t *testing.T) {
 	if f.Status != StatusWarn || !strings.Contains(f.Detail, "64/64 idle connections were still open") {
 		t.Errorf("DOS-CONNFLOOD against a server that never reaps = %s %q", f.Status, f.Detail)
 	}
+	if strings.Contains(f.Detail, "reverse proxy") {
+		t.Errorf("DOS-CONNFLOOD suggests a proxy where no response names one: %q", f.Detail)
+	}
 
 	reaping := httptest.NewUnstartedServer(ts.Config.Handler)
 	reaping.Config.ReadTimeout = 300 * time.Millisecond
@@ -156,6 +159,31 @@ func TestSlowConnectionProbesEndWithTheRun(t *testing.T) {
 		}
 		timer.Stop()
 		cancel()
+	}
+}
+
+// TestSlowConnectionProbesSuggestAProxy: a response naming a server or a
+// proxy explains connections outliving -dos-wait; the status stays.
+func TestSlowConnectionProbesSuggestAProxy(t *testing.T) {
+	ts := healthTarget(t, http.Header{"Server": {"nginx/1.27.0"}, "Via": {"1.1 edge"}})
+	s := dosScanner(t, ts.URL, 5*time.Second, 300*time.Millisecond)
+
+	flood, _ := byID(runConnFloodCheck(s), "DOS-CONNFLOOD")
+	slow, _ := byID(runSlowlorisCheck(s), "DOS-SLOWLORIS")
+	if flood.Status != StatusWarn || slow.Status != StatusFail {
+		t.Errorf("DOS-CONNFLOOD = %s, DOS-SLOWLORIS = %s; want WARN and FAIL as without the hint", flood.Status, slow.Status)
+	}
+	for _, f := range []Finding{flood, slow} {
+		for _, want := range []string{"Server: nginx/1.27.0", "Via: 1.1 edge", "reverse proxy", "-dos-wait 75s"} {
+			if !strings.Contains(f.Detail, want) {
+				t.Errorf("%s does not say %q: %q", f.ID, want, f.Detail)
+			}
+		}
+	}
+
+	s = dosScanner(t, ts.URL, 5*time.Second, 2*time.Minute)
+	if hint := s.proxyHint(http.Header{"Server": {"nginx"}}); !strings.Contains(hint, "longer -dos-wait") || strings.Contains(hint, "e.g.") {
+		t.Errorf("with -dos-wait past the suggestion, the hint is %q", hint)
 	}
 }
 
