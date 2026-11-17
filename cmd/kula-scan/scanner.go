@@ -11,12 +11,14 @@ import (
 	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- fuzz-input PRNG; -seed reproducibility needs a seedable source; not security-sensitive (tokens use crypto/rand)
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -502,6 +504,13 @@ type httpResult struct {
 	header http.Header
 	body   string
 	err    error
+
+	// The request as the probe named it: its method and its path relative
+	// to the base path. unsent marks an err that came before the request
+	// was written: the client could not build it or found no connection to
+	// write it on, so the target saw none of it.
+	method, path string
+	unsent       bool
 }
 
 // do issues an HTTP request to path with optional headers and body, returning a
@@ -517,6 +526,17 @@ func (s *Scanner) do(method, path string, headers map[string]string, body string
 func (s *Scanner) doContext(parent context.Context, method, path string, headers map[string]string, body string) httpResult {
 	ctx, cancel := context.WithTimeout(parent, s.timeout)
 	defer cancel()
+	result := httpResult{method: method, path: path}
+
+	// wrote turns true once the whole request is written to a connection.
+	var wrote atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				wrote.Store(true)
+			}
+		},
+	})
 
 	var rdr io.Reader
 	if body != "" {
@@ -524,7 +544,11 @@ func (s *Scanner) doContext(parent context.Context, method, path string, headers
 	}
 	req, err := http.NewRequestWithContext(ctx, method, s.urlFor(path), rdr)
 	if err != nil {
-		return httpResult{err: err}
+		if s.verbose {
+			_, _ = fmt.Fprintf(s.log, "    %s %s -> not sent: %s\n", printable(method), printable(path), printable(err.Error()))
+		}
+		result.err, result.unsent = err, true
+		return result
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -535,7 +559,8 @@ func (s *Scanner) doContext(parent context.Context, method, path string, headers
 		if s.verbose {
 			_, _ = fmt.Fprintf(s.log, "    %s %s -> %s\n", printable(method), printable(path), printable(err.Error()))
 		}
-		return httpResult{err: err}
+		result.err, result.unsent = err, !wrote.Load()
+		return result
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -543,7 +568,8 @@ func (s *Scanner) doContext(parent context.Context, method, path string, headers
 	if s.verbose {
 		_, _ = fmt.Fprintf(s.log, "    %s %s -> %d (%d bytes)\n", printable(method), printable(path), resp.StatusCode, len(raw))
 	}
-	return httpResult{status: resp.StatusCode, header: resp.Header, body: string(raw)}
+	result.status, result.header, result.body = resp.StatusCode, resp.Header, string(raw)
+	return result
 }
 
 // authedHeaders returns request headers carrying the active session cookie (and
