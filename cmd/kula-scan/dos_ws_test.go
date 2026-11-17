@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -155,6 +157,50 @@ func TestSlowConnectionProbesEndWithTheRun(t *testing.T) {
 		timer.Stop()
 		cancel()
 	}
+}
+
+// ---- DOS-HEADERBOMB ---------------------------------------------------------------
+
+// drainListener reads everything each connection sends and never answers.
+func drainListener(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+				_, _ = io.Copy(io.Discard, conn)
+			}()
+		}
+	}()
+	return "http://" + listener.Addr().String()
+}
+
+func TestHeaderBombTellsATimeoutFromARefusal(t *testing.T) {
+	f, _ := byID(runHeaderBombCheck(dosScanner(t, drainListener(t), time.Second, time.Second)), "DOS-HEADERBOMB")
+	if f.Status != StatusWarn || !strings.Contains(f.Detail, "took a whole 2 MiB header block") {
+		t.Errorf("DOS-HEADERBOMB against a server that reads it all and never answers = %s %q, want WARN", f.Status, f.Detail)
+	}
+
+	f, _ = byID(runHeaderBombCheck(dosScanner(t, "http://"+silentListener(t).Addr().String(), time.Second, time.Second)), "DOS-HEADERBOMB")
+	if f.Status != StatusWarn {
+		t.Errorf("DOS-HEADERBOMB against a server that never reads = %s %q, want WARN", f.Status, f.Detail)
+	}
+
+	ts := healthTarget(t, nil) // Go's default MaxHeaderBytes: 1 MiB
+	wantStatus(t, runHeaderBombCheck(dosScanner(t, ts.URL, 5*time.Second, time.Second)), "DOS-HEADERBOMB", StatusPass)
+
+	endless, _ := endlessHeaderTarget(t)
+	wantStatus(t, runHeaderBombCheck(dosScanner(t, endless, 20*time.Second, time.Second)), "DOS-HEADERBOMB", StatusError)
 }
 
 // TestDoSProbesWithoutAConnectionAreErrors: probes that open no connection

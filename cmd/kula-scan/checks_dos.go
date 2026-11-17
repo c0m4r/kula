@@ -156,7 +156,9 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 
 // runHeaderBombCheck sends a request with a multi-megabyte header value and
 // expects the server to reject it (Go's MaxHeaderBytes default is 1 MiB → 431)
-// rather than buffering it into memory.
+// rather than buffering it into memory. A refusal ends the connection or
+// answers it; a server that takes the whole block and says nothing within
+// -timeout, or stops reading it without closing, has refused nothing.
 func runHeaderBombCheck(s *Scanner) []Finding {
 	conn, err := s.dialRaw()
 	if err != nil {
@@ -168,23 +170,24 @@ func runHeaderBombCheck(s *Scanner) []Finding {
 
 	// Write the bomb in a goroutine: the server may answer 431 and close the
 	// connection before we finish writing 2 MiB, which would error our Write.
+	// written reports whether the whole block went out.
+	written := make(chan bool, 1)
 	go func() {
 		_, _ = fmt.Fprintf(conn, "GET %s/ HTTP/1.1\r\nHost: %s\r\n%sX-Bomb: ", s.base.Path, s.base.Host, s.rawHeaderLines(nil))
 		chunk := strings.Repeat("A", 64*1024)
 		for i := 0; i < 32; i++ { // 2 MiB total, past the 1 MiB default cap
 			if _, err := conn.Write([]byte(chunk)); err != nil {
+				written <- false
 				return
 			}
 		}
-		_, _ = conn.Write([]byte("\r\n\r\n"))
+		_, err := conn.Write([]byte("\r\n\r\n"))
+		written <- err == nil
 	}()
 
 	resp, err := readResponse(conn)
 	if err != nil {
-		// Server closed/reset the connection without a full response — it refused
-		// the oversized headers. That is the safe outcome.
-		return []Finding{finding("DOS-HEADERBOMB", SevMedium, StatusPass,
-			"the server refused a 2 MiB header block (connection reset before completion).")}
+		return []Finding{headerBombReadFinding(s, err, written)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -200,6 +203,46 @@ func runHeaderBombCheck(s *Scanner) []Finding {
 	default:
 		return []Finding{finding("DOS-HEADERBOMB", SevMedium, StatusPass,
 			"the oversized header request was not served normally.").withEvidence("status=%d", resp.StatusCode)}
+	}
+}
+
+// headerBombReadFinding judges a header bomb that drew no response: err is
+// how reading it ended, and written reports, once the writer is done, whether
+// the whole block went out.
+func headerBombReadFinding(s *Scanner, err error, written <-chan bool) Finding {
+	var sent bool
+	select {
+	case sent = <-written:
+	default: // still writing: the server stopped reading the block
+	}
+	switch {
+	case errors.Is(err, errResponseTooLarge):
+		// readResponse caps what the scanner reads; Kula's 431 is far smaller.
+		return finding("DOS-HEADERBOMB", SevInfo, StatusError,
+			"the server answered with response headers over 2 MiB, which the scanner does not read; this is not Kula's answer.")
+	case isHangUp(err):
+		// Closed or reset without a full response: it refused the oversized
+		// headers. That is the safe outcome.
+		how := "while it was being sent"
+		if sent {
+			how = "after it was sent, without an answer"
+		}
+		return finding("DOS-HEADERBOMB", SevMedium, StatusPass,
+			"the server refused a 2 MiB header block: it closed the connection "+how+".").
+			withEvidence("%v", err)
+	case isReadTimeout(err) && sent:
+		return finding("DOS-HEADERBOMB", SevMedium, StatusWarn,
+			fmt.Sprintf("the server took a whole 2 MiB header block and neither answered nor closed the connection within %s; it may be buffering oversized headers.", s.timeout)).
+			withEvidence("%v", err).
+			withRemediation("Set http.Server.MaxHeaderBytes (Go defaults to 1 MiB) so an oversized header block is answered with 431.")
+	case isReadTimeout(err):
+		return finding("DOS-HEADERBOMB", SevMedium, StatusWarn,
+			fmt.Sprintf("the server stopped reading a 2 MiB header block but neither refused it nor closed the connection within %s; the connection is held open.", s.timeout)).
+			withEvidence("%v", err).
+			withRemediation("Set http.Server.MaxHeaderBytes and ReadTimeout so an oversized header block is refused and its connection closed.")
+	default:
+		return finding("DOS-HEADERBOMB", SevInfo, StatusError,
+			"reading the answer to a 2 MiB header block failed: "+err.Error())
 	}
 }
 
