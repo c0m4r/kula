@@ -212,7 +212,7 @@ var catalog = []catalogEntry{
 	{"FUZZ-WS", "fuzz", ModeFuzz, "WebSocket protocol fuzzing",
 		"Malformed and binary frames on six same-origin WebSocket connections, opened in turn with the session behind auth, leave HTTP and new upgrades working; a run that opens none does not pass."},
 	{"FUZZ-LIVENESS", "fuzz", ModeFuzz, "Server survived the fuzz run",
-		"The instance still answers /health after the fuzz barrage."},
+		"The instance still answers /health at the end of the run, after the fuzz barrage and the probes that exhaust the login limiter."},
 }
 
 // catalogIndex maps a lowercased finding ID to its catalog entry.

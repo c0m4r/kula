@@ -1118,7 +1118,7 @@ func runFuzzMethods(s *Scanner) []Finding {
 
 	if !methodHit && enforced > 0 {
 		notes = append(notes, fmt.Sprintf("Method enforcement: %d requests with a method their API route does not serve "+
-			"(POST, PUT, DELETE or PATCH on a read-only route; another than POST on login, logout or the AI chat) reached the handler, and none was accepted.", enforced))
+			"(POST, PUT, DELETE or PATCH on a read-only route; any but POST and OPTIONS on login, logout or the AI chat) reached the handler, and none was accepted.", enforced))
 	}
 	if other > 0 {
 		notes = append(notes, fmt.Sprintf("For information: %d requests outside /api/ with a method other than GET, HEAD or OPTIONS were answered 2xx; "+
