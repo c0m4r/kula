@@ -1180,20 +1180,27 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 	return []Finding{t.verdict("FUZZ-SMUGGLE", s.seed, t.coverage("the server"), "")}
 }
 
-// runFuzzWS opens an authenticated, same-origin WebSocket and floods it with
+// FUZZ-WS opens fuzzWSConns connections one after another, each closed
+// before the next (Kula admits 5 per address by default), and sends up to
+// fuzzWSFrames junk frames on each.
+const (
+	fuzzWSConns  = 6
+	fuzzWSFrames = 8
+)
+
+// runFuzzWS opens authenticated, same-origin WebSockets and floods them with
 // malformed and binary frames plus rapid pause/resume churn, then confirms the
-// server is still serving new WebSocket connections and HTTP requests.
+// server is still serving new WebSocket connections and HTTP requests. It
+// says how many connections it opened and how many frames it sent on them;
+// when it could open none, it fuzzed nothing and does not pass.
 func runFuzzWS(s *Scanner) []Finding {
-	var hdr http.Header
+	hdr := http.Header{}
 	if s.authEnabled {
 		if !s.ensureSession() {
 			return []Finding{finding("FUZZ-WS", SevInfo, StatusSkip,
-				"auth is enabled and no session is available to open a WebSocket.")}
+				"auth is enabled and no session is available to open a WebSocket: "+s.noSessionReason()+".")}
 		}
-		hdr = http.Header{}
 		hdr.Set("Cookie", "kula_session="+s.session)
-	} else {
-		hdr = http.Header{}
 	}
 	hdr.Set("Origin", s.base.Scheme+"://"+s.base.Host)
 
@@ -1215,18 +1222,42 @@ func runFuzzWS(s *Scanner) []Finding {
 			return c.WriteMessage(websocket.TextMessage, []byte(`{"action":"resume"}`))
 		},
 	}
-	for i := 0; i < 6; i++ {
-		conn, _, err := s.wsDial("/ws", hdr)
+	opened, frames, refused, throttled := 0, 0, 0, 0
+	firstRefusal := ""
+	for i := 0; i < fuzzWSConns && s.ctx.Err() == nil; i++ {
+		conn, resp, err := s.wsDial("/ws", hdr)
 		if err != nil || conn == nil {
+			refused++
+			if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+				throttled++
+			}
+			if firstRefusal == "" {
+				firstRefusal = upgradeFailure(resp, err)
+			}
 			continue
 		}
-		for r := 0; r < 8; r++ {
+		opened++
+		for r := 0; r < fuzzWSFrames; r++ {
 			_ = conn.SetWriteDeadline(time.Now().Add(s.timeout))
 			if err := junk[s.randIntn(len(junk))](conn); err != nil {
 				break // server closed the connection on bad input — acceptable
 			}
+			frames++
 		}
 		_ = conn.Close()
+	}
+	coverage := fmt.Sprintf("%d connections planned, %d opened; %d frames planned on them, %d sent",
+		fuzzWSConns, opened, opened*fuzzWSFrames, frames)
+	if refused > 0 {
+		coverage += fmt.Sprintf("; %d upgrades refused (the first: %s)", refused, firstRefusal)
+	}
+	switch {
+	case opened == 0 && throttled == refused && throttled > 0:
+		return []Finding{finding("FUZZ-WS", SevInfo, StatusSkip,
+			"no WebSocket connection could be opened, the WebSocket connection limit refused every upgrade (retry once other connections close): "+coverage+".")}
+	case opened == 0:
+		return []Finding{finding("FUZZ-WS", SevInfo, StatusError,
+			"no WebSocket connection could be opened, so no frame was sent: "+coverage+".")}
 	}
 
 	// Survival check: a fresh WebSocket must still upgrade, and HTTP must answer.
@@ -1241,18 +1272,35 @@ func runFuzzWS(s *Scanner) []Finding {
 	switch {
 	case !healthOK:
 		return []Finding{finding("FUZZ-WS", SevCritical, StatusFail,
-			"after a burst of malformed WebSocket frames, HTTP /health stopped responding — the server was destabilized.").
+			"after a burst of malformed WebSocket frames, HTTP /health stopped responding — the server was destabilized: "+coverage+".").
 			withEvidence("health err=%v status=%d", live.err, live.status).
 			withRemediation("Ensure the WebSocket read loop tolerates any client input without panicking or blocking the server.")}
 	case !wsOK:
 		return []Finding{finding("FUZZ-WS", SevHigh, StatusWarn,
-			"HTTP still works, but a fresh WebSocket upgrade failed after the fuzz burst (possible connection-slot leak).").
+			"HTTP still works, but a fresh WebSocket upgrade failed after the fuzz burst (possible connection-slot leak): "+coverage+".").
 			withEvidence("ws dial err=%v", err).
 			withRemediation("Verify failed/garbage connections are always unregistered and their slots released.")}
+	case opened*2 < fuzzWSConns:
+		return []Finding{finding("FUZZ-WS", SevInfo, StatusWarn,
+			"no anomalies, but fewer than half of the planned connections opened: "+coverage+"; HTTP and a new WebSocket upgrade still work after them.")}
 	default:
 		return []Finding{finding("FUZZ-WS", SevInfo, StatusPass,
-			"the server tolerated malformed/binary frames and rapid churn; HTTP and new WebSocket upgrades still work.")}
+			"no anomalies: "+coverage+"; the server tolerated the malformed and binary frames and the churn, and HTTP and a new WebSocket upgrade still work after them.")}
 	}
+}
+
+// upgradeFailure says how a WebSocket upgrade failed, for a detail: the
+// status the target refused it with, or the error.
+func upgradeFailure(resp *http.Response, err error) string {
+	switch {
+	case resp != nil && resp.StatusCode == http.StatusTooManyRequests:
+		return "HTTP 429, the WebSocket connection limit"
+	case resp != nil:
+		return fmt.Sprintf("HTTP %d", resp.StatusCode)
+	case err != nil:
+		return truncate(printable(err.Error()), 160)
+	}
+	return "no connection"
 }
 
 // runFuzzLiveness is the final probe: after the whole fuzz barrage, and the

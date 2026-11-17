@@ -210,7 +210,7 @@ var catalog = []catalogEntry{
 	{"FUZZ-SMUGGLE", "fuzz", ModeFuzz, "Request smuggling / desync",
 		"Conflicting Content-Length and Transfer-Encoding framing is rejected."},
 	{"FUZZ-WS", "fuzz", ModeFuzz, "WebSocket protocol fuzzing",
-		"Malformed and binary WebSocket frames leave HTTP and new upgrades working."},
+		"Malformed and binary frames on six same-origin WebSocket connections, opened in turn with the session behind auth, leave HTTP and new upgrades working; a run that opens none does not pass."},
 	{"FUZZ-LIVENESS", "fuzz", ModeFuzz, "Server survived the fuzz run",
 		"The instance still answers /health after the fuzz barrage."},
 }
