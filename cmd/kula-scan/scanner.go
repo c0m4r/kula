@@ -180,6 +180,12 @@ type Scanner struct {
 	log        io.Writer       // request and progress lines; never the report
 	expect     map[string]bool // the -expect keys declared
 
+	// ctx is the run's context (Run sets it): every request and dial derives
+	// from it, so cancelling it aborts what is in flight.
+	ctx         context.Context
+	interrupted bool // the run was cancelled before every check ran
+	notRun      int  // how many checks it did not run, or cut short
+
 	username string
 	password string
 
@@ -310,6 +316,7 @@ func NewScanner(opt Options) (*Scanner, error) {
 		progress:   opt.Progress,
 		log:        opt.Log,
 		expect:     expect,
+		ctx:        context.Background(),
 		username:   opt.Username,
 		password:   opt.Password,
 		https:      u.Scheme == "https",
@@ -346,9 +353,15 @@ type httpResult struct {
 
 // do issues an HTTP request to path with optional headers and body, returning a
 // compact result. Cookies are never persisted between calls (the client has no
-// jar); callers set Cookie/Authorization headers explicitly.
+// jar); callers set Cookie/Authorization headers explicitly. The request ends
+// with the run: an interrupt aborts it.
 func (s *Scanner) do(method, path string, headers map[string]string, body string) httpResult {
-	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	return s.doContext(s.ctx, method, path, headers, body)
+}
+
+// doContext is do under parent instead of the run's context.
+func (s *Scanner) doContext(parent context.Context, method, path string, headers map[string]string, body string) httpResult {
+	ctx, cancel := context.WithTimeout(parent, s.timeout)
 	defer cancel()
 
 	var rdr io.Reader
@@ -394,7 +407,8 @@ func (s *Scanner) authedHeaders(csrf bool) map[string]string {
 // dialRaw opens a raw connection to the target (TLS when https), with default
 // ports filled in. The caller owns the returned conn and must close it. DoS
 // probes use this to drive the socket directly (partial requests, oversized
-// headers); rawTCP layers a single request/response on top.
+// headers); rawTCP layers a single request/response on top. The connection
+// is closed when the run is interrupted.
 func (s *Scanner) dialRaw() (net.Conn, error) {
 	host := s.base.Host
 	if !strings.Contains(host, ":") {
@@ -405,12 +419,38 @@ func (s *Scanner) dialRaw() (net.Conn, error) {
 		}
 	}
 	dialer := &net.Dialer{Timeout: s.timeout}
+	var conn net.Conn
+	var err error
 	if s.https {
 		// Probe tool: connect to whatever the target offers; Go's client default min is TLS 1.2. InsecureSkipVerify is an explicit opt-in.
 		// nosemgrep: missing-ssl-minversion
-		return tls.DialWithDialer(dialer, "tcp", host, &tls.Config{InsecureSkipVerify: s.insecure}) //nolint:gosec // explicit opt-in
+		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{InsecureSkipVerify: s.insecure}} //nolint:gosec // explicit opt-in
+		conn, err = tlsDialer.DialContext(s.ctx, "tcp", host)
+	} else {
+		conn, err = dialer.DialContext(s.ctx, "tcp", host)
 	}
-	return dialer.Dial("tcp", host)
+	if err != nil {
+		return nil, err
+	}
+	return s.closeOnCancel(conn), nil
+}
+
+// closeOnCancel ties conn to the run: an interrupt closes it, so a probe
+// blocked on it (a DoS probe waiting out -dos-wait) returns at once.
+func (s *Scanner) closeOnCancel(conn net.Conn) net.Conn {
+	stop := context.AfterFunc(s.ctx, func() { _ = conn.Close() })
+	return &runConn{Conn: conn, stop: stop}
+}
+
+// runConn is a connection closeOnCancel watches; closing it stops the watch.
+type runConn struct {
+	net.Conn
+	stop func() bool
+}
+
+func (c *runConn) Close() error {
+	c.stop()
+	return c.Conn.Close()
 }
 
 // rawTCP opens a raw connection (TLS when the target is https) and writes a
@@ -530,18 +570,18 @@ func (s *Scanner) wsDial(path string, headers http.Header) (*websocket.Conn, *ht
 	// nosemgrep: missing-ssl-minversion
 	dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: s.insecure} //nolint:gosec // explicit opt-in
 	// Dial calls this in the calling goroutine and is done with the budget
-	// when it returns.
+	// when it returns. The connection is closed when the run is interrupted.
 	var budgeted []*budgetConn
 	dialer.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
 		if err != nil {
 			return nil, err
 		}
-		budget := &budgetConn{Conn: conn, remaining: maxResponseHeaderBytes}
+		budget := &budgetConn{Conn: s.closeOnCancel(conn), remaining: maxResponseHeaderBytes}
 		budgeted = append(budgeted, budget)
 		return budget, nil
 	}
-	conn, resp, err := dialer.Dial(wsURL, headers)
+	conn, resp, err := dialer.DialContext(s.ctx, wsURL, headers)
 	for _, budget := range budgeted {
 		budget.remaining = -1
 	}
@@ -725,20 +765,13 @@ func allChecks() []check {
 // findings. Discovery always runs, and DISC-001, which says whether the target
 // was scanned at all, is always reported. Findings are judged against the
 // -expect posture as each check returns them.
-func (s *Scanner) Run(sel *selection) []Finding {
-	var findings []Finding
-	discovered := s.discover()
-	s.applyExpectations(discovered)
-	for _, f := range discovered {
-		if f.ID == "DISC-001" || sel.selected(f.ID) {
-			findings = append(findings, f)
-		}
-	}
-
-	// A target that does not answer, or is not Kula, is not probed further.
-	if !s.reachable || !s.kula {
-		return findings
-	}
+//
+// Cancelling ctx interrupts the run: requests in flight abort, no further
+// check starts, the findings of the check that was cut short are dropped,
+// and s.interrupted and s.notRun record it. The session is logged out in
+// any case.
+func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
+	s.ctx = ctx
 
 	// A check runs when any ID it declares is selected, and reports only
 	// those.
@@ -756,8 +789,32 @@ func (s *Scanner) Run(sel *selection) []Finding {
 		}
 	}
 
+	discovered := s.discover()
+	if ctx.Err() != nil {
+		// What discovery saw while being cancelled says nothing of the target.
+		s.interrupted, s.notRun = true, runnable
+		return nil
+	}
+	s.applyExpectations(discovered)
+	var findings []Finding
+	for _, f := range discovered {
+		if f.ID == "DISC-001" || sel.selected(f.ID) {
+			findings = append(findings, f)
+		}
+	}
+
+	// A target that does not answer, or is not Kula, is not probed further.
+	if !s.reachable || !s.kula {
+		return findings
+	}
+	defer s.logout()
+
 	started := 0
 	for _, c := range checks {
+		if ctx.Err() != nil {
+			s.interrupted, s.notRun = true, runnable-started
+			break
+		}
 		switch mode := c.entry().Mode; {
 		case mode == ModeFuzz && !s.fuzz:
 			findings = append(findings, skippedFindings(c,
@@ -771,6 +828,12 @@ func (s *Scanner) Run(sel *selection) []Finding {
 		started++
 		s.logProgress(started, runnable, c)
 		results := c.run(s)
+		if ctx.Err() != nil {
+			// Cut short: its requests failed for want of time, not because
+			// of the target.
+			s.interrupted, s.notRun = true, runnable-started+1
+			break
+		}
 		s.applyExpectations(results)
 		for _, f := range results {
 			if sel.selected(f.ID) {
@@ -778,7 +841,6 @@ func (s *Scanner) Run(sel *selection) []Finding {
 			}
 		}
 	}
-	s.logout()
 	return findings
 }
 
@@ -823,16 +885,23 @@ func skippedFindings(c check, detail string) []Finding {
 	return out
 }
 
+// logoutTimeout bounds the closing logout, which an interrupted run still
+// sends.
+const logoutTimeout = 5 * time.Second
+
 // logout ends the session ensureSession opened, so a run leaves no session
 // behind on the target. It is best effort: a check that probed the logout
-// endpoint may have ended the session already.
+// endpoint may have ended the session already. It runs under a fresh context,
+// since the run's may have been cancelled by an interrupt.
 func (s *Scanner) logout() {
 	if !s.loggedIn {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), min(s.timeout, logoutTimeout))
+	defer cancel()
 	headers := s.authedHeaders(true)
 	headers["Origin"] = s.base.Scheme + "://" + s.base.Host
-	s.do(http.MethodPost, "/api/logout", headers, "")
+	s.doContext(ctx, http.MethodPost, "/api/logout", headers, "")
 	s.loggedIn = false
 	s.session = ""
 	s.csrf = ""

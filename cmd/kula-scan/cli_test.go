@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
@@ -13,8 +14,14 @@ import (
 // runCaptured runs the command line with its output captured.
 func runCaptured(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
+	return runCapturedContext(t, context.Background(), args...)
+}
+
+// runCapturedContext runs the command line under ctx with its output captured.
+func runCapturedContext(t *testing.T, ctx context.Context, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
 	var out, errOut bytes.Buffer
-	code = runCLI(args, &out, &errOut)
+	code = runCLI(ctx, args, &out, &errOut)
 	return code, out.String(), errOut.String()
 }
 

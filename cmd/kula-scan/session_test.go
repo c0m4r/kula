@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -54,7 +55,7 @@ func scanWithLedger(t *testing.T, aggressive bool, only *selection) ([]Finding, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s.Run(only), ledger
+	return s.Run(context.Background(), only), ledger
 }
 
 func TestDefaultRunLogsInOnceAndOut(t *testing.T) {

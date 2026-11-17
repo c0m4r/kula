@@ -14,6 +14,10 @@ type Report struct {
 	Target   string    `json:"target"`
 	Findings []Finding `json:"findings"`
 	Summary  Summary   `json:"summary"`
+	// Interrupted is set when a signal cut the run short; NotRun counts the
+	// checks that did not run (or were cut short, their findings dropped).
+	Interrupted bool `json:"interrupted"`
+	NotRun      int  `json:"not_run,omitempty"`
 }
 
 // Summary holds per-status counts for the run. An ignored finding counts
@@ -141,6 +145,17 @@ func (r *Report) writeText(w io.Writer, noColor bool) {
 		color(cGray, fmt.Sprintf("%d skip / %d error", s.Skip, s.Error)),
 		ignored,
 	)
+	if r.Interrupted {
+		_, _ = fmt.Fprintf(w, "%s %s\n", color(cYellow+cBold, "Interrupted:"), notRunText(r.NotRun))
+	}
+}
+
+// notRunText says how many checks an interrupted run did not run.
+func notRunText(n int) string {
+	if n == 1 {
+		return "1 check did not run."
+	}
+	return fmt.Sprintf("%d checks did not run.", n)
 }
 
 func severityColor(sev Severity) string {
@@ -193,15 +208,19 @@ func (r *Report) worstFailure() Severity {
 // Exit statuses.
 const (
 	exitClean        = 0
-	exitFailing      = 1 // a FAIL at or above -fail-on, or a declared expectation not met
-	exitUsage        = 2 // a usage error, or a target that is unreachable or not Kula
-	exitInconclusive = 3 // no gating FAIL, but a probe could not complete
+	exitFailing      = 1   // a FAIL at or above -fail-on, or a declared expectation not met
+	exitUsage        = 2   // a usage error, or a target that is unreachable or not Kula
+	exitInconclusive = 3   // no gating FAIL, but a probe could not complete
+	exitInterrupted  = 130 // a signal cut the run short (128 + SIGINT)
 )
 
 // exitCode returns the exit status the report calls for. Ignored findings
-// count for nothing; a failure wins over an error.
+// count for nothing; a failure wins over an error, and an interrupt over
+// everything, since the report is partial.
 func (r *Report) exitCode(failOn Severity) int {
 	switch {
+	case r.Interrupted:
+		return exitInterrupted
 	case r.stoppedAtDiscovery():
 		return exitUsage
 	case r.worstFailure() >= failOn, len(r.unmetExpectations()) > 0:
@@ -263,6 +282,8 @@ func (r *Report) exitReason(failOn Severity) string {
 	code := r.exitCode(failOn)
 	var why string
 	switch code {
+	case exitInterrupted:
+		why = "interrupted; " + notRunText(r.NotRun)
 	case exitUsage:
 		for _, f := range r.Findings {
 			if f.ID == "DISC-001" {

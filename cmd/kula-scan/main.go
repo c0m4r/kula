@@ -20,30 +20,52 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"kula"
 )
 
 func main() {
-	os.Exit(run(os.Args[1:]))
+	// The first SIGINT or SIGTERM interrupts the scan: it logs out and
+	// prints the partial report. The handler is then removed, so a second
+	// signal kills the process at once.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	done, watched := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(watched)
+		select {
+		case <-ctx.Done():
+			stop()
+			_, _ = fmt.Fprintln(os.Stderr, "kula-scan: interrupted; logging out and printing the partial report (interrupt again to quit at once)")
+		case <-done:
+		}
+	}()
+	code := runCLI(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	close(done)
+	<-watched
+	stop()
+	os.Exit(code)
 }
 
-// run is the command line on the process's standard streams.
+// run is the command line on the process's standard streams, without
+// signal handling.
 func run(args []string) int {
-	return runCLI(args, os.Stdout, os.Stderr)
+	return runCLI(context.Background(), args, os.Stdout, os.Stderr)
 }
 
 // runCLI runs the command line and returns the exit status. The report goes
 // to stdout and nothing else does; request logs, progress, banners and errors
-// go to stderr.
-func runCLI(args []string, stdout, stderr io.Writer) int {
+// go to stderr. Cancelling ctx interrupts the scan (exit status 130).
+func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("kula-scan", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { printUsage(fs.Output()) }
@@ -160,9 +182,10 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 			fmt.Sprintf("FUZZ MODE: sends malformed/extreme input across the surface (seed %d). May create junk sessions/log noise; reproduce findings with -seed.", scanner.seed)))
 	}
 
-	findings := scanner.Run(sel)
+	findings := scanner.Run(ctx, sel)
 	markIgnored(findings, ignored)
 	report := newReport(scanner.urlFor(""), findings)
+	report.Interrupted, report.NotRun = scanner.interrupted, scanner.notRun
 
 	if *asJSON {
 		if err := report.writeJSON(stdout); err != nil {
@@ -275,5 +298,7 @@ Exit status:
   2    usage error, or the target is unreachable or not a Kula instance
   3    inconclusive: nothing fails, but a probe could not complete (ERROR),
        e.g. the supplied credentials were refused
+  130  interrupted (SIGINT/SIGTERM): the scan logs out and prints a partial report;
+       a second signal quits at once
 `, strings.Join(categories(), ","), strings.Join(expectKeyNames(), ","))
 }
