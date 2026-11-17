@@ -1132,8 +1132,15 @@ func runFuzzMethods(s *Scanner) []Finding {
 	return []Finding{f}
 }
 
-// runFuzzSmuggle sends requests with conflicting/duplicate framing headers. The
-// server must reject them (400) or close — never 5xx, and never two responses.
+// runFuzzSmuggle sends three requests to /api/login whose Content-Length and
+// Transfer-Encoding headers frame them ambiguously, and says what each was
+// answered. The server must refuse them, or handle them without a 2xx or a
+// 500 (net/http answers two Content-Lengths 400 and two Transfer-Encodings
+// 501 before routing, and reads Content-Length with chunked as chunked).
+// That is all one server shows: a desync is a disagreement between a proxy
+// and the server behind it on where a request ends. The requests carry no
+// Origin, so with origin validation off they reach login's limiter (see
+// allChecks).
 func runFuzzSmuggle(s *Scanner) []Finding {
 	host := s.base.Host
 	bp := s.base.Path
@@ -1145,39 +1152,61 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 		// Obfuscated Transfer-Encoding.
 		fmt.Sprintf("POST %s/api/login HTTP/1.1\r\nHost: %s\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: identity\r\nConnection: close\r\n\r\n0\r\n\r\n", bp, host),
 	}
+	// What each of raws is, in order, for the detail.
+	names := []string{"two Content-Lengths", "Content-Length with chunked Transfer-Encoding", "two Transfer-Encodings"}
 	// The -H header lines follow the Host line of what is sent; the evidence
 	// quotes the request without them, since their values are secrets.
 	hostLine := "\r\nHost: " + host + "\r\n"
 	extra := s.rawHeaderLines(nil)
 	var hits []fuzzHit
 	var lost undelivered
-	for _, raw := range raws {
+	var answers []string
+	for i, raw := range raws {
 		status, _, err := s.rawExchange(strings.Replace(raw, hostLine, hostLine+extra, 1))
 		if err != nil {
 			lost.add(err)
 			continue
 		}
+		answer := fmt.Sprintf("HTTP %d", status)
+		if status == 0 {
+			answer = "no answer (the connection closed, or nothing came within -timeout)"
+		}
+		answers = append(answers, names[i]+": "+answer)
 		switch {
 		case status == 500:
 			// A 400/501 rejection is the correct, safe response; only a 500 means
 			// the ambiguous framing actually broke a handler.
-			hits = append(hits, fuzzHit{"HTTP 500", truncate(strings.ReplaceAll(raw, "\r\n", "\\n"), 90)})
+			hits = append(hits, fuzzHit{"answered HTTP 500", truncate(strings.ReplaceAll(raw, "\r\n", "\\n"), 90)})
 		case status >= 200 && status < 300:
-			hits = append(hits, fuzzHit{"accepted ambiguous framing (smuggling risk)", truncate(strings.ReplaceAll(raw, "\r\n", "\\n"), 90)})
+			hits = append(hits, fuzzHit{fmt.Sprintf("accepted ambiguous framing (HTTP %d)", status), truncate(strings.ReplaceAll(raw, "\r\n", "\\n"), 90)})
 		}
 	}
+	delivered := len(raws) - lost.n
+	observed := fmt.Sprintf("%d of %d ambiguously framed requests to /api/login delivered", delivered, len(raws))
+	if len(answers) > 0 {
+		observed += ": " + strings.Join(answers, "; ")
+	}
 	if len(hits) == 0 && lost.n > 0 {
-		return []Finding{finding("FUZZ-SMUGGLE", SevInfo, StatusError, lost.detail(len(raws), "smuggling requests")+".")}
+		detail := lost.detail(len(raws), "ambiguously framed requests to /api/login")
+		if len(answers) > 0 {
+			detail += "; the others: " + strings.Join(answers, "; ")
+		}
+		return []Finding{finding("FUZZ-SMUGGLE", SevInfo, StatusError, detail+".")}
 	}
 	if len(hits) == 0 {
 		return []Finding{finding("FUZZ-SMUGGLE", SevMedium, StatusPass,
-			"ambiguous Content-Length / Transfer-Encoding framing is rejected (no desync, no 5xx).")}
+			observed+". None was accepted with a 2xx or answered HTTP 500. That is how this server reads the framing; "+
+				"a desync is a disagreement between a proxy and the server behind it, which one server's answers cannot show.")}
 	}
-	t := &fuzzTally{planned: len(raws), sent: len(raws) - lost.n}
+	t := &fuzzTally{planned: len(raws), sent: delivered}
+	note := ""
 	for _, h := range hits {
 		t.hit(h.kind, h.req)
+		if strings.HasPrefix(h.kind, "accepted") {
+			note = "Behind a proxy that reads such framing otherwise, a server that accepts it would not agree with the proxy on where a request ends."
+		}
 	}
-	return []Finding{t.verdict("FUZZ-SMUGGLE", s.seed, t.coverage("the server"), "")}
+	return []Finding{t.verdict("FUZZ-SMUGGLE", s.seed, observed, note)}
 }
 
 // FUZZ-WS opens fuzzWSConns connections one after another, each closed
