@@ -3,10 +3,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -37,6 +40,20 @@ func dosChecks() []check {
 // dosWaitHint tells the progress line that a probe waits out -dos-wait.
 func dosWaitHint(s *Scanner) string {
 	return "waits up to -dos-wait " + s.dosWait.String()
+}
+
+// isReadTimeout reports whether err is a deadline the scanner set expiring:
+// the connection is still open.
+func isReadTimeout(err error) bool {
+	var ne net.Error
+	return errors.Is(err, os.ErrDeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
+}
+
+// isHangUp reports whether err, from a read or write on a connection, means
+// the target ended the connection: an end of file, a reset or an abort.
+func isHangUp(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) || errors.Is(err, syscall.EPIPE)
 }
 
 // runSlowlorisCheck opens several connections that send a partial request and
@@ -267,10 +284,15 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 	}
 	hdr.Set("Origin", s.base.Scheme+"://"+s.base.Host)
 
-	conn, _, err := s.wsDial("/ws", hdr)
+	conn, resp, err := s.wsDial("/ws", hdr)
 	if err != nil || conn == nil {
-		return []Finding{finding("WS-MSGBOMB", SevInfo, StatusSkip,
-			"could not establish a WebSocket connection to test the read limit.")}
+		if resp != nil {
+			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
+				"the WebSocket upgrade was refused, so no oversized message could be sent.").
+				withEvidence("status=%s", statusOf(resp))}
+		}
+		return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
+			fmt.Sprintf("could not open a WebSocket connection to test the read limit: %v", err))}
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -281,31 +303,51 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 		bomb[i] = 'A'
 	}
 	if err := conn.WriteMessage(websocket.TextMessage, bomb); err != nil {
-		// Write failed because the server already tore the connection down — the
-		// limit is enforced.
-		return []Finding{finding("WS-MSGBOMB", SevLow, StatusPass,
-			"the server dropped the connection when an oversized message was sent (read limit enforced).")}
+		switch {
+		case isHangUp(err):
+			// The server tore the connection down while the message was
+			// still arriving: the limit is enforced.
+			return []Finding{finding("WS-MSGBOMB", SevLow, StatusPass,
+				"the server dropped the connection when an oversized message was sent (read limit enforced).").
+				withEvidence("write: %v", err)}
+		case isReadTimeout(err):
+			return []Finding{finding("WS-MSGBOMB", SevMedium, StatusWarn,
+				fmt.Sprintf("the server stopped reading a 64 KiB client message but kept the connection open for %s; the read limit may not be enforced.", s.timeout)).
+				withEvidence("write: %v", err).
+				withRemediation("Call conn.SetReadLimit on the WebSocket to bound inbound message size.")}
+		default:
+			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
+				"sending the oversized message failed, which says nothing of the read limit: "+err.Error())}
+		}
 	}
 
-	// The server normally streams metric frames; read past those until it closes
-	// the connection (read-limit exceeded) or we hit the deadline.
-	deadline := time.Now().Add(s.timeout)
-	_ = conn.SetReadDeadline(deadline)
+	// The server normally streams metric frames; read past those until it
+	// closes the connection (read limit exceeded) or the deadline passes with
+	// the connection still open.
+	_ = conn.SetReadDeadline(time.Now().Add(s.timeout))
 	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
-			if errors.Is(err, websocket.ErrReadLimit) {
-				// wsDial caps what the scanner reads; Kula's frames are far smaller.
-				return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
-					"the server sent a WebSocket message over 1 MiB, which the scanner does not read; this is not Kula's live stream.")}
-			}
+		_, _, err := conn.ReadMessage()
+		if err == nil {
+			continue
+		}
+		var closeErr *websocket.CloseError
+		switch {
+		case errors.Is(err, websocket.ErrReadLimit):
+			// wsDial caps what the scanner reads; Kula's frames are far smaller.
+			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
+				"the server sent a WebSocket message over 1 MiB, which the scanner does not read; this is not Kula's live stream.")}
+		case isReadTimeout(err):
+			return []Finding{finding("WS-MSGBOMB", SevMedium, StatusWarn,
+				fmt.Sprintf("the connection was still open %s after a 64 KiB client message; the read limit may not be enforced.", s.timeout)).
+				withEvidence("%v", err).
+				withRemediation("Call conn.SetReadLimit on the WebSocket to bound inbound message size.")}
+		case errors.As(err, &closeErr), isHangUp(err):
 			return []Finding{finding("WS-MSGBOMB", SevLow, StatusPass,
 				"the server closed the connection after an oversized client message (SetReadLimit enforced).").
 				withEvidence("close: %v", err)}
-		}
-		if time.Now().After(deadline) {
-			return []Finding{finding("WS-MSGBOMB", SevMedium, StatusWarn,
-				"the connection stayed open after a 64 KiB client message; the read limit may not be enforced.").
-				withRemediation("Call conn.SetReadLimit on the WebSocket to bound inbound message size.")}
+		default:
+			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
+				"reading from the WebSocket after the oversized message failed, which says nothing of the read limit: "+err.Error())}
 		}
 	}
 }
