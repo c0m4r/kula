@@ -225,7 +225,7 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	if f.aggressive && textOut {
 		_, _ = fmt.Fprintln(stderr, banner(bannerColor,
-			"AGGRESSIVE MODE: locks out login from your IP for ~5 min, floods connections, and holds slow requests open "+
+			"AGGRESSIVE MODE: locks out login from your IP for ~5 min, floods connections, history and AI chat requests, and holds slow requests open "+
 				"(up to -dos-wait="+f.dosWait.String()+" each). Run against staging, or accept the disruption."))
 	}
 	if f.fuzz && textOut {

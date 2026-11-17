@@ -467,7 +467,7 @@ func cspFindings(policies []cspPolicy, raw string) []Finding {
 			"CSP forbids framing (frame-ancestors 'none')."))
 	} else {
 		out = append(out, finding("HDR-007", SevMedium, StatusWarn,
-			"CSP does not set frame-ancestors 'none'; relies on X-Frame-Options alone.").
+			"CSP does not set frame-ancestors 'none'; only X-Frame-Options (HDR-002) can still forbid framing.").
 			withRemediation("Enable web.security.frame_protection.").
 			expecting("frame-protection"))
 	}
