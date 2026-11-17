@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -216,6 +217,7 @@ type Scanner struct {
 	loginTried  bool
 	login       loginOutcome // how the login attempt ended
 	loginDetail string       // why it failed, for AUTH-005
+	sessionLost string       // why the session ended before the run did (markSessionLost)
 }
 
 // loginOutcome is how ensureSession's login attempt ended.
@@ -978,8 +980,15 @@ func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 	if !s.reachable || !s.kula {
 		return findings
 	}
-	defer s.logout()
+	// The closing logout below normally ends the session; this one covers a
+	// check that panics.
+	defer func() {
+		ctx, cancel := s.closingContext()
+		defer cancel()
+		s.logout(ctx)
+	}()
 
+	revocation := false // the check declaring AUTH-010 ran: the closing logout is its probe
 	started := 0
 	for _, c := range checks {
 		if ctx.Err() != nil {
@@ -1005,6 +1014,7 @@ func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 			s.interrupted, s.notRun = true, runnable-started+1
 			break
 		}
+		revocation = revocation || slices.Contains(c.ids, "AUTH-010")
 		s.applyExpectations(results)
 		for _, f := range results {
 			if sel.selected(f.ID) {
@@ -1012,7 +1022,7 @@ func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 			}
 		}
 	}
-	return findings
+	return s.closeSession(findings, revocation)
 }
 
 // modeEnabled reports whether checks of mode run on this scan.
@@ -1060,20 +1070,33 @@ func skippedFindings(c check, detail string) []Finding {
 // sends.
 const logoutTimeout = 5 * time.Second
 
+// closingContext bounds the closing logout and its probe. It derives from a
+// fresh context, since the run's may have been cancelled by an interrupt.
+func (s *Scanner) closingContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), min(s.timeout, logoutTimeout))
+}
+
 // logout ends the session ensureSession opened, so a run leaves no session
-// behind on the target. It is best effort: a check that probed the logout
-// endpoint may have ended the session already. It runs under a fresh context,
-// since the run's may have been cancelled by an interrupt.
-func (s *Scanner) logout() {
+// behind on the target, and forgets it. It returns the session token it ended
+// and the answer; ok is false when no session was open (none was opened, or
+// a probe ended it: markSessionLost).
+func (s *Scanner) logout(ctx context.Context) (token string, r httpResult, ok bool) {
 	if !s.loggedIn {
-		return
+		return "", httpResult{}, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), min(s.timeout, logoutTimeout))
-	defer cancel()
 	headers := s.authedHeaders(true)
 	headers["Origin"] = s.base.Scheme + "://" + s.base.Host
-	s.doContext(ctx, http.MethodPost, "/api/logout", headers, "")
-	s.loggedIn = false
-	s.session = ""
-	s.csrf = ""
+	token = s.session
+	r = s.doContext(ctx, http.MethodPost, "/api/logout", headers, "")
+	s.loggedIn, s.session, s.csrf = false, "", ""
+	return token, r, true
+}
+
+// markSessionLost records that a probe ended the scan's session: the target
+// accepted a logout it should have refused. The session is forgotten without
+// another login, so the checks after it that need one skip and say why, and
+// the closing logout is not sent.
+func (s *Scanner) markSessionLost(reason string) {
+	s.loggedIn, s.session, s.csrf = false, "", ""
+	s.sessionLost = reason
 }

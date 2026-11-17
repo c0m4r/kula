@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,62 +34,37 @@ const (
 
 // ---- secure mock -------------------------------------------------------------
 
+// secureMock models a current, default-configured Kula with auth enabled. Like
+// buildHandler it gates every /api/ route but login, logout and auth/status
+// behind the session check, unknown ones included; a logout revokes the
+// session; and CSRFMiddleware's order holds: the Origin (else Referer) check
+// first, then the token, for a request carrying a valid session cookie.
 func secureMock() http.Handler {
 	mux := http.NewServeMux()
+
+	// One session at a time, issued as mockToken and revoked by logout.
+	var revoked atomic.Bool
+	valid := func(r *http.Request) bool { return hasValidSession(r) && !revoked.Load() }
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("kula is healthy"))
 	})
 	mux.HandleFunc("/api/auth/status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSONResp(w, map[string]any{"auth_required": true, "authenticated": false})
+		writeJSONResp(w, map[string]any{"auth_required": true, "authenticated": valid(r)})
 	})
 
-	// Protected routes require the valid session cookie.
-	protected := func(body any) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if !hasValidSession(r) {
-				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-				return
-			}
-			writeJSONResp(w, body)
-		}
-	}
-	mux.HandleFunc("/api/current", protected(map[string]any{"cpu": 1}))
-	mux.HandleFunc("/api/config", protected(map[string]any{"auth_enabled": true, "ollama_enabled": false}))
-	mux.HandleFunc("/api/history", func(w http.ResponseWriter, r *http.Request) {
-		if !hasValidSession(r) {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-			return
-		}
-		q := r.URL.Query()
-		from, to := q.Get("from"), q.Get("to")
-		if from != "" {
-			if _, err := time.Parse(time.RFC3339, from); err != nil {
-				http.Error(w, `{"error":"bad from"}`, http.StatusBadRequest)
-				return
-			}
-		}
-		if to != "" {
-			if _, err := time.Parse(time.RFC3339, to); err != nil {
-				http.Error(w, `{"error":"bad to"}`, http.StatusBadRequest)
-				return
-			}
-		}
-		if from != "" && to != "" {
-			f, _ := time.Parse(time.RFC3339, from)
-			t, _ := time.Parse(time.RFC3339, to)
-			if t.Before(f) || t.Sub(f) > 31*24*time.Hour {
-				http.Error(w, `{"error":"bad range"}`, http.StatusBadRequest)
-				return
-			}
-		}
-		writeJSONResp(w, map[string]any{"samples": []any{}})
+	api := http.NewServeMux()
+	api.HandleFunc("/api/current", func(w http.ResponseWriter, r *http.Request) {
+		writeJSONResp(w, map[string]any{"cpu": 1})
 	})
-	mux.HandleFunc("/api/i18n", func(w http.ResponseWriter, r *http.Request) {
-		if !hasValidSession(r) {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-			return
-		}
+	api.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		writeJSONResp(w, map[string]any{"auth_enabled": true, "ollama_enabled": false})
+	})
+	api.HandleFunc("/api/system-info", func(w http.ResponseWriter, r *http.Request) {
+		writeJSONResp(w, map[string]any{"os": "linux"})
+	})
+	api.HandleFunc("/api/history", mockHistory)
+	api.HandleFunc("/api/i18n", func(w http.ResponseWriter, r *http.Request) {
 		lang := r.URL.Query().Get("lang")
 		if lang != "en" && lang != "de" {
 			http.Error(w, `{"error":"invalid language"}`, http.StatusBadRequest)
@@ -95,14 +72,39 @@ func secureMock() http.Handler {
 		}
 		writeJSONResp(w, map[string]any{"hello": "hi"})
 	})
+	api.HandleFunc("/api/ollama/", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"ollama is not enabled"}`, http.StatusServiceUnavailable)
+	})
+	api.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		if !valid(r) {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		api.ServeHTTP(w, r)
+	})
+
+	// csrf answers 403 to a state change CSRFMiddleware refuses.
+	csrf := func(w http.ResponseWriter, r *http.Request) bool {
+		if !sameOriginPost(r) {
+			http.Error(w, `{"error":"invalid origin"}`, http.StatusForbidden)
+			return false
+		}
+		if valid(r) && r.Header.Get("X-CSRF-Token") != "csrftok" {
+			http.Error(w, `{"error":"invalid csrf token"}`, http.StatusForbidden)
+			return false
+		}
+		return true
+	}
 
 	mux.HandleFunc("/api/login", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
-		if !sameOriginPost(r) {
-			http.Error(w, `{"error":"invalid origin"}`, http.StatusForbidden)
+		if !csrf(w, r) {
 			return
 		}
 		var creds struct{ Username, Password string }
@@ -112,6 +114,7 @@ func secureMock() http.Handler {
 			http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
 			return
 		}
+		revoked.Store(false)
 		http.SetCookie(w, &http.Cookie{
 			Name: "kula_session", Value: mockToken, Path: "/",
 			HttpOnly: true, SameSite: http.SameSiteStrictMode,
@@ -120,13 +123,15 @@ func secureMock() http.Handler {
 	})
 
 	mux.HandleFunc("/api/logout", func(w http.ResponseWriter, r *http.Request) {
-		if !sameOriginPost(r) {
-			http.Error(w, `{"error":"invalid origin"}`, http.StatusForbidden)
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
 		}
-		if r.Header.Get("X-CSRF-Token") != "csrftok" {
-			http.Error(w, `{"error":"invalid csrf token"}`, http.StatusForbidden)
+		if !csrf(w, r) {
 			return
+		}
+		if hasValidSession(r) {
+			revoked.Store(true)
 		}
 		writeJSONResp(w, map[string]any{"status": "logged out"})
 	})
@@ -147,7 +152,7 @@ func secureMock() http.Handler {
 	})
 
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		if !hasValidSession(r) {
+		if !valid(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -218,6 +223,66 @@ func secureHeaders(h http.Handler) http.Handler {
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+// mockHistory validates /api/history as handleHistory does and answers one
+// sample per second of the window, capped at the 5000 points Kula allows.
+var mockHistory = historyHandler(5000)
+
+// historyHandler is mockHistory with a points cap of maxPoints.
+func historyHandler(maxPoints int) http.HandlerFunc {
+	sections := map[string]bool{"cpu": true, "lavg": true, "mem": true, "swap": true, "net": true, "disk": true,
+		"sys": true, "proc": true, "self": true, "gpu": true, "psu": true, "apps": true}
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if raw := q.Get("sections"); raw != "" {
+			for _, name := range strings.Split(raw, ",") {
+				if name = strings.TrimSpace(name); name != "" && !sections[name] {
+					http.Error(w, `{"error":"unknown history section"}`, http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		to, from := time.Now(), time.Time{}
+		if raw := q.Get("to"); raw != "" {
+			t, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				http.Error(w, `{"error":"invalid 'to' time"}`, http.StatusBadRequest)
+				return
+			}
+			to = t
+		}
+		from = to.Add(-5 * time.Minute)
+		if raw := q.Get("from"); raw != "" {
+			f, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				http.Error(w, `{"error":"invalid 'from' time"}`, http.StatusBadRequest)
+				return
+			}
+			from = f
+		}
+		if to.Before(from) || to.Sub(from) > 31*24*time.Hour {
+			http.Error(w, `{"error":"bad range"}`, http.StatusBadRequest)
+			return
+		}
+		points := 450
+		if raw := q.Get("points"); raw != "" {
+			_, _ = fmt.Sscanf(raw, "%d", &points)
+		}
+		points = max(1, min(points, maxPoints))
+		if raw := q.Get("tier"); raw != "" {
+			if v, err := strconv.Atoi(raw); err != nil || v < 0 {
+				http.Error(w, `{"error":"invalid 'tier'"}`, http.StatusBadRequest)
+				return
+			}
+		}
+		n := min(points, int(to.Sub(from)/time.Second))
+		samples := make([]map[string]any, n)
+		for i := range samples {
+			samples[i] = map[string]any{"ts": i, "data": map[string]any{"lavg": map[string]any{"load1": 0.1}}}
+		}
+		writeJSONResp(w, map[string]any{"samples": samples, "resolution": "2s", "downsampled": true})
+	}
 }
 
 func hasValidSession(r *http.Request) bool {
@@ -350,9 +415,9 @@ func TestSecureTargetPasses(t *testing.T) {
 	wantStatus(t, []Finding{enumerationFinding(s)}, "AUTH-006", StatusPass)
 
 	csrf := runCSRFChecks(s)
-	wantStatus(t, csrf, "CSRF-001", StatusPass)
-	wantStatus(t, csrf, "CSRF-002", StatusPass)
-	wantStatus(t, csrf, "CSRF-003", StatusPass)
+	for _, id := range []string{"CSRF-001", "CSRF-002", "CSRF-003", "CSRF-004"} {
+		wantStatus(t, csrf, id, StatusPass)
+	}
 
 	cors := runCORSChecks(s)
 	wantStatus(t, cors, "CORS-001", StatusPass)
@@ -374,6 +439,9 @@ func TestSecureTargetPasses(t *testing.T) {
 	input := runInputChecks(s)
 	wantStatus(t, input, "INPUT-001", StatusPass)
 	wantStatus(t, input, "INPUT-003", StatusPass)
+
+	// The closing logout revokes the session the checks shared.
+	wantStatus(t, s.closeSession(nil, true), "AUTH-010", StatusPass)
 }
 
 // ---- insecure-target tests: the matching probes must FAIL/WARN ---------------
@@ -381,7 +449,7 @@ func TestSecureTargetPasses(t *testing.T) {
 func TestInsecureTargetFails(t *testing.T) {
 	ts := httptest.NewServer(insecureMock())
 	defer ts.Close()
-	s := scannerFor(t, ts, "", "")
+	s := scannerFor(t, ts, mockUser, "anything") // the insecure login takes any password
 
 	hdr := runHeaderChecks(s)
 	for _, id := range []string{"HDR-001", "HDR-002", "HDR-003", "HDR-010"} {
@@ -394,10 +462,22 @@ func TestInsecureTargetFails(t *testing.T) {
 	auth := runAuthChecks(s)
 	wantStatus(t, auth, "AUTH-001", StatusFail) // open API despite auth_required
 	wantStatus(t, auth, "AUTH-002", StatusFail) // forged cookie accepted
+	wantStatus(t, auth, "AUTH-007", StatusFail) // cookie readable from script
+
+	// The insecure logout clears nothing on the server: a second session,
+	// ended by the closing logout, still authenticates.
+	closing := scannerFor(t, ts, mockUser, "anything")
+	closing.ensureSession()
+	wantStatus(t, closing.closeSession(nil, true), "AUTH-010", StatusFail)
 
 	csrf := runCSRFChecks(s)
 	wantStatus(t, csrf, "CSRF-001", StatusWarn) // no origin enforcement
 	wantStatus(t, csrf, "CSRF-002", StatusWarn)
+	wantStatus(t, csrf, "CSRF-003", StatusFail) // no token needed
+	// CSRF-003's accepted logout ended the session; CSRF-004 says so.
+	if f, _ := byID(csrf, "CSRF-004"); f.Status != StatusSkip || !strings.Contains(f.Detail, "CSRF-003") {
+		t.Errorf("CSRF-004 after the session was lost = %s %q, want a SKIP naming CSRF-003", f.Status, f.Detail)
+	}
 
 	cors := runCORSChecks(s)
 	if f, ok := byID(cors, "CORS-001"); !ok || f.Status != StatusFail || f.Severity != SevCritical {
@@ -578,6 +658,255 @@ func TestHeadersCheckedBeyondTheIndexPage(t *testing.T) {
 		ts.Close()
 		if f.Status != StatusFail || !strings.Contains(f.Detail, c.path+" (") {
 			t.Errorf("%s missing on %s: %s = %s %q, want a FAIL naming the path", c.header, c.path, c.id, f.Status, f.Detail)
+		}
+	}
+}
+
+// ---- sessions and CSRF -------------------------------------------------------
+
+// wrapLogout serves the secure mock, but hands /api/logout to logout first:
+// it answers the request itself or returns false to pass it on.
+func wrapLogout(logout func(w http.ResponseWriter, r *http.Request) bool) http.Handler {
+	mock := secureMock()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/logout" && logout(w, r) {
+			return
+		}
+		mock.ServeHTTP(w, r)
+	})
+}
+
+func TestClosingLogoutIsTheRevocationProbe(t *testing.T) {
+	findings, ledger := scanWithLedger(t, false, nil)
+	wantStatus(t, findings, "AUTH-010", StatusPass)
+	if got := ledger.attempts[mockUser]; len(got) != 1 {
+		t.Errorf("logged in %d times, want once", len(got))
+	}
+	// Reported once, after the other auth findings.
+	at, last := -1, -1
+	for i, f := range findings {
+		switch {
+		case f.ID == "AUTH-010":
+			if at >= 0 {
+				t.Error("AUTH-010 reported twice")
+			}
+			at = i
+		case f.Category == "auth":
+			last = i
+		}
+	}
+	if at != last+1 {
+		t.Errorf("AUTH-010 at %d, want right after the last other auth finding at %d", at, last)
+	}
+
+	// -only AUTH-010 still opens the session it replays, and nothing else.
+	only, err := newSelection("auth-010", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, ledger = scanWithLedger(t, false, only)
+	if got := strings.Join(reportedIDsOf(findings), ","); got != "DISC-001,AUTH-010" {
+		t.Errorf("-only AUTH-010 reported %s", got)
+	}
+	wantStatus(t, findings, "AUTH-010", StatusPass)
+	if len(ledger.attempts[mockUser]) != 1 || len(ledger.logouts) != 1 {
+		t.Errorf("-only AUTH-010: %d logins, %d logouts; want one each", len(ledger.attempts[mockUser]), len(ledger.logouts))
+	}
+}
+
+// TestInterruptedRunLogsOutWithoutTheReplay: an interrupt still sends the
+// closing logout, but not the replay that judges it.
+func TestInterruptedRunLogsOutWithoutTheReplay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ledger := &loginLedger{attempts: map[string][]string{}}
+	mock := ledger.wrap(secureMock())
+	var replays atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/metrics":
+			cancel() // after the auth check
+		case r.URL.Path == "/api/config" && ctx.Err() != nil:
+			replays.Add(1)
+		}
+		mock.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+	t.Setenv(passwordEnv, mockPass)
+
+	code, stdout, _ := runCapturedContext(t, ctx, "-json", "-username", mockUser, ts.URL)
+	if code != exitInterrupted {
+		t.Fatalf("exit %d, want 130", code)
+	}
+	report := decodeReport(t, stdout)
+	if f, _ := byID(report.Findings, "AUTH-010"); f.Status != StatusSkip || !strings.Contains(f.Detail, "interrupted") {
+		t.Errorf("AUTH-010 = %s %q, want a SKIP naming the interrupt", f.Status, f.Detail)
+	}
+	if replays.Load() != 0 {
+		t.Errorf("the interrupted run replayed the logged-out cookie %d times", replays.Load())
+	}
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	if n := len(ledger.logouts); n == 0 || ledger.logouts[n-1].Get("X-CSRF-Token") != "csrftok" {
+		t.Error("the interrupted run did not send the closing logout")
+	}
+}
+
+func reportedIDsOf(findings []Finding) []string {
+	ids := make([]string, 0, len(findings))
+	for _, f := range findings {
+		ids = append(ids, f.ID)
+	}
+	return ids
+}
+
+func TestLogoutThatKeepsTheSessionFails(t *testing.T) {
+	// The logout answers as Kula does, but revokes nothing.
+	keeps := wrapLogout(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Header.Get("X-CSRF-Token") != "csrftok" {
+			return false
+		}
+		writeJSONResp(w, map[string]any{"status": "logged out"})
+		return true
+	})
+	t.Setenv(passwordEnv, mockPass)
+	code, report, _ := scanJSON(t, keeps, "-username", mockUser, "-only", "auth")
+	f, _ := byID(report.Findings, "AUTH-010")
+	if f.Status != StatusFail || f.Severity != SevHigh || code != exitFailing {
+		t.Errorf("AUTH-010 = %s %s, exit %d; want a HIGH FAIL and exit 1", f.Status, f.Severity, code)
+	}
+}
+
+func TestRevocationSkipsSayWhy(t *testing.T) {
+	_, report, _ := scanJSON(t, secureMock(), "-only", "auth")
+	if f, _ := byID(report.Findings, "AUTH-010"); f.Status != StatusSkip || !strings.Contains(f.Detail, "-username/-password") {
+		t.Errorf("no credentials: AUTH-010 = %s %q", f.Status, f.Detail)
+	}
+	_, report, _ = scanJSON(t, secureMock(), "-only", "auth,csrf", "-username", mockUser, "-password", "wrong")
+	for _, id := range []string{"AUTH-010", "CSRF-003", "CSRF-004"} {
+		f, _ := byID(report.Findings, id)
+		if f.Status != StatusSkip || !strings.Contains(f.Detail, "wrong username or password") || strings.Contains(f.Detail, "supply") {
+			t.Errorf("refused credentials: %s = %s %q, want a SKIP naming the refusal", id, f.Status, f.Detail)
+		}
+	}
+	// With auth off there is no session to revoke, nor a finding about it.
+	var loginHits, chatHits atomic.Int64
+	_, report, _ = scanJSON(t, authOffMock(false, &loginHits, &chatHits), "-only", "auth,csrf", "-username", mockUser, "-password", mockPass)
+	for _, id := range []string{"AUTH-010", "CSRF-003", "CSRF-004"} {
+		if f, ok := byID(report.Findings, id); ok {
+			t.Errorf("auth off: %s reported: %+v", id, f)
+		}
+	}
+}
+
+// TestBrokenTokenGateEndsTheSession: a target that accepts CSRF-003's logout
+// ends the scan's session. The checks after it skip and say why instead of
+// misreporting, nothing logs in again, and no closing logout is sent.
+func TestBrokenTokenGateEndsTheSession(t *testing.T) {
+	ledger := &loginLedger{attempts: map[string][]string{}}
+	noToken := ledger.wrap(wrapLogout(func(w http.ResponseWriter, r *http.Request) bool {
+		r.Header.Set("X-CSRF-Token", "csrftok") // the token is never checked
+		return false
+	}))
+	t.Setenv(passwordEnv, mockPass)
+	_, report, _ := scanJSON(t, noToken, "-username", mockUser)
+
+	wantStatus(t, report.Findings, "CSRF-003", StatusFail)
+	if f, _ := byID(report.Findings, "CSRF-003"); !strings.Contains(f.Detail, "skipped") {
+		t.Errorf("CSRF-003 does not say the session ended: %q", f.Detail)
+	}
+	for _, id := range []string{"CSRF-004", "INPUT-001", "AUTH-010"} {
+		f, _ := byID(report.Findings, id)
+		if f.Status != StatusSkip || !strings.Contains(f.Detail, "CSRF-003") {
+			t.Errorf("%s after the session was lost = %s %q, want a SKIP naming CSRF-003", id, f.Status, f.Detail)
+		}
+	}
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	if got := ledger.attempts[mockUser]; len(got) != 1 {
+		t.Errorf("logged in %d times, want once", len(got))
+	}
+	withSession := 0
+	for _, h := range ledger.logouts {
+		if h.Get("Cookie") == "kula_session="+mockToken {
+			withSession++
+		}
+	}
+	if withSession != 1 {
+		t.Errorf("%d logouts carried the session, want only CSRF-003's", withSession)
+	}
+}
+
+func TestWrongCSRFTokenRefused(t *testing.T) {
+	if got := wrongCSRFToken("abc0"); got != "abc1" {
+		t.Errorf("wrongCSRFToken(abc0) = %q", got)
+	}
+	if got := wrongCSRFToken("abcf"); got != "abc0" {
+		t.Errorf("wrongCSRFToken(abcf) = %q", got)
+	}
+	if got := wrongCSRFToken(""); got == "" {
+		t.Error("wrongCSRFToken without a real token sent none")
+	}
+
+	// The token gate checks only that one is sent.
+	anyToken := wrapLogout(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Header.Get("X-CSRF-Token") != "" {
+			r.Header.Set("X-CSRF-Token", "csrftok")
+		}
+		return false
+	})
+	ts := httptest.NewServer(anyToken)
+	defer ts.Close()
+	s := scannerFor(t, ts, mockUser, mockPass)
+	csrf := runCSRFChecks(s)
+	wantStatus(t, csrf, "CSRF-003", StatusPass)
+	wantStatus(t, csrf, "CSRF-004", StatusFail)
+	if s.loggedIn || s.sessionLost == "" {
+		t.Error("the session CSRF-004's logout ended is still taken for open")
+	}
+}
+
+func TestForeignRefererRefused(t *testing.T) {
+	// Origin validation that reads Origin only: a foreign Referer passes.
+	originOnly := wrapLogout(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Header.Get("Origin") == "" && r.Header.Get("Referer") != "" {
+			writeJSONResp(w, map[string]any{"status": "logged out"})
+			return true
+		}
+		return false
+	})
+	ts := httptest.NewServer(originOnly)
+	defer ts.Close()
+	s := scannerFor(t, ts, "", "")
+	f, _ := byID(runCSRFChecks(s), "CSRF-002")
+	if f.Status != StatusWarn || !strings.Contains(f.Detail, "Referer") {
+		t.Errorf("CSRF-002 = %s %q, want a WARN naming the Referer probe", f.Status, f.Detail)
+	}
+}
+
+func TestProtectedRoutesCoverOllamaAndUnknownPaths(t *testing.T) {
+	for _, c := range []struct {
+		name, want string
+		open       func(r *http.Request) bool
+	}{
+		{"chat", "POST /api/ollama/chat", func(r *http.Request) bool { return r.URL.Path == "/api/ollama/chat" }},
+		{"models", "/api/ollama/models", func(r *http.Request) bool { return r.URL.Path == "/api/ollama/models" }},
+		{"system-info", "/api/system-info", func(r *http.Request) bool { return r.URL.Path == "/api/system-info" }},
+		{"unknown", "/api/kula-scan-", func(r *http.Request) bool { return strings.HasPrefix(r.URL.Path, "/api/kula-scan-") }},
+	} {
+		mock := secureMock()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if c.open(r) {
+				http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest) // past the gate
+				return
+			}
+			mock.ServeHTTP(w, r)
+		}))
+		s := scannerFor(t, ts, "", "")
+		f, _ := byID(runAuthChecks(s), "AUTH-001")
+		ts.Close()
+		if f.Status != StatusFail || !strings.Contains(f.Detail, c.want) {
+			t.Errorf("%s ungated: AUTH-001 = %s %q", c.name, f.Status, f.Detail)
 		}
 	}
 }

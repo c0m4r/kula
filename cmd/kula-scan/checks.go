@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -490,13 +492,40 @@ func extractNonce(csp string) string {
 
 // ============================== auth =========================================
 
-// protectedRoutes are API endpoints that must require authentication when
-// web.auth is enabled. They are all read-only GETs (no rate-limit cost).
-var protectedRoutes = []string{"/api/current", "/api/history", "/api/config", "/api/i18n?lang=en"}
+// protectedRoute is an API request that must answer 401 without a session
+// when web.auth is enabled.
+type protectedRoute struct{ method, path string }
+
+func (p protectedRoute) String() string {
+	if p.method == http.MethodGet {
+		return p.path
+	}
+	return p.method + " " + p.path
+}
+
+// protectedRoutes lists the requests AUTH-001 sends without a session. Kula
+// puts every route under /api/ but login, logout and auth/status behind
+// AuthMiddleware, whatever features are enabled, so the Ollama routes and an
+// unknown path answer 401 too. All but the chat are read-only GETs; the chat
+// is sent no body, so a broken gate answers it 400 without reaching Ollama.
+func protectedRoutes() []protectedRoute {
+	return []protectedRoute{
+		{http.MethodGet, "/api/current"},
+		{http.MethodGet, "/api/history"},
+		{http.MethodGet, "/api/config"},
+		{http.MethodGet, "/api/i18n?lang=en"},
+		{http.MethodGet, "/api/system-info"},
+		{http.MethodGet, "/api/ollama/models"},
+		{http.MethodGet, "/api/ollama/context"},
+		{http.MethodPost, "/api/ollama/chat"},
+		{http.MethodGet, "/api/kula-scan-" + randToken(8)},
+	}
+}
 
 func authChecks() []check {
 	return []check{
-		{ids: []string{"AUTH-000", "AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004", "AUTH-005", "AUTH-007", "AUTH-008", "AUTH-009"}, run: runAuthChecks},
+		// AUTH-010 is judged by the run's closing logout (closeSession).
+		{ids: []string{"AUTH-000", "AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004", "AUTH-005", "AUTH-007", "AUTH-008", "AUTH-009", "AUTH-010"}, run: runAuthChecks},
 		// A wrong password for the supplied account counts against that
 		// account's login limit (five per address in five minutes), so three
 		// default runs would lock it out.
@@ -518,59 +547,90 @@ func runAuthChecks(s *Scanner) []Finding {
 	}
 
 	// AUTH-001: protected routes reject anonymous access.
-	var leaked []string
-	for _, p := range protectedRoutes {
-		if r := s.do(http.MethodGet, p, nil, ""); r.err == nil && r.status != http.StatusUnauthorized {
-			leaked = append(leaked, p)
+	routes := protectedRoutes()
+	var leaked, unreached []string
+	for _, p := range routes {
+		var hdr map[string]string
+		if p.method != http.MethodGet {
+			// Same-origin, so origin validation lets it through to the gate.
+			hdr = map[string]string{"Origin": s.base.Scheme + "://" + s.base.Host, "Content-Type": "application/json"}
+		}
+		r := s.do(p.method, p.path, hdr, "")
+		switch {
+		case r.err != nil:
+			unreached = append(unreached, p.String())
+		case r.status != http.StatusUnauthorized:
+			leaked = append(leaked, fmt.Sprintf("%s (HTTP %d)", p, r.status))
 		}
 	}
-	if len(leaked) == 0 {
-		out = append(out, finding("AUTH-001", SevHigh, StatusPass,
-			"all protected API routes return 401 without credentials."))
-	} else {
+	switch {
+	case len(leaked) > 0:
 		out = append(out, finding("AUTH-001", SevHigh, StatusFail,
-			"these routes served data without authentication: "+strings.Join(leaked, ", ")).
+			"these routes answered without authentication instead of 401: "+strings.Join(leaked, ", ")+unreachedNote(unreached)).
 			withRemediation("This indicates a broken auth gate; routes under /api/ must sit behind AuthMiddleware."))
+	case len(unreached) == len(routes):
+		out = append(out, finding("AUTH-001", SevInfo, StatusError,
+			"could not send any request to the protected API routes."))
+	default:
+		out = append(out, finding("AUTH-001", SevHigh, StatusPass,
+			fmt.Sprintf("all %d protected API requests (data, Ollama, an unknown /api/ path) answer 401 without credentials%s.",
+				len(routes)-len(unreached), unreachedNote(unreached))))
 	}
 
 	// AUTH-002: forged session cookies are rejected.
 	forged := []string{"deadbeef", "", strings.Repeat("a", 64), "../../etc/passwd", "' OR '1'='1"}
 	var accepted []string
+	failed := 0
 	for _, tok := range forged {
 		hdr := map[string]string{"Cookie": "kula_session=" + tok}
-		if r := s.do(http.MethodGet, "/api/i18n?lang=en", hdr, ""); r.err == nil && r.status == http.StatusOK {
+		r := s.do(http.MethodGet, "/api/i18n?lang=en", hdr, "")
+		switch {
+		case r.err != nil:
+			failed++
+		case r.status == http.StatusOK:
 			accepted = append(accepted, tok)
 		}
 	}
-	if len(accepted) == 0 {
-		out = append(out, finding("AUTH-002", SevHigh, StatusPass,
-			"garbage, empty, traversal, and SQLi-style session values are all rejected."))
-	} else {
+	switch {
+	case len(accepted) > 0:
 		out = append(out, finding("AUTH-002", SevCritical, StatusFail,
 			"a forged session value authenticated successfully").withEvidence("accepted: %q", accepted).
 			withRemediation("Session validation must hash-and-lookup the token; never accept attacker-supplied values."))
+	case failed == len(forged):
+		out = append(out, finding("AUTH-002", SevInfo, StatusError,
+			"could not send any request with a forged session cookie."))
+	default:
+		detail := "garbage, empty, traversal, and SQLi-style session values are all rejected."
+		if failed > 0 {
+			detail = fmt.Sprintf("the forged session values that reached the target were rejected; %d of %d requests failed.", failed, len(forged))
+		}
+		out = append(out, finding("AUTH-002", SevHigh, StatusPass, detail))
 	}
 
 	// AUTH-003: garbage bearer token is rejected.
-	if r := s.do(http.MethodGet, "/api/i18n?lang=en", map[string]string{"Authorization": "Bearer not-a-real-token"}, ""); r.err == nil {
-		if r.status == http.StatusUnauthorized {
-			out = append(out, finding("AUTH-003", SevHigh, StatusPass,
-				"a bogus Authorization: Bearer token is rejected with 401."))
-		} else {
-			out = append(out, finding("AUTH-003", SevCritical, StatusFail,
-				"a bogus bearer token was accepted").withEvidence("status=%d", r.status))
-		}
+	switch r := s.do(http.MethodGet, "/api/i18n?lang=en", map[string]string{"Authorization": "Bearer not-a-real-token"}, ""); {
+	case r.err != nil:
+		out = append(out, finding("AUTH-003", SevInfo, StatusError,
+			"could not send a request with a bogus bearer token: "+r.err.Error()))
+	case r.status == http.StatusUnauthorized:
+		out = append(out, finding("AUTH-003", SevHigh, StatusPass,
+			"a bogus Authorization: Bearer token is rejected with 401."))
+	default:
+		out = append(out, finding("AUTH-003", SevCritical, StatusFail,
+			"a bogus bearer token was accepted").withEvidence("status=%d", r.status))
 	}
 
 	// AUTH-004: login method enforcement.
-	if r := s.do(http.MethodGet, "/api/login", nil, ""); r.err == nil {
-		if r.status == http.StatusMethodNotAllowed {
-			out = append(out, finding("AUTH-004", SevLow, StatusPass,
-				"GET /api/login returns 405."))
-		} else {
-			out = append(out, finding("AUTH-004", SevLow, StatusWarn,
-				"GET /api/login did not return 405").withEvidence("status=%d", r.status))
-		}
+	switch r := s.do(http.MethodGet, "/api/login", nil, ""); {
+	case r.err != nil:
+		out = append(out, finding("AUTH-004", SevInfo, StatusError,
+			"could not send GET /api/login: "+r.err.Error()))
+	case r.status == http.StatusMethodNotAllowed:
+		out = append(out, finding("AUTH-004", SevLow, StatusPass,
+			"GET /api/login returns 405."))
+	default:
+		out = append(out, finding("AUTH-004", SevLow, StatusWarn,
+			"GET /api/login did not return 405").withEvidence("status=%d", r.status))
 	}
 
 	// AUTH-005: happy-path login + session cookie attributes (needs creds).
@@ -624,6 +684,95 @@ func cookieAttributeFindings(s *Scanner) []Finding {
 		}
 	}
 	return out
+}
+
+// closeSession ends the run's session with the closing logout. When probe is
+// set (the check that declares AUTH-010 ran), that logout is also the AUTH-010
+// probe: the session cookie it ended must no longer authenticate. It costs no
+// login, since it replays the session the scan opened anyway. The finding goes
+// after the other auth findings, so it is reported once, under auth. An
+// interrupted run still logs out, but does not wait for the replay.
+func (s *Scanner) closeSession(findings []Finding, probe bool) []Finding {
+	ctx, cancel := s.closingContext()
+	defer cancel()
+	if !probe || !s.authEnabled {
+		s.logout(ctx)
+		return findings
+	}
+	var f Finding
+	switch {
+	case s.interrupted:
+		s.logout(ctx)
+		f = finding("AUTH-010", SevInfo, StatusSkip,
+			"the run was interrupted: the session was logged out, but whether the logout revoked it was not checked.")
+	case !s.loggedIn:
+		f = finding("AUTH-010", SevInfo, StatusSkip,
+			"no session to log out and replay: "+s.noSessionReason()+".")
+	default:
+		token, r, _ := s.logout(ctx)
+		f = s.revocationFinding(ctx, token, r)
+	}
+	return insertAfterCategory(findings, f)
+}
+
+// revocationFinding judges AUTH-010 from the closing logout's answer: the
+// session cookie it ended (token) is replayed against a protected route under
+// ctx and must be refused with 401.
+func (s *Scanner) revocationFinding(ctx context.Context, token string, logout httpResult) Finding {
+	switch {
+	case logout.err != nil:
+		return finding("AUTH-010", SevInfo, StatusError,
+			"the closing logout failed, so the session may stay open on the target until it expires: "+logout.err.Error())
+	case logout.status != http.StatusOK:
+		return finding("AUTH-010", SevInfo, StatusError,
+			fmt.Sprintf("the closing logout answered HTTP %d, so whether a logout revokes the session could not be judged; the session may stay open until it expires.", logout.status))
+	}
+	replay := s.doContext(ctx, http.MethodGet, "/api/config", map[string]string{"Cookie": "kula_session=" + token}, "")
+	switch {
+	case replay.err != nil:
+		return finding("AUTH-010", SevInfo, StatusError,
+			"could not replay the logged-out session cookie: "+replay.err.Error())
+	case replay.status == http.StatusUnauthorized:
+		return finding("AUTH-010", SevHigh, StatusPass,
+			"after the logout, the session cookie is refused with 401: the session was revoked on the server.")
+	case replay.status >= 200 && replay.status <= 299:
+		return finding("AUTH-010", SevHigh, StatusFail,
+			"after the logout, the old session cookie still authenticates: logging out does not end the session on the server, so a stolen cookie outlives it.").
+			withEvidence("GET /api/config with the logged-out cookie: HTTP %d", replay.status).
+			withRemediation("Logout must revoke the session on the server, not only clear the browser's cookie.")
+	default:
+		return finding("AUTH-010", SevInfo, StatusError,
+			fmt.Sprintf("after the logout, the session cookie was answered HTTP %d, neither 401 nor data.", replay.status))
+	}
+}
+
+// insertAfterCategory returns findings with f placed after the last finding of
+// its category, or at the end when there is none.
+func insertAfterCategory(findings []Finding, f Finding) []Finding {
+	at := len(findings)
+	for i := len(findings) - 1; i >= 0; i-- {
+		if findings[i].Category == f.Category {
+			at = i + 1
+			break
+		}
+	}
+	return slices.Insert(findings, at, f)
+}
+
+// noSessionReason says why a check that needs a session has none, for its
+// SKIP detail: a probe ended it, no credentials were supplied, or the
+// supplied ones did not log in. Call it after ensureSession returned false.
+func (s *Scanner) noSessionReason() string {
+	switch {
+	case s.sessionLost != "":
+		return s.sessionLost
+	case s.username == "" || s.password == "":
+		return "supply -username/-password to open one"
+	case s.loginDetail != "":
+		return "the supplied credentials did not log in: " + s.loginDetail
+	default:
+		return "no session is open"
+	}
 }
 
 // enumerationFinding probes the login timing/enumeration fix: a wrong password
@@ -682,72 +831,133 @@ func (s *Scanner) loginRaw(username, password string) httpResult {
 
 func csrfChecks() []check {
 	return []check{{
-		ids: []string{"CSRF-001", "CSRF-002", "CSRF-003"},
+		ids: []string{"CSRF-001", "CSRF-002", "CSRF-003", "CSRF-004"},
 		run: runCSRFChecks,
 	}}
 }
 
 func runCSRFChecks(s *Scanner) []Finding {
 	var out []Finding
-	sameOrigin := s.base.Scheme + "://" + s.base.Host
 
 	// CSRF-001: a state-changing POST with no Origin/Referer is blocked.
 	noOrigin := s.do(http.MethodPost, "/api/login",
 		map[string]string{"Content-Type": "application/json"},
 		`{"username":"x","password":"y"}`)
-	if noOrigin.err == nil {
-		if noOrigin.status == http.StatusForbidden {
-			out = append(out, finding("CSRF-001", SevMedium, StatusPass,
-				"a POST with no Origin/Referer is rejected with 403 (origin validation active)."))
-		} else {
-			out = append(out, finding("CSRF-001", SevMedium, StatusWarn,
-				"a POST with no Origin/Referer was not rejected with 403; origin validation appears disabled.").
-				withEvidence("status=%d", noOrigin.status).
-				withRemediation("Enable web.security.origin_validation for defense-in-depth against CSRF.").
-				expecting("origin-validation"))
-		}
+	switch {
+	case noOrigin.err != nil:
+		out = append(out, finding("CSRF-001", SevInfo, StatusError,
+			"could not send a POST without Origin or Referer: "+noOrigin.err.Error()))
+	case noOrigin.status == http.StatusForbidden:
+		out = append(out, finding("CSRF-001", SevMedium, StatusPass,
+			"a POST with no Origin/Referer is rejected with 403 (origin validation active)."))
+	default:
+		out = append(out, finding("CSRF-001", SevMedium, StatusWarn,
+			"a POST with no Origin/Referer was not rejected with 403; origin validation appears disabled.").
+			withEvidence("status=%d", noOrigin.status).
+			withRemediation("Enable web.security.origin_validation for defense-in-depth against CSRF.").
+			expecting("origin-validation"))
 	}
 
-	// CSRF-002: a state change from a foreign Origin is blocked.
-	foreign := s.do(http.MethodPost, "/api/login",
-		map[string]string{"Content-Type": "application/json", "Origin": "https://evil.example"},
-		`{"username":"x","password":"y"}`)
-	if foreign.err == nil {
-		if foreign.status == http.StatusForbidden {
-			out = append(out, finding("CSRF-002", SevHigh, StatusPass,
-				"a POST from a foreign Origin is rejected with 403."))
-		} else {
-			out = append(out, finding("CSRF-002", SevHigh, StatusWarn,
-				"a POST from https://evil.example was not rejected with 403.").
-				withEvidence("status=%d", foreign.status).
-				withRemediation("Enable web.security.origin_validation.").
-				expecting("origin-validation"))
-		}
-	}
+	out = append(out, foreignOriginFinding(s))
 
-	// CSRF-003 (needs session): authenticated state change without a CSRF token.
-	if s.authEnabled && s.ensureSession() {
-		hdr := map[string]string{"Cookie": "kula_session=" + s.session, "Origin": sameOrigin}
-		r := s.do(http.MethodPost, "/api/logout", hdr, "")
+	// CSRF-003, CSRF-004 (need a session): authenticated, same-origin state
+	// changes without the CSRF token and with a wrong one. Without auth Kula
+	// checks no token.
+	if !s.authEnabled {
+		return out
+	}
+	s.ensureSession()
+	out = append(out,
+		s.csrfTokenFinding("CSRF-003", "", "without the X-CSRF-Token header"),
+		s.csrfTokenFinding("CSRF-004", wrongCSRFToken(s.csrf), "with a wrong X-CSRF-Token"))
+	return out
+}
+
+// foreignOriginFinding judges CSRF-002: a state change from a foreign site is
+// refused, whether the browser names it in Origin or, without one, in
+// Referer. The Referer probe goes to the logout with no session: it ends
+// nothing, and with origin validation off it counts against no login limit.
+func foreignOriginFinding(s *Scanner) Finding {
+	probes := []struct {
+		name, path, body string
+		headers          map[string]string
+	}{
+		{"Origin: https://evil.example", "/api/login", `{"username":"x","password":"y"}`,
+			map[string]string{"Content-Type": "application/json", "Origin": "https://evil.example"}},
+		{"no Origin, Referer: https://evil.example/", "/api/logout", "",
+			map[string]string{"Referer": "https://evil.example/page"}},
+	}
+	var admitted, unreached []string
+	for _, p := range probes {
+		r := s.do(http.MethodPost, p.path, p.headers, p.body)
 		switch {
 		case r.err != nil:
-			out = append(out, finding("CSRF-003", SevInfo, StatusError,
-				"could not send an authenticated POST without a CSRF token: "+r.err.Error()))
-		case r.status == http.StatusForbidden:
-			out = append(out, finding("CSRF-003", SevHigh, StatusPass,
-				"an authenticated, same-origin POST without the X-CSRF-Token header is rejected with 403."))
-		default:
-			out = append(out, finding("CSRF-003", SevHigh, StatusFail,
-				"an authenticated state change succeeded without a CSRF token; the session is open to CSRF.").
-				withEvidence("status=%d", r.status).
-				withRemediation("Require a matching X-CSRF-Token for state-changing requests on authenticated sessions."))
+			unreached = append(unreached, p.name)
+		case r.status != http.StatusForbidden:
+			admitted = append(admitted, fmt.Sprintf("%s to %s (HTTP %d)", p.name, p.path, r.status))
 		}
-	} else if s.authEnabled {
-		out = append(out, finding("CSRF-003", SevInfo, StatusSkip,
-			"no authenticated session (supply -username/-password) to test the CSRF token gate."))
 	}
+	switch {
+	case len(admitted) > 0:
+		return finding("CSRF-002", SevHigh, StatusWarn,
+			"a POST from a foreign site was not rejected with 403: "+strings.Join(admitted, ", ")+unreachedNote(unreached)).
+			withRemediation("Enable web.security.origin_validation.").
+			expecting("origin-validation")
+	case len(unreached) == len(probes):
+		return finding("CSRF-002", SevInfo, StatusError,
+			"could not send a POST from a foreign Origin or Referer.")
+	default:
+		return finding("CSRF-002", SevHigh, StatusPass,
+			"a POST from a foreign Origin, or with no Origin and a foreign Referer, is rejected with 403"+unreachedNote(unreached)+".")
+	}
+}
 
-	return out
+// csrfTokenFinding sends an authenticated, same-origin POST /api/logout with
+// token as its X-CSRF-Token ("" sends none), which the synchronizer token
+// check must refuse with 403. A target that accepts it has ended the scan's
+// session: the session is marked lost, so the checks after this one skip
+// instead of misreporting, and the finding says so.
+func (s *Scanner) csrfTokenFinding(id, token, sent string) Finding {
+	if !s.loggedIn {
+		return finding(id, SevInfo, StatusSkip,
+			"no authenticated session to test the CSRF token gate: "+s.noSessionReason()+".")
+	}
+	hdr := map[string]string{"Cookie": "kula_session=" + s.session, "Origin": s.base.Scheme + "://" + s.base.Host}
+	if token != "" {
+		hdr["X-CSRF-Token"] = token
+	}
+	r := s.do(http.MethodPost, "/api/logout", hdr, "")
+	switch {
+	case r.err != nil:
+		return finding(id, SevInfo, StatusError,
+			"could not send an authenticated POST "+sent+": "+r.err.Error())
+	case r.status == http.StatusForbidden:
+		return finding(id, SevHigh, StatusPass,
+			"an authenticated, same-origin POST "+sent+" is rejected with 403.")
+	case r.status >= 200 && r.status <= 299:
+		s.markSessionLost(fmt.Sprintf("the target accepted %s's logout %s (HTTP %d), which ended the scan's session", id, sent, r.status))
+		return finding(id, SevHigh, StatusFail,
+			"an authenticated state change "+sent+" succeeded; the session is open to CSRF. The logout it sent ended the scan's session, so the checks after this one that need a session are skipped.").
+			withEvidence("POST /api/logout %s: HTTP %d", sent, r.status).
+			withRemediation("Require a matching X-CSRF-Token for state-changing requests on authenticated sessions.")
+	default:
+		return finding(id, SevMedium, StatusWarn,
+			fmt.Sprintf("an authenticated POST %s answered HTTP %d: neither refused with 403 nor accepted.", sent, r.status))
+	}
+}
+
+// wrongCSRFToken returns a token that differs from the session's real one
+// only in its last character, so a check that compares no more than the
+// length or a prefix still has to refuse it.
+func wrongCSRFToken(real string) string {
+	if real == "" {
+		return "kula-scan-" + randToken(16)
+	}
+	last := byte('0')
+	if real[len(real)-1] == last {
+		last = '1'
+	}
+	return real[:len(real)-1] + string(last)
 }
 
 // ============================== cors =========================================
@@ -1087,7 +1297,7 @@ func runInputChecks(s *Scanner) []Finding {
 	hdr, ok := s.apiHeaders()
 	if !ok {
 		out = append(out, finding("INPUT-001", SevInfo, StatusSkip,
-			"auth is enabled and no session is available; supply -username/-password to exercise /api/history."))
+			"auth is enabled and no session is available to exercise /api/history: "+s.noSessionReason()+"."))
 	} else {
 		// Bad / inverted / oversized time ranges must be rejected with 400.
 		cases := []struct{ name, query string }{
