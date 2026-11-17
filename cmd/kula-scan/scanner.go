@@ -971,8 +971,12 @@ func allChecks() []check {
 	checks = append(checks, tlsChecks()...)
 	checks = append(checks, aggressiveChecks()...)
 	checks = append(checks, dosChecks()...)
+	checks = append(checks, limitChecks()...)
 	checks = append(checks, bypassChecks()...)
 	checks = append(checks, fuzzChecks()...) // runs last; ends with the liveness probe
+	// After the fuzz probes, which send chat bodies too; belongs before
+	// FUZZ-LIVENESS.
+	checks = append(checks, chatRateChecks()...)
 	return checks
 }
 

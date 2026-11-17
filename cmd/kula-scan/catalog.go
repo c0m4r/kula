@@ -160,6 +160,8 @@ var catalog = []catalogEntry{
 		"/api/i18n rejects invalid and traversal language codes and reads no other file."},
 	{"INPUT-AGG", "input", ModeAggressive, "Login body size cap",
 		"An 8 KiB login body is rejected by the 4 KiB body cap."},
+	{"INPUT-CHAT", "input", ModeAggressive, "AI chat body size cap",
+		"A 320 KiB chat body is refused before it is sent whole, by the 32 KiB cap; no body sent decodes, so no chat starts."},
 
 	{"REDIR-001", "redirect", ModeDefault, "No open redirect",
 		"Crafted paths do not produce a redirect whose Location, read as a browser reads it, names a foreign host."},
@@ -182,6 +184,8 @@ var catalog = []catalogEntry{
 		"A burst of Ollama requests starts answering 429."},
 	{"RATE-LOGIN", "rate", ModeAggressive, "Login brute-force rate limiting",
 		"A burst of failed logins starts answering 429 (locks out login from this address for about five minutes)."},
+	{"RATE-CHAT", "rate", ModeAggressive, "AI chat rate limiting",
+		"Chat requests past ten a minute from one address are answered 429; no body sent decodes, so no chat starts."},
 
 	{"DOS-SLOWLORIS", "dos", ModeAggressive, "Slow-request (Slowloris) reaping",
 		"Half-open requests are dropped within -dos-wait while the server keeps answering."},
@@ -189,6 +193,8 @@ var catalog = []catalogEntry{
 		"A 2 MiB request header block is refused."},
 	{"DOS-CONNFLOOD", "dos", ModeAggressive, "Idle-connection flood resilience",
 		"The server keeps answering under a flood of idle connections and drops them within -dos-wait."},
+	{"DOS-HISTORY", "dos", ModeAggressive, "History request burst",
+		"Each of a burst of concurrent 31-day, 5000-point history requests is answered with data or deferred with 503 and Retry-After, none hangs, and /health keeps answering."},
 
 	{"BYPASS-XFF", "bypass", ModeAggressive, "X-Forwarded-For rate-limit bypass",
 		"Rotating a spoofed X-Forwarded-For does not escape the login rate limiter."},
