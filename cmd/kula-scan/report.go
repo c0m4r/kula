@@ -109,6 +109,9 @@ func (r *Report) writeText(w io.Writer, noColor bool) {
 			if f.Status == StatusFail || f.Status == StatusWarn {
 				line += " " + color(severityColor(f.Severity), "["+f.Severity.String()+"]")
 			}
+			if f.Expectation != "" && f.Status == StatusFail {
+				line += " " + color(cRed, "(expected: "+printable(f.Expectation)+")")
+			}
 			if f.Ignored {
 				line += " " + color(cGray, "(ignored)")
 			}
@@ -190,7 +193,7 @@ func (r *Report) worstFailure() Severity {
 // Exit statuses.
 const (
 	exitClean        = 0
-	exitFailing      = 1 // a FAIL at or above -fail-on
+	exitFailing      = 1 // a FAIL at or above -fail-on, or a declared expectation not met
 	exitUsage        = 2 // a usage error, or a target that is unreachable or not Kula
 	exitInconclusive = 3 // no gating FAIL, but a probe could not complete
 )
@@ -201,7 +204,7 @@ func (r *Report) exitCode(failOn Severity) int {
 	switch {
 	case r.stoppedAtDiscovery():
 		return exitUsage
-	case r.worstFailure() >= failOn:
+	case r.worstFailure() >= failOn, len(r.unmetExpectations()) > 0:
 		return exitFailing
 	case len(r.erroredIDs()) > 0:
 		return exitInconclusive
@@ -219,6 +222,27 @@ func (r *Report) stoppedAtDiscovery() bool {
 		}
 	}
 	return false
+}
+
+// unmetExpectations lists, as "key (ID, ID)", each -expect key that a FAIL
+// finding not ignored contradicts. These fail the run whatever -fail-on is.
+func (r *Report) unmetExpectations() []string {
+	byKey := map[string][]string{}
+	var keys []string
+	for _, f := range r.Findings {
+		if f.Status != StatusFail || f.Ignored || f.Expectation == "" {
+			continue
+		}
+		if _, seen := byKey[f.Expectation]; !seen {
+			keys = append(keys, f.Expectation)
+		}
+		byKey[f.Expectation] = append(byKey[f.Expectation], f.ID)
+	}
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+" ("+strings.Join(byKey[key], ", ")+")")
+	}
+	return out
 }
 
 // erroredIDs lists the IDs of ERROR findings that are not ignored.
@@ -246,7 +270,14 @@ func (r *Report) exitReason(failOn Severity) string {
 			}
 		}
 	case exitFailing:
-		why = fmt.Sprintf("safeguards FAIL at/above %s: %s", failOn, strings.Join(r.failingIDs(failOn), ", "))
+		var parts []string
+		if ids := r.failingIDs(failOn); len(ids) > 0 {
+			parts = append(parts, fmt.Sprintf("safeguards FAIL at/above %s: %s", failOn, strings.Join(ids, ", ")))
+		}
+		if unmet := r.unmetExpectations(); len(unmet) > 0 {
+			parts = append(parts, "expected posture not met: "+strings.Join(unmet, ", "))
+		}
+		why = strings.Join(parts, "; ")
 	case exitInconclusive:
 		why = "inconclusive: no failing safeguard, but these probes could not complete: " + strings.Join(r.erroredIDs(), ", ")
 	default:

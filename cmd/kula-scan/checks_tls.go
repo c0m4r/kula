@@ -43,6 +43,12 @@ func tlsVersionName(v uint16) string {
 
 func runTLSChecks(s *Scanner) []Finding {
 	if !s.https {
+		if s.expects("tls") {
+			return []Finding{finding("TLS-001", SevHigh, StatusFail,
+				"target is plain HTTP, but -expect tls declares it is served over TLS.").
+				withRemediation("Scan the HTTPS URL, or serve kula over HTTPS (TLS-terminating reverse proxy).").
+				expecting("tls")}
+		}
 		return []Finding{finding("TLS-001", SevInfo, StatusSkip,
 			"target is plain HTTP; no TLS layer to inspect.")}
 	}

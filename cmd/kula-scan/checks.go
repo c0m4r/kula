@@ -83,7 +83,8 @@ func runHeaderChecks(s *Scanner) []Finding {
 		} else {
 			out = append(out, finding("HDR-007", SevMedium, StatusWarn,
 				"CSP does not set frame-ancestors 'none'; relies on X-Frame-Options alone.").
-				withRemediation("Enable web.security.frame_protection."))
+				withRemediation("Enable web.security.frame_protection.").
+				expecting("frame-protection"))
 		}
 	}
 
@@ -114,7 +115,8 @@ func runHeaderChecks(s *Scanner) []Finding {
 		} else {
 			out = append(out, finding("HDR-008", SevLow, StatusWarn,
 				"served over HTTPS but no Strict-Transport-Security header.").
-				withRemediation("Enable web.security.headers; HSTS is emitted automatically over TLS."))
+				withRemediation("Enable web.security.headers; HSTS is emitted automatically over TLS.").
+				expecting("hsts"))
 		}
 	}
 
@@ -166,7 +168,8 @@ func runAuthChecks(s *Scanner) []Finding {
 	if !s.authEnabled {
 		out = append(out, finding("AUTH-000", SevMedium, StatusWarn,
 			"web.auth is disabled: the API, history, and config endpoints are served to anyone who can reach the port.").
-			withRemediation("Enable web.auth (and put kula behind TLS) unless access is restricted at the network layer."))
+			withRemediation("Enable web.auth (and put kula behind TLS) unless access is restricted at the network layer.").
+			expecting("auth"))
 		return out
 	}
 
@@ -356,7 +359,8 @@ func runCSRFChecks(s *Scanner) []Finding {
 			out = append(out, finding("CSRF-001", SevMedium, StatusWarn,
 				"a POST with no Origin/Referer was not rejected with 403; origin validation appears disabled.").
 				withEvidence("status=%d", noOrigin.status).
-				withRemediation("Enable web.security.origin_validation for defense-in-depth against CSRF."))
+				withRemediation("Enable web.security.origin_validation for defense-in-depth against CSRF.").
+				expecting("origin-validation"))
 		}
 	}
 
@@ -372,7 +376,8 @@ func runCSRFChecks(s *Scanner) []Finding {
 			out = append(out, finding("CSRF-002", SevHigh, StatusWarn,
 				"a POST from https://evil.example was not rejected with 403.").
 				withEvidence("status=%d", foreign.status).
-				withRemediation("Enable web.security.origin_validation."))
+				withRemediation("Enable web.security.origin_validation.").
+				expecting("origin-validation"))
 		}
 	}
 
@@ -623,7 +628,8 @@ func runMetricsChecks(s *Scanner) []Finding {
 		return []Finding{finding("PROM-001", SevMedium, StatusWarn,
 			"/metrics is served with no authentication; it discloses the hostname and detailed system metrics to anyone who can reach the port.").
 			withEvidence("%d bytes of metrics returned unauthenticated", len(r.body)).
-			withRemediation("Set web.prometheus_metrics.token, or restrict /metrics at the network/proxy layer.")}
+			withRemediation("Set web.prometheus_metrics.token, or restrict /metrics at the network/proxy layer.").
+			expecting("metrics-token")}
 	default:
 		return []Finding{finding("PROM-001", SevInfo, StatusWarn,
 			"unexpected status from /metrics").withEvidence("status=%d", r.status)}

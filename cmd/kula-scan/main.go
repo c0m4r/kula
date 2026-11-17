@@ -63,6 +63,7 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		only       = fs.String("only", "", "comma-separated categories and/or finding IDs to run (see -list)")
 		skip       = fs.String("skip", "", "comma-separated categories and/or finding IDs not to run or report")
 		ignore     = fs.String("ignore", "", "comma-separated finding IDs that stay in the report but never affect the exit status")
+		expect     = fs.String("expect", "", "comma-separated posture the target must have, failing the run otherwise: "+strings.Join(expectKeyNames(), ","))
 		failOn     = fs.String("fail-on", "high", "min FAIL severity for non-zero exit: info|low|medium|high|critical")
 		asJSON     = fs.Bool("json", false, "emit findings as JSON")
 		noColor    = fs.Bool("no-color", false, "disable ANSI colors")
@@ -116,6 +117,11 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
+	expected, err := parseExpect(*expect)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return 2
+	}
 
 	scanner, err := NewScanner(Options{
 		Target:     tgt,
@@ -134,6 +140,7 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		// report and what -v asks for.
 		Progress: *verbose || isTerminal(stderr),
 		Log:      stderr,
+		Expect:   expected,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
@@ -227,6 +234,7 @@ Examples:
   kula-scan -username admin https://mon.example.com
   kula-scan -only headers,traversal,cors http://10.0.0.5:27960
   kula-scan -skip HDR-009 -ignore PROM-001 http://10.0.0.5:27960
+  kula-scan -expect auth,tls,hsts -username admin https://mon.example.com
   kula-scan -aggressive -username admin http://localhost:27960
   kula-scan -fuzz -fuzz-iter 500 -username admin http://localhost:27960
   kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960
@@ -251,6 +259,8 @@ Flags:
   -skip list          categories and/or finding IDs not to run or report
   -ignore list        finding IDs that stay in the report, marked ignored, but never affect
                       the exit status
+  -expect list        posture the target must have; a finding that contradicts it FAILs and
+                      exits 1 whatever -fail-on says. Keys: %s
   -fail-on string     min FAIL severity for non-zero exit: info|low|medium|high|critical (default high)
   -json               emit findings as JSON
   -no-color           disable ANSI colors
@@ -260,9 +270,10 @@ Flags:
 
 Exit status:
   0    no failing safeguard at/above -fail-on, and every probe completed
-  1    one or more safeguards FAIL at/above -fail-on (ignored findings excepted)
+  1    one or more safeguards FAIL at/above -fail-on, or contradict -expect
+       (ignored findings excepted)
   2    usage error, or the target is unreachable or not a Kula instance
   3    inconclusive: nothing fails, but a probe could not complete (ERROR),
        e.g. the supplied credentials were refused
-`, strings.Join(categories(), ","))
+`, strings.Join(categories(), ","), strings.Join(expectKeyNames(), ","))
 }

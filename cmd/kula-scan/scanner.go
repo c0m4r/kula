@@ -109,6 +109,9 @@ type Finding struct {
 	Detail      string   `json:"detail,omitempty"`
 	Evidence    string   `json:"evidence,omitempty"`
 	Remediation string   `json:"remediation,omitempty"`
+	// Expectation names the -expect key this finding was judged against
+	// (see expecting). A FAIL carrying one always sets exit status 1.
+	Expectation string `json:"expectation,omitempty"`
 	// Ignored marks a finding named by -ignore: it keeps its status but is
 	// counted apart and never affects the exit status.
 	Ignored bool `json:"ignored,omitempty"`
@@ -172,9 +175,10 @@ type Scanner struct {
 	seed       int64
 	rng        *rand.Rand
 	rngMu      sync.Mutex
-	verbose    bool      // log every request to log
-	progress   bool      // log one line per check as it starts
-	log        io.Writer // request and progress lines; never the report
+	verbose    bool            // log every request to log
+	progress   bool            // log one line per check as it starts
+	log        io.Writer       // request and progress lines; never the report
+	expect     map[string]bool // the -expect keys declared
 
 	username string
 	password string
@@ -225,6 +229,7 @@ type Options struct {
 	Verbose    bool      // log each request and its response status
 	Progress   bool      // log one line per check as it starts
 	Log        io.Writer // where Verbose and Progress write; nil means standard error
+	Expect     []string  // -expect keys (see expectKeys): the posture the target declares
 }
 
 // NewScanner builds a Scanner for opt.Target. opt.BasePath, when non-empty, is
@@ -284,6 +289,11 @@ func NewScanner(opt Options) (*Scanner, error) {
 		},
 	}
 
+	expect := map[string]bool{}
+	for _, key := range opt.Expect {
+		expect[key] = true
+	}
+
 	return &Scanner{
 		base:       u,
 		rawBase:    opt.Target,
@@ -299,6 +309,7 @@ func NewScanner(opt Options) (*Scanner, error) {
 		verbose:    opt.Verbose,
 		progress:   opt.Progress,
 		log:        opt.Log,
+		expect:     expect,
 		username:   opt.Username,
 		password:   opt.Password,
 		https:      u.Scheme == "https",
@@ -614,7 +625,8 @@ func (s *Scanner) discover() []Finding {
 	if s.authEnabled && !s.https {
 		out = append(out, finding("DISC-002", SevMedium, StatusWarn,
 			"authentication is enabled but the target was reached over plain HTTP; login credentials and session cookies are exposed unless a TLS-terminating reverse proxy sits in front.").
-			withRemediation("Serve kula behind HTTPS (reverse proxy + trust_proxy, or terminate TLS) so the Secure cookie flag and HSTS apply."))
+			withRemediation("Serve kula behind HTTPS (reverse proxy + trust_proxy, or terminate TLS) so the Secure cookie flag and HSTS apply.").
+			expecting("tls"))
 	}
 
 	return out
@@ -711,10 +723,13 @@ func allChecks() []check {
 
 // Run executes discovery and every check sel selects, returning the selected
 // findings. Discovery always runs, and DISC-001, which says whether the target
-// was scanned at all, is always reported.
+// was scanned at all, is always reported. Findings are judged against the
+// -expect posture as each check returns them.
 func (s *Scanner) Run(sel *selection) []Finding {
 	var findings []Finding
-	for _, f := range s.discover() {
+	discovered := s.discover()
+	s.applyExpectations(discovered)
+	for _, f := range discovered {
 		if f.ID == "DISC-001" || sel.selected(f.ID) {
 			findings = append(findings, f)
 		}
@@ -755,7 +770,9 @@ func (s *Scanner) Run(sel *selection) []Finding {
 		}
 		started++
 		s.logProgress(started, runnable, c)
-		for _, f := range c.run(s) {
+		results := c.run(s)
+		s.applyExpectations(results)
+		for _, f := range results {
 			if sel.selected(f.ID) {
 				findings = append(findings, f)
 			}
