@@ -16,7 +16,8 @@ Usage: ./showcase.sh COMMAND [OPTIONS]
                        --no-ai  remove the Ollama containers, AI off
                        --build  build Kula from this checkout as kula:showcase
                                 instead of running c0m4r/kula:latest
-  test                 check every feature against the running stack
+  test                 check every feature against the running stack, then
+                       scan it with kula-scan built from this checkout
   info                 print the URLs and passwords
   stop                 stop the stack, keeping its data
   down                 remove the stack, its volumes and the generated files
@@ -225,9 +226,23 @@ check() {
 # writer's SIGPIPE as a failure.
 logged() { docker compose logs --no-log-prefix kula | grep -F "$1" >/dev/null; }
 
+# scan NAME ARGS...: runs kula-scan with ARGS and a JSON report, keeping the
+# report and the exit status in reports/NAME.json and reports/NAME.exit.
+scan() {
+    local name=$1 status=0
+    shift
+    echo "kula-scan $name: $*"
+    docker compose --profile test run --rm -T scanner -format json "$@" \
+        >"reports/$name.json" || status=$?
+    echo "$status" >"reports/$name.exit"
+    chmod 0644 "reports/$name.json" "reports/$name.exit"
+}
+
 cmd_test() {
     [[ -f .env ]] || die "not set up; run ./showcase.sh up"
     failed=0
+    # Created here, before a container mounts it, so it is not root's.
+    rm -rf reports && mkdir -m 0755 reports
     check "Landlock sandbox enforced" logged "Landlock sandbox enforced"
     check "containers module in socket mode" logged "monitoring enabled (mode: socket)"
     check "backup schedule logged" logged "Backup enabled"
@@ -236,6 +251,24 @@ cmd_test() {
     docker compose exec -T proxy cat /data/caddy/pki/authorities/local/root.crt \
         >secrets/caddy_root.crt || die "cannot read Caddy's root certificate"
     docker compose --profile test run --rm tester || failed=1
+
+    # kula-scan from this checkout, after the feature checks: its -aggressive
+    # probes lock login out from the address they come from for five minutes.
+    # Through Caddy, Kula sees that address as 127.0.0.1, as for the feature
+    # checks; the direct scan names another in X-Forwarded-For, which
+    # web.trust_proxy honours, so each scan has its own login attempts. The
+    # -dos-wait outlasts Kula's 30 s read timeout, and through Caddy its
+    # header timeout as well.
+    docker build -q -f scan/Dockerfile -t kula-scan:showcase ../../.. >/dev/null ||
+        die "cannot build kula-scan"
+    scan direct -username admin -aggressive -fuzz -dos-wait 35s \
+        -H "X-Forwarded-For: 192.0.2.10" -ignore BYPASS-XFF \
+        -expect auth,origin-validation,frame-protection,metrics-token \
+        http://127.0.0.1:27970/kula/
+    scan proxy -username admin -aggressive -fuzz -dos-wait 75s -insecure \
+        -expect auth,hsts,origin-validation,frame-protection,metrics-token \
+        https://localhost:27971/kula/
+    docker compose --profile test run --rm tester python -u /test/scan_test.py || failed=1
     if ((failed)); then
         echo "Some checks failed."
         return 1
@@ -250,7 +283,7 @@ cmd_down() {
             POSTGRES_PASSWORD=- MARIADB_ROOT_PASSWORD=-
     fi
     docker compose --profile ai --profile test down --volumes --remove-orphans
-    rm -rf .env config.yaml docker-compose.logins.yml secrets
+    rm -rf .env config.yaml docker-compose.logins.yml secrets reports
 }
 
 case "${1:-}" in

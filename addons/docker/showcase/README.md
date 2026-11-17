@@ -7,7 +7,7 @@ dashboard, or to check a build before a release.
 ```bash
 cd addons/docker/showcase
 ./showcase.sh up          # generate secrets and config, start, print URLs and passwords
-./showcase.sh test        # check every feature (takes up to ~2 minutes: waits for a backup)
+./showcase.sh test        # check every feature, then scan it (up to ~6 minutes: waits for a backup)
 ./showcase.sh down        # remove the stack, its volumes and the generated files
 ```
 
@@ -74,6 +74,7 @@ docker compose exec kula /app/kula tui --config /app/config.yaml
 - `config.yaml`: rendered from [`config.template.yaml`](config.template.yaml).
 - `secrets/prometheus_token`, and `secrets/caddy_root.crt`, which the test uses to verify
   the proxy's certificate.
+- `reports/`, written by `test`: each kula-scan run's JSON report and exit status.
 
 `config.yaml` and the token are world-readable, because Kula (uid 100) and Prometheus
 (uid 65534) read them. That suits a local demo, not a shared host.
@@ -97,11 +98,27 @@ config: `up` restarts Kula when `config.yaml` changes.
 - `/metrics` refusing a scrape without the token and serving every application's series
   with it, and Prometheus scraping it;
 - the logged-in user count, a backup run with all three tiers;
-- with `--ai`: the model list and a chat answer.
+- with `--ai`: the model list and a chat answer;
+- last, [`kula-scan`](../../../cmd/kula-scan/README.md) with `-aggressive -fuzz`, as `admin`
+  with the `/metrics` token, directly under the base path and through Caddy over HTTPS; then
+  [`test/scan_test.py`](test/scan_test.py) checks each scan's exit status and its `FAIL` and
+  `WARN` findings, each expected one with its reason.
 
 Each check prints `PASS`, `FAIL` or `SKIP`; the command exits 1 if any fails.
 
+The scanner is built from this checkout as its own image, `kula-scan:showcase`
+([`scan/Dockerfile`](scan/Dockerfile)), which never enters Kula's; `test` rebuilds it, from
+the build cache once built. Its reports stay in `reports/` until `down`. Through Caddy the
+scan runs with `-insecure`, so `TLS-004` warns that no system trusts Caddy's local CA, and
+`TLS-003` that its certificates, issued for 12 hours and renewed, have under 14 days left. The
+direct port is plain HTTP (`DISC-002`), and `web.trust_proxy` trusts `X-Forwarded-For` there,
+which only local clients reach: `BYPASS-XFF` fails and the scan ignores it (`-ignore`). The
+slow-connection probes wait out Kula's 30-second read timeout, and through Caddy its header
+timeout, so the scans take a few minutes.
+
 A run logs in once as `admin`, once as `viewer` and once with a wrong password under a third
 name. Kula's login limiter allows five attempts per account and address in five minutes,
-successful ones included, so up to five runs fit in that window; past it, logins answer
-`429` and the test says to wait.
+successful ones included. The scans' `-aggressive` probes then lock login out from their
+address for five minutes: through Caddy that is `127.0.0.1`, the feature checks' address,
+while the direct scan names another in `X-Forwarded-For`. Run `test` again after five
+minutes; sooner, logins answer `429` and the test says to wait.

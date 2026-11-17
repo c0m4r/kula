@@ -233,7 +233,21 @@ services:
       - ./test:/test:ro
       - ./secrets:/secrets:ro
       - kula_data:/kula:ro
+      - ./reports:/reports:ro
     command: ["python", "-u", "/test/showcase_test.py"]
+
+  # ./showcase.sh test: kula-scan, built from this checkout as
+  # kula-scan:showcase. showcase.sh names the target and keeps the reports.
+  scanner:
+    profiles: [test]
+    image: kula-scan:showcase
+    network_mode: host
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    environment:
+      KULA_SCAN_PASSWORD: ${KULA_ADMIN_PASSWORD}
+      KULA_SCAN_METRICS_TOKEN: ${PROMETHEUS_TOKEN}
 
 volumes:
   kula_data:
