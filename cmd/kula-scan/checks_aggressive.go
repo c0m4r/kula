@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -114,9 +117,34 @@ func runOllamaRateCheck(s *Scanner) []Finding {
 		withRemediation("Confirm the per-IP Ollama rate limiter is active.")}
 }
 
+// wsLimitAnswered says which of Kula's two WebSocket caps refused an upgrade
+// with 429, as the error in its JSON body names it, or "" when the body does
+// not say. gorilla keeps the first KiB of a refused handshake's body.
+func wsLimitAnswered(resp *http.Response) string {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if err != nil {
+		return ""
+	}
+	var answer struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &answer) != nil {
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(answer.Error, "per-IP"):
+		return "per-address"
+	case strings.HasPrefix(answer.Error, "global"):
+		return "global"
+	}
+	return ""
+}
+
 // runWSFloodCheck opens more concurrent WebSocket connections than the per-IP
 // limit and expects the upgrade to start being rejected with 429. All opened
-// connections are closed before returning.
+// connections are closed before returning. Kula answers past either of its
+// caps, per address (web.max_websocket_conns_per_ip) and for all clients
+// (web.max_websocket_conns), and names the one in the body.
 func runWSFloodCheck(s *Scanner) []Finding {
 	var hdr http.Header
 	if s.authEnabled {
@@ -137,26 +165,54 @@ func runWSFloodCheck(s *Scanner) []Finding {
 	}()
 
 	limited := 0
-	for i := 0; i < attempts; i++ {
+	byLimit := map[string]int{} // 429s by the cap their body names
+	var other []string          // upgrades that neither succeeded nor got a 429
+	for i := 0; i < attempts && s.ctx.Err() == nil; i++ {
 		dh := cloneHeader(hdr)
 		dh.Set("Origin", s.base.Scheme+"://"+s.base.Host)
 		conn, resp, err := s.wsDial("/ws", dh)
-		if err == nil && conn != nil {
+		switch {
+		case err == nil && conn != nil:
 			open = append(open, conn)
-			continue
-		}
-		if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
+		case resp != nil && resp.StatusCode == http.StatusTooManyRequests:
 			limited++
+			byLimit[wsLimitAnswered(resp)]++
+		case resp != nil:
+			other = append(other, statusOf(resp))
+		default:
+			other = append(other, err.Error())
 		}
 	}
 
-	if limited > 0 {
-		return []Finding{finding("WS-FLOOD", SevMedium, StatusPass,
-			"opening more than the per-IP limit of WebSocket connections is rejected with 429.").
-			withEvidence("%d/%d upgrades rejected with 429, %d held open", limited, attempts, len(open))}
+	switch {
+	case limited > 0:
+		var answered []string
+		for _, limit := range []string{"per-address", "global"} {
+			if n := byLimit[limit]; n > 0 {
+				answered = append(answered, fmt.Sprintf("%d by the %s limit", n, limit))
+			}
+		}
+		if n := byLimit[""]; n > 0 {
+			answered = append(answered, fmt.Sprintf("%d naming no limit", n))
+		}
+		detail := "opening more than the per-IP limit of WebSocket connections is rejected with 429."
+		if byLimit["global"] > 0 && byLimit["per-address"] == 0 {
+			detail = "WebSocket upgrades past a cap are rejected with 429, but by the global limit (web.max_websocket_conns), not the per-address one: other clients hold connections, or the global limit is at or below the per-address limit."
+		}
+		return []Finding{finding("WS-FLOOD", SevMedium, StatusPass, detail).
+			withEvidence("%d/%d upgrades rejected with 429 (%s), %d held open", limited, attempts, strings.Join(answered, ", "), len(open))}
+	case len(open) == 0:
+		return []Finding{finding("WS-FLOOD", SevInfo, StatusError,
+			"no WebSocket upgrade succeeded and none was rejected with 429, so no connection cap could be observed.").
+			withEvidence("%s", strings.Join(other, "; "))}
+	case len(other) > 0:
+		return []Finding{finding("WS-FLOOD", SevInfo, StatusError,
+			fmt.Sprintf("%d upgrades succeeded and %d failed without a 429, so whether a cap holds is not known.", len(open), len(other))).
+			withEvidence("%s", strings.Join(other, "; "))}
+	default:
+		return []Finding{finding("WS-FLOOD", SevMedium, StatusWarn,
+			"all WebSocket upgrades succeeded; no per-IP connection cap was observed.").
+			withEvidence("%d connections opened without a 429", len(open)).
+			withRemediation("Set web.max_websocket_conns_per_ip to bound connections per client.")}
 	}
-	return []Finding{finding("WS-FLOOD", SevMedium, StatusWarn,
-		"all WebSocket upgrades succeeded; no per-IP connection cap was observed.").
-		withEvidence("%d connections opened without a 429", len(open)).
-		withRemediation("Set web.max_websocket_conns_per_ip to bound connections per client.")}
 }

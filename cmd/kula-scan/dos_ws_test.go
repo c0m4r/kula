@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -229,6 +231,73 @@ func TestHeaderBombTellsATimeoutFromARefusal(t *testing.T) {
 
 	endless, _ := endlessHeaderTarget(t)
 	wantStatus(t, runHeaderBombCheck(dosScanner(t, endless, 20*time.Second, time.Second)), "DOS-HEADERBOMB", StatusError)
+}
+
+// ---- WS-FLOOD -------------------------------------------------------------------------
+
+// wsCapTarget serves /ws, refusing an upgrade with Kula's 429 and message
+// while limit connections are open; limit 0 sets no cap.
+func wsCapTarget(t *testing.T, limit int64, message string) *httptest.Server {
+	t.Helper()
+	var open atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if open.Add(1) > limit && limit > 0 {
+			open.Add(-1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+			return
+		}
+		defer open.Add(-1)
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func TestWSFloodNamesTheLimitThatAnswered(t *testing.T) {
+	perAddress := wsCapTarget(t, 5, "per-IP connection limit reached")
+	f, _ := byID(runWSFloodCheck(dosScanner(t, perAddress.URL, 5*time.Second, time.Second)), "WS-FLOOD")
+	if f.Status != StatusPass || !strings.Contains(f.Evidence, "7 by the per-address limit") || !strings.Contains(f.Evidence, "5 held open") {
+		t.Errorf("WS-FLOOD against a per-address cap = %s %q | %q", f.Status, f.Detail, f.Evidence)
+	}
+
+	global := wsCapTarget(t, 3, "global connection limit reached")
+	f, _ = byID(runWSFloodCheck(dosScanner(t, global.URL, 5*time.Second, time.Second)), "WS-FLOOD")
+	if f.Status != StatusPass || !strings.Contains(f.Evidence, "9 by the global limit") || !strings.Contains(f.Detail, "global limit") {
+		t.Errorf("WS-FLOOD against a global cap = %s %q | %q", f.Status, f.Detail, f.Evidence)
+	}
+
+	unnamed := wsCapTarget(t, 5, "slow down")
+	f, _ = byID(runWSFloodCheck(dosScanner(t, unnamed.URL, 5*time.Second, time.Second)), "WS-FLOOD")
+	if f.Status != StatusPass || !strings.Contains(f.Evidence, "7 naming no limit") {
+		t.Errorf("WS-FLOOD against a cap its body does not name = %s %q", f.Status, f.Evidence)
+	}
+
+	uncapped := wsCapTarget(t, 0, "")
+	f, _ = byID(runWSFloodCheck(dosScanner(t, uncapped.URL, 5*time.Second, time.Second)), "WS-FLOOD")
+	if f.Status != StatusWarn {
+		t.Errorf("WS-FLOOD against no cap = %s %q", f.Status, f.Detail)
+	}
+}
+
+func TestWSFloodWithoutAConnectionIsAnError(t *testing.T) {
+	wantStatus(t, runWSFloodCheck(dosScanner(t, "http://"+closedAddress(t), 5*time.Second, time.Second)), "WS-FLOOD", StatusError)
+
+	refused := healthTarget(t, nil) // answers /ws with 404
+	f, _ := byID(runWSFloodCheck(dosScanner(t, refused.URL, 5*time.Second, time.Second)), "WS-FLOOD")
+	if f.Status != StatusError || !strings.Contains(f.Evidence, "404") {
+		t.Errorf("WS-FLOOD with every upgrade refused with 404 = %s %q | %q", f.Status, f.Detail, f.Evidence)
+	}
 }
 
 // TestDoSProbesWithoutAConnectionAreErrors: probes that open no connection
