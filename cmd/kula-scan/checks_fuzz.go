@@ -572,59 +572,251 @@ func reflectedXSS(r httpResult, canary string) bool {
 	return strings.Contains(r.body, canary)
 }
 
-// runFuzzLoop drives gen for fuzzIter iterations, stopping early at
-// maxFuzzHits anomalies, and renders a single aggregated finding. target
-// names the code under test.
-func (s *Scanner) runFuzzLoop(id, target string, headers map[string]string, gen func() (method, path, body, canary string)) Finding {
-	t := &fuzzTally{planned: s.fuzzIter}
-	for i := 0; i < s.fuzzIter && !t.full() && s.ctx.Err() == nil; i++ {
-		m, p, b, canary := gen()
-		t.record(s.do(m, p, headers, b), reqDesc(m, p, b), canary)
-	}
-	return t.verdict(id, s.seed, t.coverage(target), "")
+// fuzzCanary returns a fresh reflection canary. It carries angle brackets so
+// a reflection only counts when the server echoes them UNescaped — an actual
+// XSS sink, not a redirect body or JSON string that safely escapes "<".
+func fuzzCanary() string {
+	return "<kx" + randToken(6) + ">"
 }
 
-// runFuzzQuery fuzzes the query parameters of the read API endpoints.
+// ---- raw requests -----------------------------------------------------------
+
+// rawGet sends GET path (relative to the base path) exactly as written, over
+// a raw connection, with headers and the -H headers, and reads the answer.
+// The HTTP client escapes, refuses or normalises what a hostile path or
+// query is made of (control and high bytes, bad percent-escapes, angle
+// brackets); this sends it as it is.
+func (s *Scanner) rawGet(path string, headers map[string]string) httpResult {
+	own := http.Header{}
+	for name, value := range headers {
+		own.Set(name, value)
+	}
+	head := fmt.Sprintf("GET %s%s HTTP/1.1\r\nHost: %s\r\n%sConnection: close\r\n\r\n",
+		s.base.Path, path, s.base.Host, s.rawHeaderLines(own))
+	return s.rawRequest(http.MethodGet, path, head)
+}
+
+// rawRequest writes raw, a whole request, on a raw connection and reads one
+// response. Unlike rawExchange it keeps what the fuzz oracle needs: the
+// response headers (the reflection canary looks at the Content-Type), and
+// the error as it came, so that a request the target dropped or left
+// unanswered is told from one that never reached it (unsent).
+func (s *Scanner) rawRequest(method, path, raw string) httpResult {
+	r := httpResult{method: method, path: path}
+	conn, err := s.dialRaw()
+	if err == nil {
+		defer func() { _ = conn.Close() }()
+		_ = conn.SetDeadline(time.Now().Add(s.timeout))
+		_, err = io.WriteString(conn, raw)
+	}
+	if err != nil {
+		r.err, r.unsent = err, true
+		s.logRaw(r)
+		return r
+	}
+	resp, err := readResponse(conn)
+	if err != nil {
+		r.err = err
+		s.logRaw(r)
+		return r
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
+	_ = resp.Body.Close()
+	r.status, r.header, r.body = resp.StatusCode, resp.Header, string(body)
+	s.logRaw(r)
+	return r
+}
+
+// logRaw logs a raw request and its outcome, when -v asks for it.
+func (s *Scanner) logRaw(r httpResult) {
+	if !s.verbose {
+		return
+	}
+	path := printable(truncate(r.path, 120))
+	switch {
+	case r.unsent:
+		_, _ = fmt.Fprintf(s.log, "    raw %s %s -> not sent: %s\n", r.method, path, printable(r.err.Error()))
+	case r.err != nil:
+		_, _ = fmt.Fprintf(s.log, "    raw %s %s -> %s\n", r.method, path, printable(r.err.Error()))
+	default:
+		_, _ = fmt.Fprintf(s.log, "    raw %s %s -> %d (%d bytes)\n", r.method, path, r.status, len(r.body))
+	}
+}
+
+// rawPathOddities are what the HTTP client will not send as written: bad
+// and overlong percent-escapes, raw control and high bytes, backslashes and
+// odd separators. FUZZ-PATH puts them around its tokens on the raw socket.
+var rawPathOddities = []string{
+	"", "", "", "//", "/./", "/../", "\\", "\\..\\", ";", ";x=1", "?", "??", "#",
+	"%", "%z", "%zz", "%%", "%0", "%u002e", "%c0%af", "%2f", "%5c", "%00", "\x7f", "\xff", "\xc0\xae", "\t",
+}
+
+// rawQueryOddities are the same for a query string.
+var rawQueryOddities = []string{
+	"", "", "", "", "%", "%z", "%zz", "%%", "%0", "%00", "+", "=", "==", "?", "#", "[]", "\x00", "\xff",
+}
+
+// rawQuerySeparators join the pairs of a raw query.
+var rawQuerySeparators = []string{"&", "&", "&", ";", "&&", "&amp;", "%26"}
+
+func (s *Scanner) pick(list []string) string {
+	return list[s.randIntn(len(list))]
+}
+
+// ---- FUZZ-PATH --------------------------------------------------------------
+
+// runFuzzPath fuzzes the request path with a canary so any reflection into
+// the HTML shell is caught. Half the paths are well formed (fully escaped)
+// and go through the HTTP client; the other half are written raw, the token,
+// oddities and canary as they are, so they reach the server as written.
+func runFuzzPath(s *Scanner) []Finding {
+	t := &fuzzTally{planned: s.fuzzIter}
+	for i := 0; i < s.fuzzIter && !t.full() && s.ctx.Err() == nil; i++ {
+		canary, tok := fuzzCanary(), s.fuzzToken()
+		if s.randIntn(2) == 0 {
+			p := "/" + url.PathEscape(tok+canary)
+			t.record(s.do(http.MethodGet, p, nil, ""), reqDesc(http.MethodGet, p, ""), canary)
+			continue
+		}
+		p := "/" + s.pick(rawPathOddities) + tok + s.pick(rawPathOddities) + canary
+		t.record(s.rawGet(p, nil), "raw "+reqDesc(http.MethodGet, p, ""), canary)
+	}
+	return []Finding{t.verdict("FUZZ-PATH", s.seed, t.coverage("the server"), "")}
+}
+
+// ---- FUZZ-QUERY -------------------------------------------------------------
+
+// historyParams are /api/history's query parameters.
+var historyParams = []string{"from", "to", "points", "tier", "sections"}
+
+// historySections are the names /api/history's sections parameter takes.
+var historySections = []string{"cpu", "lavg", "mem", "swap", "net", "disk", "sys", "proc", "self", "gpu", "psu", "apps"}
+
+// historyValue returns a value for a history parameter: a hostile token, or
+// a valid or nearly valid one, so that some requests pass validation and
+// reach the store.
+func (s *Scanner) historyValue(key string, now time.Time) string {
+	if s.randIntn(2) == 0 {
+		return s.fuzzToken()
+	}
+	switch key {
+	case "from", "to":
+		switch s.randIntn(5) {
+		case 0:
+			return now.Format(time.RFC3339)
+		case 1:
+			return now.Add(-5 * time.Minute).UTC().Format(time.RFC3339Nano)
+		case 2:
+			return now.Add(-24 * time.Hour).In(time.FixedZone("", 14*3600)).Format(time.RFC3339)
+		default:
+			return s.pick([]string{"0001-01-01T00:00:00Z", "9999-12-31T23:59:59Z", "2026-02-30T00:00:00Z",
+				"2026-01-01T24:00:00Z", "1970-01-01T00:00:00-12:00", "2026-01-01T00:00:00", "2026-01-01"})
+		}
+	case "points":
+		return s.pick([]string{"0", "1", "-1", "450", "5000", "5001", "1e3", "0x10"})
+	case "tier":
+		return s.pick([]string{"0", "1", "2", "3", "-1", "9", "+1", "01", "4294967296"})
+	default: // sections
+		names := make([]string, 0, 3)
+		for range 1 + s.randIntn(3) {
+			names = append(names, s.pick(historySections))
+		}
+		return s.pick([]string{strings.Join(names, ","), strings.Join(names, ",") + "," + s.fuzzToken(),
+			",,,", " cpu , mem ", "CPU", "cpu,cpu,cpu", ","})
+	}
+}
+
+// historyQuery returns a well-formed history query, canary in one value.
+func (s *Scanner) historyQuery(now time.Time, canary string) string {
+	q := url.Values{}
+	for _, key := range historyParams {
+		if s.randIntn(3) != 0 {
+			q.Set(key, s.historyValue(key, now))
+		}
+	}
+	if canary != "" {
+		key := s.pick(historyParams)
+		q.Set(key, q.Get(key)+canary)
+	}
+	return q.Encode()
+}
+
+// rawHistoryQuery returns a history query as written: values unescaped,
+// oddities around them, odd separators and pairs, canary in one value.
+func (s *Scanner) rawHistoryQuery(now time.Time, canary string) string {
+	var pairs []string
+	for _, key := range historyParams {
+		if s.randIntn(3) != 0 {
+			pairs = append(pairs, key+"="+s.pick(rawQueryOddities)+s.historyValue(key, now)+s.pick(rawQueryOddities))
+		}
+	}
+	if s.randIntn(3) == 0 {
+		pairs = append(pairs, s.pick([]string{"from=", "=1", "tier", "tier[]=0", "points=1&points=2", "sections", "%zz=1"}))
+	}
+	if len(pairs) == 0 {
+		pairs = append(pairs, "tier="+s.fuzzToken())
+	}
+	if canary != "" {
+		pairs[s.randIntn(len(pairs))] += canary
+	}
+	var b strings.Builder
+	for i, pair := range pairs {
+		if i > 0 {
+			b.WriteString(s.pick(rawQuerySeparators))
+		}
+		b.WriteString(pair)
+	}
+	return b.String()
+}
+
+// i18nQuery returns a lang query: well formed, or as written.
+func (s *Scanner) i18nQuery(raw bool, canary string) string {
+	if !raw {
+		q := url.Values{}
+		q.Set("lang", s.fuzzToken()+canary)
+		return q.Encode()
+	}
+	lang := "lang=" + s.pick(rawQueryOddities) + s.fuzzToken() + s.pick(rawQueryOddities) + canary
+	if s.randIntn(4) == 0 {
+		lang = "lang=en" + s.pick(rawQuerySeparators) + lang
+	}
+	return lang
+}
+
+// runFuzzQuery fuzzes the query parameters of the read API endpoints:
+// /api/history's from, to, points, tier and sections, and /api/i18n's lang.
+// Half the queries are well formed and go through the HTTP client; the
+// other half are written raw.
 func runFuzzQuery(s *Scanner) []Finding {
 	hdr, ok := s.apiHeaders()
 	if !ok {
 		return []Finding{finding("FUZZ-QUERY", SevInfo, StatusSkip,
 			"auth is enabled and no session is available; supply -username/-password to fuzz the API.")}
 	}
-	gen := func() (string, string, string, string) {
-		// Alternate between the two endpoints that take parameters.
-		if s.randIntn(2) == 0 {
-			q := url.Values{}
-			for _, k := range []string{"from", "to", "points"} {
-				if s.randIntn(3) != 0 {
-					q.Set(k, s.fuzzToken())
-				}
-			}
-			return http.MethodGet, "/api/history?" + q.Encode(), "", ""
+	now := time.Now()
+	t := &fuzzTally{planned: s.fuzzIter}
+	for i := 0; i < s.fuzzIter && !t.full() && s.ctx.Err() == nil; i++ {
+		canary := ""
+		if s.randIntn(4) == 0 {
+			canary = fuzzCanary()
 		}
-		q := url.Values{}
-		q.Set("lang", s.fuzzToken())
-		return http.MethodGet, "/api/i18n?" + q.Encode(), "", ""
-	}
-	return []Finding{s.runFuzzLoop("FUZZ-QUERY", "the history and i18n handlers", hdr, gen)}
-}
-
-// runFuzzPath fuzzes the request path with a canary so any reflection into the
-// HTML shell is caught.
-func runFuzzPath(s *Scanner) []Finding {
-	gen := func() (string, string, string, string) {
-		// The canary carries angle brackets so a reflection only counts when the
-		// server echoes them UNescaped — an actual XSS sink, not a redirect body
-		// or JSON string that safely escapes "<".
-		canary := "<kx" + randToken(6) + ">"
-		tok := s.fuzzToken()
-		p := "/" + url.PathEscape(tok+canary)
-		if s.randIntn(2) == 0 {
-			p = "/" + tok + canary // unescaped variant
+		history, raw := s.randIntn(3) != 0, s.randIntn(2) == 0
+		var path string
+		switch {
+		case history && raw:
+			path = "/api/history?" + s.rawHistoryQuery(now, canary)
+		case history:
+			path = "/api/history?" + s.historyQuery(now, canary)
+		default:
+			path = "/api/i18n?" + s.i18nQuery(raw, canary)
 		}
-		return http.MethodGet, p, "", canary
+		if raw {
+			t.record(s.rawGet(path, hdr), "raw "+reqDesc(http.MethodGet, path, ""), canary)
+		} else {
+			t.record(s.do(http.MethodGet, path, hdr, ""), reqDesc(http.MethodGet, path, ""), canary)
+		}
 	}
-	return []Finding{s.runFuzzLoop("FUZZ-PATH", "the server", nil, gen)}
+	return []Finding{t.verdict("FUZZ-QUERY", s.seed, t.coverage("the history and i18n handlers"), "")}
 }
 
 // runFuzzBody sends a curated set of malformed JSON bodies to the JSON POST

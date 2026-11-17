@@ -47,8 +47,14 @@ type kulaMock struct {
 }
 
 type kulaMockRequest struct {
-	method, path string
-	header       http.Header
+	method, path, query string
+	header              http.Header
+}
+
+func (m *kulaMock) requests() []kulaMockRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]kulaMockRequest(nil), m.seen...)
 }
 
 const (
@@ -124,7 +130,7 @@ func kmSameOrigin(r *http.Request) bool {
 
 func (m *kulaMock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.mu.Lock()
-	m.seen = append(m.seen, kulaMockRequest{r.Method, r.URL.Path, r.Header.Clone()})
+	m.seen = append(m.seen, kulaMockRequest{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Clone()})
 	if r.URL.Path == "/api/logout" {
 		m.logoutCookies = append(m.logoutCookies, r.Header.Get("Cookie"))
 	}
