@@ -78,6 +78,15 @@ const craft = (change) => {
 const entry = (packages, name) => packages[`node_modules/${name}`];
 const chart = (packages) => entry(packages, 'chart.js');
 
+// The releases the committed lockfile pins, as the refusals below name them,
+// so that bumping one (addons/build-chartjs.sh --update) leaves them valid.
+const lockedChart = chart(COMMITTED.packages);
+const lockedEsbuild = entry(COMMITTED.packages, 'esbuild');
+const lockedEsbuildLinux = entry(COMMITTED.packages, '@esbuild/linux-x64');
+const CHART = `chart.js@${lockedChart.version}`;
+const ESBUILD = `esbuild@${lockedEsbuild.version}`;
+const ESBUILD_LINUX = `@esbuild/linux-x64@${lockedEsbuildLinux.version}`;
+
 test('the committed lockfile passes against a registry that agrees with it', () => {
     const result = verify(COMMITTED);
     assert.equal(result.status, 0, result.stderr);
@@ -93,9 +102,9 @@ const refused = [
             integrity: fakeIntegrity('A'),
         }),
         reasons: [
-            '@esbuild/linux-x64@0.28.2: resolved URL "https://registry.npmjs.org/@esbuild/linux-x64/-/../../../evil-esbuild-linux-x64/-/evil-esbuild-linux-x64-1.0.0.tgz" is not in canonical form',
-            '@esbuild/linux-x64@0.28.2: resolved https://registry.npmjs.org/@esbuild/linux-x64/-/../../../evil-esbuild-linux-x64/-/evil-esbuild-linux-x64-1.0.0.tgz, but the registry lists https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.2.tgz',
-            "@esbuild/linux-x64@0.28.2: integrity differs from the registry's",
+            `${ESBUILD_LINUX}: resolved URL "https://registry.npmjs.org/@esbuild/linux-x64/-/../../../evil-esbuild-linux-x64/-/evil-esbuild-linux-x64-1.0.0.tgz" is not in canonical form`,
+            `${ESBUILD_LINUX}: resolved https://registry.npmjs.org/@esbuild/linux-x64/-/../../../evil-esbuild-linux-x64/-/evil-esbuild-linux-x64-1.0.0.tgz, but the registry lists ${lockedEsbuildLinux.resolved}`,
+            `${ESBUILD_LINUX}: integrity differs from the registry's`,
         ],
     },
     {
@@ -103,14 +112,14 @@ const refused = [
         change: (packages) => {
             chart(packages).resolved = `${REGISTRY}chart.js/-/%2e%2e/%2E%2E/evil-chart/-/evil-chart-1.0.0.tgz`;
         },
-        reasons: ['chart.js@4.5.1: resolved URL', 'is not in canonical form', 'but the registry lists https://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz'],
+        reasons: [`${CHART}: resolved URL`, 'is not in canonical form', `but the registry lists ${lockedChart.resolved}`],
     },
     {
         name: 'a version field older than the release resolved fetches',
         change: (packages) => {
             entry(packages, 'esbuild').resolved = tarballOf('esbuild', '0.29.9');
         },
-        reasons: ['esbuild@0.28.2: resolved https://registry.npmjs.org/esbuild/-/esbuild-0.29.9.tgz, but the registry lists https://registry.npmjs.org/esbuild/-/esbuild-0.28.2.tgz'],
+        reasons: [`${ESBUILD}: resolved https://registry.npmjs.org/esbuild/-/esbuild-0.29.9.tgz, but the registry lists ${lockedEsbuild.resolved}`],
     },
     {
         name: "the fresh release's tarball and integrity under an old version",
@@ -118,7 +127,7 @@ const refused = [
             resolved: tarballOf('esbuild', '0.29.9'),
             integrity: fakeIntegrity('E'),
         }),
-        reasons: ['esbuild@0.28.2: resolved https://registry.npmjs.org/esbuild/-/esbuild-0.29.9.tgz, but', "esbuild@0.28.2: integrity differs from the registry's"],
+        reasons: [`${ESBUILD}: resolved https://registry.npmjs.org/esbuild/-/esbuild-0.29.9.tgz, but`, `${ESBUILD}: integrity differs from the registry's`],
     },
     // The other ways a tarball URL or hash can disagree with the registry.
     {
@@ -126,14 +135,14 @@ const refused = [
         change: (packages) => {
             chart(packages).integrity = fakeIntegrity('B');
         },
-        reasons: ["chart.js@4.5.1: integrity differs from the registry's"],
+        reasons: [`${CHART}: integrity differs from the registry's`],
     },
     {
         name: 'a query string in resolved',
         change: (packages) => {
             chart(packages).resolved += '?evil=1';
         },
-        reasons: ['chart.js@4.5.1: resolved URL "https://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz?evil=1" is not in canonical form'],
+        reasons: [`${CHART}: resolved URL "${lockedChart.resolved}?evil=1" is not in canonical form`],
     },
     {
         name: 'an empty query string in resolved',
@@ -147,19 +156,19 @@ const refused = [
         change: (packages) => {
             chart(packages).resolved += '#evil';
         },
-        reasons: ['chart.js@4.5.1: resolved URL "https://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz#evil" is not in canonical form'],
+        reasons: [`${CHART}: resolved URL "${lockedChart.resolved}#evil" is not in canonical form`],
     },
     {
         name: 'backslashes in resolved',
         change: (packages) => {
             chart(packages).resolved = `${REGISTRY}chart.js/-/..\\..\\evil-chart\\-\\evil-chart-1.0.0.tgz`;
         },
-        reasons: ['chart.js@4.5.1: resolved URL', 'is not in canonical form'],
+        reasons: [`${CHART}: resolved URL`, 'is not in canonical form'],
     },
     {
         name: 'a tab in resolved',
         change: (packages) => {
-            chart(packages).resolved = `${REGISTRY}chart.js/-/chart.js-4.5.1\t.tgz`;
+            chart(packages).resolved = lockedChart.resolved.replace(/\.tgz$/, '\t.tgz');
         },
         reasons: ['is not in canonical form'],
     },
@@ -183,14 +192,14 @@ const refused = [
         change: (packages) => {
             chart(packages).name = 'evil';
         },
-        reasons: ['chart.js@4.5.1: installs the package "evil"'],
+        reasons: [`${CHART}: installs the package "evil"`],
     },
     {
         name: 'a link entry',
         change: (packages) => {
             chart(packages).link = true;
         },
-        reasons: ['chart.js@4.5.1: a link to https://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz, not a registry tarball'],
+        reasons: [`${CHART}: a link to ${lockedChart.resolved}, not a registry tarball`],
     },
     {
         name: 'a lockfile path that climbs out of node_modules',
@@ -223,33 +232,33 @@ const refused = [
         change: (packages) => {
             chart(packages).resolved = 'git+ssh://git@github.com/evil/chart.js.git#abc';
         },
-        reasons: ['chart.js@4.5.1: resolved from git+ssh://git@github.com/evil/chart.js.git#abc'],
+        reasons: [`${CHART}: resolved from git+ssh://git@github.com/evil/chart.js.git#abc`],
     },
     {
         name: 'a file: link',
         change: (packages) => Object.assign(chart(packages), { resolved: 'file:../evil', link: true }),
-        reasons: ['chart.js@4.5.1: resolved from file:../evil'],
+        reasons: [`${CHART}: resolved from file:../evil`],
     },
     {
         name: 'a plain-http tarball',
         change: (packages) => {
-            chart(packages).resolved = 'http://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz';
+            chart(packages).resolved = lockedChart.resolved.replace(/^https:/, 'http:');
         },
-        reasons: ['chart.js@4.5.1: resolved from http://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz'],
+        reasons: [`${CHART}: resolved from ${lockedChart.resolved.replace(/^https:/, 'http:')}`],
     },
     {
         name: 'no resolved URL',
         change: (packages) => {
             delete chart(packages).resolved;
         },
-        reasons: ['chart.js@4.5.1: resolved from undefined'],
+        reasons: [`${CHART}: resolved from undefined`],
     },
     {
         name: 'a sha1 integrity',
         change: (packages) => {
             chart(packages).integrity = 'sha1-AAAA';
         },
-        reasons: ['chart.js@4.5.1: no sha512 integrity'],
+        reasons: [`${CHART}: no sha512 integrity`],
     },
     {
         name: "another package's tarball under this name",
@@ -258,7 +267,7 @@ const refused = [
             resolved: tarballOf('evil', '1.0.0'),
             integrity: fakeIntegrity('V'),
         }),
-        reasons: ['chart.js@4.5.1: resolved from https://registry.npmjs.org/evil/-/evil-1.0.0.tgz'],
+        reasons: [`${CHART}: resolved from https://registry.npmjs.org/evil/-/evil-1.0.0.tgz`],
     },
     {
         name: 'an honestly locked release under 14 days old',
