@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -186,14 +187,72 @@ func (r *Report) worstFailure() Severity {
 	return worst
 }
 
-// exitCode returns a non-zero code when any FAIL at or above failOn exists.
-// 0 = clean, 1 = failing safeguard at/above threshold, 2 reserved for usage errors.
+// Exit statuses.
+const (
+	exitClean        = 0
+	exitFailing      = 1 // a FAIL at or above -fail-on
+	exitUsage        = 2 // a usage error, or a target that is unreachable or not Kula
+	exitInconclusive = 3 // no gating FAIL, but a probe could not complete
+)
+
+// exitCode returns the exit status the report calls for. Ignored findings
+// count for nothing; a failure wins over an error.
 func (r *Report) exitCode(failOn Severity) int {
-	w := r.worstFailure()
-	if w >= 0 && w >= failOn {
-		return 1
+	switch {
+	case r.stoppedAtDiscovery():
+		return exitUsage
+	case r.worstFailure() >= failOn:
+		return exitFailing
+	case len(r.erroredIDs()) > 0:
+		return exitInconclusive
+	default:
+		return exitClean
 	}
-	return 0
+}
+
+// stoppedAtDiscovery reports whether discovery found the target unreachable
+// or not Kula, which ends the scan: DISC-001 is then an ERROR.
+func (r *Report) stoppedAtDiscovery() bool {
+	for _, f := range r.Findings {
+		if f.ID == "DISC-001" && f.Status == StatusError {
+			return true
+		}
+	}
+	return false
+}
+
+// erroredIDs lists the IDs of ERROR findings that are not ignored.
+func (r *Report) erroredIDs() []string {
+	var ids []string
+	for _, f := range r.Findings {
+		if f.Status == StatusError && !f.Ignored {
+			ids = append(ids, f.ID)
+		}
+	}
+	sort.Strings(ids)
+	return slices.Compact(ids)
+}
+
+// exitReason explains a non-zero exit status in one line, or returns "" for
+// a clean exit.
+func (r *Report) exitReason(failOn Severity) string {
+	code := r.exitCode(failOn)
+	var why string
+	switch code {
+	case exitUsage:
+		for _, f := range r.Findings {
+			if f.ID == "DISC-001" {
+				why = "the scan stopped at discovery (DISC-001): " + f.Detail
+			}
+		}
+	case exitFailing:
+		why = fmt.Sprintf("safeguards FAIL at/above %s: %s", failOn, strings.Join(r.failingIDs(failOn), ", "))
+	case exitInconclusive:
+		why = "inconclusive: no failing safeguard, but these probes could not complete: " + strings.Join(r.erroredIDs(), ", ")
+	default:
+		return ""
+	}
+	return fmt.Sprintf("kula-scan: exit %d: %s", code, printable(why))
 }
 
 // failingIDs lists the IDs of FAIL findings at or above failOn that are not

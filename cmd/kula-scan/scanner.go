@@ -180,10 +180,12 @@ type Scanner struct {
 	password string
 
 	// Discovered during the discovery phase.
-	reachable   bool
+	reachable   bool // the target answered HTTP
+	kula        bool // and identified as Kula
 	https       bool
 	authEnabled bool
 	ollama      bool
+	version     string // Kula's version, when /api/config discloses it
 
 	// Populated by ensureSession() when credentials are supplied and valid.
 	session     string       // kula_session cookie value
@@ -191,7 +193,20 @@ type Scanner struct {
 	loginCookie *http.Cookie // the Set-Cookie issued at login, for attribute inspection
 	loggedIn    bool
 	loginTried  bool
+	login       loginOutcome // how the login attempt ended
+	loginDetail string       // why it failed, for AUTH-005
 }
+
+// loginOutcome is how ensureSession's login attempt ended.
+type loginOutcome int
+
+const (
+	loginNotTried  loginOutcome = iota
+	loginOK                     // a session is open
+	loginRefused                // 401: wrong username or password
+	loginThrottled              // 429: the login rate limiter refused the attempt
+	loginFailed                 // the request failed, or another answer
+)
 
 // Options configures a Scanner. Only Target is required; everything else has a
 // sensible zero/default.
@@ -527,50 +542,72 @@ func (s *Scanner) wsDial(path string, headers http.Header) (*websocket.Conn, *ht
 
 // ---- discovery ---------------------------------------------------------------
 
-// discover probes the target to learn whether it is reachable, whether auth is
-// enabled, and which optional features (Ollama) are active. The findings it
-// returns describe the target rather than judging it.
+// discover probes the target to learn whether it is reachable and is Kula,
+// whether auth is enabled, and which optional features (Ollama) are active.
+// The findings it returns describe the target rather than judging it. A
+// target that does not answer, or answers but is not Kula, gets a DISC-001
+// ERROR and leaves s.reachable or s.kula false: the scan stops there.
 func (s *Scanner) discover() []Finding {
 	var out []Finding
 
-	// Confirm reachability via the unauthenticated liveness endpoint.
-	if r := s.do(http.MethodGet, "/health", nil, ""); r.err == nil {
-		s.reachable = true
-	}
-
-	// auth/status is always unauthenticated and reveals the auth posture.
-	r := s.do(http.MethodGet, "/api/auth/status", nil, "")
-	if r.err != nil {
-		out = append(out, finding("DISC-001", SevInfo, StatusError,
-			fmt.Sprintf("could not reach %s: %v", s.rawBase, r.err)).
-			withRemediation("Check the target URL, port, and that kula's web server is enabled."))
-		return out
+	// The liveness endpoint and auth/status are open whatever the config;
+	// auth/status reveals the auth posture.
+	health := s.do(http.MethodGet, "/health", nil, "")
+	status := s.do(http.MethodGet, "/api/auth/status", nil, "")
+	if health.err != nil && status.err != nil {
+		return []Finding{finding("DISC-001", SevInfo, StatusError,
+			fmt.Sprintf("could not reach %s: %v", s.rawBase, status.err)).
+			withRemediation("Check the target URL, port, and that kula's web server is enabled.")}
 	}
 	s.reachable = true
 
-	var status struct {
-		AuthRequired bool `json:"auth_required"`
-	}
-	_ = json.Unmarshal([]byte(r.body), &status)
-	s.authEnabled = status.AuthRequired
-
 	// /api/config (open when auth is off; gated when on) reveals ollama state.
-	cfg := s.do(http.MethodGet, "/api/config", s.authedHeaders(false), "")
+	cfg := s.do(http.MethodGet, "/api/config", nil, "")
+
+	// Kula says so on /health, answers auth/status with auth_required, or
+	// refuses the API to a Host name it does not serve (DNS-rebinding check).
+	var authStatus map[string]json.RawMessage
+	hasAuthRequired := false
+	if status.err == nil && json.Unmarshal([]byte(status.body), &authStatus) == nil {
+		_, hasAuthRequired = authStatus["auth_required"]
+	}
+	hostRefused := hostCheckRefusal(status) || hostCheckRefusal(cfg)
+	s.kula = (health.err == nil && strings.Contains(health.body, "kula is healthy")) || hasAuthRequired || hostRefused
+	if !s.kula {
+		return []Finding{finding("DISC-001", SevInfo, StatusError,
+			fmt.Sprintf("%s answers HTTP but does not look like Kula: /health does not say \"kula is healthy\" and /api/auth/status carries no auth_required.", s.urlFor(""))).
+			withEvidence("/health: %s; /api/auth/status: %s", describeResult(health), describeResult(status)).
+			withRemediation("Check the target URL and port; if Kula is mounted under a base path, include it in the URL or pass -base-path.")}
+	}
+
+	// A host check refusal leaves authEnabled false, which it is: Kula
+	// guards the API with that check only while auth is off.
+	if hasAuthRequired {
+		_ = json.Unmarshal(authStatus["auth_required"], &s.authEnabled)
+	}
 	if cfg.status == http.StatusOK {
 		var c struct {
-			OllamaEnabled bool `json:"ollama_enabled"`
+			OllamaEnabled bool   `json:"ollama_enabled"`
+			Version       string `json:"version"`
 		}
 		_ = json.Unmarshal([]byte(cfg.body), &c)
 		s.ollama = c.OllamaEnabled
+		s.version = c.Version
 	}
 
 	authState := "disabled"
 	if s.authEnabled {
 		authState = "enabled"
 	}
-	out = append(out, finding("DISC-001", SevInfo, StatusPass,
-		fmt.Sprintf("reachable at %s (%s); authentication %s; ollama %v",
-			s.urlFor(""), s.base.Scheme, authState, s.ollama)))
+	detail := fmt.Sprintf("reachable at %s (%s); authentication %s; ollama %v",
+		s.urlFor(""), s.base.Scheme, authState, s.ollama)
+	if s.version != "" {
+		detail += "; version " + s.version
+	}
+	if hostRefused {
+		detail += "; the API refuses this Host name (Kula's DNS-rebinding check), so API checks see that refusal: scan by address or by a name in web.security.allowed_hosts"
+	}
+	out = append(out, finding("DISC-001", SevInfo, StatusPass, detail))
 
 	// Plaintext transport with auth enabled means credentials cross the wire in
 	// the clear unless a TLS-terminating proxy sits in front.
@@ -583,9 +620,30 @@ func (s *Scanner) discover() []Finding {
 	return out
 }
 
+// hostCheckRefusal reports whether r is Kula's refusal of a Host name it does
+// not serve: a 403 whose JSON error starts "host not allowed".
+func hostCheckRefusal(r httpResult) bool {
+	if r.err != nil || r.status != http.StatusForbidden {
+		return false
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal([]byte(r.body), &body) == nil && strings.HasPrefix(body.Error, "host not allowed")
+}
+
+// describeResult renders how a request ended, for evidence.
+func describeResult(r httpResult) string {
+	if r.err != nil {
+		return r.err.Error()
+	}
+	return fmt.Sprintf("HTTP %d", r.status)
+}
+
 // ensureSession logs in once (lazily) using the supplied credentials and caches
 // the resulting session cookie + CSRF token. It is a no-op without credentials
-// or when auth is disabled. Returns true when an authenticated session exists.
+// or when auth is disabled. Returns true when an authenticated session exists;
+// otherwise s.login and s.loginDetail say why not.
 func (s *Scanner) ensureSession() bool {
 	if s.loggedIn {
 		return true
@@ -598,41 +656,35 @@ func (s *Scanner) ensureSession() bool {
 		return false
 	}
 
-	payload, _ := json.Marshal(map[string]string{"username": s.username, "password": s.password})
-	headers := map[string]string{
-		"Content-Type": "application/json",
-		"Origin":       s.base.Scheme + "://" + s.base.Host,
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.urlFor("/api/login"), strings.NewReader(string(payload)))
-	if err != nil {
-		return false
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	for _, c := range resp.Cookies() {
-		if c.Name == "kula_session" {
-			s.session = c.Value
-			s.loginCookie = c
+	r := s.loginRaw(s.username, s.password)
+	switch {
+	case r.err != nil:
+		s.login, s.loginDetail = loginFailed, "the login request failed: "+r.err.Error()
+	case r.status == http.StatusUnauthorized:
+		s.login, s.loginDetail = loginRefused, "the target refused them (HTTP 401): wrong username or password"
+	case r.status == http.StatusTooManyRequests:
+		s.login, s.loginDetail = loginThrottled, "login is rate-limited for this account or address (HTTP 429); retry in five minutes"
+	case r.status != http.StatusOK:
+		s.login, s.loginDetail = loginFailed, fmt.Sprintf("the login request answered HTTP %d", r.status)
+	default:
+		for _, c := range (&http.Response{Header: r.header}).Cookies() {
+			if c.Name == "kula_session" {
+				s.session = c.Value
+				s.loginCookie = c
+			}
+		}
+		var parsed struct {
+			CSRFToken string `json:"csrf_token"`
+		}
+		_ = json.Unmarshal([]byte(r.body), &parsed)
+		s.csrf = parsed.CSRFToken
+		s.loggedIn = s.session != ""
+		if s.loggedIn {
+			s.login = loginOK
+		} else {
+			s.login, s.loginDetail = loginFailed, "login answered HTTP 200 without a kula_session cookie"
 		}
 	}
-	var parsed struct {
-		CSRFToken string `json:"csrf_token"`
-	}
-	_ = json.Unmarshal(raw, &parsed)
-	s.csrf = parsed.CSRFToken
-	s.loggedIn = s.session != ""
 	return s.loggedIn
 }
 
@@ -668,8 +720,8 @@ func (s *Scanner) Run(sel *selection) []Finding {
 		}
 	}
 
-	// If discovery could not reach the target, there is nothing more to probe.
-	if !s.reachable {
+	// A target that does not answer, or is not Kula, is not probed further.
+	if !s.reachable || !s.kula {
 		return findings
 	}
 

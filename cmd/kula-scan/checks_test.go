@@ -442,13 +442,6 @@ func TestParseSeverityAndOnly(t *testing.T) {
 	}
 }
 
-func TestJSONStringEscaping(t *testing.T) {
-	got := jsonString(`a"b\c` + "\n")
-	if !strings.HasPrefix(got, `"`) || strings.Contains(got, "\n") {
-		t.Errorf("jsonString did not escape control/quote chars: %s", got)
-	}
-}
-
 // ---- DoS / resource-exhaustion checks ----------------------------------------
 
 // scannerForDos builds a scanner with an explicit dosWait so the slow-connection

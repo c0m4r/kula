@@ -231,8 +231,9 @@ func runAuthChecks(s *Scanner) []Finding {
 		out = append(out, finding("AUTH-005", SevInfo, StatusSkip,
 			"no -username/-password supplied; skipping authenticated login probe."))
 	} else if !s.ensureSession() {
-		out = append(out, finding("AUTH-005", SevInfo, StatusWarn,
-			"could not log in with the supplied credentials (wrong creds, or already rate-limited)."))
+		// The checks that need a session skip, so the run is inconclusive.
+		out = append(out, finding("AUTH-005", SevInfo, StatusError,
+			"could not log in with the supplied credentials: "+s.loginDetail+"; the checks that need a session are skipped."))
 	} else {
 		out = append(out, finding("AUTH-005", SevInfo, StatusPass,
 			"the supplied credentials logged in and returned a session cookie + CSRF token."))
@@ -315,7 +316,8 @@ func enumerationFinding(s *Scanner) Finding {
 }
 
 // loginRaw posts credentials with a same-origin header (so CSRF admits it) and
-// returns the result. Used by probes that must reach the login handler.
+// returns the result. ensureSession opens the scan's session with it, and
+// probes that must reach the login handler call it directly.
 func (s *Scanner) loginRaw(username, password string) httpResult {
 	b, err := json.Marshal(map[string]string{"username": username, "password": password})
 	if err != nil {
@@ -378,10 +380,14 @@ func runCSRFChecks(s *Scanner) []Finding {
 	if s.authEnabled && s.ensureSession() {
 		hdr := map[string]string{"Cookie": "kula_session=" + s.session, "Origin": sameOrigin}
 		r := s.do(http.MethodPost, "/api/logout", hdr, "")
-		if r.status == http.StatusForbidden {
+		switch {
+		case r.err != nil:
+			out = append(out, finding("CSRF-003", SevInfo, StatusError,
+				"could not send an authenticated POST without a CSRF token: "+r.err.Error()))
+		case r.status == http.StatusForbidden:
 			out = append(out, finding("CSRF-003", SevHigh, StatusPass,
 				"an authenticated, same-origin POST without the X-CSRF-Token header is rejected with 403."))
-		} else {
+		default:
 			out = append(out, finding("CSRF-003", SevHigh, StatusFail,
 				"an authenticated state change succeeded without a CSRF token; the session is open to CSRF.").
 				withEvidence("status=%d", r.status).
@@ -601,10 +607,14 @@ func runMetricsChecks(s *Scanner) []Finding {
 		}
 		// A wrong token must also be rejected.
 		w := s.do(http.MethodGet, "/metrics", map[string]string{"Authorization": "Bearer wrong-" + randToken(8)}, "")
-		if w.status == http.StatusUnauthorized {
+		switch {
+		case w.err != nil:
+			out = append(out, finding("PROM-002", SevInfo, StatusError,
+				"could not query /metrics with a wrong token: "+w.err.Error()))
+		case w.status == http.StatusUnauthorized:
 			out = append(out, finding("PROM-002", SevMedium, StatusPass,
 				"an incorrect bearer token is rejected with 401."))
-		} else {
+		default:
 			out = append(out, finding("PROM-002", SevHigh, StatusFail,
 				"an incorrect bearer token was not rejected").withEvidence("status=%d", w.status))
 		}

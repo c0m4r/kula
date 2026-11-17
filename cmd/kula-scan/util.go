@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,16 +18,6 @@ func randToken(n int) string {
 		return "0000000000"[:n]
 	}
 	return hex.EncodeToString(b)[:n]
-}
-
-// jsonString JSON-encodes s into a quoted string literal, safely escaping any
-// metacharacters so crafted usernames can't break out of the request body.
-func jsonString(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return `""`
-	}
-	return string(b)
 }
 
 // truncate shortens s to at most n runes, appending an ellipsis when cut.

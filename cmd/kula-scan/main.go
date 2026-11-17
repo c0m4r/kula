@@ -13,8 +13,10 @@
 //
 //	kula-scan [flags] <target-url>
 //
-// Exit status is non-zero when any safeguard FAILs at or above -fail-on
-// severity (default high), so it can gate CI / releases.
+// Exit status is 1 when any safeguard FAILs at or above -fail-on severity
+// (default high), 2 on a usage error or a target that is unreachable or not
+// Kula, and 3 when nothing fails but a probe could not complete, so it can
+// gate CI / releases.
 package main
 
 import (
@@ -167,6 +169,9 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	if reason := report.exitReason(failSev); reason != "" {
+		_, _ = fmt.Fprintln(stderr, reason)
+	}
 	return report.exitCode(failSev)
 }
 
@@ -253,6 +258,11 @@ Flags:
   -list               print every finding ID with its category, mode and title, then exit
   -version            print the version and exit
 
-Exit status: 0 = no failing safeguard at/above -fail-on; 1 = one or more failures; 2 = usage error.
+Exit status:
+  0    no failing safeguard at/above -fail-on, and every probe completed
+  1    one or more safeguards FAIL at/above -fail-on (ignored findings excepted)
+  2    usage error, or the target is unreachable or not a Kula instance
+  3    inconclusive: nothing fails, but a probe could not complete (ERROR),
+       e.g. the supplied credentials were refused
 `, strings.Join(categories(), ","))
 }
