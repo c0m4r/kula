@@ -13,9 +13,10 @@ import (
 )
 
 // Disruptive probes. Each has real side effects on the live target — login
-// lockout, consumed WebSocket slots — so they only run with -aggressive. They
-// are ordered so the login rate-limit flood (which locks out login for ~5 min)
-// runs last, after every probe that needs to authenticate.
+// lockout, consumed WebSocket slots — so they only run with -aggressive. The
+// login rate-limit flood (runLoginRateCheck, which locks out login for ~5 min)
+// is not among aggressiveChecks: allChecks registers it near the end of the
+// run, after every probe that needs to authenticate.
 
 func aggressiveChecks() []check {
 	return []check{

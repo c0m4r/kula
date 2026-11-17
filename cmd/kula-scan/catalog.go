@@ -44,8 +44,12 @@ type catalogEntry struct {
 	Description string // one line: what the finding verifies
 }
 
-// catalog lists every finding ID, grouped by category in the order the scan
-// runs them. A new finding ID needs an entry here and a place in the ids of
+// catalog lists every finding ID, grouped by category; -list prints it in
+// this order, and categories() returns the categories in it. The scan runs
+// the checks in allChecks' order instead: by category too, but most
+// aggressive checks and the fuzz checks after the default ones, and the
+// login and chat budgets put RATE-CHAT, RATE-LOGIN, BYPASS-XFF and
+// FUZZ-LIVENESS at the end of the run. A new finding ID needs an entry here and a place in the ids of
 // the registry check that emits it; TestCatalogCoversEveryEmittedID and
 // TestRegistryDeclaresEveryCatalogID fail otherwise.
 var catalog = []catalogEntry{
@@ -240,7 +244,7 @@ func catalogEntryFor(id string) catalogEntry {
 	return catalogEntry{ID: id, Category: "unknown", Title: id}
 }
 
-// categories returns every category in the catalog, in scan order.
+// categories returns every category in the catalog, in catalog order.
 func categories() []string {
 	var out []string
 	seen := map[string]bool{}
