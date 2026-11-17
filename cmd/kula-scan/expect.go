@@ -16,7 +16,7 @@ var expectKeys = []struct {
 	{"auth", "web.auth is enabled (AUTH-000)"},
 	{"tls", "the target is served over HTTPS with a certificate clients trust (DISC-002, TLS-001, TLS-004)"},
 	{"hsts", "the target is served over HTTPS with Strict-Transport-Security (HDR-008)"},
-	{"origin-validation", "a state change without an Origin, or from a foreign one, is refused (CSRF-001, CSRF-002)"},
+	{"origin-validation", "a state change without an Origin, or from a foreign one, and a WebSocket upgrade from a foreign Origin are refused (CSRF-001, CSRF-002, WS-002)"},
 	{"frame-protection", "the CSP forbids framing with frame-ancestors 'none' (HDR-007)"},
 	{"metrics-token", "/metrics requires a bearer token (PROM-001)"},
 }

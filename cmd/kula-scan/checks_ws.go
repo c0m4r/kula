@@ -15,6 +15,9 @@ func wsChecks() []check {
 	}}
 }
 
+// foreignOrigin is the Origin the cross-origin upgrade probe sends.
+const foreignOrigin = "https://evil.example"
+
 func runWSChecks(s *Scanner) []Finding {
 	var out []Finding
 	sameOrigin := s.base.Scheme + "://" + s.base.Host
@@ -62,16 +65,14 @@ func runWSChecks(s *Scanner) []Finding {
 	}
 
 	foreign := cloneHeader(hdr)
-	foreign.Set("Origin", "https://evil.example")
+	foreign.Set("Origin", foreignOrigin)
 	conn, resp, err := s.wsDial("/ws", foreign)
 	if conn != nil {
 		_ = conn.Close()
 	}
 	switch {
 	case err == nil:
-		out = append(out, finding("WS-002", SevHigh, StatusFail,
-			"a cross-origin WebSocket upgrade from https://evil.example succeeded; a malicious page can hijack the live stream.").
-			withRemediation("Keep web.security.origin_validation enabled so CheckOrigin rejects foreign origins."))
+		out = append(out, crossOriginUpgradeFinding(s))
 	case resp == nil:
 		out = append(out, finding("WS-002", SevInfo, StatusError,
 			"could not attempt a cross-origin WebSocket upgrade: "+err.Error()))
@@ -105,4 +106,44 @@ func runWSChecks(s *Scanner) []Finding {
 	}
 
 	return out
+}
+
+// crossOriginUpgradeFinding judges a cross-origin upgrade that succeeded by
+// what a page on another site can do with it. With auth off, any page opens
+// the stream through its visitor's browser. With auth on, the probe got past
+// auth with the scanner's own session cookie, which a browser sends with a
+// cross-site WebSocket handshake only when the cookie is SameSite=None, or
+// has no SameSite attribute (which some browsers treat as None). A Strict or
+// Lax cookie keeps other sites out of the session, but then that attribute
+// alone does: origin validation is off, which -expect origin-validation
+// turns into a FAIL, as it does for CSRF-001 and CSRF-002.
+func crossOriginUpgradeFinding(s *Scanner) Finding {
+	if !s.authEnabled {
+		return finding("WS-002", SevHigh, StatusFail,
+			"a cross-origin WebSocket upgrade from "+foreignOrigin+" succeeded with auth off; any website a visitor opens can read the live stream through their browser.").
+			withRemediation("Keep web.security.origin_validation enabled so CheckOrigin rejects foreign origins.")
+	}
+	sameSite, attribute := http.SameSiteDefaultMode, "no SameSite attribute"
+	if s.loginCookie != nil {
+		sameSite = s.loginCookie.SameSite
+	}
+	switch sameSite {
+	case http.SameSiteStrictMode:
+		attribute = "SameSite=Strict"
+	case http.SameSiteLaxMode:
+		attribute = "SameSite=Lax"
+	case http.SameSiteNoneMode:
+		attribute = "SameSite=None"
+	}
+	if sameSite == http.SameSiteStrictMode || sameSite == http.SameSiteLaxMode {
+		return finding("WS-002", SevMedium, StatusWarn,
+			"a cross-origin WebSocket upgrade from "+foreignOrigin+" succeeded with a session cookie: origin validation is off, and only the cookie's "+attribute+" keeps other sites from opening the live stream with a visitor's session.").
+			withEvidence("session cookie: %s", attribute).
+			withRemediation("Enable web.security.origin_validation so CheckOrigin rejects foreign origins.").
+			expecting("origin-validation")
+	}
+	return finding("WS-002", SevHigh, StatusFail,
+		"a cross-origin WebSocket upgrade from "+foreignOrigin+" succeeded, and the session cookie has "+attribute+", so a browser sends it cross-site: a malicious page can open the live stream with a visitor's session.").
+		withEvidence("session cookie: %s", attribute).
+		withRemediation("Enable web.security.origin_validation so CheckOrigin rejects foreign origins; with web.security.allowed_origins set, Kula issues SameSite=None cookies, so origin validation is the only guard.")
 }

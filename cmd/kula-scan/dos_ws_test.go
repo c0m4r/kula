@@ -233,6 +233,21 @@ func TestHeaderBombTellsATimeoutFromARefusal(t *testing.T) {
 	wantStatus(t, runHeaderBombCheck(dosScanner(t, endless, 20*time.Second, time.Second)), "DOS-HEADERBOMB", StatusError)
 }
 
+// TestDoSProbesWithoutAConnectionAreErrors: probes that open no connection
+// report an ERROR that says why, never a PASS.
+func TestDoSProbesWithoutAConnectionAreErrors(t *testing.T) {
+	s := dosScanner(t, "http://"+closedAddress(t), 5*time.Second, time.Second)
+	for name, run := range map[string]func(*Scanner) []Finding{
+		"DOS-SLOWLORIS":  runSlowlorisCheck,
+		"DOS-HEADERBOMB": runHeaderBombCheck,
+		"DOS-CONNFLOOD":  runConnFloodCheck,
+	} {
+		if f, _ := byID(run(s), name); f.Status != StatusError || !strings.Contains(f.Detail, "refused") {
+			t.Errorf("%s against a closed port = %s %q, want an ERROR saying why", name, f.Status, f.Detail)
+		}
+	}
+}
+
 // ---- WS-FLOOD -------------------------------------------------------------------------
 
 // wsCapTarget serves /ws, refusing an upgrade with Kula's 429 and message
@@ -435,17 +450,77 @@ func TestWSUpgradesWithoutAnAnswerAreErrors(t *testing.T) {
 	}
 }
 
-// TestDoSProbesWithoutAConnectionAreErrors: probes that open no connection
-// report an ERROR that says why, never a PASS.
-func TestDoSProbesWithoutAConnectionAreErrors(t *testing.T) {
-	s := dosScanner(t, "http://"+closedAddress(t), 5*time.Second, time.Second)
-	for name, run := range map[string]func(*Scanner) []Finding{
-		"DOS-SLOWLORIS":  runSlowlorisCheck,
-		"DOS-HEADERBOMB": runHeaderBombCheck,
-		"DOS-CONNFLOOD":  runConnFloodCheck,
-	} {
-		if f, _ := byID(run(s), name); f.Status != StatusError || !strings.Contains(f.Detail, "refused") {
-			t.Errorf("%s against a closed port = %s %q, want an ERROR saying why", name, f.Status, f.Detail)
+// sameSiteTarget is Kula with origin validation off: /api/login issues the
+// session cookie with sameSite, and /ws upgrades any Origin, with that
+// session when auth is on.
+func sameSiteTarget(t *testing.T, auth bool, sameSite http.SameSite) *httptest.Server {
+	t.Helper()
+	const token = "the-session"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/login":
+			http.SetCookie(w, &http.Cookie{Name: "kula_session", Value: token, Path: "/", HttpOnly: true, SameSite: sameSite})
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"logged in","csrf_token":"csrf"}`))
+		case "/ws":
+			if cookie, err := r.Cookie("kula_session"); auth && (err != nil || cookie.Value != token) {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// TestCrossOriginUpgradeJudgedByTheSessionCookie: with origin validation off,
+// what another site can do with /ws depends on auth and on whether a browser
+// sends the session cookie cross-site.
+func TestCrossOriginUpgradeJudgedByTheSessionCookie(t *testing.T) {
+	cases := []struct {
+		name        string
+		auth        bool
+		sameSite    http.SameSite
+		status      Status
+		sev         Severity
+		expectation string
+	}{
+		{"auth off", false, http.SameSiteStrictMode, StatusFail, SevHigh, ""},
+		{"SameSite=None", true, http.SameSiteNoneMode, StatusFail, SevHigh, ""},
+		{"no SameSite", true, http.SameSiteDefaultMode, StatusFail, SevHigh, ""},
+		{"SameSite=Strict", true, http.SameSiteStrictMode, StatusWarn, SevMedium, "origin-validation"},
+		{"SameSite=Lax", true, http.SameSiteLaxMode, StatusWarn, SevMedium, "origin-validation"},
+	}
+	for _, c := range cases {
+		ts := sameSiteTarget(t, c.auth, c.sameSite)
+		s, err := NewScanner(Options{Target: ts.URL, Username: "admin", Password: "secret", Timeout: 5 * time.Second,
+			Expect: []string{"origin-validation"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.authEnabled = c.auth
+		findings := runWSChecks(s)
+		f, _ := byID(findings, "WS-002")
+		if f.Status != c.status || f.Severity != c.sev || f.Expectation != c.expectation {
+			t.Errorf("%s: WS-002 = %s %s, expectation %q (%q); want %s %s, expectation %q",
+				c.name, f.Status, f.Severity, f.Expectation, f.Detail, c.status, c.sev, c.expectation)
+		}
+		wantStatus(t, findings, "WS-000", StatusPass)
+		if c.auth {
+			wantStatus(t, findings, "WS-001", StatusPass)
+		}
+		// -expect origin-validation fails the WARN, as it does CSRF-001.
+		s.applyExpectations(findings)
+		if f, _ := byID(findings, "WS-002"); f.Status != StatusFail {
+			t.Errorf("%s: WS-002 under -expect origin-validation = %s, want FAIL", c.name, f.Status)
 		}
 	}
 }
