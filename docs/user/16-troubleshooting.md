@@ -61,6 +61,8 @@ syscall filter denies a Landlock call. Kula keeps running without the sandbox. A
 - Login is rate-limited over a **5-minute window**: **5 attempts per username *and* IP**,
   and **15 attempts per IP** overall. Wait ~5 minutes after repeated failures. Over IPv6 the
   limits count a whole /64 network, so machines sharing one share them.
+- A `kula-scan -aggressive` run spends the whole per-IP limit on purpose: logins from the
+  scanning machine's address are refused for about five minutes after it.
 - Regenerate the hash with `./kula hash-password` if you're unsure of the password, and make
   sure both `password_hash` **and** `password_salt` are pasted.
 - Make sure the `web.auth.argon2` parameters at hash-generation time match those in the
@@ -110,7 +112,7 @@ Change `web.port` / `KULA_PORT`, or switch to a Unix socket with `web.unix_socke
 2. `kula inspect` — confirm storage is healthy and growing.
 3. `curl localhost:27960/health` — confirm the server is up.
 4. Raise `web.logging.level` to `debug` and watch the logs.
-5. Run [`kula-scan`](../dev/13-kula-scan.md) against the instance to verify the security
+5. Run [`kula-scan`](../../cmd/kula-scan/README.md) against the instance to verify the security
    posture of your deployment. The packages, tarballs and Docker image do not include it: each
    release ships it per architecture as `kula-scan-linux-<version>-<arch>.gz` (`amd64`,
    `arm64`, `riscv64`), listed in the release's `CHECKSUMS.sha256.txt`. Take the release that

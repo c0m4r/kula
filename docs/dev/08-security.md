@@ -6,8 +6,9 @@ systemd unit. This page covers the application-level mechanisms; the OS sandbox 
 ([Landlock Sandbox](09-sandbox.md)).
 
 Most of this lives in [`internal/web/auth.go`](../../internal/web/auth.go) and
-[`internal/web/server.go`](../../internal/web/server.go), and is verified both by in-tree tests
-and by the out-of-tree [kula-scan](13-kula-scan.md) black-box scanner.
+[`internal/web/server.go`](../../internal/web/server.go), and is verified both by unit tests and
+by the black-box scanner [kula-scan](13-kula-scan.md), which probes a running instance over the
+wire.
 
 ## Authentication
 
@@ -284,7 +285,10 @@ Security-critical paths have dedicated tests:
 - `config_test.go` — YAML parsing, env overrides, tier validation, `allowed_origins` and
   `allowed_hosts` normalization.
 
-Plus the external **[kula-scan](13-kula-scan.md)** scanner, which verifies these defenses over
-the wire against a *running* instance.
+Plus the **[kula-scan](13-kula-scan.md)** scanner, which verifies these defenses over the wire
+against a *running* instance; its integration test runs it against the real `kula serve` in
+several postures, so a change that weakens a safeguard fails `go test`
+([Testing](12-testing.md#black-box-scanning-kula-scan)). A new safeguard, route or limit needs
+its scanner check there too.
 
 Next: [Landlock Sandbox](09-sandbox.md).

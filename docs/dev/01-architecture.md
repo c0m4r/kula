@@ -72,7 +72,7 @@ the binary via `//go:embed`, so there are no runtime assets to ship.
 | `internal/backup` | Cron-scheduled tier-file snapshots | [Backups](../user/12-backups.md) |
 | `internal/sysinfo` | Live hardware inventory for the System Info page and `/api/system-info` | [Web Dashboard](../user/05-web-dashboard.md) |
 | `cmd/kula` | Binary entrypoint + subcommands | [CLI Reference](../user/14-cli-reference.md) |
-| `cmd/kula-scan` | Out-of-tree black-box security scanner | [kula-scan](13-kula-scan.md) |
+| `cmd/kula-scan` | Black-box safeguard scanner for a running instance (separate binary) | [kula-scan](13-kula-scan.md) |
 | `cmd/gen-mock-data` | Generates multi-day mock timeseries for storage tests | [Testing](12-testing.md) |
 
 ## Key design choices

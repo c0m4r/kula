@@ -25,7 +25,8 @@ From [`AGENTS.md`](../../AGENTS.md):
 2. Make your change. Match the surrounding code's style, naming, and comment density.
 3. Add/adjust tests (see [Testing & QA](12-testing.md)). New parsers should get a fuzz target;
    security-relevant changes should be covered by both unit tests and, where applicable,
-   [kula-scan](13-kula-scan.md).
+   [kula-scan](13-kula-scan.md): a new safeguard, route or limit needs its scanner check and its
+   line in the scanner's integration test.
 4. Run `./addons/check.sh` until green. Frontend/dashboard changes also need
    `./addons/test-frontend-regressions.sh` (Node.js 22+ and Chromium/Chrome).
 5. If you touched Python helpers, run `black`, `pylint`, and `mypy --strict`.

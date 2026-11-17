@@ -1,7 +1,8 @@
 # Testing & QA
 
 Kula has unit tests, race tests, native fuzz targets, benchmarks, in-process runtime security
-tests, and an out-of-tree black-box scanner. The canonical gate is `./addons/check.sh`.
+tests, and a black-box scanner, `kula-scan`, run against the real server by an integration test.
+The canonical gate is `./addons/check.sh`.
 
 ## The check gate
 
@@ -354,10 +355,31 @@ end, not just unit logic.
 
 ## Black-box scanning (kula-scan)
 
-[`kula-scan`](13-kula-scan.md) verifies the same defenses **in the field**, over HTTP/WebSocket,
-against a running instance — complementing the in-tree tests. It imports nothing from `internal/`,
-so every assertion is made over the wire. Use it as a release/CI gate against a stood-up
-instance.
+[`kula-scan`](13-kula-scan.md) verifies the same defenses in the field, over the wire, against a
+running instance; it imports nothing from `internal/`. Use it as a CI or release gate against a
+stood-up instance ([exit statuses](../../cmd/kula-scan/README.md#exit-status)). It is tested at
+three levels:
+
+- **Unit tests** in `cmd/kula-scan` judge every check against mock servers that hold or break
+  each safeguard, and cover the transport, report formats and exit statuses.
+- **Integration test.** `<<integration-test-file>>` builds `kula`, boots the real `kula serve`
+  in several postures, runs the scanner against each and asserts its exit status and the exact
+  set of WARN and SKIP findings. A server change that weakens a safeguard, or a scanner change
+  that misjudges one, fails it. It runs with the rest of `go test ./...` and is skipped under
+  `go test -short`. The two slow DoS probes, `DOS-SLOWLORIS` and `DOS-CONNFLOOD`, which wait out
+  `-dos-wait`, run only when `<<slow-dos-env>>` is set:
+
+  ```bash
+  go test -race -run <<integration-test-name>> ./cmd/kula-scan
+  <<slow-dos-env>>=1 go test -race -run <<integration-test-name>> ./cmd/kula-scan
+  ```
+
+- **Showcase.** `./showcase.sh test` ([Feature showcase](#feature-showcase-docker)) also runs the
+  scanner against the showcase's Kula, under its base path and through Caddy over HTTPS
+  (`<<showcase-step>>`).
+
+A new safeguard, route or limit in `internal/web` needs its scanner check and its line in the
+integration test's expectation tables ([Adding a check](13-kula-scan.md#adding-a-check)).
 
 ## Python helpers
 

@@ -169,6 +169,25 @@ per-application reducer branches.
   `TestHistoryResponsesMatchDashboardContract` (storage) feeds real responses to the frontend
   modules; add a scenario there when a change alters tiers, steps, clipping or extrema profiles.
 
+### kula-scan — black-box, catalog-driven
+
+`cmd/kula-scan/` judges a running Kula over the wire and imports nothing from `internal/` (only
+the root `kula` package, for its version).
+
+- Every finding ID has one entry in `catalog` (`catalog.go`) and is declared by exactly one check
+  in `allChecks()`; discovery's come from `discover()`. `TestCatalogCoversEveryEmittedID` and
+  `TestRegistryDeclaresEveryCatalogID` fail otherwise. A title never varies; the detail does.
+- A check never passes because its requests failed (that is an ERROR, exit 3) and never FAILs a
+  correct Kula: an operator's choice is a WARN tagged `expecting(key)`, which `-expect` gates.
+- A default run spends one login, through `ensureSession()`, and logs out; it never sends a
+  wrong password for the supplied account (`TestDefaultRunLogsInOnceAndOut`).
+- Every probe that posts to `/api/login` runs before `RATE-LOGIN` and `BYPASS-XFF`, which exhaust
+  the login limiter; `FUZZ-LIVENESS` runs last. The comment in `allChecks()` is the budget and
+  `TestLoginBudgetOrder` the order; a probe that spends logins updates both.
+- A new server safeguard, route or limit needs its scanner check and its line in the expectation
+  tables of `<<integration-test-file>>`, which boots the real `kula serve`. A new deliberate 5xx
+  needs an entry in `deliberate5xx` (`checks_fuzz.go`), or `-fuzz` reports it as an anomaly.
+
 ### Build and lint
 
 - **CGO-free** (`CGO_ENABLED=0`). Do not introduce cgo dependencies.
@@ -224,7 +243,7 @@ code, and trust the code when the two disagree.
 | Storage engine, binary codec | `docs/dev/05-storage-engine.md`, `docs/dev/06-storage-codec.md` |
 | Web server & API, security, sandbox | `docs/dev/07-web-server-api.md`, `docs/dev/08-security.md`, `docs/dev/09-sandbox.md` |
 | Frontend, i18n | `docs/dev/10-frontend.md`, `docs/dev/11-i18n.md` |
-| kula-scan | `docs/dev/13-kula-scan.md` |
+| kula-scan | `cmd/kula-scan/README.md` (reference), `docs/dev/13-kula-scan.md` (internals) |
 | Adding a metric type | `docs/dev/14-adding-metrics.md` |
 | Packaging, release, contributing | `docs/dev/15-packaging.md`, `docs/dev/16-contributing.md` |
 | User-facing behavior and config reference | `docs/user/` |

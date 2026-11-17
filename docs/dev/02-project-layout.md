@@ -97,11 +97,12 @@ names too.
 
 ## The binaries
 
-The module produces three binaries but ships only one:
+The module produces three binaries and ships two:
 
 - **`./cmd/kula`** — the released binary (and Docker image).
-- **`./cmd/kula-scan`** — a developer/operator security scanner that imports nothing from
-  `internal/`; not in releases but covered by `go vet ./...` and `go test ./...`. See
+- **`./cmd/kula-scan`** — the black-box safeguard scanner for a running instance, which imports
+  nothing from `internal/`. Each release ships it as an asset of its own,
+  `kula-scan-linux-<version>-<arch>.gz`; the packages, tarballs and Docker image leave it out. See
   [kula-scan](13-kula-scan.md).
 - **`./cmd/gen-mock-data`** — the mock-history fixture generator used by storage testing; not
   in releases, but covered by the same gate. See [Testing](12-testing.md#realistic-mock-history).

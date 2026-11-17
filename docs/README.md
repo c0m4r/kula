@@ -54,7 +54,7 @@ For contributors and people building on top of Kula.
 | 10 | [Frontend](dev/10-frontend.md) | The embedded SPA dashboard |
 | 11 | [Internationalization](dev/11-i18n.md) | The i18n system and locales |
 | 12 | [Testing & QA](dev/12-testing.md) | Unit, race, fuzz, and benchmark suites |
-| 13 | [kula-scan](dev/13-kula-scan.md) | The black-box security scanner |
+| 13 | [kula-scan](dev/13-kula-scan.md) | The black-box safeguard scanner: how it works and how to extend it ([reference](../cmd/kula-scan/README.md)) |
 | 14 | [Adding a Metric Type](dev/14-adding-metrics.md) | Step-by-step codec extension guide |
 | 15 | [Packaging & Release](dev/15-packaging.md) | Building distro packages and releases |
 | 16 | [Contributing](dev/16-contributing.md) | Conventions, governance, and workflow |
