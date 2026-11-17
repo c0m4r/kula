@@ -49,6 +49,7 @@ type ReportOptions struct {
 	FailOn     string   `json:"fail_on"`
 	Connect    string   `json:"connect,omitempty"` // -connect: where connections went instead of the URL's address
 	Unix       string   `json:"unix,omitempty"`    // -unix: the socket connections went to
+	Headers    []string `json:"headers,omitempty"` // the -H header names; never their values
 }
 
 // TargetInfo is what discovery learnt about the target.

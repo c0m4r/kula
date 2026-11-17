@@ -96,7 +96,9 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		verbose    = fs.Bool("v", false, "verbose: log each request and its response status to stderr")
 		list       = fs.Bool("list", false, "print every finding ID with its category, mode and title, then exit")
 		version    = fs.Bool("version", false, "print the version and exit")
+		headers    headerFlags
 	)
+	fs.Var(&headers, "H", "'Name: value' header sent on every request, e.g. a gateway's access token (repeatable; values are never printed)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -174,6 +176,7 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Expect:   expected,
 		Connect:  *connect,
 		Unix:     *unix,
+		Headers:  headers,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
@@ -223,6 +226,7 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		FailOn:     strings.ToLower(failSev.String()),
 		Connect:    *connect,
 		Unix:       *unix,
+		Headers:    scanner.extraHeaderNames(),
 	}
 	if *fuzz {
 		report.Options.Seed = scanner.seed
@@ -273,6 +277,17 @@ func resolvePassword(flagValue string) string {
 		return flagValue
 	}
 	return os.Getenv(passwordEnv)
+}
+
+// headerFlags collects the repeatable -H flag. String shows no value: the
+// flag package prints it, and header values are secrets.
+type headerFlags []string
+
+func (h *headerFlags) String() string { return "" }
+
+func (h *headerFlags) Set(value string) error {
+	*h = append(*h, value)
+	return nil
 }
 
 // colorEnabled reports whether ANSI colors should be used on w: honors
@@ -333,6 +348,10 @@ Flags:
                       name, or a backend behind its proxy)
   -unix path          connect over this Unix socket (Kula's web.unix_socket); the URL still
                       gives the Host header and base path
+  -H 'Name: value'    header sent on every request, for a gateway in front of Kula (an access
+                      proxy's token, basic auth at the proxy); repeatable. A probe's own header
+                      of the same name wins, except Cookie, which carries both. Values are
+                      never printed; the JSON report lists the names
   -timeout duration   per-request timeout (default 10s)
   -dos-wait duration  how long DoS probes wait for a slow/idle connection to be reaped (default 35s)
   -insecure           skip TLS certificate verification

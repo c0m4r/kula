@@ -167,8 +167,6 @@ func (c check) entry() catalogEntry {
 type Scanner struct {
 	base       *url.URL // scheme + host + base path; no trailing slash beyond base
 	rawBase    string   // original -target string, for messages
-	network    string   // "tcp", or "unix" with -unix
-	address    string   // where every connection goes (see dial)
 	client     *http.Client
 	insecure   bool
 	timeout    time.Duration
@@ -183,6 +181,13 @@ type Scanner struct {
 	progress   bool            // log one line per check as it starts
 	log        io.Writer       // request and progress lines; never the report
 	expect     map[string]bool // the -expect keys declared
+
+	// How the target is reached: every connection goes to address over
+	// network ("tcp", or "unix" with -unix; see dial), and every request
+	// carries the -H headers (see addExtraHeaders).
+	network string
+	address string
+	extra   []extraHeader
 
 	// ctx is the run's context (Run sets it): every request and dial derives
 	// from it, so cancelling it aborts what is in flight.
@@ -245,6 +250,9 @@ type Options struct {
 	// Host header, the TLS server name, Origin values and the base path.
 	Connect string
 	Unix    string
+	// Headers are -H "Name: value" headers sent on every request, for a
+	// gateway in front of Kula. Their values are never printed.
+	Headers []string
 }
 
 // NewScanner builds a Scanner for opt.Target. opt.BasePath, when non-empty, is
@@ -279,6 +287,10 @@ func NewScanner(opt Options) (*Scanner, error) {
 	if err != nil {
 		return nil, err
 	}
+	extra, err := parseExtraHeaders(opt.Headers)
+	if err != nil {
+		return nil, err
+	}
 
 	if opt.Timeout <= 0 {
 		opt.Timeout = 10 * time.Second
@@ -306,6 +318,7 @@ func NewScanner(opt Options) (*Scanner, error) {
 		rawBase:    opt.Target,
 		network:    network,
 		address:    address,
+		extra:      extra,
 		insecure:   opt.Insecure,
 		timeout:    opt.Timeout,
 		dosWait:    opt.DoSWait,
@@ -485,8 +498,9 @@ type httpResult struct {
 
 // do issues an HTTP request to path with optional headers and body, returning a
 // compact result. Cookies are never persisted between calls (the client has no
-// jar); callers set Cookie/Authorization headers explicitly. The request ends
-// with the run: an interrupt aborts it.
+// jar); callers set Cookie/Authorization headers explicitly. The -H headers
+// are added (see addExtraHeaders). The request ends with the run: an
+// interrupt aborts it.
 func (s *Scanner) do(method, path string, headers map[string]string, body string) httpResult {
 	return s.doContext(s.ctx, method, path, headers, body)
 }
@@ -507,6 +521,7 @@ func (s *Scanner) doContext(parent context.Context, method, path string, headers
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	s.addExtraHeaders(req.Header)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		if s.verbose {
@@ -586,7 +601,7 @@ func (s *Scanner) rawTCP(requestLine string) (int, string) {
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(s.timeout))
 
-	if _, err := fmt.Fprintf(conn, "%s\r\nHost: %s\r\nConnection: close\r\n\r\n", requestLine, s.base.Host); err != nil {
+	if _, err := fmt.Fprintf(conn, "%s\r\nHost: %s\r\n%sConnection: close\r\n\r\n", requestLine, s.base.Host, s.rawHeaderLines(nil)); err != nil {
 		return 0, ""
 	}
 	resp, err := readResponse(conn)
@@ -675,14 +690,17 @@ func (c *budgetConn) Read(p []byte) (int, error) {
 }
 
 // wsDial attempts a WebSocket upgrade to path with the given extra headers,
-// returning the HTTP response (for status inspection) and the connection (nil
-// on failure). The caller is responsible for closing a non-nil connection.
+// and the -H headers (see addExtraHeaders), returning the HTTP response (for
+// status inspection) and the connection (nil on failure). The caller is
+// responsible for closing a non-nil connection.
 func (s *Scanner) wsDial(path string, headers http.Header) (*websocket.Conn, *http.Response, error) {
 	scheme := "ws"
 	if s.https {
 		scheme = "wss"
 	}
 	wsURL := scheme + "://" + s.base.Host + s.base.Path + path
+	headers = cloneHeader(headers)
+	s.addExtraHeaders(headers)
 
 	dialer := *websocket.DefaultDialer
 	dialer.HandshakeTimeout = s.timeout

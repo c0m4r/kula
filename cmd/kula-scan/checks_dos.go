@@ -45,7 +45,7 @@ func dosWaitHint(s *Scanner) string {
 // reaps the stalled connections within dosWait (i.e. ReadTimeout is enforced).
 func runSlowlorisCheck(s *Scanner) []Finding {
 	const conns = 12
-	reqHead := fmt.Sprintf("GET %s/ HTTP/1.1\r\nHost: %s\r\n", s.base.Path, s.base.Host)
+	reqHead := fmt.Sprintf("GET %s/ HTTP/1.1\r\nHost: %s\r\n%s", s.base.Path, s.base.Host, s.rawHeaderLines(nil))
 
 	var opened []net.Conn
 	defer func() {
@@ -153,7 +153,7 @@ func runHeaderBombCheck(s *Scanner) []Finding {
 	// Write the bomb in a goroutine: the server may answer 431 and close the
 	// connection before we finish writing 2 MiB, which would error our Write.
 	go func() {
-		_, _ = fmt.Fprintf(conn, "GET %s/ HTTP/1.1\r\nHost: %s\r\nX-Bomb: ", s.base.Path, s.base.Host)
+		_, _ = fmt.Fprintf(conn, "GET %s/ HTTP/1.1\r\nHost: %s\r\n%sX-Bomb: ", s.base.Path, s.base.Host, s.rawHeaderLines(nil))
 		chunk := strings.Repeat("A", 64*1024)
 		for i := 0; i < 32; i++ { // 2 MiB total, past the 1 MiB default cap
 			if _, err := conn.Write([]byte(chunk)); err != nil {

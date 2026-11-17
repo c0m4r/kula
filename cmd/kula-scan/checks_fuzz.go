@@ -267,9 +267,13 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 		// Obfuscated Transfer-Encoding.
 		fmt.Sprintf("POST %s/api/login HTTP/1.1\r\nHost: %s\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: identity\r\nConnection: close\r\n\r\n0\r\n\r\n", bp, host),
 	}
+	// The -H header lines follow the Host line of what is sent; the evidence
+	// quotes the request without them, since their values are secrets.
+	hostLine := "\r\nHost: " + host + "\r\n"
+	extra := s.rawHeaderLines(nil)
 	var hits []fuzzHit
 	for _, raw := range raws {
-		status, _ := s.rawExchange(raw)
+		status, _ := s.rawExchange(strings.Replace(raw, hostLine, hostLine+extra, 1))
 		switch {
 		case status == 500:
 			// A 400/501 rejection is the correct, safe response; only a 500 means

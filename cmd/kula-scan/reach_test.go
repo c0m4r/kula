@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -340,6 +341,197 @@ func TestBadBasePathsAreUsageErrors(t *testing.T) {
 		}
 		if !strings.Contains(stderr, "base path") && !strings.Contains(stderr, "-base-path") {
 			t.Errorf("%q: the error does not name the base path:\n%s", args, stderr)
+		}
+	}
+}
+
+// Extra header values the tests send: secrets, which no output may show.
+const (
+	gatewayToken  = "gw-token-s3cret"
+	gatewayCookie = "gw=c00kie-s3cret"
+)
+
+// TestExtraHeadersReachEveryRequest: -H headers travel on HTTP, raw-socket
+// and WebSocket requests alike, a -H cookie with the session's, and their
+// values appear nowhere in the output.
+func TestExtraHeadersReachEveryRequest(t *testing.T) {
+	rec := &requestRecorder{}
+	ts := httptest.NewServer(rec.wrap(secureMock()))
+	defer ts.Close()
+	t.Setenv(passwordEnv, mockPass)
+
+	code, stdout, stderr := runCaptured(t, "-json", "-v", "-username", mockUser,
+		"-H", "x-gateway-token: "+gatewayToken, "-H", "Cookie:"+gatewayCookie,
+		"-only", "headers,auth,csrf,traversal,metrics,ws", ts.URL)
+	if code != exitClean {
+		t.Fatalf("exit %d; stderr:\n%s", code, stderr)
+	}
+	report := decodeReport(t, stdout)
+	for _, id := range []string{"AUTH-005", "CSRF-003", "TRAV-001", "WS-000", "WS-002"} {
+		wantStatus(t, report.Findings, id, StatusPass)
+	}
+	if got := strings.Join(report.Options.Headers, ","); got != "X-Gateway-Token,Cookie" {
+		t.Errorf("options.headers = %q, want the names X-Gateway-Token,Cookie", got)
+	}
+	for _, secret := range []string{gatewayToken, gatewayCookie} {
+		if strings.Contains(stdout, secret) || strings.Contains(stderr, secret) {
+			t.Errorf("the output shows the header value %q", secret)
+		}
+	}
+	if !strings.Contains(stderr, "GET /metrics -> 401") {
+		t.Errorf("-v logged no requests:\n%s", stderr)
+	}
+
+	requests := rec.requests()
+	session := 0
+	for _, r := range requests {
+		if got := r.header.Values("X-Gateway-Token"); len(got) != 1 || got[0] != gatewayToken {
+			t.Errorf("%s carried X-Gateway-Token %q", r.path, got)
+		}
+		cookie := r.header.Get("Cookie")
+		switch {
+		case cookie == gatewayCookie+"; kula_session="+mockToken:
+			session++
+		case !strings.HasPrefix(cookie, gatewayCookie):
+			t.Errorf("%s carried Cookie %q, want the -H cookie first", r.path, cookie)
+		}
+	}
+	if session == 0 {
+		t.Error("no request carried the -H cookie together with the session cookie")
+	}
+	if raw, ws := sawRawAndWebSocket(requests); !raw || !ws {
+		t.Errorf("the target saw a raw-socket request: %v, a WebSocket handshake: %v", raw, ws)
+	}
+}
+
+// TestProbeHeadersWinOverExtraHeaders: a probe that sets a header itself
+// sends its own value, not the -H one.
+func TestProbeHeadersWinOverExtraHeaders(t *testing.T) {
+	rec := &requestRecorder{}
+	ts := httptest.NewServer(rec.wrap(secureMock()))
+	defer ts.Close()
+
+	code, _, stderr := runCaptured(t, "-json", "-H", "Authorization: Basic Z2F0ZXdheQ==",
+		"-H", "Origin: https://gateway.example", "-only", "metrics,csrf", ts.URL)
+	if code != exitClean {
+		t.Fatalf("exit %d; stderr:\n%s", code, stderr)
+	}
+	var basic, bearer, evil bool
+	for _, r := range rec.requests() {
+		authorization, origin := r.header.Values("Authorization"), r.header.Values("Origin")
+		if len(authorization) != 1 || len(origin) != 1 {
+			t.Errorf("%s carried Authorization %q and Origin %q, want one of each", r.path, authorization, origin)
+			continue
+		}
+		basic = basic || (r.path == "/metrics" && authorization[0] == "Basic Z2F0ZXdheQ==")
+		bearer = bearer || (r.path == "/metrics" && strings.HasPrefix(authorization[0], "Bearer wrong-"))
+		evil = evil || (r.path == "/api/login" && origin[0] == "https://evil.example")
+	}
+	if !basic || !bearer || !evil {
+		t.Errorf("-H Authorization on the tokenless request: %v; the probe's wrong bearer token: %v; the probe's foreign Origin: %v",
+			basic, bearer, evil)
+	}
+}
+
+// headCapture accepts connections and records the first bytes each sends,
+// up to the end of the request head or a short pause, then answers 400.
+func headCapture(t *testing.T) (string, func() []string) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	var mu sync.Mutex
+	var heads []string
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				var head []byte
+				buf := make([]byte, 4096)
+				for len(head) < 64<<10 && !strings.Contains(string(head), "\r\n\r\n") {
+					_ = conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+					n, err := conn.Read(buf)
+					head = append(head, buf[:n]...)
+					if err != nil {
+						break
+					}
+				}
+				mu.Lock()
+				heads = append(heads, string(head))
+				mu.Unlock()
+				_ = conn.SetWriteDeadline(time.Now().Add(time.Second))
+				_, _ = conn.Write([]byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+			}()
+		}
+	}()
+	return "http://" + listener.Addr().String(), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), heads...)
+	}
+}
+
+// TestExtraHeadersReachRawRequests: the request heads the raw-socket probes
+// write by hand carry the -H headers after their Host line.
+func TestExtraHeadersReachRawRequests(t *testing.T) {
+	target, heads := headCapture(t)
+	s, err := NewScanner(Options{Target: target, Timeout: 5 * time.Second, DoSWait: time.Second,
+		Headers: []string{"X-Gateway-Token: " + gatewayToken}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.rawTCP("GET /style.css HTTP/1.1")
+	runSlowlorisCheck(s)
+	runHeaderBombCheck(s)
+	runFuzzSmuggle(s)
+
+	want := "\r\nX-Gateway-Token: " + gatewayToken + "\r\n"
+	captured := heads()
+	for _, head := range captured {
+		if !strings.Contains(head, want) {
+			t.Errorf("a request head lacks the -H header:\n%q", head)
+		}
+	}
+	for _, probe := range []string{"GET /style.css", "X-Slowloris", "X-Bomb", "Transfer-Encoding: chunked"} {
+		if !slices.ContainsFunc(captured, func(head string) bool { return strings.Contains(head, probe) }) {
+			t.Errorf("the target saw no request head with %q", probe)
+		}
+	}
+}
+
+func TestBadExtraHeadersAreUsageErrors(t *testing.T) {
+	for _, c := range []struct{ header, want string }{
+		{"X-Token: a\r\nX-Injected: 1", "line break"},
+		{"X-Token: a\nb", "line break"},
+		{"X-Token: a\x00b", "control character"},
+		{"X-Token-s3cret", "Name: value"},
+		{": s3cret", "Name: value"},
+		{"Bad Name: s3cret", "Name: value"},
+		{"Authorization Bearer s3cret:x", "Name: value"},
+		{"X-Token:", "no value"},
+		{"X-Token: \t ", "no value"},
+		{"Host: other.example", "-connect"},
+		{"host: other.example", "-connect"},
+		{"Content-Length: 5", "Content-Length"},
+		{"Transfer-Encoding: chunked", "Transfer-Encoding"},
+		{"Connection: keep-alive", "Connection"},
+		{"Sec-WebSocket-Key: x", "Sec-Websocket-Key"},
+	} {
+		code, stdout, stderr := runCaptured(t, "-H", "X-Fine: 1", "-H", c.header, "http://kula-scan.invalid")
+		if code != exitUsage || stdout != "" {
+			t.Errorf("-H %q: exit %d, stdout %q; want a usage error", c.header, code, stdout)
+		}
+		if !strings.Contains(stderr, c.want) {
+			t.Errorf("-H %q: the error does not say %q:\n%s", c.header, c.want, stderr)
+		}
+		if strings.Contains(stderr, "s3cret") {
+			t.Errorf("-H %q: the error shows the value:\n%s", c.header, stderr)
 		}
 	}
 }
