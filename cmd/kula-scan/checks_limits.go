@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -63,31 +62,20 @@ const (
 // token), or the status and detail of the finding that says why it cannot.
 func (s *Scanner) chatAccess() (map[string]string, Status, string) {
 	hdr := map[string]string{"Content-Type": "application/json", "Origin": s.base.Scheme + "://" + s.base.Host}
-	if !s.authEnabled {
-		if !s.ollama {
-			return nil, StatusSkip, "the AI assistant is not enabled (/api/config says ollama_enabled is false)."
-		}
-		return hdr, StatusPass, ""
-	}
-	if !s.ensureSession() {
+	if s.authEnabled && !s.ensureSession() {
 		return nil, StatusSkip, "auth is enabled and no session is available to reach the chat: " + s.noSessionReason() + "."
 	}
-	// Without a session discovery could not read whether the assistant is on.
-	r := s.do(http.MethodGet, "/api/config", map[string]string{"Cookie": "kula_session=" + s.session}, "")
-	var config struct {
-		OllamaEnabled bool `json:"ollama_enabled"`
-	}
-	switch {
-	case r.err != nil:
-		return nil, StatusError, "could not read /api/config to learn whether the AI assistant is enabled: " + r.err.Error()
-	case r.status != http.StatusOK || json.Unmarshal([]byte(r.body), &config) != nil:
-		return nil, StatusError, fmt.Sprintf("/api/config answered HTTP %d to the session, not the configuration, so whether the AI assistant is enabled is unknown.", r.status)
-	case !config.OllamaEnabled:
+	switch enabled, st, why := s.assistantEnabled(); {
+	case st != StatusPass:
+		return nil, st, why + "."
+	case !enabled:
 		return nil, StatusSkip, "the AI assistant is not enabled (/api/config says ollama_enabled is false)."
 	}
-	hdr["Cookie"] = "kula_session=" + s.session
-	if s.csrf != "" {
-		hdr["X-CSRF-Token"] = s.csrf
+	if s.authEnabled {
+		hdr["Cookie"] = "kula_session=" + s.session
+		if s.csrf != "" {
+			hdr["X-CSRF-Token"] = s.csrf
+		}
 	}
 	return hdr, StatusPass, ""
 }

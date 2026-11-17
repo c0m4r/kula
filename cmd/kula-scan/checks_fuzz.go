@@ -954,28 +954,19 @@ func (s *Scanner) postFuzzBodies(path string, bodies []fuzzBody, headers map[str
 }
 
 // chatOpen reports whether the AI chat can be sent bodies, or why not.
-// Discovery reads ollama_enabled from /api/config, which auth hides from a
-// client without a session; behind auth it is asked again with the session.
+// Behind auth the chat needs the session, which is also what reads whether
+// the assistant is enabled (assistantEnabled).
 func (s *Scanner) chatOpen() (bool, string) {
-	const disabled = "the AI assistant is disabled, so there is no chat endpoint"
-	switch {
-	case !s.authEnabled && !s.ollama:
-		return false, disabled
-	case !s.authEnabled:
-		return true, ""
-	case !s.ensureSession():
+	if s.authEnabled && !s.ensureSession() {
 		return false, "auth is enabled and no session is available to reach the AI chat: " + s.noSessionReason()
-	case s.ollama:
-		return true, ""
 	}
-	r := s.do(http.MethodGet, "/api/config", s.authedHeaders(false), "")
-	var cfg struct {
-		OllamaEnabled bool `json:"ollama_enabled"`
+	switch enabled, st, why := s.assistantEnabled(); {
+	case st != StatusPass:
+		return false, why
+	case !enabled:
+		return false, "the AI assistant is disabled, so there is no chat endpoint"
 	}
-	if r.err == nil && r.status == http.StatusOK && json.Unmarshal([]byte(r.body), &cfg) == nil && cfg.OllamaEnabled {
-		return true, ""
-	}
-	return false, disabled
+	return true, ""
 }
 
 // ---- FUZZ-METHODS -----------------------------------------------------------

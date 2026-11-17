@@ -52,7 +52,9 @@ type ReportOptions struct {
 	Headers    []string `json:"headers,omitempty"` // the -H header names; never their values
 }
 
-// TargetInfo is what discovery learnt about the target.
+// TargetInfo is what discovery learnt about the target, and behind auth what
+// the run's session read of /api/config: Ollama and Version stay unset when
+// auth hid it and the run opened no session.
 type TargetInfo struct {
 	HTTPS       bool   `json:"https"`
 	AuthEnabled bool   `json:"auth_enabled"`

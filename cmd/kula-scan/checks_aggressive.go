@@ -136,16 +136,20 @@ func runLoginRateCheck(s *Scanner) []Finding {
 }
 
 // runOllamaRateCheck floods the Ollama meta endpoint and expects 429s. SKIP when
-// Ollama is not enabled on the target.
+// Ollama is not enabled on the target. Behind auth it needs the session, which
+// is also what reads whether Ollama is enabled (assistantEnabled).
 func runOllamaRateCheck(s *Scanner) []Finding {
-	if !s.ollama {
-		return []Finding{finding("RATE-OLLAMA", SevInfo, StatusSkip,
-			"Ollama integration is not enabled on this instance.")}
-	}
 	hdr, ok := s.apiHeaders()
 	if !ok {
 		return []Finding{finding("RATE-OLLAMA", SevInfo, StatusSkip,
-			"auth is enabled and no session is available to reach the Ollama endpoints.")}
+			"auth is enabled and no session is available to reach the Ollama endpoints: "+s.noSessionReason()+".")}
+	}
+	switch enabled, st, why := s.assistantEnabled(); {
+	case st != StatusPass:
+		return []Finding{finding("RATE-OLLAMA", SevInfo, st, why+".")}
+	case !enabled:
+		return []Finding{finding("RATE-OLLAMA", SevInfo, StatusSkip,
+			"Ollama integration is not enabled on this instance.")}
 	}
 	const burst = 70 // ollamaMetaRateLimit is 60/min
 	var t tally

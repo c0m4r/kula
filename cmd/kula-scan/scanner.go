@@ -208,8 +208,14 @@ type Scanner struct {
 	kula        bool // and identified as Kula
 	https       bool
 	authEnabled bool
-	ollama      bool
-	version     string // Kula's version, when /api/config discloses it
+	// ollama is whether the AI assistant is enabled, as /api/config says;
+	// checks ask assistantEnabled. ollamaKnown: /api/config was read, by
+	// discovery or, behind auth, with the session; ollamaReadErr says why
+	// that read with the session failed, once it did.
+	ollama        bool
+	ollamaKnown   bool
+	ollamaReadErr string
+	version       string // Kula's version, when /api/config discloses it
 	// hostRefused: Kula's DNS-rebinding check refuses the Host name the
 	// scanner sends (DISC-003), so the checks that would read that refusal
 	// as their own result are skipped (runsUnderRefusedHost).
@@ -812,7 +818,8 @@ func (s *Scanner) discover() []Finding {
 	}
 	s.reachable = true
 
-	// /api/config (open when auth is off; gated when on) reveals ollama state.
+	// /api/config (open when auth is off; gated when on) reveals ollama
+	// state; behind auth, assistantEnabled reads it with the session.
 	cfg := s.do(http.MethodGet, "/api/config", nil, "")
 
 	// Kula says so on /health, answers auth/status with auth_required, or
@@ -837,21 +844,19 @@ func (s *Scanner) discover() []Finding {
 		_ = json.Unmarshal(authStatus["auth_required"], &s.authEnabled)
 	}
 	if cfg.status == http.StatusOK {
-		var c struct {
-			OllamaEnabled bool   `json:"ollama_enabled"`
-			Version       string `json:"version"`
-		}
-		_ = json.Unmarshal([]byte(cfg.body), &c)
-		s.ollama = c.OllamaEnabled
-		s.version = c.Version
+		s.learnConfig(cfg.body)
 	}
 
 	authState := "disabled"
 	if s.authEnabled {
 		authState = "enabled"
 	}
-	detail := fmt.Sprintf("reachable at %s (%s); authentication %s; ollama %v",
-		s.urlFor(""), s.base.Scheme, authState, s.ollama)
+	assistant := fmt.Sprintf("ollama %v", s.ollama)
+	if s.authEnabled && !s.ollamaKnown {
+		assistant = "ollama not visible without a session"
+	}
+	detail := fmt.Sprintf("reachable at %s (%s); authentication %s; %s",
+		s.urlFor(""), s.base.Scheme, authState, assistant)
 	if s.version != "" {
 		detail += "; version " + s.version
 	}
@@ -880,9 +885,62 @@ func (s *Scanner) discover() []Finding {
 	return out
 }
 
-// targetInfo returns what discovery learnt, for the report.
+// targetInfo returns what discovery learnt, and behind auth what the run's
+// session read of /api/config (assistantEnabled), for the report.
 func (s *Scanner) targetInfo() TargetInfo {
 	return TargetInfo{HTTPS: s.https, AuthEnabled: s.authEnabled, Ollama: s.ollama, Version: s.version}
+}
+
+// learnConfig keeps what a body of /api/config, answered 200, says of the
+// target: whether the AI assistant is enabled, and Kula's version when it
+// discloses one. It reports false, learning nothing, when the body is not
+// that JSON.
+func (s *Scanner) learnConfig(body string) bool {
+	var c struct {
+		OllamaEnabled bool   `json:"ollama_enabled"`
+		Version       string `json:"version"`
+	}
+	if json.Unmarshal([]byte(body), &c) != nil {
+		return false
+	}
+	s.ollama, s.ollamaKnown = c.OllamaEnabled, true
+	if c.Version != "" {
+		s.version = c.Version
+	}
+	return true
+}
+
+// assistantEnabled reports whether the target's AI assistant is enabled, as
+// /api/config's ollama_enabled says. Discovery reads it when /api/config
+// answers without a session, as it does with auth off. Behind auth the first
+// call made while the run's session is open reads it with that session, once,
+// and keeps the answer, which the report's target_info then shows. It never
+// logs in itself, so a run that opens no session reads nothing: a check that
+// needs the assistant opens the session first, as it needs one to reach it.
+//
+// st is StatusPass when enabled is the answer. Otherwise the answer is not
+// known and why says why: StatusSkip without a session, StatusError when the
+// read failed. why ends without a period.
+func (s *Scanner) assistantEnabled() (enabled bool, st Status, why string) {
+	switch {
+	case s.ollamaKnown || !s.authEnabled:
+		// With auth off discovery could read it: what it learnt stands.
+		return s.ollama, StatusPass, ""
+	case s.ollamaReadErr != "":
+		return false, StatusError, s.ollamaReadErr
+	case !s.loggedIn:
+		return false, StatusSkip, "auth is enabled and no session is available to read whether the AI assistant is enabled: " + s.noSessionReason()
+	}
+	r := s.do(http.MethodGet, "/api/config", s.authedHeaders(false), "")
+	switch {
+	case r.err != nil:
+		s.ollamaReadErr = "could not read /api/config to learn whether the AI assistant is enabled: " + r.err.Error()
+	case r.status != http.StatusOK || !s.learnConfig(r.body):
+		s.ollamaReadErr = fmt.Sprintf("/api/config answered HTTP %d to the session, not the configuration, so whether the AI assistant is enabled is unknown", r.status)
+	default:
+		return s.ollama, StatusPass, ""
+	}
+	return false, StatusError, s.ollamaReadErr
 }
 
 // hostCheckRefusal reports whether r is Kula's refusal of a Host name it does
@@ -1124,6 +1182,11 @@ func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 				findings = append(findings, f)
 			}
 		}
+	}
+	// Behind auth only the session can read whether the assistant is on;
+	// while it is open, the report's target_info learns it (once a run).
+	if s.loggedIn && !s.interrupted {
+		s.assistantEnabled()
 	}
 	return s.closeSession(findings, revocation)
 }
