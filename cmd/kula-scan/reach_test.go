@@ -412,24 +412,28 @@ func TestProbeHeadersWinOverExtraHeaders(t *testing.T) {
 	defer ts.Close()
 
 	code, _, stderr := runCaptured(t, "-json", "-H", "Authorization: Basic Z2F0ZXdheQ==",
-		"-H", "Origin: https://gateway.example", "-only", "metrics,csrf", ts.URL)
+		"-H", "Content-Type: text/plain", "-only", "metrics,csrf", ts.URL)
 	if code != exitClean {
 		t.Fatalf("exit %d; stderr:\n%s", code, stderr)
 	}
-	var basic, bearer, evil bool
+	var basic, bearer, plain, json bool
 	for _, r := range rec.requests() {
-		authorization, origin := r.header.Values("Authorization"), r.header.Values("Origin")
-		if len(authorization) != 1 || len(origin) != 1 {
-			t.Errorf("%s carried Authorization %q and Origin %q, want one of each", r.path, authorization, origin)
+		authorization, contentType := r.header.Values("Authorization"), r.header.Values("Content-Type")
+		if len(authorization) != 1 || len(contentType) != 1 {
+			t.Errorf("%s carried Authorization %q and Content-Type %q, want one of each", r.path, authorization, contentType)
 			continue
 		}
 		basic = basic || (r.path == "/metrics" && authorization[0] == "Basic Z2F0ZXdheQ==")
 		bearer = bearer || (r.path == "/metrics" && strings.HasPrefix(authorization[0], "Bearer wrong-"))
-		evil = evil || (r.path == "/api/login" && origin[0] == "https://evil.example")
+		plain = plain || (r.path != "/api/login" && contentType[0] == "text/plain")
+		json = json || (r.path == "/api/login" && contentType[0] == "application/json")
+		if r.path == "/api/login" && contentType[0] != "application/json" {
+			t.Errorf("a login probe carried Content-Type %q, not its own application/json", contentType[0])
+		}
 	}
-	if !basic || !bearer || !evil {
-		t.Errorf("-H Authorization on the tokenless request: %v; the probe's wrong bearer token: %v; the probe's foreign Origin: %v",
-			basic, bearer, evil)
+	if !basic || !bearer || !plain || !json {
+		t.Errorf("-H Authorization on the tokenless request: %v; the probe's wrong bearer token: %v; "+
+			"-H Content-Type where the probe sets none: %v; the login probe's own Content-Type: %v", basic, bearer, plain, json)
 	}
 }
 
@@ -522,6 +526,13 @@ func TestBadExtraHeadersAreUsageErrors(t *testing.T) {
 		{"Transfer-Encoding: chunked", "Transfer-Encoding"},
 		{"Connection: keep-alive", "Connection"},
 		{"Sec-WebSocket-Key: x", "Sec-Websocket-Key"},
+		// Headers the probes send or leave out on purpose.
+		{"Origin: https://s3cret.example", "-H Origin: the CSRF, CORS and WebSocket probes send or omit this header on purpose"},
+		{"referer: https://s3cret.example/", "-H Referer: the CSRF, CORS and WebSocket probes send or omit this header on purpose"},
+		{"X-CSRF-Token: s3cret", "-H X-Csrf-Token: the CSRF, CORS and WebSocket probes send or omit this header on purpose"},
+		{"Cookie: kula_session=s3cret", "-H Cookie: it carries a kula_session cookie; the scanner's session comes from -username"},
+		{"Cookie: gw=s3cret;kula_session=s3cret", "kula_session"},
+		{"Cookie: gw=s3cret; kula_session = s3cret; other=1", "kula_session"},
 	} {
 		code, stdout, stderr := runCaptured(t, "-H", "X-Fine: 1", "-H", c.header, "http://kula-scan.invalid")
 		if code != exitUsage || stdout != "" {
@@ -532,6 +543,14 @@ func TestBadExtraHeadersAreUsageErrors(t *testing.T) {
 		}
 		if strings.Contains(stderr, "s3cret") {
 			t.Errorf("-H %q: the error shows the value:\n%s", c.header, stderr)
+		}
+	}
+
+	// Other cookies, a cookie merely named like the session's, and a
+	// gateway's Authorization stay allowed.
+	for _, header := range []string{"Cookie: gw=1; kula_session_hint=2", "Cookie: gw=kula_session", "Authorization: Basic Z2F0ZXdheQ=="} {
+		if _, err := NewScanner(Options{Target: "http://kula-scan.invalid", Headers: []string{header}}); err != nil {
+			t.Errorf("-H %q refused: %v", header, err)
 		}
 	}
 }

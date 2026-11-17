@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -46,6 +47,9 @@ func parseExtraHeaders(specs []string) ([]extraHeader, error) {
 		if why := reservedHeader(name); why != "" {
 			return nil, fmt.Errorf("-H %s: %s", name, why)
 		}
+		if name == "Cookie" && carriesSessionCookie(value) {
+			return nil, errors.New("-H Cookie: it carries a kula_session cookie; the scanner's session comes from -username and the password (-password or " + passwordEnv + "), and the auth probes send session cookies of their own")
+		}
 		out = append(out, extraHeader{name: name, value: value})
 	}
 	return out, nil
@@ -68,7 +72,9 @@ func validHeaderName(name string) bool {
 
 // reservedHeader says why -H may not set name, or returns "" when it may.
 // These are the headers the scanner writes itself to frame a request and
-// manage its connection; a second copy would break the probes.
+// manage its connection, where a second copy would break the probes, and
+// the ones probes send or leave out on purpose, where a value on every
+// request would decide their outcome.
 func reservedHeader(name string) string {
 	switch {
 	case name == "Host":
@@ -77,8 +83,22 @@ func reservedHeader(name string) string {
 		return "each request frames its own body"
 	case name == "Connection", name == "Upgrade", strings.HasPrefix(name, "Sec-Websocket-"):
 		return "the scanner sets the connection and WebSocket handshake headers itself"
+	case name == "Origin", name == "Referer", name == "X-Csrf-Token":
+		return "the CSRF, CORS and WebSocket probes send or omit this header on purpose; a value on every request would decide their outcome"
 	}
 	return ""
+}
+
+// carriesSessionCookie reports whether a Cookie header value has a
+// kula_session cookie among its "name=value" pairs.
+func carriesSessionCookie(value string) bool {
+	for pair := range strings.SplitSeq(value, ";") {
+		name, _, _ := strings.Cut(pair, "=")
+		if strings.TrimSpace(name) == "kula_session" {
+			return true
+		}
+	}
+	return false
 }
 
 // extraHeaderNames lists the -H header names, each once, for the report.
