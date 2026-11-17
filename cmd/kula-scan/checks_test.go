@@ -184,13 +184,22 @@ func secureMock() http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html")
+		// The page carries the response's nonce: never cached.
+		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write([]byte("<html><body>kula</body></html>"))
 	})
 
 	return secureHeaders(mux)
 }
 
-// secureHeaders wraps h with kula's security headers (fresh nonce per request).
+// kulaCSP is the policy Kula sends (contentSecurityPolicy in
+// internal/web/server.go) with frame protection on.
+func kulaCSP(nonce string) string {
+	return fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';", nonce)
+}
+
+// secureHeaders wraps h with kula's security headers (fresh nonce per request)
+// and marks API responses no-store, as Kula's noStore does.
 func secureHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b := make([]byte, 16)
@@ -198,10 +207,15 @@ func secureHeaders(h http.Handler) http.Handler {
 		nonce := base64.StdEncoding.EncodeToString(b)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy",
-			fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none';", nonce))
+		w.Header().Set("Content-Security-Policy", kulaCSP(nonce))
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		if r.TLS != nil {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		h.ServeHTTP(w, r)
 	})
 }
@@ -321,11 +335,10 @@ func TestSecureTargetPasses(t *testing.T) {
 	s := scannerFor(t, ts, mockUser, mockPass)
 
 	hdr := runHeaderChecks(s)
-	wantStatus(t, hdr, "HDR-001", StatusPass)
-	wantStatus(t, hdr, "HDR-002", StatusPass)
-	wantStatus(t, hdr, "HDR-003", StatusPass)
-	wantStatus(t, hdr, "HDR-004", StatusPass) // nonce freshness
-	wantStatus(t, hdr, "HDR-007", StatusPass) // frame-ancestors
+	for _, id := range []string{"HDR-001", "HDR-002", "HDR-003", "HDR-004", "HDR-007", "HDR-010", "HDR-011", "HDR-012", "HDR-013"} {
+		wantStatus(t, hdr, id, StatusPass)
+	}
+	wantStatus(t, hdr, "HDR-008", StatusSkip) // plain HTTP
 
 	auth := runAuthChecks(s)
 	wantStatus(t, auth, "AUTH-001", StatusPass)
@@ -371,9 +384,12 @@ func TestInsecureTargetFails(t *testing.T) {
 	s := scannerFor(t, ts, "", "")
 
 	hdr := runHeaderChecks(s)
-	wantStatus(t, hdr, "HDR-001", StatusFail)
-	wantStatus(t, hdr, "HDR-002", StatusFail)
-	wantStatus(t, hdr, "HDR-003", StatusFail)
+	for _, id := range []string{"HDR-001", "HDR-002", "HDR-003", "HDR-010"} {
+		wantStatus(t, hdr, id, StatusFail)
+	}
+	for _, id := range []string{"HDR-007", "HDR-011", "HDR-012", "HDR-013"} {
+		wantStatus(t, hdr, id, StatusWarn)
+	}
 
 	auth := runAuthChecks(s)
 	wantStatus(t, auth, "AUTH-001", StatusFail) // open API despite auth_required
@@ -394,6 +410,176 @@ func TestInsecureTargetFails(t *testing.T) {
 
 	prom := runMetricsChecks(s)
 	wantStatus(t, prom, "PROM-001", StatusWarn) // exposed without token
+}
+
+// ---- headers -----------------------------------------------------------------
+
+// TestCSPJudgement: today's Kula policy passes every CSP finding; each
+// weakening fails or warns the finding that names it, and no other.
+func TestCSPJudgement(t *testing.T) {
+	cspIDs := []string{"HDR-003", "HDR-007", "HDR-011", "HDR-012", "HDR-013"}
+	cases := []struct {
+		name   string
+		values []string
+		want   map[string]Status // IDs not named must PASS
+	}{
+		{"today's Kula", []string{kulaCSP("cmFuZG9t")}, nil},
+		{"keywords in upper case", []string{strings.ToUpper(kulaCSP("cmFuZG9t"))}, nil},
+		{"frame protection off", []string{strings.TrimSuffix(kulaCSP("n"), " frame-ancestors 'none';")},
+			map[string]Status{"HDR-007": StatusWarn}},
+		{"a 0.21 policy", []string{"default-src 'self'; script-src 'self' 'nonce-n'; style-src 'self'; frame-ancestors 'none';"},
+			map[string]Status{"HDR-011": StatusWarn, "HDR-012": StatusWarn, "HDR-013": StatusWarn}},
+		{"unsafe-inline scripts", []string{strings.Replace(kulaCSP("n"), "'nonce-n'", "'nonce-n' 'unsafe-inline'", 1)},
+			map[string]Status{"HDR-003": StatusFail}},
+		{"unsafe-eval scripts", []string{strings.Replace(kulaCSP("n"), "'nonce-n'", "'nonce-n' 'unsafe-eval'", 1)},
+			map[string]Status{"HDR-003": StatusFail}},
+		{"wildcard scripts", []string{strings.Replace(kulaCSP("n"), "script-src 'self' 'nonce-n'", "script-src *", 1)},
+			map[string]Status{"HDR-003": StatusFail}},
+		{"https: scripts", []string{strings.Replace(kulaCSP("n"), "'nonce-n'", "'nonce-n' https:", 1)},
+			map[string]Status{"HDR-003": StatusFail}},
+		{"data: scripts", []string{strings.Replace(kulaCSP("n"), "'nonce-n'", "'nonce-n' data:", 1)},
+			map[string]Status{"HDR-003": StatusFail}},
+		{"no script nonce", []string{strings.Replace(kulaCSP("n"), " 'nonce-n'", "", 1)},
+			map[string]Status{"HDR-003": StatusFail}},
+		{"no script-src, so default-src without a nonce", []string{strings.Replace(kulaCSP("n"), " script-src 'self' 'nonce-n';", "", 1)},
+			map[string]Status{"HDR-003": StatusFail}},
+		{"wide default-src", []string{strings.Replace(kulaCSP("n"), "default-src 'self'", "default-src 'self' https:", 1)},
+			map[string]Status{"HDR-003": StatusFail}},
+		{"no base-uri", []string{strings.Replace(kulaCSP("n"), " base-uri 'self';", "", 1)},
+			map[string]Status{"HDR-011": StatusWarn}},
+		{"wide base-uri", []string{strings.Replace(kulaCSP("n"), "base-uri 'self'", "base-uri *", 1)},
+			map[string]Status{"HDR-011": StatusWarn}},
+		{"no form-action", []string{strings.Replace(kulaCSP("n"), " form-action 'self';", "", 1)},
+			map[string]Status{"HDR-012": StatusWarn}},
+		{"object-src from default-src 'self'", []string{strings.Replace(kulaCSP("n"), " object-src 'none';", "", 1)},
+			map[string]Status{"HDR-013": StatusWarn}},
+		{"object-src from default-src 'none'", []string{"default-src 'none'; script-src 'nonce-n'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"}, nil},
+		{"a later duplicate directive is ignored", []string{kulaCSP("n") + " script-src *;"}, nil},
+		{"an earlier duplicate directive wins", []string{"script-src *; " + kulaCSP("n")},
+			map[string]Status{"HDR-003": StatusFail}},
+		{"a second, strict policy still binds", []string{"script-src *", kulaCSP("n")}, nil},
+		{"two policies in one value", []string{"default-src *, " + kulaCSP("n")}, nil},
+	}
+	for _, c := range cases {
+		findings := cspFindings(parseCSP(c.values), strings.Join(c.values, ", "))
+		for _, id := range cspIDs {
+			want, named := c.want[id]
+			if !named {
+				want = StatusPass
+			}
+			f, ok := byID(findings, id)
+			if !ok || f.Status != want {
+				t.Errorf("%s: %s = %s %q, want %s", c.name, id, f.Status, f.Detail, want)
+			}
+		}
+	}
+
+	// No policy at all: scripts are not contained, and the frame-protection
+	// expectation is still judged.
+	findings := cspFindings(nil, "")
+	wantStatus(t, findings, "HDR-003", StatusFail)
+	if f, _ := byID(findings, "HDR-007"); f.Status != StatusWarn || f.Expectation != "frame-protection" {
+		t.Errorf("no CSP: HDR-007 = %s, expectation %q; want a WARN against frame-protection", f.Status, f.Expectation)
+	}
+}
+
+func TestExpectFrameProtectionWithoutCSP(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth/status" {
+			writeJSONResp(w, map[string]any{"auth_required": false})
+			return
+		}
+		_, _ = w.Write([]byte("kula is healthy"))
+	}))
+	defer ts.Close()
+	s, err := NewScanner(Options{Target: ts.URL, Timeout: 5 * time.Second, Expect: []string{"frame-protection"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.discover()
+	findings := runHeaderChecks(s)
+	s.applyExpectations(findings)
+	if f, _ := byID(findings, "HDR-007"); f.Status != StatusFail || f.Expectation != "frame-protection" {
+		t.Errorf("no CSP with -expect frame-protection: HDR-007 = %s %q", f.Status, f.Expectation)
+	}
+}
+
+func TestHSTSJudgement(t *testing.T) {
+	https, err := NewScanner(Options{Target: "https://kula-scan.invalid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		value  string
+		want   Status
+		tagged bool
+	}{
+		{"max-age=31536000; includeSubDomains", StatusPass, false},
+		{"max-age=15552000", StatusPass, false},
+		{`max-age="31536000"`, StatusPass, false},
+		{"includeSubDomains; MAX-AGE=63072000; preload", StatusPass, false},
+		{"max-age=86400", StatusWarn, false},
+		{"max-age=0", StatusWarn, true},
+		{"includeSubDomains", StatusWarn, true},
+		{"max-age=soon", StatusWarn, true},
+		{"", StatusWarn, true},
+	} {
+		h := http.Header{}
+		if c.value != "" {
+			h.Set("Strict-Transport-Security", c.value)
+		}
+		f := hstsFinding(https, h)
+		if f.Status != c.want || (f.Expectation == "hsts") != c.tagged {
+			t.Errorf("HSTS %q: %s, expectation %q; want %s, tagged %v", c.value, f.Status, f.Expectation, c.want, c.tagged)
+		}
+	}
+
+	plain, err := NewScanner(Options{Target: "http://kula-scan.invalid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := hstsFinding(plain, http.Header{}); f.Status != StatusSkip || !strings.Contains(f.Detail, "TLS only") {
+		t.Errorf("plain HTTP: %s %q, want a SKIP", f.Status, f.Detail)
+	}
+	expecting, err := NewScanner(Options{Target: "http://kula-scan.invalid", Expect: []string{"hsts"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := hstsFinding(expecting, http.Header{}); f.Status != StatusFail || f.Expectation != "hsts" {
+		t.Errorf("plain HTTP with -expect hsts: %s, expectation %q; want a FAIL against hsts", f.Status, f.Expectation)
+	}
+}
+
+// withoutHeader serves the secure mock, but without header on path
+// (dropHeader is in selection_test.go).
+func withoutHeader(path, header string) http.Handler {
+	mock := secureMock()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == path {
+			w = &dropHeader{ResponseWriter: w, name: header}
+		}
+		mock.ServeHTTP(w, r)
+	})
+}
+
+func TestHeadersCheckedBeyondTheIndexPage(t *testing.T) {
+	for _, c := range []struct {
+		path, header, id string
+	}{
+		{"/style.css", "X-Content-Type-Options", "HDR-001"},
+		{"/api/auth/status", "X-Content-Type-Options", "HDR-001"},
+		{"/", "Cache-Control", "HDR-010"},
+		{"/api/auth/status", "Cache-Control", "HDR-010"},
+		{"/api/config", "Cache-Control", "HDR-010"},
+	} {
+		ts := httptest.NewServer(withoutHeader(c.path, c.header))
+		s := scannerFor(t, ts, mockUser, mockPass)
+		f, _ := byID(runHeaderChecks(s), c.id)
+		ts.Close()
+		if f.Status != StatusFail || !strings.Contains(f.Detail, c.path+" (") {
+			t.Errorf("%s missing on %s: %s = %s %q, want a FAIL naming the path", c.header, c.path, c.id, f.Status, f.Detail)
+		}
+	}
 }
 
 // ---- report logic ------------------------------------------------------------

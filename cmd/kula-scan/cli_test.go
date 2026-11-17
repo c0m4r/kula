@@ -72,8 +72,9 @@ func TestJSONReportCarriesItsMetadata(t *testing.T) {
 	defer ts.Close()
 
 	before := time.Now().UTC().Truncate(time.Second)
+	// HDR-008 is skipped: over plain HTTP it fails -expect hsts.
 	code, stdout, stderr := runCaptured(t, "-json", "-fuzz", "-fuzz-iter", "3", "-seed", "42",
-		"-only", "headers,fuzz-liveness", "-skip", "hdr-009", "-ignore", "hdr-003", "-expect", "hsts,auth",
+		"-only", "headers,fuzz-liveness", "-skip", "hdr-009,hdr-008", "-ignore", "hdr-003", "-expect", "hsts,auth",
 		"-fail-on", "MEDIUM", ts.URL)
 	if code != exitClean {
 		t.Fatalf("exit %d; stderr:\n%s", code, stderr)
@@ -100,7 +101,7 @@ func TestJSONReportCarriesItsMetadata(t *testing.T) {
 	}
 	want := ReportOptions{
 		Aggressive: false, Fuzz: true, Seed: 42,
-		Only: []string{"headers", "FUZZ-LIVENESS"}, Skip: []string{"HDR-009"},
+		Only: []string{"headers", "FUZZ-LIVENESS"}, Skip: []string{"HDR-009", "HDR-008"},
 		Ignore: []string{"HDR-003"}, Expect: []string{"hsts", "auth"}, FailOn: "medium",
 	}
 	if !reflect.DeepEqual(report.Options, want) {

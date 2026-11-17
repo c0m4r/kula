@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -16,9 +17,16 @@ import (
 
 func headerChecks() []check {
 	return []check{{
-		ids: []string{"HDR-000", "HDR-001", "HDR-002", "HDR-003", "HDR-004", "HDR-005", "HDR-006", "HDR-007", "HDR-008", "HDR-009"},
+		ids: []string{"HDR-000", "HDR-001", "HDR-002", "HDR-003", "HDR-004", "HDR-005", "HDR-006", "HDR-007", "HDR-008", "HDR-009",
+			"HDR-010", "HDR-011", "HDR-012", "HDR-013"},
 		run: runHeaderChecks,
 	}}
+}
+
+// probed is the answer to a request for path.
+type probed struct {
+	path string
+	r    httpResult
 }
 
 func runHeaderChecks(s *Scanner) []Finding {
@@ -30,6 +38,12 @@ func runHeaderChecks(s *Scanner) []Finding {
 			"could not GET / to inspect security headers: "+r.err.Error())}
 	}
 	h := r.header
+
+	// A static asset and an API response, which need no session: headers
+	// every response must carry are checked on them too.
+	asset := probed{"/style.css", s.do(http.MethodGet, "/style.css", nil, "")}
+	status := probed{"/api/auth/status", s.do(http.MethodGet, "/api/auth/status", nil, "")}
+	index := probed{"/", r}
 
 	want := func(id, header, expect string, sev Severity) Finding {
 		got := h.Get(header)
@@ -49,51 +63,23 @@ func runHeaderChecks(s *Scanner) []Finding {
 	}
 
 	out = append(out,
-		want("HDR-001", "X-Content-Type-Options", "nosniff", SevMedium),
+		nosniffFinding([]probed{index, asset, status}),
 		want("HDR-002", "X-Frame-Options", "DENY", SevMedium),
 		want("HDR-005", "Referrer-Policy", "", SevLow),
 		want("HDR-006", "Permissions-Policy", "", SevLow),
 	)
 
-	// CSP: must constrain default-src to self, lock framing, and use a nonce.
-	csp := h.Get("Content-Security-Policy")
-	switch csp {
-	case "":
-		out = append(out, finding("HDR-003", SevHigh, StatusFail,
-			"no Content-Security-Policy header; the dashboard has no script/XSS containment.").
-			withRemediation("Enable web.security.headers in config.yaml."))
-	default:
-		var missing []string
-		for _, tok := range []string{"default-src 'self'", "nonce-"} {
-			if !strings.Contains(csp, tok) {
-				missing = append(missing, tok)
-			}
-		}
-		if len(missing) == 0 {
-			out = append(out, finding("HDR-003", SevHigh, StatusPass,
-				"CSP constrains default-src to 'self' and uses a per-request script nonce.").withEvidence("CSP: %s", csp))
-		} else {
-			out = append(out, finding("HDR-003", SevHigh, StatusFail,
-				"CSP is present but missing: "+strings.Join(missing, ", ")).withEvidence("CSP: %s", csp).
-				withRemediation("Upgrade to a version that ships the nonce-based CSP, or re-enable web.security.headers."))
-		}
-		// frame-ancestors 'none' is the modern clickjacking control.
-		if strings.Contains(csp, "frame-ancestors 'none'") {
-			out = append(out, finding("HDR-007", SevMedium, StatusPass,
-				"CSP forbids framing (frame-ancestors 'none')."))
-		} else {
-			out = append(out, finding("HDR-007", SevMedium, StatusWarn,
-				"CSP does not set frame-ancestors 'none'; relies on X-Frame-Options alone.").
-				withRemediation("Enable web.security.frame_protection.").
-				expecting("frame-protection"))
-		}
-	}
+	csp := strings.Join(h.Values("Content-Security-Policy"), ", ")
+	out = append(out, cspFindings(parseCSP(h.Values("Content-Security-Policy")), csp)...)
 
 	// Nonce freshness: a reused nonce defeats the whole point of a nonce-CSP.
 	if strings.Contains(csp, "nonce-") {
 		r2 := s.do(http.MethodGet, "/", nil, "")
 		n1, n2 := extractNonce(csp), extractNonce(r2.header.Get("Content-Security-Policy"))
 		switch {
+		case r2.err != nil:
+			out = append(out, finding("HDR-004", SevInfo, StatusError,
+				"could not GET / a second time to compare nonces: "+r2.err.Error()))
 		case n1 == "" || n2 == "":
 			out = append(out, finding("HDR-004", SevMedium, StatusWarn,
 				"could not extract nonces from two responses to compare."))
@@ -108,23 +94,380 @@ func runHeaderChecks(s *Scanner) []Finding {
 		}
 	}
 
-	// HSTS only makes sense over TLS.
-	if s.https {
-		if h.Get("Strict-Transport-Security") != "" {
-			out = append(out, finding("HDR-008", SevLow, StatusPass,
-				"Strict-Transport-Security is set.").withEvidence("%s", h.Get("Strict-Transport-Security")))
-		} else {
-			out = append(out, finding("HDR-008", SevLow, StatusWarn,
-				"served over HTTPS but no Strict-Transport-Security header.").
-				withRemediation("Enable web.security.headers; HSTS is emitted automatically over TLS.").
-				expecting("hsts"))
-		}
-	}
+	out = append(out, hstsFinding(s, h))
 
 	// Banner / version disclosure.
 	if banner := h.Get("Server"); banner != "" {
 		out = append(out, finding("HDR-009", SevInfo, StatusWarn,
 			"a Server header is present; minor information disclosure.").withEvidence("Server: %s", banner))
+	}
+
+	// The API answers /api/config to the scanner when auth is off or a
+	// session is open; it carries the most data of the open routes.
+	cached := []probed{index, status}
+	if hdr, ok := s.apiHeaders(); ok {
+		cached = append(cached, probed{"/api/config", s.do(http.MethodGet, "/api/config", hdr, "")})
+	}
+	out = append(out, noStoreFinding(cached))
+
+	return out
+}
+
+// nosniffFinding judges HDR-001 over every response in responses: each must
+// carry X-Content-Type-Options: nosniff.
+func nosniffFinding(responses []probed) Finding {
+	var missing, unreached []string
+	for _, p := range responses {
+		if p.r.err != nil {
+			unreached = append(unreached, p.path)
+			continue
+		}
+		if got := p.r.header.Get("X-Content-Type-Options"); !strings.EqualFold(strings.TrimSpace(got), "nosniff") {
+			missing = append(missing, fmt.Sprintf("%s (%q)", p.path, got))
+		}
+	}
+	switch {
+	case len(unreached) == len(responses):
+		return finding("HDR-001", SevInfo, StatusError,
+			"could not fetch any response to inspect X-Content-Type-Options.")
+	case len(missing) > 0:
+		return finding("HDR-001", SevMedium, StatusFail,
+			"X-Content-Type-Options: nosniff is missing on "+strings.Join(missing, ", ")+unreachedNote(unreached)).
+			withRemediation("Enable web.security.headers in config.yaml; Kula sets nosniff on every response.")
+	default:
+		return finding("HDR-001", SevMedium, StatusPass,
+			"the UI page, a static asset and an API response all carry X-Content-Type-Options: nosniff"+unreachedNote(unreached)+".")
+	}
+}
+
+// unreachedNote names the paths a probe could not fetch, for a detail line.
+func unreachedNote(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return "; could not fetch " + strings.Join(paths, ", ")
+}
+
+// noStoreFinding judges HDR-010: every successful response in responses is
+// Cache-Control: no-store. The index page carries the per-request CSP nonce,
+// which a cached copy would serve twice, and API responses carry live,
+// session-bound data. An answer other than 2xx (an index page the UI does not
+// serve, a refused Host) carries neither and is not judged.
+func noStoreFinding(responses []probed) Finding {
+	var missing, judged, unreached, other []string
+	for _, p := range responses {
+		switch {
+		case p.r.err != nil:
+			unreached = append(unreached, p.path)
+		case p.r.status < 200 || p.r.status > 299:
+			other = append(other, fmt.Sprintf("%s (HTTP %d)", p.path, p.r.status))
+		default:
+			judged = append(judged, p.path)
+			value := strings.Join(p.r.header.Values("Cache-Control"), ", ")
+			if !hasDirective(value, "no-store") {
+				missing = append(missing, fmt.Sprintf("%s (Cache-Control: %q)", p.path, value))
+			}
+		}
+	}
+	notJudged := ""
+	if len(other) > 0 {
+		notJudged = "; not judged: " + strings.Join(other, ", ")
+	}
+	switch {
+	case len(unreached) == len(responses):
+		return finding("HDR-010", SevInfo, StatusError,
+			"could not fetch any response to inspect Cache-Control.")
+	case len(judged) == 0:
+		return finding("HDR-010", SevInfo, StatusSkip,
+			"no response answered 2xx, so none carries a nonce or live data to protect"+notJudged+unreachedNote(unreached)+".")
+	case len(missing) > 0:
+		return finding("HDR-010", SevMedium, StatusFail,
+			"these responses may be kept by a browser or shared cache, which would serve a CSP nonce twice or session data to another user: "+
+				strings.Join(missing, ", ")+notJudged+unreachedNote(unreached)).
+			withRemediation("Upgrade Kula (0.22.0 and later mark the UI page and API responses no-store), and keep any proxy in front from overriding Cache-Control.")
+	default:
+		return finding("HDR-010", SevMedium, StatusPass,
+			"Cache-Control: no-store on "+strings.Join(judged, ", ")+notJudged+unreachedNote(unreached)+".")
+	}
+}
+
+// hasDirective reports whether a comma-separated header value, such as
+// Cache-Control, carries the directive name (with or without a value).
+func hasDirective(value, name string) bool {
+	for _, part := range strings.Split(value, ",") {
+		directive, _, _ := strings.Cut(part, "=")
+		if strings.EqualFold(strings.TrimSpace(directive), name) {
+			return true
+		}
+	}
+	return false
+}
+
+// minHSTSMaxAge is the shortest HSTS max-age HDR-008 accepts: 180 days.
+const minHSTSMaxAge = 180 * 24 * 60 * 60
+
+// hstsFinding judges HDR-008. HSTS means something only over TLS: over plain
+// HTTP the finding is a SKIP, or a FAIL when -expect hsts declares it.
+func hstsFinding(s *Scanner, h http.Header) Finding {
+	if !s.https {
+		if s.expects("hsts") {
+			return finding("HDR-008", SevLow, StatusFail,
+				"the target was reached over plain HTTP, where no Strict-Transport-Security applies.").
+				withRemediation("Serve Kula over HTTPS (TLS or a TLS-terminating proxy with trust_proxy), and scan it by its https:// URL.").
+				expecting("hsts")
+		}
+		return finding("HDR-008", SevInfo, StatusSkip,
+			"HSTS applies over TLS only; the target was reached over plain HTTP.")
+	}
+	value := h.Get("Strict-Transport-Security")
+	if value == "" {
+		return finding("HDR-008", SevLow, StatusWarn,
+			"served over HTTPS but no Strict-Transport-Security header.").
+			withRemediation("Enable web.security.headers; HSTS is emitted automatically over TLS.").
+			expecting("hsts")
+	}
+	maxAge, ok := hstsMaxAge(value)
+	switch {
+	case !ok:
+		return finding("HDR-008", SevLow, StatusWarn,
+			"Strict-Transport-Security carries no valid max-age, so browsers ignore it.").
+			withEvidence("Strict-Transport-Security: %s", value).
+			withRemediation("Send a max-age of at least 15552000 seconds (180 days); Kula sends one year.").
+			expecting("hsts")
+	case maxAge == 0:
+		return finding("HDR-008", SevLow, StatusWarn,
+			"Strict-Transport-Security has max-age=0, which tells browsers to forget HSTS for this host.").
+			withEvidence("Strict-Transport-Security: %s", value).
+			withRemediation("Send a max-age of at least 15552000 seconds (180 days); Kula sends one year.").
+			expecting("hsts")
+	case maxAge < minHSTSMaxAge:
+		return finding("HDR-008", SevLow, StatusWarn,
+			fmt.Sprintf("Strict-Transport-Security max-age is %d seconds (%d days), under 180 days.", maxAge, maxAge/86400)).
+			withEvidence("Strict-Transport-Security: %s", value).
+			withRemediation("Send a max-age of at least 15552000 seconds (180 days); Kula sends one year. A proxy in front may be rewriting the header.")
+	default:
+		return finding("HDR-008", SevLow, StatusPass,
+			fmt.Sprintf("Strict-Transport-Security is set with a max-age of %d days.", maxAge/86400)).
+			withEvidence("Strict-Transport-Security: %s", value)
+	}
+}
+
+// hstsMaxAge returns the max-age directive of a Strict-Transport-Security
+// value, in seconds; ok is false when it has none or it is not a number.
+func hstsMaxAge(value string) (int64, bool) {
+	for _, part := range strings.Split(value, ";") {
+		name, arg, found := strings.Cut(strings.TrimSpace(part), "=")
+		if !found || !strings.EqualFold(strings.TrimSpace(name), "max-age") {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.Trim(strings.TrimSpace(arg), `"`), 10, 64)
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
+}
+
+// cspPolicy is one Content-Security-Policy: each directive, by its lower-case
+// name, with its source list as sent.
+type cspPolicy map[string][]string
+
+// parseCSP parses Content-Security-Policy header values. A value may carry
+// several policies separated by commas; each is enforced, so a resource must
+// pass all of them. Within a policy the first occurrence of a directive wins,
+// as in browsers.
+func parseCSP(values []string) []cspPolicy {
+	var policies []cspPolicy
+	for _, value := range values {
+		for _, text := range strings.Split(value, ",") {
+			policy := cspPolicy{}
+			for _, directive := range strings.Split(text, ";") {
+				fields := strings.Fields(directive)
+				if len(fields) == 0 {
+					continue
+				}
+				name := strings.ToLower(fields[0])
+				if _, seen := policy[name]; !seen {
+					policy[name] = fields[1:]
+				}
+			}
+			if len(policy) > 0 {
+				policies = append(policies, policy)
+			}
+		}
+	}
+	return policies
+}
+
+// effective returns the source list that governs directive: its own, or
+// default-src's when it falls back to that one. ok is false when neither is set.
+func (p cspPolicy) effective(directive string, fallsBack bool) (name string, sources []string, ok bool) {
+	if sources, ok := p[directive]; ok {
+		return directive, sources, true
+	}
+	if fallsBack {
+		if sources, ok := p["default-src"]; ok {
+			return "default-src", sources, true
+		}
+	}
+	return directive, nil, false
+}
+
+// restrictedTo reports whether directive is set to exactly one of keywords
+// ('self', 'none'), compared case-insensitively as browsers compare keywords.
+func (p cspPolicy) restrictedTo(directive string, fallsBack bool, keywords ...string) bool {
+	_, sources, ok := p.effective(directive, fallsBack)
+	if !ok || len(sources) != 1 {
+		return false
+	}
+	for _, k := range keywords {
+		if strings.EqualFold(sources[0], k) {
+			return true
+		}
+	}
+	return false
+}
+
+// scriptProblems lists what in the effective script policy (script-src, else
+// default-src) admits a script without the nonce; none when scripts run only
+// by nonce. name is the directive that governs scripts.
+func (p cspPolicy) scriptProblems() (name string, problems []string) {
+	name, sources, ok := p.effective("script-src", true)
+	if !ok {
+		return "script-src", []string{"is not set (nor default-src)"}
+	}
+	nonce := false
+	for _, src := range sources {
+		lower := strings.ToLower(src)
+		switch {
+		case strings.HasPrefix(lower, "'nonce-") && len(lower) > len("'nonce-'"):
+			nonce = true
+		case lower == "'unsafe-inline'", lower == "'unsafe-eval'", lower == "*", isSchemeSource(lower):
+			problems = append(problems, "allows "+src)
+		}
+	}
+	if !nonce {
+		problems = append(problems, "carries no nonce")
+	}
+	return name, problems
+}
+
+// isSchemeSource reports whether a CSP source is a bare scheme, such as
+// https: or data:, which admits anything served over that scheme.
+func isSchemeSource(src string) bool {
+	scheme, ok := strings.CutSuffix(src, ":")
+	if !ok || scheme == "" {
+		return false
+	}
+	for i, c := range scheme {
+		switch {
+		case c >= 'a' && c <= 'z':
+		case i > 0 && (c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// anyPolicy reports whether one of policies satisfies ok. Every policy is
+// enforced, so a restriction any one of them makes holds.
+func anyPolicy(policies []cspPolicy, ok func(cspPolicy) bool) bool {
+	for _, p := range policies {
+		if ok(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// cspFindings judges the Content-Security-Policy: whether it contains scripts
+// (HDR-003), forbids framing (HDR-007), and pins the directives that do not
+// fall back to default-src (HDR-011, HDR-012) and object-src (HDR-013). raw is
+// the policy as sent, for evidence.
+func cspFindings(policies []cspPolicy, raw string) []Finding {
+	const upgrade = "Upgrade Kula (0.22.0 and later send it), and keep any proxy in front from rewriting the Content-Security-Policy."
+	if len(policies) == 0 {
+		noCSP := "no Content-Security-Policy header (HDR-003)."
+		return []Finding{
+			finding("HDR-003", SevHigh, StatusFail,
+				"no Content-Security-Policy header; the dashboard has no script/XSS containment.").
+				withRemediation("Enable web.security.headers in config.yaml."),
+			finding("HDR-007", SevMedium, StatusWarn,
+				"no Content-Security-Policy, so no frame-ancestors: only X-Frame-Options (HDR-002) can forbid framing.").
+				withRemediation("Enable web.security.headers and web.security.frame_protection.").
+				expecting("frame-protection"),
+			finding("HDR-011", SevLow, StatusWarn, noCSP).withRemediation("Enable web.security.headers in config.yaml."),
+			finding("HDR-012", SevLow, StatusWarn, noCSP).withRemediation("Enable web.security.headers in config.yaml."),
+			finding("HDR-013", SevLow, StatusWarn, noCSP).withRemediation("Enable web.security.headers in config.yaml."),
+		}
+	}
+	var out []Finding
+
+	// HDR-003: default-src is 'self' (or 'none') and scripts run only by nonce.
+	var problems []string
+	if !anyPolicy(policies, func(p cspPolicy) bool { return p.restrictedTo("default-src", false, "'self'", "'none'") }) {
+		if sources, ok := policies[0]["default-src"]; ok {
+			problems = append(problems, fmt.Sprintf("default-src is %q, not 'self'", strings.Join(sources, " ")))
+		} else {
+			problems = append(problems, "default-src is not set")
+		}
+	}
+	if !anyPolicy(policies, func(p cspPolicy) bool { _, issues := p.scriptProblems(); return len(issues) == 0 }) {
+		name, issues := policies[0].scriptProblems()
+		problems = append(problems, name+" "+strings.Join(issues, ", "))
+	}
+	if len(problems) == 0 {
+		out = append(out, finding("HDR-003", SevHigh, StatusPass,
+			"CSP constrains default-src to 'self' and admits scripts only by a per-request nonce.").withEvidence("CSP: %s", raw))
+	} else {
+		out = append(out, finding("HDR-003", SevHigh, StatusFail,
+			"the CSP does not contain scripts: "+strings.Join(problems, "; ")+".").withEvidence("CSP: %s", raw).
+			withRemediation("Re-enable web.security.headers, and keep any proxy in front from rewriting the Content-Security-Policy; Kula sends default-src 'self' and a nonce-only script-src."))
+	}
+
+	// HDR-007: frame-ancestors 'none' is the modern clickjacking control.
+	if anyPolicy(policies, func(p cspPolicy) bool { return p.restrictedTo("frame-ancestors", false, "'none'") }) {
+		out = append(out, finding("HDR-007", SevMedium, StatusPass,
+			"CSP forbids framing (frame-ancestors 'none')."))
+	} else {
+		out = append(out, finding("HDR-007", SevMedium, StatusWarn,
+			"CSP does not set frame-ancestors 'none'; relies on X-Frame-Options alone.").
+			withRemediation("Enable web.security.frame_protection.").
+			expecting("frame-protection"))
+	}
+
+	// HDR-011, HDR-012: base-uri and form-action do not fall back to
+	// default-src. Without base-uri an injected <base> moves the relative URLs
+	// of the nonce'd scripts to another host; without form-action an injected
+	// form submits anywhere.
+	for _, d := range []struct{ id, directive string }{{"HDR-011", "base-uri"}, {"HDR-012", "form-action"}} {
+		switch {
+		case anyPolicy(policies, func(p cspPolicy) bool { return p.restrictedTo(d.directive, false, "'self'", "'none'") }):
+			out = append(out, finding(d.id, SevLow, StatusPass,
+				"CSP restricts "+d.directive+" to 'self' or 'none'."))
+		default:
+			detail := "CSP sets no " + d.directive + ", which does not fall back to default-src."
+			if sources, ok := policies[0][d.directive]; ok {
+				detail = fmt.Sprintf("CSP sets %s %q, not 'self' or 'none'.", d.directive, strings.Join(sources, " "))
+			}
+			out = append(out, finding(d.id, SevLow, StatusWarn, detail).withEvidence("CSP: %s", raw).withRemediation(upgrade))
+		}
+	}
+
+	// HDR-013: object-src falls back to default-src, but 'self' still admits
+	// plugin content from the origin; 'none' admits none.
+	if anyPolicy(policies, func(p cspPolicy) bool { return p.restrictedTo("object-src", true, "'none'") }) {
+		out = append(out, finding("HDR-013", SevLow, StatusPass,
+			"CSP sets object-src 'none'."))
+	} else {
+		detail := "CSP sets neither object-src nor default-src, so plugin content may load from anywhere."
+		if name, sources, ok := policies[0].effective("object-src", true); ok {
+			detail = fmt.Sprintf("the effective object-src (%s %q) is not 'none'.", name, strings.Join(sources, " "))
+		}
+		out = append(out, finding("HDR-013", SevLow, StatusWarn, detail).
+			withEvidence("CSP: %s", raw).withRemediation(upgrade))
 	}
 
 	return out

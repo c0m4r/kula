@@ -107,7 +107,8 @@ func TestOnlySelectsFindingIDs(t *testing.T) {
 		t.Errorf("-only csrf-003 reported %s", got)
 	}
 	wantStatus(t, report.Findings, "CSRF-003", StatusPass)
-	if log.count("/metrics") != 0 || log.count("/style.css") != 0 {
+	// /style.css: the header check; /fonts/: only the traversal check.
+	if log.count("/metrics") != 0 || log.count("/style.css") != 0 || log.count("/fonts/") != 0 {
 		t.Errorf("-only csrf-003 ran other checks: %v", log.paths)
 	}
 }
@@ -118,7 +119,7 @@ func TestSkipDropsOrFiltersChecks(t *testing.T) {
 	if log.count("/metrics") != 0 {
 		t.Error("the metrics check ran with all of its IDs skipped")
 	}
-	if log.count("/style.css") != 0 {
+	if log.count("/fonts/") != 0 { // only the traversal check requests it
 		t.Error("the traversal check ran with its category skipped")
 	}
 	for _, id := range []string{"PROM-001", "PROM-002", "PROM-003", "HDR-009", "TRAV-001"} {
