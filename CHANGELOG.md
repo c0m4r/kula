@@ -14,6 +14,7 @@ Types of changes: Added, Changed, Deprecated, Removed, Fixed, Security
 
 - ai: rework the assistant panel
 - web: load the AI panel only when the assistant may be used
+- chartjs: update Chart.js to 4.6.1
 
 ## [0.22.0] - 2026-11-14
 
