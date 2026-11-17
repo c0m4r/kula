@@ -19,6 +19,7 @@ var expectKeys = []struct {
 	{"origin-validation", "a state change without an Origin, or from a foreign one, and a WebSocket upgrade from a foreign Origin are refused (CSRF-001, CSRF-002, WS-002)"},
 	{"frame-protection", "the CSP forbids framing with frame-ancestors 'none' (HDR-007)"},
 	{"metrics-token", "/metrics requires a bearer token (PROM-001)"},
+	{"host-check", "Kula refuses Host names a public DNS server could answer for: the DNS-rebinding check is on (HOST-001)"},
 }
 
 // expectKeyNames returns the -expect keys in table order.

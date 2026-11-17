@@ -122,6 +122,9 @@ var catalog = []catalogEntry{
 	{"CORS-003", "cors", ModeDefault, "CORS allow-list edge cases",
 		"null, trailing-dot, userinfo and look-alike variants of the target's origin are not reflected, even when it allow-lists its own origin."},
 
+	{"HOST-001", "host", ModeDefault, "Foreign Host names refused (DNS rebinding)",
+		"Without auth, the API answers no Host name a public DNS server could answer for, with a port, a trailing dot, in mixed case or behind a local label; with auth, neither does a /metrics served without a token."},
+
 	{"TRAV-000", "traversal", ModeDefault, "Static serving control",
 		"GET /style.css answers 200, so the traversal probes are meaningful."},
 	{"TRAV-001", "traversal", ModeDefault, "Path traversal blocked",

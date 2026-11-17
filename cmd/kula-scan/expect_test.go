@@ -88,6 +88,7 @@ func TestExpectationTags(t *testing.T) {
 		{"origin-validation", "CSRF-001", insecureMock(), false, runCSRFChecks},
 		{"origin-validation", "CSRF-002", insecureMock(), false, runCSRFChecks},
 		{"metrics-token", "PROM-001", insecureMock(), false, runMetricsChecks},
+		{"host-check", "HOST-001", authOffMock(false, &loginHits, &chatHits), false, runHostCheck},
 		{"frame-protection", "HDR-007", weakCSP, false, runHeaderChecks},
 		{"hsts", "HDR-008", weakCSP, true, runHeaderChecks},
 		{"tls", "DISC-002", secureMock(), false, func(s *Scanner) []Finding { return s.discover() }},

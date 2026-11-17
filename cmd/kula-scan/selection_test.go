@@ -115,7 +115,9 @@ func TestOnlySelectsFindingIDs(t *testing.T) {
 
 func TestSkipDropsOrFiltersChecks(t *testing.T) {
 	log := &requestLog{paths: map[string]int{}}
-	_, report, _ := scanJSON(t, log.wrap(secureMock()), "-skip", "PROM-001,prom-002,prom-003,HDR-009,traversal")
+	// HOST-001 asks /metrics too, with auth on: skipped, so only the metrics
+	// check would.
+	_, report, _ := scanJSON(t, log.wrap(secureMock()), "-skip", "PROM-001,prom-002,prom-003,HDR-009,traversal,host")
 	if log.count("/metrics") != 0 {
 		t.Error("the metrics check ran with all of its IDs skipped")
 	}

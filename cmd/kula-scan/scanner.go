@@ -947,6 +947,7 @@ func allChecks() []check {
 	checks = append(checks, authChecks()...)
 	checks = append(checks, csrfChecks()...)
 	checks = append(checks, corsChecks()...)
+	checks = append(checks, hostChecks()...)
 	checks = append(checks, traversalChecks()...)
 	checks = append(checks, metricsChecks()...)
 	checks = append(checks, wsChecks()...)
