@@ -51,6 +51,16 @@ if [ "$ARG" == "cross" ] || [ "$ARG" == "all" ]; then
             -buildvcs=false \
             -o "dist/kula-$os-$VERSION-$arch" \
             ./cmd/kula/
+
+        # kula-scan ships as its own release asset. Its name must not match
+        # kula-linux-*, which release.sh bundles and the packages install.
+        echo "Building kula-scan for $os/$arch..."
+        CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+            -trimpath \
+            -ldflags="-s -w" \
+            -buildvcs=false \
+            -o "dist/kula-scan-$os-$VERSION-$arch" \
+            ./cmd/kula-scan/
     done
 else
     echo "Building kula for current architecture..."

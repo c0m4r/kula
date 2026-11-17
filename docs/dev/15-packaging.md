@@ -10,15 +10,18 @@ run the builders."
 
 1. Reads `VERSION`.
 2. Wipes `dist/` (so checksums reflect exactly this release).
-3. Cross-compiles all architectures (`./build.sh cross` → amd64, arm64, riscv64).
-4. For each binary, assembles a `kula/` bundle containing the binary plus `CHANGELOG.md`,
+3. Cross-compiles `kula` and `kula-scan` for all architectures (`./build.sh cross` → amd64,
+   arm64, riscv64).
+4. For each `kula` binary, assembles a `kula/` bundle containing the binary plus `CHANGELOG.md`,
    `VERSION`, `LICENSE`, `README.md`, `config.example.yaml`, `scripts/`, `bash-completion`,
    `init/`, and `man/`, and produces both a `.tar.gz` (its members owned by uid/gid 0, so a root
-   extraction does not hand the files to the builder's uid) and a gzipped single binary.
-5. Builds `.deb` and `.rpm` packages for amd64, arm64 and riscv64 from those binaries, then deletes
-   the uncompressed binaries (only the `.gz`/`.tar.gz`/`.deb`/`.rpm` files ship). When `docker`
-   or `snapcraft` is installed, the `.snap` set is cross-built from source (in Docker when it is
-   usable, else in LXD); a failed snap build only warns.
+   extraction does not hand the files to the builder's uid) and a gzipped single binary. Each
+   `kula-scan` binary ships alone, gzipped, as `kula-scan-linux-<ver>-<arch>.gz`: it is an
+   operator tool, so the bundle, the packages, the snap and the Docker image leave it out.
+5. Builds `.deb` and `.rpm` packages for amd64, arm64 and riscv64 from the `kula` binaries, then
+   deletes the uncompressed binaries (only the `.gz`/`.tar.gz`/`.deb`/`.rpm` files ship). When
+   `docker` or `snapcraft` is installed, the `.snap` set is cross-built from source (in Docker
+   when it is usable, else in LXD); a failed snap build only warns.
 6. Generates `CHECKSUMS.sha256.txt` over the artifacts (used by the guided installer).
 
 AUR files are deliberately not built there (the PKGBUILD pins the published GitHub source archive):
@@ -29,7 +32,7 @@ run [`addons/build_aur.sh`](../../addons/build_aur.sh) after the release exists 
 
 | Script | Output | Notes |
 |--------|--------|-------|
-| [`build.sh`](../../addons/build.sh) | `kula` (+ `kula-scan`, `gen-mock-data`) in the repo root, or `dist/kula-linux-<ver>-<arch>` with `cross` | `./build.sh cross` for all arches |
+| [`build.sh`](../../addons/build.sh) | `kula` (+ `kula-scan`, `gen-mock-data`) in the repo root, or `dist/kula-linux-<ver>-<arch>` and `dist/kula-scan-linux-<ver>-<arch>` with `cross` | `./build.sh cross` for all arches |
 | [`build_deb.sh`](../../addons/build_deb.sh) | `dist/kula-*.deb` | installs systemd unit + `kula` user |
 | [`build_rpm.sh`](../../addons/build_rpm.sh) | `dist/kula-*.rpm` | RHEL/Fedora family |
 | [`build_aur.sh`](../../addons/build_aur.sh) | `dist/kula-<ver>-aur/` (+ `.tar.gz`) | then `makepkg -si` |

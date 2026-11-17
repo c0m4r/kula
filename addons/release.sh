@@ -45,6 +45,12 @@ for f in kula-linux-* ; do
     rm -rf kula
 done
 
+# kula-scan ships alone as a gzipped single binary per arch: an operator tool,
+# kept out of the kula bundle, the packages and the Docker image.
+for f in kula-scan-linux-* ; do
+    gzip -c "$f" > "${f}.gz"
+done
+
 cd ..
 
 # building deb and rpm packages for all archs (these also consume the raw binaries)
@@ -60,6 +66,7 @@ done
 # Remove the uncompressed raw binaries; we ship the .gz/.tar.gz/.deb/.rpm only.
 for arch in "${ARCHS[@]}"; do
     rm -f "dist/kula-linux-${VERSION}-${arch}"
+    rm -f "dist/kula-scan-linux-${VERSION}-${arch}"
 done
 
 # Snap, cross-built from source for all archs by the go plugin (so it ignores

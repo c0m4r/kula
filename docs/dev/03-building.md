@@ -26,7 +26,7 @@ from the [`VERSION`](../../VERSION) file:
 
 ```bash
 ./addons/build.sh          # current architecture: kula, kula-scan and gen-mock-data
-./addons/build.sh cross    # cross-compile amd64, arm64, riscv64 → dist/ (alias: all)
+./addons/build.sh cross    # kula and kula-scan for amd64, arm64, riscv64 → dist/ (alias: all)
 ./addons/build.sh --help
 ```
 
@@ -37,6 +37,10 @@ CGO_ENABLED=0 GOOS=linux GOARCH=<arch> go build \
   -trimpath -ldflags="-s -w" -buildvcs=false \
   -o dist/kula-linux-<version>-<arch> ./cmd/kula/
 ```
+
+and the same flags with `-o dist/kula-scan-linux-<version>-<arch> ./cmd/kula-scan/`. A release
+ships each `kula-scan` binary gzipped, as an asset of its own
+([Release orchestration](15-packaging.md#release-orchestration)).
 
 Supported targets: `linux/amd64`, `linux/arm64`, `linux/riscv64`.
 
