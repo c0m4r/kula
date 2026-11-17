@@ -39,11 +39,12 @@ func parseExpect(list string) ([]string, error) {
 	}
 	var keys, unknown []string
 	for _, token := range splitList(list) {
-		if !known[token] {
+		key := strings.ToLower(token)
+		if !known[key] {
 			unknown = append(unknown, fmt.Sprintf("%q", token))
 			continue
 		}
-		keys = append(keys, token)
+		keys = append(keys, key)
 	}
 	if len(unknown) > 0 {
 		return nil, fmt.Errorf("-expect: unknown key %s (keys: %s)", strings.Join(unknown, ", "), strings.Join(expectKeyNames(), ", "))

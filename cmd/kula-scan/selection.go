@@ -29,12 +29,12 @@ func newSelection(only, skip string) (*selection, error) {
 	} {
 		var unknown []string
 		for _, token := range splitList(flag.list) {
-			name, ok := canonicalToken(token)
+			name, ok := canonicalToken(strings.ToLower(token))
 			if !ok {
 				unknown = append(unknown, fmt.Sprintf("%q", token))
 				continue
 			}
-			flag.set[token] = true
+			flag.set[strings.ToLower(token)] = true
 			*flag.out = append(*flag.out, name)
 		}
 		if len(unknown) > 0 {
@@ -95,7 +95,7 @@ func parseIgnore(list string) (map[string]bool, []string, error) {
 			unknown = append(unknown, fmt.Sprintf("%q", token))
 			continue
 		}
-		set[token] = true
+		set[strings.ToLower(e.ID)] = true
 		names = append(names, e.ID)
 	}
 	if len(unknown) > 0 {
@@ -113,15 +113,15 @@ func markIgnored(findings []Finding, ignore map[string]bool) {
 	}
 }
 
-// splitList splits a comma list into lowercased, trimmed tokens, dropping
-// empty ones and repeats and keeping the order given.
+// splitList splits a comma list into trimmed tokens as written, dropping
+// empty ones and case-insensitive repeats and keeping the order given.
 func splitList(s string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, part := range strings.Split(s, ",") {
-		p := strings.ToLower(strings.TrimSpace(part))
-		if p != "" && !seen[p] {
-			seen[p] = true
+		p := strings.TrimSpace(part)
+		if p != "" && !seen[strings.ToLower(p)] {
+			seen[strings.ToLower(p)] = true
 			out = append(out, p)
 		}
 	}

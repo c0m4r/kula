@@ -309,7 +309,8 @@ Flags:
   -ignore list        finding IDs that stay in the report, marked ignored, but never affect
                       the exit status
   -expect list        posture the target must have; a finding that contradicts it FAILs and
-                      exits 1 whatever -fail-on says. Keys: %s
+                      exits 1 whatever -fail-on says; the keys are
+                      %s
   -fail-on string     min FAIL severity for non-zero exit: info|low|medium|high|critical (default high)
   -json               emit findings as JSON
   -no-color           disable ANSI colors

@@ -22,8 +22,9 @@ func TestUnknownSelectionTokensAreUsageErrors(t *testing.T) {
 		if code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)
 		}
+		// The token is named as written.
 		bad := args[1][strings.LastIndex(args[1], ",")+1:]
-		if !strings.Contains(stderr, `"`+strings.ToLower(bad)+`"`) {
+		if !strings.Contains(stderr, `"`+bad+`"`) {
 			t.Errorf("%v: the error does not name %q:\n%s", args, bad, stderr)
 		}
 		if args[0] != "-ignore" && !strings.Contains(stderr, "headers, auth, csrf") {
