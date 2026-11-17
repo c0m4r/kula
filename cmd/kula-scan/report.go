@@ -47,6 +47,8 @@ type ReportOptions struct {
 	Ignore     []string `json:"ignore"`
 	Expect     []string `json:"expect"`
 	FailOn     string   `json:"fail_on"`
+	Connect    string   `json:"connect,omitempty"` // -connect: where connections went instead of the URL's address
+	Unix       string   `json:"unix,omitempty"`    // -unix: the socket connections went to
 }
 
 // TargetInfo is what discovery learnt about the target.

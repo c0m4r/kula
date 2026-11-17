@@ -75,6 +75,8 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		username   = fs.String("username", "", "username for authenticated checks (optional)")
 		password   = fs.String("password", "", "password for authenticated checks (optional; prefer the "+passwordEnv+" environment variable)")
 		basePath   = fs.String("base-path", "", "base path if kula is mounted under one, e.g. /kula")
+		connect    = fs.String("connect", "", "connect to this host:port instead of the target URL's address; the URL still gives the Host header, TLS server name and origin")
+		unix       = fs.String("unix", "", "connect over this Unix socket (Kula's web.unix_socket); the URL still gives the Host header and base path")
 		timeout    = fs.Duration("timeout", 10*time.Second, "per-request timeout")
 		dosWait    = fs.Duration("dos-wait", 35*time.Second, "how long DoS probes wait for the server to reap a slow/idle connection (raise if the target uses long read timeouts)")
 		insecure   = fs.Bool("insecure", false, "skip TLS certificate verification")
@@ -170,6 +172,8 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Progress: *verbose || isTerminal(stderr),
 		Log:      stderr,
 		Expect:   expected,
+		Connect:  *connect,
+		Unix:     *unix,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
@@ -217,6 +221,8 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Ignore:     nonNil(ignoredIDs),
 		Expect:     nonNil(expected),
 		FailOn:     strings.ToLower(failSev.String()),
+		Connect:    *connect,
+		Unix:       *unix,
 	}
 	if *fuzz {
 		report.Options.Seed = scanner.seed
@@ -306,6 +312,8 @@ Examples:
   read -rs KULA_SCAN_PASSWORD && export KULA_SCAN_PASSWORD
   kula-scan -username admin https://mon.example.com
   kula-scan -only headers,traversal,cors http://10.0.0.5:27960
+  kula-scan -connect 10.0.0.5:443 https://mon.example.com
+  kula-scan -unix /run/kula/kula.sock http://localhost/
   kula-scan -skip HDR-009 -ignore PROM-001 http://10.0.0.5:27960
   kula-scan -expect auth,tls,hsts -username admin https://mon.example.com
   kula-scan -aggressive -username admin http://localhost:27960
@@ -320,6 +328,11 @@ Flags:
   -password string    password for authenticated checks; KULA_SCAN_PASSWORD in the
                       environment keeps it out of the process list and shell history
   -base-path string   base path if kula is mounted under one (e.g. /kula)
+  -connect host:port  connect here instead of the target URL's address; the URL still gives
+                      the Host header, TLS server name and origin (scan by IP under the real
+                      name, or a backend behind its proxy)
+  -unix path          connect over this Unix socket (Kula's web.unix_socket); the URL still
+                      gives the Host header and base path
   -timeout duration   per-request timeout (default 10s)
   -dos-wait duration  how long DoS probes wait for a slow/idle connection to be reaped (default 35s)
   -insecure           skip TLS certificate verification

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -165,7 +166,7 @@ func (c check) entry() catalogEntry {
 type Scanner struct {
 	base       *url.URL // scheme + host + base path; no trailing slash beyond base
 	rawBase    string   // original -target string, for messages
-	network    string   // "tcp"
+	network    string   // "tcp", or "unix" with -unix
 	address    string   // where every connection goes (see dial)
 	client     *http.Client
 	insecure   bool
@@ -238,6 +239,11 @@ type Options struct {
 	Progress   bool      // log one line per check as it starts
 	Log        io.Writer // where Verbose and Progress write; nil means standard error
 	Expect     []string  // -expect keys (see expectKeys): the posture the target declares
+	// Connect (host:port) or Unix (a socket path) sends every connection
+	// there instead of to the target URL's address; the URL still gives the
+	// Host header, the TLS server name, Origin values and the base path.
+	Connect string
+	Unix    string
 }
 
 // NewScanner builds a Scanner for opt.Target. opt.BasePath, when non-empty, is
@@ -264,6 +270,11 @@ func NewScanner(opt Options) (*Scanner, error) {
 	u.RawQuery = ""
 	u.Fragment = ""
 
+	network, address, err := dialTarget(u, opt.Connect, opt.Unix)
+	if err != nil {
+		return nil, err
+	}
+
 	if opt.Timeout <= 0 {
 		opt.Timeout = 10 * time.Second
 	}
@@ -288,8 +299,8 @@ func NewScanner(opt Options) (*Scanner, error) {
 	s := &Scanner{
 		base:       u,
 		rawBase:    opt.Target,
-		network:    "tcp",
-		address:    urlAddress(u),
+		network:    network,
+		address:    address,
 		insecure:   opt.Insecure,
 		timeout:    opt.Timeout,
 		dosWait:    opt.DoSWait,
@@ -325,6 +336,33 @@ func NewScanner(opt Options) (*Scanner, error) {
 		},
 	}
 	return s, nil
+}
+
+// dialTarget returns where the scanner's connections go: the -unix socket,
+// the -connect address, or the host and port the target URL names.
+func dialTarget(u *url.URL, connect, unix string) (network, address string, err error) {
+	switch {
+	case connect != "" && unix != "":
+		return "", "", errors.New("-connect and -unix both say where to connect; pass one of them")
+	case unix != "":
+		return "unix", unix, nil
+	case connect != "":
+		if !validHostPort(connect) {
+			return "", "", fmt.Errorf("invalid -connect %q: want host:port, e.g. 127.0.0.1:27960 or [::1]:27960", connect)
+		}
+		return "tcp", connect, nil
+	}
+	return "tcp", urlAddress(u), nil
+}
+
+// validHostPort reports whether s is a host and a port number.
+func validHostPort(s string) bool {
+	host, port, err := net.SplitHostPort(s)
+	if err != nil || host == "" {
+		return false
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	return err == nil && n > 0
 }
 
 // urlAddress returns the host and port u names, with the scheme's default
