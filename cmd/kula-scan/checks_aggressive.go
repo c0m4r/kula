@@ -22,7 +22,6 @@ func aggressiveChecks() []check {
 		{ids: []string{"INPUT-AGG"}, run: runOversizedBodyCheck},
 		{ids: []string{"RATE-OLLAMA"}, run: runOllamaRateCheck},
 		{ids: []string{"WS-FLOOD"}, run: runWSFloodCheck},
-		{ids: []string{"RATE-LOGIN"}, run: runLoginRateCheck},
 	}
 }
 

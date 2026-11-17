@@ -38,6 +38,9 @@ import (
 // All of these are gated behind -fuzz. Every probe draws from a seeded PRNG and
 // reports the seed, so any anomaly is reproducible with -seed.
 
+// fuzzChecks are the fault-injection probes. They run before the probes that
+// exhaust the login limiter, since FUZZ-BODY spends login attempts, and
+// fuzzLivenessCheck runs after those (see allChecks).
 func fuzzChecks() []check {
 	return []check{
 		{ids: []string{"FUZZ-QUERY"}, run: runFuzzQuery},
@@ -46,8 +49,13 @@ func fuzzChecks() []check {
 		{ids: []string{"FUZZ-METHODS"}, run: runFuzzMethods},
 		{ids: []string{"FUZZ-SMUGGLE"}, run: runFuzzSmuggle},
 		{ids: []string{"FUZZ-WS"}, run: runFuzzWS},
-		{ids: []string{"FUZZ-LIVENESS"}, run: runFuzzLiveness},
 	}
+}
+
+// fuzzLivenessCheck is the run's last probe: the target must still answer
+// after everything before it.
+func fuzzLivenessCheck() check {
+	return check{ids: []string{"FUZZ-LIVENESS"}, run: runFuzzLiveness}
 }
 
 // fuzzTokens is the corpus of hostile values mixed into fuzzed inputs.
@@ -1247,8 +1255,9 @@ func runFuzzWS(s *Scanner) []Finding {
 	}
 }
 
-// runFuzzLiveness is the final probe: after the whole fuzz barrage, the instance
-// must still be alive and serving. It runs last in the registry.
+// runFuzzLiveness is the final probe: after the whole fuzz barrage, and the
+// probes that run after it, the instance must still be alive and serving. It
+// runs last in the registry.
 func runFuzzLiveness(s *Scanner) []Finding {
 	var lastErr error
 	for i := 0; i < 3; i++ {

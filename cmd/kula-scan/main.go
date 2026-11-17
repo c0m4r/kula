@@ -208,8 +208,7 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 				"(up to -dos-wait="+dosWait.String()+" each). Run against staging, or accept the disruption."))
 	}
 	if *fuzz && textOut {
-		_, _ = fmt.Fprintln(stderr, banner(bannerColor,
-			fmt.Sprintf("FUZZ MODE: sends malformed/extreme input across the surface (seed %d). May create junk sessions/log noise; reproduce findings with -seed.", scanner.seed)))
+		_, _ = fmt.Fprintln(stderr, banner(bannerColor, fuzzBanner(scanner.seed)))
 	}
 
 	started := time.Now()
@@ -324,6 +323,16 @@ func isTerminal(w io.Writer) bool {
 		return false
 	}
 	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// fuzzBanner is the -fuzz warning: what fuzzing costs the target. The login
+// attempts are FUZZ-BODY's, and with origin validation off one of
+// FUZZ-SMUGGLE's requests (see allChecks).
+func fuzzBanner(seed int64) string {
+	return fmt.Sprintf("FUZZ MODE: sends malformed/extreme input across the surface (seed %d). "+
+		"With auth on it spends up to %d of this address's %d login attempts in five minutes (%d with origin validation off), "+
+		"and leaves the refused requests in the target's log; reproduce findings with -seed.",
+		seed, fuzzLoginBodies, kulaLoginAddressLimit, fuzzLoginBodies+1)
 }
 
 func banner(color bool, msg string) string {

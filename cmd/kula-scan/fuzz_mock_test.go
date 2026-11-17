@@ -28,6 +28,9 @@ type kulaMock struct {
 	// laxMethods makes the GET-only API routes answer 200 to any method,
 	// as a server without readOnly would; static routes always do.
 	laxMethods bool
+	// noOriginCheck drops the CSRF gate's Origin check, as
+	// web.security.origin_validation: false does; the token check stays.
+	noOriginCheck bool
 	// loginLimit and chatLimit are the per-address limits (Kula: 15 logins
 	// in five minutes, 10 chats a minute); a test sets fewer to begin
 	// partly spent.
@@ -160,7 +163,7 @@ func (m *kulaMock) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if !kmSameOrigin(r) {
+			if !m.noOriginCheck && !kmSameOrigin(r) {
 				kmJSONError(w, "invalid origin", http.StatusForbidden)
 				return
 			}

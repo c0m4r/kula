@@ -954,7 +954,8 @@ func (s *Scanner) ensureSession() bool {
 }
 
 // allChecks returns the full registry in execution order. Categories run
-// grouped; aggressive checks are tagged and filtered by the runner.
+// grouped, but for the end of the run, which the login budget orders (below);
+// aggressive and fuzz checks are tagged and filtered by the runner.
 func allChecks() []check {
 	var checks []check
 	checks = append(checks, headerChecks()...)
@@ -972,11 +973,42 @@ func allChecks() []check {
 	checks = append(checks, aggressiveChecks()...)
 	checks = append(checks, dosChecks()...)
 	checks = append(checks, limitChecks()...)
-	checks = append(checks, bypassChecks()...)
-	checks = append(checks, fuzzChecks()...) // runs last; ends with the liveness probe
-	// After the fuzz probes, which send chat bodies too; belongs before
-	// FUZZ-LIVENESS.
+
+	// The login budget. Kula admits 15 login attempts per client address in
+	// five minutes, and 5 per account and address (loginIPAttemptLimit and
+	// loginUserAttemptLimit in internal/web/auth.go). Every POST /api/login
+	// that passes the CSRF gate counts against the first, whatever its body;
+	// one whose body decodes counts against the second too. The probes that
+	// spend attempts run first, so that each still reaches the code it tests:
+	//
+	//	the scan's login, by the first check that needs a session   1
+	//	AUTH-006: a wrong password, known and unknown username       2
+	//	INPUT-AGG: an 8 KiB body, refused by the 4 KiB cap           1
+	//	FUZZ-BODY: malformed bodies, stopping at a 429            <= 6
+	//	                                                            10 of 15
+	//
+	// Then the two that exhaust the limiter on purpose: RATE-LOGIN sends 8
+	// for one account, 5 reach the handler and 3 are refused 429 (its PASS);
+	// BYPASS-XFF's 12 then all find the address spent (its PASS, with
+	// trust_proxy off). FUZZ-LIVENESS, which needs no login, ends the run.
+	//
+	// With web.security.origin_validation off, two more reach the limiter
+	// before FUZZ-BODY: CSRF-001's and CSRF-002's logins without and with a
+	// foreign Origin. And FUZZ-SMUGGLE's three ambiguously framed requests to
+	// /api/login, which carry no Origin, pass the CSRF gate: net/http refuses
+	// two of them before routing (two Content-Lengths, two
+	// Transfer-Encodings) and one reaches the limiter, three at most on
+	// another server. That is 13 attempts, 15 at most, before RATE-LOGIN:
+	// FUZZ-BODY's six still reach the parser (attempts 7 to 12), AUTH-006 and
+	// INPUT-AGG are not throttled, RATE-LOGIN still meets a 429 within its 8,
+	// and BYPASS-XFF's 12 are all still refused.
+	checks = append(checks, fuzzChecks()...)
+	// RATE-CHAT exhausts the AI chat limiter, so it runs after FUZZ-BODY,
+	// which sends the chat a few bodies of its own.
 	checks = append(checks, chatRateChecks()...)
+	checks = append(checks, check{ids: []string{"RATE-LOGIN"}, run: runLoginRateCheck})
+	checks = append(checks, bypassChecks()...)
+	checks = append(checks, fuzzLivenessCheck())
 	return checks
 }
 
