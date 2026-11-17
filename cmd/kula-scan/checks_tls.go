@@ -3,8 +3,6 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
-	"net"
-	"strings"
 	"time"
 )
 
@@ -53,15 +51,10 @@ func runTLSChecks(s *Scanner) []Finding {
 			"target is plain HTTP; no TLS layer to inspect.")}
 	}
 
-	host := s.base.Host
-	if !strings.Contains(host, ":") {
-		host += ":443"
-	}
-	dialer := &net.Dialer{Timeout: s.timeout}
 	// Verify the certificate chain unless -insecure; either way we can read the
-	// negotiated parameters and the leaf certificate.
-	// nosemgrep: missing-ssl-minversion
-	conn, err := tls.DialWithDialer(dialer, "tcp", host, &tls.Config{InsecureSkipVerify: s.insecure}) //nolint:gosec // -insecure is an explicit opt-in
+	// negotiated parameters and the leaf certificate. The handshake ends with
+	// the run.
+	conn, err := s.dialTLS(s.ctx)
 	if err != nil {
 		return []Finding{finding("TLS-001", SevMedium, StatusWarn,
 			"could not complete a TLS handshake with the target.").withEvidence("%v", err)}

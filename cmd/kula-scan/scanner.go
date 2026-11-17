@@ -165,6 +165,8 @@ func (c check) entry() catalogEntry {
 type Scanner struct {
 	base       *url.URL // scheme + host + base path; no trailing slash beyond base
 	rawBase    string   // original -target string, for messages
+	network    string   // "tcp"
+	address    string   // where every connection goes (see dial)
 	client     *http.Client
 	insecure   bool
 	timeout    time.Duration
@@ -278,32 +280,16 @@ func NewScanner(opt Options) (*Scanner, error) {
 		opt.Log = os.Stderr
 	}
 
-	transport := &http.Transport{
-		// kula-scan probes arbitrary targets; the Go client default min (TLS 1.2) is correct, and InsecureSkipVerify is the opt-in below.
-		// nosemgrep: missing-ssl-minversion
-		TLSClientConfig:        &tls.Config{InsecureSkipVerify: opt.Insecure}, //nolint:gosec // -insecure is an explicit opt-in for self-signed test instances
-		ForceAttemptHTTP2:      true,
-		MaxResponseHeaderBytes: maxResponseHeaderBytes,
-	}
-	client := &http.Client{
-		Timeout:   opt.Timeout,
-		Transport: transport,
-		// Observe redirects (301/302) directly rather than following them, so
-		// base-path redirects and auth bounces are visible to the checks.
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
 	expect := map[string]bool{}
 	for _, key := range opt.Expect {
 		expect[key] = true
 	}
 
-	return &Scanner{
+	s := &Scanner{
 		base:       u,
 		rawBase:    opt.Target,
-		client:     client,
+		network:    "tcp",
+		address:    urlAddress(u),
 		insecure:   opt.Insecure,
 		timeout:    opt.Timeout,
 		dosWait:    opt.DoSWait,
@@ -320,7 +306,75 @@ func NewScanner(opt Options) (*Scanner, error) {
 		username:   opt.Username,
 		password:   opt.Password,
 		https:      u.Scheme == "https",
-	}, nil
+	}
+	s.client = &http.Client{
+		Timeout: opt.Timeout,
+		Transport: &http.Transport{
+			// Every request goes where dial connects, whatever its URL names.
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return s.dial(ctx)
+			},
+			TLSClientConfig:        s.tlsConfig(),
+			ForceAttemptHTTP2:      true,
+			MaxResponseHeaderBytes: maxResponseHeaderBytes,
+		},
+		// Observe redirects (301/302) directly rather than following them, so
+		// base-path redirects and auth bounces are visible to the checks.
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return s, nil
+}
+
+// urlAddress returns the host and port u names, with the scheme's default
+// port when it names none. An IPv6 literal keeps its brackets: [::1]:80.
+func urlAddress(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if u.Scheme == "https" {
+			port = "443"
+		}
+	}
+	return net.JoinHostPort(u.Hostname(), port)
+}
+
+// dial opens a connection to the target. Every connection the scanner makes
+// starts here: the HTTP client's, the raw-socket probes' (dialRaw), the
+// WebSocket handshakes' (wsDial) and the TLS check's (dialTLS). ctx and
+// -timeout bound the dial; the caller adds TLS and, for a connection it holds,
+// closeOnCancel.
+func (s *Scanner) dial(ctx context.Context) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: s.timeout}
+	return dialer.DialContext(ctx, s.network, s.address)
+}
+
+// tlsConfig returns the TLS client configuration of every TLS connection the
+// scanner makes. The server name, sent as SNI and checked against the
+// certificate, is always the target URL's host name, wherever dial connects.
+func (s *Scanner) tlsConfig() *tls.Config {
+	// kula-scan probes arbitrary targets; the Go client default min (TLS 1.2) is correct, and InsecureSkipVerify is the opt-in below.
+	// nosemgrep: missing-ssl-minversion
+	return &tls.Config{ServerName: s.base.Hostname(), InsecureSkipVerify: s.insecure} //nolint:gosec // -insecure is an explicit opt-in for self-signed test instances
+}
+
+// dialTLS opens a TLS connection to the target through dial and completes
+// the handshake. ctx ends the dial and the handshake, which -timeout bounds
+// together; the established connection outlives it.
+func (s *Scanner) dialTLS(ctx context.Context) (*tls.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	conn, err := s.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tlsConn := tls.Client(conn, s.tlsConfig())
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
 }
 
 // randIntn returns a non-negative pseudo-random int in [0,n) from the seeded
@@ -404,30 +458,18 @@ func (s *Scanner) authedHeaders(csrf bool) map[string]string {
 	return h
 }
 
-// dialRaw opens a raw connection to the target (TLS when https), with default
-// ports filled in. The caller owns the returned conn and must close it. DoS
-// probes use this to drive the socket directly (partial requests, oversized
-// headers); rawTCP layers a single request/response on top. The connection
-// is closed when the run is interrupted.
+// dialRaw opens a raw connection to the target (TLS when https). The caller
+// owns the returned conn and must close it. DoS probes use this to drive the
+// socket directly (partial requests, oversized headers); rawTCP layers a
+// single request/response on top. The connection is closed when the run is
+// interrupted.
 func (s *Scanner) dialRaw() (net.Conn, error) {
-	host := s.base.Host
-	if !strings.Contains(host, ":") {
-		if s.https {
-			host += ":443"
-		} else {
-			host += ":80"
-		}
-	}
-	dialer := &net.Dialer{Timeout: s.timeout}
 	var conn net.Conn
 	var err error
 	if s.https {
-		// Probe tool: connect to whatever the target offers; Go's client default min is TLS 1.2. InsecureSkipVerify is an explicit opt-in.
-		// nosemgrep: missing-ssl-minversion
-		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{InsecureSkipVerify: s.insecure}} //nolint:gosec // explicit opt-in
-		conn, err = tlsDialer.DialContext(s.ctx, "tcp", host)
+		conn, err = s.dialTLS(s.ctx)
 	} else {
-		conn, err = dialer.DialContext(s.ctx, "tcp", host)
+		conn, err = s.dial(s.ctx)
 	}
 	if err != nil {
 		return nil, err
@@ -566,14 +608,15 @@ func (s *Scanner) wsDial(path string, headers http.Header) (*websocket.Conn, *ht
 
 	dialer := *websocket.DefaultDialer
 	dialer.HandshakeTimeout = s.timeout
-	// Probe tool: connect to whatever the target offers; Go's client default min is TLS 1.2. InsecureSkipVerify is an explicit opt-in.
-	// nosemgrep: missing-ssl-minversion
-	dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: s.insecure} //nolint:gosec // explicit opt-in
+	// The handshake goes where dial connects, as the HTTP client's requests
+	// do, never through a proxy from the environment.
+	dialer.Proxy = nil
+	dialer.TLSClientConfig = s.tlsConfig()
 	// Dial calls this in the calling goroutine and is done with the budget
 	// when it returns. The connection is closed when the run is interrupted.
 	var budgeted []*budgetConn
-	dialer.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+	dialer.NetDialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		conn, err := s.dial(ctx)
 		if err != nil {
 			return nil, err
 		}
