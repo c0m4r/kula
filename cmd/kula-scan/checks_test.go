@@ -440,7 +440,11 @@ func TestSecureTargetPasses(t *testing.T) {
 
 	input := runInputChecks(s)
 	wantStatus(t, input, "INPUT-001", StatusPass)
+	wantStatus(t, input, "INPUT-002", StatusPass)
 	wantStatus(t, input, "INPUT-003", StatusPass)
+	if f, _ := byID(input, "INPUT-002"); !strings.Contains(f.Detail, "5000 samples") {
+		t.Errorf("INPUT-002 did not count the capped answer: %q", f.Detail)
+	}
 
 	// The closing logout revokes the session the checks shared.
 	wantStatus(t, s.closeSession(nil, true), "AUTH-010", StatusPass)
@@ -1038,6 +1042,102 @@ func TestWildcardCORS(t *testing.T) {
 	}
 }
 
+// ---- input -------------------------------------------------------------------
+
+// withHistory serves the secure mock with history answered by history.
+func withHistory(history http.HandlerFunc) http.Handler {
+	mock := secureMock()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/history" && hasValidSession(r) {
+			history(w, r)
+			return
+		}
+		mock.ServeHTTP(w, r)
+	})
+}
+
+func TestHistoryPointsCapIsCounted(t *testing.T) {
+	ts := httptest.NewServer(withHistory(historyHandler(1 << 30)))
+	defer ts.Close()
+	s := scannerFor(t, ts, mockUser, mockPass)
+	f, _ := byID(runInputChecks(s), "INPUT-002")
+	if f.Status != StatusFail || !strings.Contains(f.Detail, "more than 5000") {
+		t.Errorf("uncapped points: INPUT-002 = %s %q, want a FAIL", f.Status, f.Detail)
+	}
+}
+
+func TestHistoryValidatesTierAndSections(t *testing.T) {
+	// A Kula from before tier and sections were validated.
+	lax := historyHandler(5000)
+	ts := httptest.NewServer(withHistory(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		q.Del("tier")
+		q.Del("sections")
+		r.URL.RawQuery = q.Encode()
+		lax(w, r)
+	}))
+	defer ts.Close()
+	s := scannerFor(t, ts, mockUser, mockPass)
+	f, _ := byID(runInputChecks(s), "INPUT-001")
+	for _, want := range []string{"negative tier", "non-numeric tier", "unknown section"} {
+		if f.Status != StatusWarn || !strings.Contains(f.Detail, want) {
+			t.Errorf("INPUT-001 = %s %q, want a WARN naming %s", f.Status, f.Detail, want)
+		}
+	}
+	if strings.Contains(f.Detail, "range") {
+		t.Errorf("INPUT-001 names a range the target refused: %q", f.Detail)
+	}
+}
+
+func TestReadHistoryCount(t *testing.T) {
+	for _, c := range []struct {
+		body    string
+		samples int
+		more    bool
+		err     bool
+	}{
+		{`{"samples":[{"ts":1},{"ts":2}],"resolution":"1s","downsampled":false}`, 2, false, false},
+		{`{"tier":0,"samples":[],"resolution":"1s"}`, 0, false, false},
+		{`{"samples":null}`, 0, false, false},
+		{`{"samples":[` + strings.Repeat(`{"ts":1},`, 5000) + `{"ts":2}]}`, 5000, true, false},
+		{`{"samples":[` + strings.TrimSuffix(strings.Repeat(`{"ts":1},`, 5000), ",") + `]}`, 5000, false, false},
+		{`{"data":1}`, 0, false, true},
+		{`{"samples":{}}`, 0, false, true},
+		{`[]`, 0, false, true},
+		{`{"samples":[{"ts":1}`, 1, false, true},
+	} {
+		got, err := readHistoryCount(strings.NewReader(c.body))
+		if got.samples != c.samples || got.more != c.more || (err != nil) != c.err {
+			t.Errorf("%.40s: samples %d more %v err %v; want %d %v error %v", c.body, got.samples, got.more, err, c.samples, c.more, c.err)
+		}
+	}
+	got, _ := readHistoryCount(strings.NewReader(`{"samples":[],"resolution":"2s","downsampled":true}`))
+	if got.resolution != "2s" || !got.downsampled {
+		t.Errorf("resolution %q downsampled %v", got.resolution, got.downsampled)
+	}
+}
+
+// TestRequestsThatAllFailAreErrors: a probe whose every request failed has
+// learnt nothing, and says so instead of passing.
+func TestRequestsThatAllFailAreErrors(t *testing.T) {
+	ts := httptest.NewServer(secureMock())
+	s := scannerFor(t, ts, mockUser, mockPass)
+	if !s.ensureSession() {
+		t.Fatal("no session")
+	}
+	ts.Close() // every request from here on fails
+
+	var findings []Finding
+	for _, run := range []func(*Scanner) []Finding{runAuthChecks, runCSRFChecks, runCORSChecks, runInputChecks, runOpenRedirectCheck} {
+		findings = append(findings, run(s)...)
+	}
+	for _, id := range []string{"AUTH-001", "AUTH-002", "AUTH-003", "AUTH-004", "CSRF-001", "CSRF-002", "CSRF-003",
+		"CORS-001", "CORS-003", "INPUT-001", "INPUT-002", "INPUT-003", "REDIR-001"} {
+		wantStatus(t, findings, id, StatusError)
+	}
+	wantStatus(t, runHeaderChecks(s), "HDR-000", StatusError)
+}
+
 // ---- report logic ------------------------------------------------------------
 
 func TestExitCodeThreshold(t *testing.T) {
@@ -1249,6 +1349,60 @@ func TestOpenRedirectDetected(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "evil.example") {
 			http.Redirect(w, r, "http://evil.example/", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+	s := scannerForDos(t, ts, "", "", time.Second)
+	wantStatus(t, runOpenRedirectCheck(s), "REDIR-001", StatusFail)
+}
+
+// TestLocationAsABrowserReadsIt: a Location is judged by where a browser
+// goes, not by how url.Parse reads it.
+func TestLocationAsABrowserReadsIt(t *testing.T) {
+	s, err := NewScanner(Options{Target: "http://127.0.0.1:27960/kula"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		loc     string
+		foreign bool
+	}{
+		{"/kula/", false},
+		{"/evil.example/", false},
+		{"kula/", false},
+		{"?lang=en", false},
+		{"", false},
+		{"/%2f%2fevil.example/", false},
+		{"http://127.0.0.1:27960/kula/", false},
+		{"HTTP://127.0.0.1./kula/", false},
+		{"http:kula/", false}, // same scheme, no slashes: a relative path
+		{"//evil.example/", true},
+		{"/\\evil.example/", true},
+		{"\\\\evil.example", true},
+		{" //evil.example/", true},
+		{"\x01//evil.example/", true},
+		{"/\t/evil.example", true},
+		{"http://evil.example/", true},
+		{"HTTPS://evil.example", true},
+		{"https:evil.example", true}, // another scheme: an authority follows
+		{"http://127.0.0.1@evil.example/", true},
+		{"http://evil.example:27960", true},
+		{"ftp://evil.example/", true},
+	} {
+		host, off := locationHost(c.loc, s.base.Scheme)
+		if foreign := off && !s.sameHostname(host); foreign != c.foreign {
+			t.Errorf("Location %q: foreign = %v (host %q), want %v", c.loc, foreign, host, c.foreign)
+		}
+	}
+}
+
+func TestBackslashRedirectDetected(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "evil.example") {
+			w.Header().Set("Location", `/\evil.example/`)
+			w.WriteHeader(http.StatusFound)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

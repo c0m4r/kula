@@ -148,16 +148,16 @@ var catalog = []catalogEntry{
 		"The server drops a WebSocket connection that sends a message past its read limit."},
 
 	{"INPUT-001", "input", ModeDefault, "History range validation",
-		"/api/history answers 400 to malformed, inverted and over-long time ranges."},
+		"/api/history answers 400 to malformed, inverted and over-long time ranges, a negative or non-numeric tier and an unknown section."},
 	{"INPUT-002", "input", ModeDefault, "History points cap",
-		"/api/history caps an absurd points value instead of failing."},
+		"/api/history answers an absurd points value over two hours with no more than 5000 samples."},
 	{"INPUT-003", "input", ModeDefault, "i18n language validation",
 		"/api/i18n rejects invalid and traversal language codes and reads no other file."},
 	{"INPUT-AGG", "input", ModeAggressive, "Login body size cap",
 		"An 8 KiB login body is rejected by the 4 KiB body cap."},
 
 	{"REDIR-001", "redirect", ModeDefault, "No open redirect",
-		"Crafted paths do not produce a redirect to a foreign host."},
+		"Crafted paths do not produce a redirect whose Location, read as a browser reads it, names a foreign host."},
 
 	{"TLS-001", "tls", ModeDefault, "TLS protocol version",
 		"Over HTTPS, the connection negotiates TLS 1.2 or later."},

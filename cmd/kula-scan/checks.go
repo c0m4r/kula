@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // This file holds the non-disruptive safeguard probes, grouped by category.
@@ -1318,70 +1321,235 @@ func inputChecks() []check {
 }
 
 func runInputChecks(s *Scanner) []Finding {
-	var out []Finding
-
 	hdr, ok := s.apiHeaders()
 	if !ok {
-		out = append(out, finding("INPUT-001", SevInfo, StatusSkip,
-			"auth is enabled and no session is available to exercise /api/history: "+s.noSessionReason()+"."))
-	} else {
-		// Bad / inverted / oversized time ranges must be rejected with 400.
-		cases := []struct{ name, query string }{
-			{"malformed 'from'", "/api/history?from=not-a-time"},
-			{"malformed 'to'", "/api/history?to=garbage"},
-			{"inverted range", "/api/history?from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z"},
-			{"range > 31 days", "/api/history?from=2020-01-01T00:00:00Z&to=2026-01-01T00:00:00Z"},
-		}
-		var bad []string
-		for _, c := range cases {
-			if r := s.do(http.MethodGet, c.query, hdr, ""); r.err == nil && r.status != http.StatusBadRequest {
-				bad = append(bad, c.name)
-			}
-		}
-		if len(bad) == 0 {
-			out = append(out, finding("INPUT-001", SevLow, StatusPass,
-				"malformed, inverted, and over-long time ranges are all rejected with 400."))
-		} else {
-			out = append(out, finding("INPUT-001", SevMedium, StatusWarn,
-				"these /api/history inputs were not rejected with 400: "+strings.Join(bad, ", ")).
-				withRemediation("Validate and bound the from/to window server-side."))
-		}
-
-		// An absurd points value must be capped, not cause an error/OOM.
-		if r := s.do(http.MethodGet, "/api/history?points=999999999", hdr, ""); r.err == nil {
-			if r.status == http.StatusOK {
-				out = append(out, finding("INPUT-002", SevLow, StatusPass,
-					"a huge points value is accepted but capped (no error, no resource blow-up)."))
-			} else {
-				out = append(out, finding("INPUT-002", SevInfo, StatusWarn,
-					"a huge points value returned a non-200 status").withEvidence("status=%d", r.status))
-			}
+		// /api/history and /api/i18n sit behind the auth gate.
+		why := "auth is enabled and no session is available to reach the API: " + s.noSessionReason() + "."
+		return []Finding{
+			finding("INPUT-001", SevInfo, StatusSkip, why),
+			finding("INPUT-002", SevInfo, StatusSkip, why),
+			finding("INPUT-003", SevInfo, StatusSkip, why),
 		}
 	}
+	return []Finding{historyValidationFinding(s, hdr), pointsCapFinding(s, hdr), languageFinding(s, hdr)}
+}
 
-	// i18n language validation (open endpoint when auth off; behind auth when on).
-	if hdr, ok := s.apiHeaders(); ok {
-		var leaked []string
-		for _, lang := range []string{"../../etc/passwd", "..%2f..%2fconfig.yaml", "zz", "<script>", "\x00en"} {
-			r := s.do(http.MethodGet, "/api/i18n?lang="+lang, hdr, "")
-			if r.err != nil {
-				continue
-			}
-			if r.status == http.StatusOK && (strings.Contains(r.body, "root:x:") || strings.Contains(r.body, "password_hash") || strings.Contains(r.body, "module kula")) {
-				leaked = append(leaked, lang)
-			}
-		}
-		if len(leaked) == 0 {
-			out = append(out, finding("INPUT-003", SevMedium, StatusPass,
-				"invalid / traversal language codes are rejected and never read arbitrary files."))
-		} else {
-			out = append(out, finding("INPUT-003", SevCritical, StatusFail,
-				"a crafted lang parameter leaked file content: "+strings.Join(leaked, ", ")).
-				withRemediation("Validate lang against the fixed supported-language allow-list."))
+// historyValidationFinding judges INPUT-001: /api/history answers 400 to a
+// bad, inverted or over-long time range, a negative or non-numeric tier and
+// an unknown section.
+func historyValidationFinding(s *Scanner, hdr map[string]string) Finding {
+	cases := []struct{ name, query string }{
+		{"malformed 'from'", "/api/history?from=not-a-time"},
+		{"malformed 'to'", "/api/history?to=garbage"},
+		{"inverted range", "/api/history?from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z"},
+		{"range > 31 days", "/api/history?from=2020-01-01T00:00:00Z&to=2026-01-01T00:00:00Z"},
+		{"negative tier", "/api/history?tier=-1"},
+		{"non-numeric tier", "/api/history?tier=first"},
+		{"unknown section", "/api/history?sections=kula-scan-nosuch"},
+	}
+	var bad, unreached []string
+	for _, c := range cases {
+		r := s.do(http.MethodGet, c.query, hdr, "")
+		switch {
+		case r.err != nil:
+			unreached = append(unreached, c.name)
+		case r.status != http.StatusBadRequest:
+			bad = append(bad, fmt.Sprintf("%s (HTTP %d)", c.name, r.status))
 		}
 	}
+	switch {
+	case len(bad) > 0:
+		return finding("INPUT-001", SevMedium, StatusWarn,
+			"these /api/history inputs were not rejected with 400: "+strings.Join(bad, ", ")+unreachedNote(unreached)).
+			withRemediation("Validate and bound the from/to window, the tier and the sections server-side; older Kula releases do not validate tier or sections.")
+	case len(unreached) == len(cases):
+		return finding("INPUT-001", SevInfo, StatusError,
+			"could not send any request to /api/history.")
+	default:
+		return finding("INPUT-001", SevLow, StatusPass,
+			"malformed, inverted and over-long time ranges, a negative or non-numeric tier and an unknown section are all rejected with 400"+unreachedNote(unreached)+".")
+	}
+}
 
-	return out
+// maxHistoryPoints is the most samples Kula answers a history request with,
+// whatever points value it asks for.
+const maxHistoryPoints = 5000
+
+// pointsCapFinding judges INPUT-002 by counting what an absurd points value
+// gets: the samples of the last two hours, which at one-second resolution are
+// more than the cap, of one section to keep them small.
+func pointsCapFinding(s *Scanner, hdr map[string]string) Finding {
+	to := time.Now().UTC().Truncate(time.Second)
+	from := to.Add(-2 * time.Hour)
+	path := fmt.Sprintf("/api/history?from=%s&to=%s&points=999999999&sections=lavg", from.Format(time.RFC3339), to.Format(time.RFC3339))
+	p := s.countHistory(path, hdr)
+	switch {
+	case p.err != nil:
+		return finding("INPUT-002", SevInfo, StatusError,
+			"could not request /api/history with a huge points value: "+p.err.Error())
+	case p.status != http.StatusOK:
+		return finding("INPUT-002", SevInfo, StatusWarn,
+			"a huge points value returned a non-200 status").withEvidence("status=%d", p.status)
+	case p.readErr != nil:
+		return finding("INPUT-002", SevInfo, StatusError,
+			"the answer to a huge points value could not be read as a history response: "+p.readErr.Error())
+	case p.count.more:
+		return finding("INPUT-002", SevMedium, StatusFail,
+			fmt.Sprintf("a huge points value was answered with more than %d samples: the points value is not capped, so one request can make the server build an unbounded response.", maxHistoryPoints)).
+			withEvidence("GET %s: over %d samples", path, maxHistoryPoints).
+			withRemediation("Cap the points a history request may ask for; Kula caps it at 5000.")
+	default:
+		detail := fmt.Sprintf("points=999999999 over the last two hours was answered with %d samples, no more than Kula's cap of %d", p.count.samples, maxHistoryPoints)
+		if p.count.downsampled && p.count.resolution != "" {
+			detail += ", downsampled to " + p.count.resolution + " buckets"
+		}
+		return finding("INPUT-002", SevLow, StatusPass, detail+".").
+			withEvidence("samples=%d resolution=%q downsampled=%v", p.count.samples, p.count.resolution, p.count.downsampled)
+	}
+}
+
+// languageFinding judges INPUT-003: invalid and traversal language codes read
+// no file.
+func languageFinding(s *Scanner, hdr map[string]string) Finding {
+	langs := []string{"../../etc/passwd", "..%2f..%2fconfig.yaml", "zz", "<script>", "%00en"}
+	var leaked []string
+	failed := 0
+	for _, lang := range langs {
+		r := s.do(http.MethodGet, "/api/i18n?lang="+lang, hdr, "")
+		switch {
+		case r.err != nil:
+			failed++
+		case r.status == http.StatusOK && (strings.Contains(r.body, "root:x:") || strings.Contains(r.body, "password_hash") || strings.Contains(r.body, "module kula")):
+			leaked = append(leaked, lang)
+		}
+	}
+	switch {
+	case len(leaked) > 0:
+		return finding("INPUT-003", SevCritical, StatusFail,
+			"a crafted lang parameter leaked file content: "+strings.Join(leaked, ", ")).
+			withRemediation("Validate lang against the fixed supported-language allow-list.")
+	case failed == len(langs):
+		return finding("INPUT-003", SevInfo, StatusError,
+			"could not send any request to /api/i18n.")
+	default:
+		detail := "invalid / traversal language codes are rejected and never read arbitrary files."
+		if failed > 0 {
+			detail = fmt.Sprintf("the invalid / traversal language codes that reached the target read no file; %d of %d requests failed.", failed, len(langs))
+		}
+		return finding("INPUT-003", SevMedium, StatusPass, detail)
+	}
+}
+
+// maxHistoryBody bounds what countHistory reads; it stops counting past the
+// cap well before.
+const maxHistoryBody = 64 << 20
+
+// historyCount is what INPUT-002 reads of a history response.
+type historyCount struct {
+	samples     int  // counted up to maxHistoryPoints
+	more        bool // and there were more
+	resolution  string
+	downsampled bool
+}
+
+// historyProbe is how a countHistory request ended: err when the request
+// failed, readErr when a 200's body was not a history response.
+type historyProbe struct {
+	status  int
+	count   historyCount
+	err     error
+	readErr error
+}
+
+// countHistory requests a history path and counts the samples of a 200
+// answer as they stream in, up to one past maxHistoryPoints: an answer at
+// the cap is larger than do reads.
+func (s *Scanner) countHistory(path string, headers map[string]string) historyProbe {
+	ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.urlFor(path), nil)
+	if err != nil {
+		return historyProbe{err: err}
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		if s.verbose {
+			_, _ = fmt.Fprintf(s.log, "    GET %s -> %s\n", printable(path), printable(err.Error()))
+		}
+		return historyProbe{err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if s.verbose {
+		_, _ = fmt.Fprintf(s.log, "    GET %s -> %d (streamed)\n", printable(path), resp.StatusCode)
+	}
+	p := historyProbe{status: resp.StatusCode}
+	if resp.StatusCode == http.StatusOK {
+		p.count, p.readErr = readHistoryCount(io.LimitReader(resp.Body, maxHistoryBody))
+	}
+	return p
+}
+
+// readHistoryCount counts the samples of a history response, stopping once
+// there are more than maxHistoryPoints, and reads its resolution and
+// downsampled fields when it gets that far.
+func readHistoryCount(r io.Reader) (historyCount, error) {
+	var c historyCount
+	dec := json.NewDecoder(r)
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return c, errors.New("the body is not a JSON object")
+	}
+	sawSamples := false
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return c, err
+		}
+		var dst any
+		switch tok {
+		case "samples":
+			sawSamples = true
+			if tok, err = dec.Token(); err != nil {
+				return c, err
+			}
+			if tok == nil {
+				continue // null: no samples
+			}
+			if tok != json.Delim('[') {
+				return c, errors.New("samples is not a list")
+			}
+			for dec.More() {
+				if c.samples == maxHistoryPoints {
+					c.more = true
+					return c, nil
+				}
+				var sample json.RawMessage
+				if err := dec.Decode(&sample); err != nil {
+					return c, err
+				}
+				c.samples++
+			}
+			if _, err := dec.Token(); err != nil {
+				return c, err
+			}
+			continue
+		case "resolution":
+			dst = &c.resolution
+		case "downsampled":
+			dst = &c.downsampled
+		default:
+			dst = new(json.RawMessage)
+		}
+		if err := dec.Decode(dst); err != nil {
+			return c, err
+		}
+	}
+	if !sawSamples {
+		return c, errors.New("the body has no samples list")
+	}
+	return c, nil
 }
 
 // apiHeaders returns the headers needed to reach authenticated API endpoints
