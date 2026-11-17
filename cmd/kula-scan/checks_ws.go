@@ -60,7 +60,7 @@ func runWSChecks(s *Scanner) []Finding {
 
 	if !canTestOrigin {
 		out = append(out, finding("WS-002", SevInfo, StatusSkip,
-			"auth is enabled and no session is available; supply -username/-password to test the WebSocket origin gate."))
+			"auth is enabled and no session is available to test the WebSocket origin gate: "+s.noSessionReason()+"."))
 		return out
 	}
 

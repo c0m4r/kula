@@ -205,7 +205,7 @@ func runWSFloodCheck(s *Scanner) []Finding {
 	if s.authEnabled {
 		if !s.ensureSession() {
 			return []Finding{finding("WS-FLOOD", SevInfo, StatusSkip,
-				"auth is enabled and no session is available to open WebSocket connections.")}
+				"auth is enabled and no session is available to open WebSocket connections: "+s.noSessionReason()+".")}
 		}
 		hdr = http.Header{}
 		hdr.Set("Cookie", "kula_session="+s.session)

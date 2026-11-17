@@ -334,7 +334,7 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 	if s.authEnabled {
 		if !s.ensureSession() {
 			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusSkip,
-				"auth is enabled and no session is available; supply -username/-password to test the WebSocket read limit.")}
+				"auth is enabled and no session is available to test the WebSocket read limit: "+s.noSessionReason()+".")}
 		}
 		hdr = http.Header{}
 		hdr.Set("Cookie", "kula_session="+s.session)
