@@ -39,8 +39,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Pinned upstream releases: --download fetches exactly these versions and
 # verifies each dist file against these sha256 sums before installing it.
-CHARTJS_VERSION="4.5.1"
-CHARTJS_SHA256="48444a82d4edcb5bec0f1965faacdde18d9c17db3063d042abada2f705c9f54a"
+CHARTJS_VERSION="4.6.1"
+CHARTJS_SHA256="87364cc2b2a76a6684929e7d6b80b18a897794db38400caff1fcf1791c6925d2"
 ZOOM_VERSION="2.2.0"
 ZOOM_SHA256="e4a088e5bab93be6ee47c939eeb9ebaa80e0b39156d4bdfd1af9c844be81b6c4"
 ADAPTER_VERSION="3.0.0"
