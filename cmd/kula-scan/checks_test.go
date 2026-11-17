@@ -425,14 +425,20 @@ func TestParseSeverityAndOnly(t *testing.T) {
 	if sev, ok := parseSeverity("CRITICAL"); !ok || sev != SevCritical {
 		t.Errorf("parseSeverity(CRITICAL) = %v,%v", sev, ok)
 	}
-	set := parseOnly("auth, CORS ,headers")
-	for _, want := range []string{"auth", "cors", "headers"} {
-		if !set[want] {
-			t.Errorf("parseOnly missing %q in %v", want, set)
+	sel, err := newSelection("auth, CORS ,headers", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"AUTH-001", "CORS-001", "HDR-001"} {
+		if !sel.selected(id) {
+			t.Errorf("-only auth,CORS,headers does not select %s", id)
 		}
 	}
-	if parseOnly("") != nil {
-		t.Error("parseOnly(\"\") should be nil (means all)")
+	if sel.selected("TRAV-001") {
+		t.Error("-only auth,CORS,headers selects TRAV-001")
+	}
+	if all, err := newSelection("", ""); err != nil || !all.selected("TRAV-001") {
+		t.Error("an empty -only should select everything")
 	}
 }
 

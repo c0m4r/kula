@@ -15,19 +15,25 @@ type Report struct {
 	Summary  Summary   `json:"summary"`
 }
 
-// Summary holds per-status counts for the run.
+// Summary holds per-status counts for the run. An ignored finding counts
+// under Ignored only, not under its status.
 type Summary struct {
-	Pass  int `json:"pass"`
-	Fail  int `json:"fail"`
-	Warn  int `json:"warn"`
-	Skip  int `json:"skip"`
-	Error int `json:"error"`
+	Pass    int `json:"pass"`
+	Fail    int `json:"fail"`
+	Warn    int `json:"warn"`
+	Skip    int `json:"skip"`
+	Error   int `json:"error"`
+	Ignored int `json:"ignored"`
 }
 
 // newReport tallies findings into a Report.
 func newReport(target string, findings []Finding) *Report {
 	r := &Report{Target: target, Findings: findings}
 	for _, f := range findings {
+		if f.Ignored {
+			r.Summary.Ignored++
+			continue
+		}
 		switch f.Status {
 		case StatusPass:
 			r.Summary.Pass++
@@ -102,6 +108,9 @@ func (r *Report) writeText(w io.Writer, noColor bool) {
 			if f.Status == StatusFail || f.Status == StatusWarn {
 				line += " " + color(severityColor(f.Severity), "["+f.Severity.String()+"]")
 			}
+			if f.Ignored {
+				line += " " + color(cGray, "(ignored)")
+			}
 			_, _ = fmt.Fprintln(w, line)
 			if f.Detail != "" {
 				_, _ = fmt.Fprintf(w, "        %s\n", color(cGray, printable(f.Detail)))
@@ -116,12 +125,17 @@ func (r *Report) writeText(w io.Writer, noColor bool) {
 	}
 
 	s := r.Summary
-	_, _ = fmt.Fprintf(w, "\n%s  %s  %s  %s  %s\n",
+	ignored := ""
+	if s.Ignored > 0 {
+		ignored = "  " + color(cGray, fmt.Sprintf("%d ignored", s.Ignored))
+	}
+	_, _ = fmt.Fprintf(w, "\n%s  %s  %s  %s  %s%s\n",
 		color(cBold, "Summary:"),
 		color(cGreen, fmt.Sprintf("%d pass", s.Pass)),
 		color(cRed, fmt.Sprintf("%d fail", s.Fail)),
 		color(cYellow, fmt.Sprintf("%d warn", s.Warn)),
 		color(cGray, fmt.Sprintf("%d skip / %d error", s.Skip, s.Error)),
+		ignored,
 	)
 }
 
@@ -160,12 +174,12 @@ func (r *Report) writeJSON(w io.Writer) error {
 	return err
 }
 
-// worstFailure returns the highest severity among FAIL findings, or -1 when
-// there are no failures.
+// worstFailure returns the highest severity among FAIL findings that are not
+// ignored, or -1 when there are none.
 func (r *Report) worstFailure() Severity {
 	worst := Severity(-1)
 	for _, f := range r.Findings {
-		if f.Status == StatusFail && f.Severity > worst {
+		if f.Status == StatusFail && !f.Ignored && f.Severity > worst {
 			worst = f.Severity
 		}
 	}
@@ -182,11 +196,12 @@ func (r *Report) exitCode(failOn Severity) int {
 	return 0
 }
 
-// failingIDs lists the IDs of FAIL findings at or above failOn, for the closing summary line.
+// failingIDs lists the IDs of FAIL findings at or above failOn that are not
+// ignored, for the closing summary line.
 func (r *Report) failingIDs(failOn Severity) []string {
 	var ids []string
 	for _, f := range r.Findings {
-		if f.Status == StatusFail && f.Severity >= failOn {
+		if f.Status == StatusFail && !f.Ignored && f.Severity >= failOn {
 			ids = append(ids, f.ID)
 		}
 	}

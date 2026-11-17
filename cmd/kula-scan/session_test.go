@@ -42,7 +42,7 @@ func (l *loginLedger) wrap(next http.Handler) http.Handler {
 	})
 }
 
-func scanWithLedger(t *testing.T, aggressive bool, only map[string]bool) ([]Finding, *loginLedger) {
+func scanWithLedger(t *testing.T, aggressive bool, only *selection) ([]Finding, *loginLedger) {
 	t.Helper()
 	ledger := &loginLedger{attempts: map[string][]string{}}
 	ts := httptest.NewServer(ledger.wrap(secureMock()))
@@ -110,7 +110,11 @@ func TestPasswordComesFromTheEnvironment(t *testing.T) {
 }
 
 func TestAggressiveRunProbesUsernameEnumeration(t *testing.T) {
-	findings, ledger := scanWithLedger(t, true, map[string]bool{"auth": true})
+	only, err := newSelection("auth", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, ledger := scanWithLedger(t, true, only)
 
 	wantStatus(t, findings, "AUTH-006", StatusPass)
 	if got := ledger.attempts[mockUser]; len(got) != 2 {

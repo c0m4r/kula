@@ -109,6 +109,9 @@ type Finding struct {
 	Detail      string   `json:"detail,omitempty"`
 	Evidence    string   `json:"evidence,omitempty"`
 	Remediation string   `json:"remediation,omitempty"`
+	// Ignored marks a finding named by -ignore: it keeps its status but is
+	// counted apart and never affects the exit status.
+	Ignored bool `json:"ignored,omitempty"`
 }
 
 // finding builds the finding id with its category and title from the catalog,
@@ -654,19 +657,28 @@ func allChecks() []check {
 	return checks
 }
 
-// Run executes discovery and every selected check, returning all findings. only
-// (when non-empty) restricts execution to the named categories.
-func (s *Scanner) Run(only map[string]bool) []Finding {
-	findings := s.discover()
+// Run executes discovery and every check sel selects, returning the selected
+// findings. Discovery always runs, and DISC-001, which says whether the target
+// was scanned at all, is always reported.
+func (s *Scanner) Run(sel *selection) []Finding {
+	var findings []Finding
+	for _, f := range s.discover() {
+		if f.ID == "DISC-001" || sel.selected(f.ID) {
+			findings = append(findings, f)
+		}
+	}
 
 	// If discovery could not reach the target, there is nothing more to probe.
 	if !s.reachable {
 		return findings
 	}
 
+	// A check runs when any ID it declares is selected, and reports only
+	// those.
 	var checks []check
 	for _, c := range allChecks() {
-		if len(only) == 0 || only[c.entry().Category] {
+		if ids := sel.selectedIDs(c.ids); len(ids) > 0 {
+			c.ids = ids
 			checks = append(checks, c)
 		}
 	}
@@ -691,7 +703,11 @@ func (s *Scanner) Run(only map[string]bool) []Finding {
 		}
 		started++
 		s.logProgress(started, runnable, c)
-		findings = append(findings, c.run(s)...)
+		for _, f := range c.run(s) {
+			if sel.selected(f.ID) {
+				findings = append(findings, f)
+			}
+		}
 	}
 	s.logout()
 	return findings

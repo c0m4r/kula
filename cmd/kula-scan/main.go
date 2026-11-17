@@ -58,7 +58,9 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		fuzz       = fs.Bool("fuzz", false, "enable blind fault-injection fuzzing (malformed/extreme input across the surface)")
 		fuzzIter   = fs.Int("fuzz-iter", 200, "iterations per randomized fuzz probe")
 		seed       = fs.Int64("seed", 0, "PRNG seed for fuzzing (0 = random; the chosen seed is reported so runs are reproducible)")
-		only       = fs.String("only", "", "comma-separated categories to run (auth,csrf,cors,headers,traversal,metrics,ws,input,rate,dos,redirect,tls,bypass,fuzz)")
+		only       = fs.String("only", "", "comma-separated categories and/or finding IDs to run (see -list)")
+		skip       = fs.String("skip", "", "comma-separated categories and/or finding IDs not to run or report")
+		ignore     = fs.String("ignore", "", "comma-separated finding IDs that stay in the report but never affect the exit status")
 		failOn     = fs.String("fail-on", "high", "min FAIL severity for non-zero exit: info|low|medium|high|critical")
 		asJSON     = fs.Bool("json", false, "emit findings as JSON")
 		noColor    = fs.Bool("no-color", false, "disable ANSI colors")
@@ -102,7 +104,16 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	onlySet := parseOnly(*only)
+	sel, err := newSelection(*only, *skip)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return 2
+	}
+	ignored, _, err := parseIgnore(*ignore)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return 2
+	}
 
 	scanner, err := NewScanner(Options{
 		Target:     tgt,
@@ -140,7 +151,8 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 			fmt.Sprintf("FUZZ MODE: sends malformed/extreme input across the surface (seed %d). May create junk sessions/log noise; reproduce findings with -seed.", scanner.seed)))
 	}
 
-	findings := scanner.Run(onlySet)
+	findings := scanner.Run(sel)
+	markIgnored(findings, ignored)
 	report := newReport(scanner.urlFor(""), findings)
 
 	if *asJSON {
@@ -172,21 +184,6 @@ func resolvePassword(flagValue string) string {
 	return os.Getenv(passwordEnv)
 }
 
-// parseOnly turns a comma list into a set; empty input means "all categories".
-func parseOnly(s string) map[string]bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	set := map[string]bool{}
-	for _, part := range strings.Split(s, ",") {
-		if p := strings.ToLower(strings.TrimSpace(part)); p != "" {
-			set[p] = true
-		}
-	}
-	return set
-}
-
 // colorEnabled reports whether ANSI colors should be used on w: honors
 // NO_COLOR and only colorizes a terminal.
 func colorEnabled(w io.Writer) bool {
@@ -213,8 +210,8 @@ func banner(color bool, msg string) string {
 	return "WARNING: " + msg
 }
 
-func printUsage(w interface{ Write([]byte) (int, error) }) {
-	_, _ = fmt.Fprint(w, `kula-scan — active safeguard scanner for a running kula instance
+func printUsage(w io.Writer) {
+	_, _ = fmt.Fprintf(w, `kula-scan — active safeguard scanner for a running kula instance
 
 Usage:
   kula-scan [flags] <target-url>
@@ -224,6 +221,7 @@ Examples:
   read -rs KULA_SCAN_PASSWORD && export KULA_SCAN_PASSWORD
   kula-scan -username admin https://mon.example.com
   kula-scan -only headers,traversal,cors http://10.0.0.5:27960
+  kula-scan -skip HDR-009 -ignore PROM-001 http://10.0.0.5:27960
   kula-scan -aggressive -username admin http://localhost:27960
   kula-scan -fuzz -fuzz-iter 500 -username admin http://localhost:27960
   kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960
@@ -242,7 +240,12 @@ Flags:
   -fuzz               enable blind fault-injection fuzzing (malformed/extreme input)
   -fuzz-iter int      iterations per randomized fuzz probe (default 200)
   -seed int           PRNG seed for fuzzing (0 = random; reported for reproducibility)
-  -only string        comma-separated categories: auth,csrf,cors,headers,traversal,metrics,ws,input,rate,dos,redirect,tls,bypass,fuzz
+  -only list          categories and/or finding IDs to run, comma-separated (case-insensitive);
+                      IDs such as CSRF-003 are listed by -list; the categories are
+                      %s
+  -skip list          categories and/or finding IDs not to run or report
+  -ignore list        finding IDs that stay in the report, marked ignored, but never affect
+                      the exit status
   -fail-on string     min FAIL severity for non-zero exit: info|low|medium|high|critical (default high)
   -json               emit findings as JSON
   -no-color           disable ANSI colors
@@ -251,5 +254,5 @@ Flags:
   -version            print the version and exit
 
 Exit status: 0 = no failing safeguard at/above -fail-on; 1 = one or more failures; 2 = usage error.
-`)
+`, strings.Join(categories(), ","))
 }
