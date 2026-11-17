@@ -290,7 +290,7 @@ func (r *Report) unmetExpectations() []string {
 	byKey := map[string][]string{}
 	var keys []string
 	for _, f := range r.Findings {
-		if f.Status != StatusFail || f.Ignored || f.Expectation == "" {
+		if !contradictsExpectation(f) {
 			continue
 		}
 		if _, seen := byKey[f.Expectation]; !seen {
@@ -353,10 +353,28 @@ func (r *Report) exitReason(failOn Severity) string {
 func (r *Report) failingIDs(failOn Severity) []string {
 	var ids []string
 	for _, f := range r.Findings {
-		if f.Status == StatusFail && !f.Ignored && f.Severity >= failOn {
+		if failsAt(f, failOn) {
 			ids = append(ids, f.ID)
 		}
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// failsAt reports whether f is a FAIL at or above failOn that is not
+// ignored: one of failingIDs.
+func failsAt(f Finding, failOn Severity) bool {
+	return f.Status == StatusFail && !f.Ignored && f.Severity >= failOn
+}
+
+// contradictsExpectation reports whether f is a FAIL not ignored against a
+// declared -expect key: one of unmetExpectations.
+func contradictsExpectation(f Finding) bool {
+	return f.Status == StatusFail && !f.Ignored && f.Expectation != ""
+}
+
+// gates reports whether f calls for exit status 1, as exitCode counts it: a
+// failing safeguard or an unmet expectation.
+func gates(f Finding, failOn Severity) bool {
+	return failsAt(f, failOn) || contradictsExpectation(f)
 }

@@ -87,7 +87,8 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ignore     = fs.String("ignore", "", "comma-separated finding IDs that stay in the report but never affect the exit status")
 		expect     = fs.String("expect", "", "comma-separated posture the target must have, failing the run otherwise: "+strings.Join(expectKeyNames(), ","))
 		failOn     = fs.String("fail-on", "high", "min FAIL severity for non-zero exit: info|low|medium|high|critical")
-		asJSON     = fs.Bool("json", false, "emit findings as JSON")
+		asJSON     = fs.Bool("json", false, "emit findings as JSON (-format json)")
+		format     = fs.String("format", "", "report format: text|json|junit (default text)")
 		noColor    = fs.Bool("no-color", false, "disable ANSI colors")
 		verbose    = fs.Bool("v", false, "verbose: log each request and its response status to stderr")
 		list       = fs.Bool("list", false, "print every finding ID with its category, mode and title, then exit")
@@ -144,6 +145,11 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
+	reportFormat, err := resolveFormat(*format, *asJSON)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return 2
+	}
 
 	scanner, err := NewScanner(Options{
 		Target:     tgt,
@@ -169,15 +175,17 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	useColor := !*noColor && !*asJSON && colorEnabled(stdout)
+	textOut := reportFormat == formatText
+
+	useColor := !*noColor && textOut && colorEnabled(stdout)
 	bannerColor := !*noColor && colorEnabled(stderr)
 
-	if *aggressive && !*asJSON {
+	if *aggressive && textOut {
 		_, _ = fmt.Fprintln(stderr, banner(bannerColor,
 			"AGGRESSIVE MODE: locks out login from your IP for ~5 min, floods connections, and holds slow requests open "+
 				"(up to -dos-wait="+dosWait.String()+" each). Run against staging, or accept the disruption."))
 	}
-	if *fuzz && !*asJSON {
+	if *fuzz && textOut {
 		_, _ = fmt.Fprintln(stderr, banner(bannerColor,
 			fmt.Sprintf("FUZZ MODE: sends malformed/extreme input across the surface (seed %d). May create junk sessions/log noise; reproduce findings with -seed.", scanner.seed)))
 	}
@@ -205,16 +213,9 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	report.Interrupted, report.NotRun = scanner.interrupted, scanner.notRun
 	report.ExitCode = report.exitCode(failSev)
 
-	if *asJSON {
-		if err := report.writeJSON(stdout); err != nil {
-			_, _ = fmt.Fprintf(stderr, "error encoding JSON: %v\n", err)
-			return 2
-		}
-	} else {
-		report.writeText(stdout, !useColor)
-		if ids := report.failingIDs(failSev); len(ids) > 0 {
-			_, _ = fmt.Fprintf(stdout, "\nFAILING safeguards at/above %s: %s\n", failSev, strings.Join(ids, ", "))
-		}
+	if err := report.writeFormat(stdout, reportFormat, failSev, !useColor); err != nil {
+		_, _ = fmt.Fprintf(stderr, "error writing the %s report: %v\n", reportFormat, err)
+		return 2
 	}
 
 	if reason := report.exitReason(failSev); reason != "" {
@@ -288,6 +289,7 @@ Examples:
   kula-scan -fuzz -fuzz-iter 500 -username admin http://localhost:27960
   kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960
   kula-scan -json http://localhost:27960 > report.json
+  kula-scan -format junit http://localhost:27960 > kula-scan.xml
 
 Flags:
   -target string      target base URL (or pass as positional arg)
@@ -312,7 +314,8 @@ Flags:
                       exits 1 whatever -fail-on says; the keys are
                       %s
   -fail-on string     min FAIL severity for non-zero exit: info|low|medium|high|critical (default high)
-  -json               emit findings as JSON
+  -format string      report format: text|json|junit (default text)
+  -json               emit findings as JSON (the same as -format json)
   -no-color           disable ANSI colors
   -v                  log each request and its response status to stderr
   -list               print every finding ID with its category, mode and title, then exit
