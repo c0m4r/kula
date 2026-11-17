@@ -20,7 +20,7 @@ var kulaReadOnlyRoutes = map[string]bool{
 // but POST on the AI chat. It reports whether the method is served.
 // secureMock calls it behind its auth gate, where Kula's readOnly sits.
 func kulaMethodAllowed(w http.ResponseWriter, r *http.Request) bool {
-	allow := ""
+	var allow string
 	switch {
 	case kulaReadOnlyRoutes[r.URL.Path] && r.Method != http.MethodGet && r.Method != http.MethodHead:
 		allow = "GET, HEAD"
