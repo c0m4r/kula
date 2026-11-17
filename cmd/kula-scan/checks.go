@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"regexp"
 	"slices"
@@ -980,8 +981,9 @@ func runCORSChecks(s *Scanner) []Finding {
 		"Access-Control-Request-Headers": "authorization",
 	}, "")
 	if r.err != nil {
-		return []Finding{finding("CORS-001", SevInfo, StatusError,
-			"could not send CORS preflight: "+r.err.Error())}
+		out = append(out, finding("CORS-001", SevInfo, StatusError,
+			"could not send CORS preflight: "+r.err.Error()))
+		return append(out, corsEdgeCaseFinding(s))
 	}
 
 	acao := r.header.Get("Access-Control-Allow-Origin")
@@ -998,6 +1000,16 @@ func runCORSChecks(s *Scanner) []Finding {
 			"Access-Control-Allow-Origin: * combined with Allow-Credentials: true exposes authenticated responses to any site.").
 			withEvidence("ACAO: * ; ACAC: true").
 			withRemediation("Never combine a wildcard ACAO with credentialed CORS."))
+	case acao == "*" && !s.authEnabled:
+		out = append(out, finding("CORS-001", SevHigh, StatusFail,
+			"Access-Control-Allow-Origin: * lets any website read the API through a visitor's browser: with auth disabled the API needs no credentials, so a page on any site can read the metrics of an instance its visitor can reach.").
+			withEvidence("ACAO: *").
+			withRemediation("Kula never sends a wildcard; remove it from the proxy in front, and list the origins that may read the API in web.security.allowed_origins."))
+	case acao == "*":
+		out = append(out, finding("CORS-001", SevMedium, StatusWarn,
+			"Access-Control-Allow-Origin: * is sent. A browser does not send the session cookie with a wildcard grant, so authenticated data stays out of reach, but any website can read what the API answers without a session.").
+			withEvidence("ACAO: *").
+			withRemediation("Kula never sends a wildcard; remove it from the proxy in front, and list the origins that may read the API in web.security.allowed_origins."))
 	case acao == "":
 		out = append(out, finding("CORS-001", SevMedium, StatusPass,
 			"a preflight from an arbitrary foreign origin gets no Access-Control-Allow-Origin (cross-origin reads blocked)."))
@@ -1026,23 +1038,32 @@ func runCORSChecks(s *Scanner) []Finding {
 }
 
 // corsEdgeCaseFinding probes Origins that commonly slip past sloppy allow-list
-// matching: the literal "null" origin, a trailing-dot host, a host with
-// embedded credentials, a case-varied host, and a look-alike subdomain. None of
-// them must be reflected back into Access-Control-Allow-Origin.
+// matching: the literal "null" origin, the target's host with a trailing dot,
+// with embedded credentials, and inside look-alike names. None of them must be
+// reflected back into Access-Control-Allow-Origin, even when the target lists
+// its own origin. A case variant of an allowed origin is not probed: host
+// names are case-insensitive, so it is the same origin, and Kula rightly
+// matches it.
 func corsEdgeCaseFinding(s *Scanner) Finding {
-	host := s.base.Host
+	scheme, hostname, port := s.base.Scheme, s.base.Hostname(), s.base.Port()
+	origin := func(host string) string {
+		if port != "" {
+			host = net.JoinHostPort(host, port)
+		}
+		return scheme + "://" + host
+	}
 	edge := []string{
 		"null",
-		s.base.Scheme + "://" + host + ".",             // trailing dot
-		s.base.Scheme + "://user:pass@" + host,         // userinfo
-		s.base.Scheme + "://" + strings.ToUpper(host),  // case variation
-		s.base.Scheme + "://" + host + ".evil.example", // look-alike suffix
-		s.base.Scheme + "://evil-" + host,              // look-alike prefix
+		origin(hostname + "."),                 // trailing dot
+		scheme + "://user:pass@" + s.base.Host, // userinfo
+		origin(hostname + ".evil.example"),     // look-alike suffix
+		origin("evil-" + hostname),             // look-alike prefix
 	}
-	var reflected []string
+	var reflected, unreached []string
 	for _, o := range edge {
 		r := s.do(http.MethodGet, "/api/config", map[string]string{"Origin": o}, "")
 		if r.err != nil {
+			unreached = append(unreached, o)
 			continue
 		}
 		acao := r.header.Get("Access-Control-Allow-Origin")
@@ -1050,14 +1071,19 @@ func corsEdgeCaseFinding(s *Scanner) Finding {
 			reflected = append(reflected, fmt.Sprintf("%s → ACAO %s", o, acao))
 		}
 	}
-	if len(reflected) == 0 {
+	switch {
+	case len(reflected) > 0:
+		return finding("CORS-003", SevHigh, StatusFail,
+			"an edge-case origin slipped past CORS matching and was reflected, enabling cross-site reads"+unreachedNote(unreached)+".").
+			withEvidence("%s", strings.Join(reflected, " | ")).
+			withRemediation("Match origins by exact, normalized string equality; reject 'null' and any host that isn't an exact allow-list entry.")
+	case len(unreached) == len(edge):
+		return finding("CORS-003", SevInfo, StatusError,
+			"could not send any request with an edge-case Origin.")
+	default:
 		return finding("CORS-003", SevMedium, StatusPass,
-			"null / trailing-dot / userinfo / case / look-alike origins are not reflected.")
+			"null, trailing-dot, userinfo and look-alike origins are not reflected"+unreachedNote(unreached)+".")
 	}
-	return finding("CORS-003", SevHigh, StatusFail,
-		"an edge-case origin slipped past CORS matching and was reflected, enabling cross-site reads.").
-		withEvidence("%s", strings.Join(reflected, " | ")).
-		withRemediation("Match origins by exact, normalized string equality; reject 'null' and any host that isn't an exact allow-list entry.")
 }
 
 // ============================== traversal ====================================

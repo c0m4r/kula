@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -907,6 +909,131 @@ func TestProtectedRoutesCoverOllamaAndUnknownPaths(t *testing.T) {
 		ts.Close()
 		if f.Status != StatusFail || !strings.Contains(f.Detail, c.want) {
 			t.Errorf("%s ungated: AUTH-001 = %s %q", c.name, f.Status, f.Detail)
+		}
+	}
+}
+
+// ---- CORS --------------------------------------------------------------------
+
+// kulaCORS wraps next in Kula's corsMiddleware for allowed: an Origin equal
+// to an entry, case-insensitively, is granted with credentials; Vary: Origin
+// is always sent; a preflight is answered 204 or 403.
+func kulaCORS(allowed []string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Origin")
+		origin := r.Header.Get("Origin")
+		granted := false
+		for _, a := range allowed {
+			granted = granted || (origin != "" && strings.EqualFold(origin, a))
+		}
+		if granted {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+		if r.Method == http.MethodOptions && origin != "" {
+			if granted {
+				w.WriteHeader(http.StatusNoContent)
+			} else {
+				w.WriteHeader(http.StatusForbidden)
+			}
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// TestOwnOriginAllowListPasses: an instance that lists its own origin in
+// allowed_origins, scanned by that name, reflects only that origin, which is
+// no finding; the edge cases around it are still caught.
+func TestOwnOriginAllowListPasses(t *testing.T) {
+	// own is the origin the server is scanned by: localhost and its port.
+	serve := func(handler func(own string) http.Handler) (*httptest.Server, string) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, port, _ := net.SplitHostPort(listener.Addr().String())
+		own := "http://localhost:" + port
+		ts := &httptest.Server{Listener: listener, Config: &http.Server{Handler: handler(own)}}
+		ts.Start()
+		t.Cleanup(ts.Close)
+		return ts, own
+	}
+	scan := func(own string) []Finding {
+		s, err := NewScanner(Options{Target: own, Timeout: 5 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.discover()
+		return runCORSChecks(s)
+	}
+
+	_, own := serve(func(own string) http.Handler { return kulaCORS([]string{own}, secureMock()) })
+	cors := scan(own)
+	wantStatus(t, cors, "CORS-001", StatusPass)
+	wantStatus(t, cors, "CORS-003", StatusPass)
+
+	// An allow-list matched by prefix admits the look-alike suffix.
+	_, own = serve(func(own string) http.Handler {
+		next := kulaCORS([]string{own}, secureMock())
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if o := r.Header.Get("Origin"); strings.HasPrefix(o, "http://localhost") {
+				w.Header().Set("Access-Control-Allow-Origin", o)
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	f, _ := byID(scan(own), "CORS-003")
+	if f.Status != StatusFail || !strings.Contains(f.Evidence, "localhost.evil.example") {
+		t.Errorf("prefix matching: CORS-003 = %s %q", f.Status, f.Evidence)
+	}
+}
+
+func TestCORSEdgeCasesAreWellFormed(t *testing.T) {
+	var mu sync.Mutex
+	var sent []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		sent = append(sent, r.Header.Get("Origin"))
+		mu.Unlock()
+	}))
+	defer ts.Close()
+	s, err := NewScanner(Options{Target: ts.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = corsEdgeCaseFinding(s)
+	host, port, _ := net.SplitHostPort(s.base.Host)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, want := range []string{"null", "http://" + host + ".:" + port, "http://user:pass@" + host + ":" + port,
+		"http://" + host + ".evil.example:" + port, "http://evil-" + host + ":" + port} {
+		if !slices.Contains(sent, want) {
+			t.Errorf("edge-case origins %q do not include %q", sent, want)
+		}
+	}
+}
+
+func TestWildcardCORS(t *testing.T) {
+	for _, auth := range []bool{false, true} {
+		mock := secureMock()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			if r.URL.Path == "/api/auth/status" {
+				writeJSONResp(w, map[string]any{"auth_required": auth})
+				return
+			}
+			mock.ServeHTTP(w, r)
+		}))
+		s := scannerFor(t, ts, "", "")
+		f, _ := byID(runCORSChecks(s), "CORS-001")
+		ts.Close()
+		want, sev := StatusFail, SevHigh
+		if auth {
+			want, sev = StatusWarn, SevMedium
+		}
+		if f.Status != want || f.Severity != sev {
+			t.Errorf("ACAO * with auth=%v: CORS-001 = %s %s %q, want %s %s", auth, f.Status, f.Severity, f.Detail, want, sev)
 		}
 	}
 }

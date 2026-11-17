@@ -116,11 +116,11 @@ var catalog = []catalogEntry{
 		"An authenticated same-origin POST with a wrong X-CSRF-Token is refused with 403."},
 
 	{"CORS-001", "cors", ModeDefault, "CORS does not reflect arbitrary origin",
-		"A preflight from a foreign Origin is not granted, and never with a wildcard plus credentials."},
+		"A preflight from a foreign Origin is not granted, nor answered with a wildcard (FAIL without auth, WARN with it)."},
 	{"CORS-002", "cors", ModeDefault, "Vary: Origin on CORS responses",
 		"Responses that carry CORS headers also carry Vary: Origin."},
 	{"CORS-003", "cors", ModeDefault, "CORS allow-list edge cases",
-		"null, trailing-dot, userinfo, case-varied and look-alike origins are not reflected."},
+		"null, trailing-dot, userinfo and look-alike variants of the target's origin are not reflected, even when it allow-lists its own origin."},
 
 	{"TRAV-000", "traversal", ModeDefault, "Static serving control",
 		"GET /style.css answers 200, so the traversal probes are meaningful."},
