@@ -7,17 +7,54 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Report bundles all findings from a scan plus rendering and exit-code logic.
+// It carries everything an output format needs: the scan's metadata, the
+// findings, their tally and the exit status.
 type Report struct {
-	Target   string    `json:"target"`
-	Findings []Finding `json:"findings"`
-	Summary  Summary   `json:"summary"`
+	Scanner    ScannerInfo   `json:"scanner"`
+	Target     string        `json:"target"`
+	Started    time.Time     `json:"started"` // UTC, whole seconds: RFC 3339 in JSON
+	DurationMS int64         `json:"duration_ms"`
+	Options    ReportOptions `json:"options"`
+	TargetInfo TargetInfo    `json:"target_info"`
+	Findings   []Finding     `json:"findings"`
+	Summary    Summary       `json:"summary"`
 	// Interrupted is set when a signal cut the run short; NotRun counts the
 	// checks that did not run (or were cut short, their findings dropped).
 	Interrupted bool `json:"interrupted"`
 	NotRun      int  `json:"not_run,omitempty"`
+	ExitCode    int  `json:"exit_code"`
+}
+
+// ScannerInfo names the program that wrote the report.
+type ScannerInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// ReportOptions records the options that shaped the run. The lists hold the
+// canonical spelling of what was given (categories lower case, finding IDs
+// as the catalog writes them) and are empty, not absent, when unset.
+type ReportOptions struct {
+	Aggressive bool     `json:"aggressive"`
+	Fuzz       bool     `json:"fuzz"`
+	Seed       int64    `json:"seed,omitempty"` // the fuzz seed, when fuzzing
+	Only       []string `json:"only"`
+	Skip       []string `json:"skip"`
+	Ignore     []string `json:"ignore"`
+	Expect     []string `json:"expect"`
+	FailOn     string   `json:"fail_on"`
+}
+
+// TargetInfo is what discovery learnt about the target.
+type TargetInfo struct {
+	HTTPS       bool   `json:"https"`
+	AuthEnabled bool   `json:"auth_enabled"`
+	Ollama      bool   `json:"ollama"`
+	Version     string `json:"version,omitempty"` // when /api/config discloses it
 }
 
 // Summary holds per-status counts for the run. An ignored finding counts
@@ -100,7 +137,11 @@ func (r *Report) writeText(w io.Writer, noColor bool) {
 		groups[f.Category] = append(groups[f.Category], f)
 	}
 
-	_, _ = fmt.Fprintf(w, "\n%s %s\n", color(cBold, "kula-scan — target:"), printable(r.Target))
+	name := "kula-scan"
+	if r.Scanner.Version != "" {
+		name += " " + r.Scanner.Version
+	}
+	_, _ = fmt.Fprintf(w, "\n%s %s\n", color(cBold, name+" — target:"), printable(r.Target))
 
 	// Any field may quote the target (a header value, a certificate name, an
 	// error message), so each is written through printable.

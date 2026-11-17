@@ -672,6 +672,11 @@ func (s *Scanner) discover() []Finding {
 	return out
 }
 
+// targetInfo returns what discovery learnt, for the report.
+func (s *Scanner) targetInfo() TargetInfo {
+	return TargetInfo{HTTPS: s.https, AuthEnabled: s.authEnabled, Ollama: s.ollama, Version: s.version}
+}
+
 // hostCheckRefusal reports whether r is Kula's refusal of a Host name it does
 // not serve: a 403 whose JSON error starts "host not allowed".
 func hostCheckRefusal(r httpResult) bool {

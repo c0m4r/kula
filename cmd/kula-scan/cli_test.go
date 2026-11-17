@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"kula"
 )
@@ -62,6 +64,65 @@ func TestQuietWhenStderrIsNotATerminal(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "HDR-001") {
 		t.Errorf("the text report is missing:\n%s", stdout)
+	}
+}
+
+func TestJSONReportCarriesItsMetadata(t *testing.T) {
+	ts := httptest.NewServer(secureMock())
+	defer ts.Close()
+
+	before := time.Now().UTC().Truncate(time.Second)
+	code, stdout, stderr := runCaptured(t, "-json", "-fuzz", "-fuzz-iter", "3", "-seed", "42",
+		"-only", "headers,fuzz-liveness", "-skip", "hdr-009", "-ignore", "hdr-003", "-expect", "hsts,auth",
+		"-fail-on", "MEDIUM", ts.URL)
+	if code != exitClean {
+		t.Fatalf("exit %d; stderr:\n%s", code, stderr)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"scanner", "target", "started", "duration_ms", "options", "target_info",
+		"findings", "summary", "interrupted", "exit_code"} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("the JSON report has no %q", key)
+		}
+	}
+	var started string
+	_ = json.Unmarshal(raw["started"], &started)
+	if at, err := time.Parse(time.RFC3339, started); err != nil || at.Before(before) {
+		t.Errorf("started = %q, want RFC 3339 no earlier than %s", started, before)
+	}
+
+	report := decodeReport(t, stdout)
+	if report.Scanner != (ScannerInfo{Name: "kula-scan", Version: kula.Version}) {
+		t.Errorf("scanner = %+v", report.Scanner)
+	}
+	want := ReportOptions{
+		Aggressive: false, Fuzz: true, Seed: 42,
+		Only: []string{"headers", "FUZZ-LIVENESS"}, Skip: []string{"HDR-009"},
+		Ignore: []string{"HDR-003"}, Expect: []string{"hsts", "auth"}, FailOn: "medium",
+	}
+	if !reflect.DeepEqual(report.Options, want) {
+		t.Errorf("options = %+v, want %+v", report.Options, want)
+	}
+	if report.TargetInfo != (TargetInfo{HTTPS: false, AuthEnabled: true}) {
+		t.Errorf("target_info = %+v", report.TargetInfo)
+	}
+	if report.ExitCode != code || report.Interrupted || report.DurationMS < 0 {
+		t.Errorf("exit_code %d, interrupted %v, duration_ms %d", report.ExitCode, report.Interrupted, report.DurationMS)
+	}
+
+	// Unset lists are empty, not null, and the seed is absent without -fuzz.
+	_, stdout, _ = runCaptured(t, "-json", "-only", "headers", ts.URL)
+	_ = json.Unmarshal([]byte(stdout), &raw)
+	var options map[string]json.RawMessage
+	_ = json.Unmarshal(raw["options"], &options)
+	if string(options["skip"]) != "[]" || string(options["expect"]) != "[]" {
+		t.Errorf("unset lists encode as %s and %s, want []", options["skip"], options["expect"])
+	}
+	if _, ok := options["seed"]; ok {
+		t.Errorf("the seed is reported without -fuzz: %s", raw["options"])
 	}
 }
 

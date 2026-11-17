@@ -134,7 +134,7 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
-	ignored, _, err := parseIgnore(*ignore)
+	ignored, ignoredIDs, err := parseIgnore(*ignore)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
@@ -182,10 +182,28 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			fmt.Sprintf("FUZZ MODE: sends malformed/extreme input across the surface (seed %d). May create junk sessions/log noise; reproduce findings with -seed.", scanner.seed)))
 	}
 
+	started := time.Now()
 	findings := scanner.Run(ctx, sel)
 	markIgnored(findings, ignored)
 	report := newReport(scanner.urlFor(""), findings)
+	report.Scanner = ScannerInfo{Name: "kula-scan", Version: kula.Version}
+	report.Started = started.UTC().Truncate(time.Second)
+	report.DurationMS = time.Since(started).Milliseconds()
+	report.Options = ReportOptions{
+		Aggressive: *aggressive,
+		Fuzz:       *fuzz,
+		Only:       nonNil(sel.onlyList),
+		Skip:       nonNil(sel.skipList),
+		Ignore:     nonNil(ignoredIDs),
+		Expect:     nonNil(expected),
+		FailOn:     strings.ToLower(failSev.String()),
+	}
+	if *fuzz {
+		report.Options.Seed = scanner.seed
+	}
+	report.TargetInfo = scanner.targetInfo()
 	report.Interrupted, report.NotRun = scanner.interrupted, scanner.notRun
+	report.ExitCode = report.exitCode(failSev)
 
 	if *asJSON {
 		if err := report.writeJSON(stdout); err != nil {
@@ -202,7 +220,15 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if reason := report.exitReason(failSev); reason != "" {
 		_, _ = fmt.Fprintln(stderr, reason)
 	}
-	return report.exitCode(failSev)
+	return report.ExitCode
+}
+
+// nonNil returns list, or an empty list for nil, so JSON shows [] not null.
+func nonNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
 }
 
 // passwordEnv names the environment variable that can carry the password
