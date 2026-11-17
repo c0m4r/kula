@@ -136,10 +136,11 @@ func classify(r httpResult) judgement {
 		return judgement{outcome: outReached, parser: true}
 	}
 	if d, ok := deliberateAnswerFor(r); ok {
+		why := fmt.Sprintf("%s (HTTP %d%s)", d.why, r.status, retryAfter(r))
 		if d.busy {
-			return judgement{outcome: outThrottled, why: d.why + retryAfter(r)}
+			return judgement{outcome: outThrottled, why: why}
 		}
-		return judgement{outcome: outUnavailable, why: d.why}
+		return judgement{outcome: outUnavailable, why: why}
 	}
 	switch {
 	case r.status >= 500:
@@ -204,13 +205,13 @@ type deliberateAnswer struct {
 var deliberate5xx = []deliberateAnswer{
 	// handleCurrent before the first sample, right after start.
 	{http.StatusServiceUnavailable, "/api/current", "no data yet", "", false, false,
-		"no sample collected yet (right after start)"},
+		"no sample collected yet, right after start"},
 	// handleHistory when every history slot stayed busy for historySlotWait.
 	{http.StatusServiceUnavailable, "/api/history", "too many history requests in progress", "", true, true,
-		"history queries at their concurrency limit"},
+		"the history concurrency limit"},
 	// handleLogin when no password-hashing slot freed up (the attempt is refunded).
 	{http.StatusServiceUnavailable, "/api/login", "server busy", "", true, true,
-		"login busy hashing passwords"},
+		"login's password-hashing limit, server busy"},
 	// The AI routes with the assistant disabled.
 	{http.StatusServiceUnavailable, "/api/ollama/", "ollama is not enabled", "disabled", false, false,
 		"the AI assistant is disabled"},
@@ -326,22 +327,22 @@ func throttledBy(r httpResult) string {
 	route := routeOf(r.path)
 	switch {
 	case route == "/api/login":
-		return fmt.Sprintf("the login limiter (%d attempts per address, %d per account and address, in five minutes); retry in five minutes",
+		return fmt.Sprintf("the login limiter (%d attempts per address, %d per account and address, in five minutes; retry in five minutes)",
 			kulaLoginAddressLimit, kulaLoginAccountLimit)
 	case route == "/api/ollama/chat":
-		return fmt.Sprintf("the AI chat limiter (%d requests a minute per address); retry in a minute", kulaChatLimit)
+		return fmt.Sprintf("the AI chat limiter (%d requests a minute per address; retry in a minute)", kulaChatLimit)
 	case strings.HasPrefix(route, "/api/ollama/"):
-		return "the AI limiter (60 requests a minute per address); retry in a minute"
+		return "the AI limiter (60 requests a minute per address; retry in a minute)"
 	case route == "/ws":
-		return "the WebSocket connection limit; retry once other connections close"
+		return "the WebSocket connection limit (retry once other connections close)"
 	}
-	return "HTTP 429" + retryAfter(r)
+	return "a limiter (HTTP 429" + retryAfter(r) + ")"
 }
 
 // retryAfter renders r's Retry-After, if any, for a detail.
 func retryAfter(r httpResult) string {
 	if ra := r.header.Get("Retry-After"); ra != "" {
-		return "; retry after " + ra + " s"
+		return ", retry after " + ra + " s"
 	}
 	return ""
 }
@@ -479,7 +480,7 @@ func (t *fuzzTally) coverage(target string) string {
 		fmt.Fprintf(&b, ", %d stopped at the auth or CSRF gate", t.gated)
 	}
 	if t.throttled > 0 {
-		fmt.Fprintf(&b, ", %d throttled", t.throttled)
+		fmt.Fprintf(&b, ", %d throttled by %s", t.throttled, t.throttledBy)
 	}
 	if t.unavailable > 0 {
 		fmt.Fprintf(&b, ", %d answered unavailable (%s)", t.unavailable, t.unavailableBy)
@@ -526,11 +527,11 @@ func (t *fuzzTally) verdict(id string, seed int64, coverage, note string) Findin
 			withRemediation("Return 4xx for malformed input; never 5xx, panic, or hang. Reproduce with -seed and the listed requests.")
 	case t.reached == 0 && t.throttled > 0:
 		return finding(id, SevInfo, StatusSkip,
-			fmt.Sprintf("nothing reached the code under test: %s. Turned away by %s.%s", coverage, t.throttledBy, note)).
+			fmt.Sprintf("nothing reached the code under test, a limiter turned the requests away: %s.%s", coverage, note)).
 			withEvidence("seed=%d", seed)
 	case t.reached == 0 && t.unavailable > 0 && t.unsent+t.failed+t.gated == 0:
 		return finding(id, SevInfo, StatusSkip,
-			fmt.Sprintf("nothing reached the code under test: %s. The target answered that %s.%s", coverage, t.unavailableBy, note)).
+			fmt.Sprintf("nothing reached the code under test, the target answered that it is unavailable: %s.%s", coverage, note)).
 			withEvidence("seed=%d", seed)
 	case t.reached == 0:
 		why := ""
@@ -819,43 +820,152 @@ func runFuzzQuery(s *Scanner) []Finding {
 	return []Finding{t.verdict("FUZZ-QUERY", s.seed, t.coverage("the history and i18n handlers"), "")}
 }
 
-// runFuzzBody sends a curated set of malformed JSON bodies to the JSON POST
-// endpoints. Login is per-IP rate-limited, so coverage there is best-effort;
-// the point is that a malformed body must yield 400 — never a 5xx or a panic.
-// Login exists only with auth enabled (Kula answers it with 404 otherwise) and
-// the Ollama chat only with Ollama enabled; with neither the probe is skipped.
-func runFuzzBody(s *Scanner) []Finding {
-	if !s.authEnabled && !s.ollama {
-		return []Finding{finding("FUZZ-BODY", SevInfo, StatusSkip,
-			"auth and Ollama are disabled; the instance has no endpoint that parses a JSON body.")}
-	}
-	bodies := []string{
-		`{`, `{"username":}`, `{"username":123,"password":[]}`, `[1,2,3]`, `"x"`, `null`, `12345`,
-		"\x00\x01garbage", `{"username":"` + strings.Repeat("A", 6000) + `"}`,
-		`{"a":` + deepNest(2000) + `}`, strings.Repeat("[", 3000) + strings.Repeat("]", 3000),
-		`{"username":"x"` + strings.Repeat(`,"x":"y"`, 5000) + `}`,
-	}
-	origin := s.base.Scheme + "://" + s.base.Host
+// ---- FUZZ-BODY --------------------------------------------------------------
 
+// fuzzBody is one malformed body FUZZ-BODY sends, named for evidence.
+type fuzzBody struct{ name, body string }
+
+// fuzzLoginBodies is how many bodies FUZZ-BODY sends to /api/login. Each
+// costs one of the address's kulaLoginAddressLimit login attempts in five
+// minutes, whatever it holds, so it sends few, and leaves the probes that
+// run after it the attempts they need (see allChecks).
+const fuzzLoginBodies = 6
+
+// loginFuzzBodies are the bodies for /api/login: the cases that matter for
+// its decoder. None decodes into a login, so none counts against an
+// account's limit or costs a password hash, and all but the oversized one
+// fit the 4 KiB cap, so the decoder reads them through.
+func loginFuzzBodies() []fuzzBody {
+	return []fuzzBody{
+		{"truncated JSON", `{"username":"kula-scan-fuzz","password":`},
+		{"wrong types", `{"username":123,"password":["x"]}`},
+		{"2000 levels of nesting", strings.Repeat("[", 2000) + strings.Repeat("]", 2000)},
+		{"a 64 KiB array, past the 4 KiB cap", "[" + strings.Repeat("0,", 32*1024-1) + "0]"},
+		{"400 keys", manyKeys(400, `"username":1`)},
+		{"binary garbage", "\x00\x01\x02\x03\xff\xfe\x1b[0m{\"\x00"},
+	}
+}
+
+// fuzzChatBodies is how many bodies FUZZ-BODY sends to /api/ollama/chat,
+// within the chat limiter's kulaChatLimit a minute per address, with room
+// to spare for the dashboard.
+const fuzzChatBodies = 6
+
+// chatFuzzBodies are the bodies for /api/ollama/chat. Every one fails Go's
+// decoder, size cap or not: a body that decodes into a chat request (null,
+// {}, an object of unknown keys, however deeply nested) starts a real chat
+// with the model, which costs the operator and, with a slow model, reads as
+// a hang.
+func chatFuzzBodies() []fuzzBody {
+	return []fuzzBody{
+		{"truncated JSON", `{"prompt":"kula-scan fuzz","messages":[{"role":"user","content":`},
+		{"wrong types", `{"prompt":123,"messages":"x","lang":[]}`},
+		{"12000 levels of nesting, past the decoder's depth limit",
+			`{"prompt":` + strings.Repeat("[", 12000) + strings.Repeat("]", 12000) + `}`},
+		{"a 40 KiB array, past the 32 KiB cap", `{"prompt":[` + strings.Repeat("0,", 20*1024) + `0]}`},
+		{"2000 keys", manyKeys(2000, `"prompt":1`)},
+		{"binary garbage", "\x00\x01\x02\x03\xff\xfe\x1b[0m{\"\x00"},
+	}
+}
+
+// manyKeys returns a JSON object of n keys, "k0":0 on, ending with last.
+func manyKeys(n int, last string) string {
+	var b strings.Builder
+	b.WriteString("{")
+	for i := range n {
+		fmt.Fprintf(&b, `"k%d":0,`, i)
+	}
+	b.WriteString(last + "}")
+	return b.String()
+}
+
+// runFuzzBody sends malformed JSON bodies to the endpoints that parse one:
+// login, which exists with auth on (Kula answers it 404 otherwise), and the
+// AI chat, with the assistant on. A malformed body must yield 400 — never a
+// 5xx, a panic or a hang. A half whose endpoint does not exist or cannot be
+// reached is left out, saying why; with neither, the probe is skipped.
+func runFuzzBody(s *Scanner) []Finding {
+	origin := s.base.Scheme + "://" + s.base.Host
 	total := &fuzzTally{}
-	post := func(path string) {
-		t := &fuzzTally{planned: len(bodies)}
-		for _, b := range bodies {
-			r := s.do(http.MethodPost, path, map[string]string{"Content-Type": "application/json", "Origin": origin}, b)
-			t.record(r, reqDesc(http.MethodPost, path, b), "")
-			if r.status == http.StatusTooManyRequests {
-				break // further attempts won't reach the body parser
-			}
-		}
-		total.add(t)
-	}
+	var covered, left []string
+
 	if s.authEnabled {
-		post("/api/login")
+		// No session: CSRF admits a request without one on its Origin, and
+		// login does not ask for one.
+		hdr := map[string]string{"Content-Type": "application/json", "Origin": origin}
+		login := s.postFuzzBodies("/api/login", loginFuzzBodies(), hdr)
+		total.add(login)
+		covered = append(covered, "login: "+login.coverage("its body parser"))
+	} else {
+		left = append(left, "auth is disabled, so there is no login endpoint")
 	}
-	if s.ollama {
-		post("/api/ollama/chat")
+
+	if open, why := s.chatOpen(); open {
+		hdr := map[string]string{"Content-Type": "application/json", "Origin": origin}
+		if s.loggedIn {
+			// Behind auth the chat needs the session, and CSRF its token.
+			hdr["Cookie"] = "kula_session=" + s.session
+			hdr["X-CSRF-Token"] = s.csrf
+		}
+		chat := s.postFuzzBodies("/api/ollama/chat", chatFuzzBodies(), hdr)
+		total.add(chat)
+		covered = append(covered, "AI chat: "+chat.coverage("its body decoder"))
+	} else {
+		left = append(left, why)
 	}
-	return []Finding{total.verdict("FUZZ-BODY", s.seed, total.coverage("the JSON body parsers"), "")}
+
+	if len(covered) == 0 {
+		return []Finding{finding("FUZZ-BODY", SevInfo, StatusSkip,
+			"no endpoint that parses a JSON body could be sent one: "+strings.Join(left, "; ")+".")}
+	}
+	note := ""
+	if len(left) > 0 {
+		note = "Not covered: " + strings.Join(left, "; ") + "."
+	}
+	return []Finding{total.verdict("FUZZ-BODY", s.seed, strings.Join(covered, "; "), note)}
+}
+
+// postFuzzBodies posts each body to path, and stops at the first 429: the
+// limiter refuses the rest too, and each further attempt would count.
+func (s *Scanner) postFuzzBodies(path string, bodies []fuzzBody, headers map[string]string) *fuzzTally {
+	t := &fuzzTally{planned: len(bodies)}
+	for _, b := range bodies {
+		if s.ctx.Err() != nil {
+			break
+		}
+		r := s.do(http.MethodPost, path, headers, b.body)
+		t.record(r, reqDesc(http.MethodPost, path, "")+" ("+b.name+")", "")
+		if r.err == nil && r.status == http.StatusTooManyRequests {
+			t.stopped = "once throttled"
+			break
+		}
+	}
+	return t
+}
+
+// chatOpen reports whether the AI chat can be sent bodies, or why not.
+// Discovery reads ollama_enabled from /api/config, which auth hides from a
+// client without a session; behind auth it is asked again with the session.
+func (s *Scanner) chatOpen() (bool, string) {
+	const disabled = "the AI assistant is disabled, so there is no chat endpoint"
+	switch {
+	case !s.authEnabled && !s.ollama:
+		return false, disabled
+	case !s.authEnabled:
+		return true, ""
+	case !s.ensureSession():
+		return false, "auth is enabled and no session is available to reach the AI chat (supply -username/-password)"
+	case s.ollama:
+		return true, ""
+	}
+	r := s.do(http.MethodGet, "/api/config", s.authedHeaders(false), "")
+	var cfg struct {
+		OllamaEnabled bool `json:"ollama_enabled"`
+	}
+	if r.err == nil && r.status == http.StatusOK && json.Unmarshal([]byte(r.body), &cfg) == nil && cfg.OllamaEnabled {
+		return true, ""
+	}
+	return false, disabled
 }
 
 // runFuzzMethods sends a matrix of HTTP methods at every known route. A 5xx or a
@@ -1023,10 +1133,4 @@ func runFuzzLiveness(s *Scanner) []Finding {
 		"the instance stopped responding to /health after fuzzing — fault injection may have crashed or hung it.").
 		withEvidence("last err=%v", lastErr).
 		withRemediation("Investigate the preceding fuzz findings; a monitoring daemon must never be crashable by remote input.")}
-}
-
-// deepNest builds a string of n nested single-key JSON objects, used to probe
-// recursive-descent parser limits (stack exhaustion).
-func deepNest(n int) string {
-	return strings.Repeat(`{"a":`, n) + "1" + strings.Repeat("}", n)
 }
