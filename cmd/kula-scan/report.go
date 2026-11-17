@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Report bundles all findings from a scan plus rendering and exit-code logic.
@@ -148,13 +149,20 @@ func (r *Report) writeText(w io.Writer, noColor bool) {
 	}
 	_, _ = fmt.Fprintf(w, "\n%s %s\n", color(cBold, name+" — target:"), printable(r.Target))
 
+	// The ID column is as wide as the longest ID, ten at least, so the
+	// titles line up.
+	idWidth := 10
+	for _, f := range r.Findings {
+		idWidth = max(idWidth, utf8.RuneCountInString(printable(f.ID)))
+	}
+
 	// Any field may quote the target (a header value, a certificate name, an
 	// error message), so each is written through printable.
 	for _, cat := range order {
 		_, _ = fmt.Fprintf(w, "\n%s\n", color(cBold, strings.ToUpper(printable(cat))))
 		for _, f := range groups[cat] {
 			tag := fmt.Sprintf("%-5s", f.Status.String())
-			line := fmt.Sprintf("  %s %-10s %s", color(statusColor(f.Status), tag), printable(f.ID), printable(f.Title))
+			line := fmt.Sprintf("  %s %-*s %s", color(statusColor(f.Status), tag), idWidth, printable(f.ID), printable(f.Title))
 			// Severity tag only matters for things that went wrong.
 			if f.Status == StatusFail || f.Status == StatusWarn {
 				line += " " + color(severityColor(f.Severity), "["+f.Severity.String()+"]")
