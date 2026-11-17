@@ -21,17 +21,29 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
+
+	"kula"
 )
 
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
+// run is the command line on the process's standard streams.
 func run(args []string) int {
+	return runCLI(args, os.Stdout, os.Stderr)
+}
+
+// runCLI runs the command line and returns the exit status. The report goes
+// to stdout and nothing else does; request logs, progress, banners and errors
+// go to stderr.
+func runCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("kula-scan", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	fs.Usage = func() { printUsage(fs.Output()) }
 
 	var (
@@ -50,8 +62,9 @@ func run(args []string) int {
 		failOn     = fs.String("fail-on", "high", "min FAIL severity for non-zero exit: info|low|medium|high|critical")
 		asJSON     = fs.Bool("json", false, "emit findings as JSON")
 		noColor    = fs.Bool("no-color", false, "disable ANSI colors")
-		verbose    = fs.Bool("v", false, "verbose: print each request/response")
+		verbose    = fs.Bool("v", false, "verbose: log each request and its response status to stderr")
 		list       = fs.Bool("list", false, "print every finding ID with its category, mode and title, then exit")
+		version    = fs.Bool("version", false, "print the version and exit")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -61,9 +74,13 @@ func run(args []string) int {
 		return 2
 	}
 
+	if *version {
+		_, _ = fmt.Fprintf(stdout, "kula-scan %s\n", kula.Version)
+		return 0
+	}
 	if *list {
-		if err := writeCatalog(os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		if err := writeCatalog(stdout); err != nil {
+			_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 			return 2
 		}
 		return 0
@@ -74,14 +91,14 @@ func run(args []string) int {
 		tgt = fs.Arg(0)
 	}
 	if tgt == "" {
-		fmt.Fprintln(os.Stderr, "error: no target URL given")
-		printUsage(os.Stderr)
+		_, _ = fmt.Fprintln(stderr, "error: no target URL given")
+		printUsage(stderr)
 		return 2
 	}
 
 	failSev, ok := parseSeverity(*failOn)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "error: invalid -fail-on %q (want info|low|medium|high|critical)\n", *failOn)
+		_, _ = fmt.Fprintf(stderr, "error: invalid -fail-on %q (want info|low|medium|high|critical)\n", *failOn)
 		return 2
 	}
 
@@ -100,21 +117,26 @@ func run(args []string) int {
 		FuzzIter:   *fuzzIter,
 		Seed:       *seed,
 		Verbose:    *verbose,
+		// Progress lines are for a person watching; a log keeps only the
+		// report and what -v asks for.
+		Progress: *verbose || isTerminal(stderr),
+		Log:      stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
 
-	useColor := !*noColor && !*asJSON && colorEnabled()
+	useColor := !*noColor && !*asJSON && colorEnabled(stdout)
+	bannerColor := !*noColor && colorEnabled(stderr)
 
 	if *aggressive && !*asJSON {
-		fmt.Fprintln(os.Stderr, banner(useColor,
+		_, _ = fmt.Fprintln(stderr, banner(bannerColor,
 			"AGGRESSIVE MODE: locks out login from your IP for ~5 min, floods connections, and holds slow requests open "+
 				"(up to -dos-wait="+dosWait.String()+" each). Run against staging, or accept the disruption."))
 	}
 	if *fuzz && !*asJSON {
-		fmt.Fprintln(os.Stderr, banner(useColor,
+		_, _ = fmt.Fprintln(stderr, banner(bannerColor,
 			fmt.Sprintf("FUZZ MODE: sends malformed/extreme input across the surface (seed %d). May create junk sessions/log noise; reproduce findings with -seed.", scanner.seed)))
 	}
 
@@ -122,14 +144,14 @@ func run(args []string) int {
 	report := newReport(scanner.urlFor(""), findings)
 
 	if *asJSON {
-		if err := report.writeJSON(os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "error encoding JSON: %v\n", err)
+		if err := report.writeJSON(stdout); err != nil {
+			_, _ = fmt.Fprintf(stderr, "error encoding JSON: %v\n", err)
 			return 2
 		}
 	} else {
-		report.writeText(os.Stdout, !useColor)
+		report.writeText(stdout, !useColor)
 		if ids := report.failingIDs(failSev); len(ids) > 0 {
-			fmt.Printf("\nFAILING safeguards at/above %s: %s\n", failSev, strings.Join(ids, ", "))
+			_, _ = fmt.Fprintf(stdout, "\nFAILING safeguards at/above %s: %s\n", failSev, strings.Join(ids, ", "))
 		}
 	}
 
@@ -165,13 +187,19 @@ func parseOnly(s string) map[string]bool {
 	return set
 }
 
-// colorEnabled reports whether ANSI colors should be used: honors NO_COLOR and
-// only colorizes when stdout is a character device (a terminal).
-func colorEnabled() bool {
-	if os.Getenv("NO_COLOR") != "" {
+// colorEnabled reports whether ANSI colors should be used on w: honors
+// NO_COLOR and only colorizes a terminal.
+func colorEnabled(w io.Writer) bool {
+	return os.Getenv("NO_COLOR") == "" && isTerminal(w)
+}
+
+// isTerminal reports whether w is a character device (a terminal).
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
 		return false
 	}
-	info, err := os.Stdout.Stat()
+	info, err := f.Stat()
 	if err != nil {
 		return false
 	}
@@ -218,8 +246,9 @@ Flags:
   -fail-on string     min FAIL severity for non-zero exit: info|low|medium|high|critical (default high)
   -json               emit findings as JSON
   -no-color           disable ANSI colors
-  -v                  verbose request/response logging
+  -v                  log each request and its response status to stderr
   -list               print every finding ID with its category, mode and title, then exit
+  -version            print the version and exit
 
 Exit status: 0 = no failing safeguard at/above -fail-on; 1 = one or more failures; 2 = usage error.
 `)

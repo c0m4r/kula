@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -142,8 +143,9 @@ func (f Finding) withRemediation(s string) Finding {
 // their catalog entries give the check its category and its Mode (all of them
 // agree, which TestRegistryDeclaresEveryCatalogID checks).
 type check struct {
-	ids []string
-	run func(s *Scanner) []Finding
+	ids  []string
+	run  func(s *Scanner) []Finding
+	hint func(s *Scanner) string // optional: why the check may take a while, shown in its progress line
 }
 
 // entry returns the catalog entry of the check's first finding ID, which
@@ -167,7 +169,9 @@ type Scanner struct {
 	seed       int64
 	rng        *rand.Rand
 	rngMu      sync.Mutex
-	verbose    bool
+	verbose    bool      // log every request to log
+	progress   bool      // log one line per check as it starts
+	log        io.Writer // request and progress lines; never the report
 
 	username string
 	password string
@@ -199,8 +203,10 @@ type Options struct {
 	Aggressive bool
 	Fuzz       bool
 	FuzzIter   int
-	Seed       int64 // 0 → a random seed is chosen and reported
-	Verbose    bool
+	Seed       int64     // 0 → a random seed is chosen and reported
+	Verbose    bool      // log each request and its response status
+	Progress   bool      // log one line per check as it starts
+	Log        io.Writer // where Verbose and Progress write; nil means standard error
 }
 
 // NewScanner builds a Scanner for opt.Target. opt.BasePath, when non-empty, is
@@ -239,6 +245,9 @@ func NewScanner(opt Options) (*Scanner, error) {
 	if opt.Seed == 0 {
 		opt.Seed = time.Now().UnixNano()
 	}
+	if opt.Log == nil {
+		opt.Log = os.Stderr
+	}
 
 	transport := &http.Transport{
 		// kula-scan probes arbitrary targets; the Go client default min (TLS 1.2) is correct, and InsecureSkipVerify is the opt-in below.
@@ -270,6 +279,8 @@ func NewScanner(opt Options) (*Scanner, error) {
 		seed:       opt.Seed,
 		rng:        rand.New(rand.NewSource(opt.Seed)), //nolint:gosec // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- fuzz-input randomness, reproducible via -seed; not security-sensitive
 		verbose:    opt.Verbose,
+		progress:   opt.Progress,
+		log:        opt.Log,
 		username:   opt.Username,
 		password:   opt.Password,
 		https:      u.Scheme == "https",
@@ -324,13 +335,16 @@ func (s *Scanner) do(method, path string, headers map[string]string, body string
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
+		if s.verbose {
+			_, _ = fmt.Fprintf(s.log, "    %s %s -> %s\n", printable(method), printable(path), printable(err.Error()))
+		}
 		return httpResult{err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if s.verbose {
-		fmt.Printf("    %s %s -> %d (%d bytes)\n", printable(method), printable(path), resp.StatusCode, len(raw))
+		_, _ = fmt.Fprintf(s.log, "    %s %s -> %d (%d bytes)\n", printable(method), printable(path), resp.StatusCode, len(raw))
 	}
 	return httpResult{status: resp.StatusCode, header: resp.Header, body: string(raw)}
 }
@@ -650,25 +664,68 @@ func (s *Scanner) Run(only map[string]bool) []Finding {
 		return findings
 	}
 
+	var checks []check
 	for _, c := range allChecks() {
-		entry := c.entry()
-		if len(only) > 0 && !only[entry.Category] {
-			continue
+		if len(only) == 0 || only[c.entry().Category] {
+			checks = append(checks, c)
 		}
-		if entry.Mode == ModeFuzz && !s.fuzz {
+	}
+	runnable := 0
+	for _, c := range checks {
+		if s.modeEnabled(c.entry().Mode) {
+			runnable++
+		}
+	}
+
+	started := 0
+	for _, c := range checks {
+		switch mode := c.entry().Mode; {
+		case mode == ModeFuzz && !s.fuzz:
 			findings = append(findings, skippedFindings(c,
 				"blind fault-injection check not run; pass -fuzz to enable (it sends malformed/extreme input to the live target).")...)
 			continue
-		}
-		if entry.Mode == ModeAggressive && !s.aggressive {
+		case mode == ModeAggressive && !s.aggressive:
 			findings = append(findings, skippedFindings(c,
 				"disruptive check not run; pass -aggressive to enable (it has side effects on the live target).")...)
 			continue
 		}
+		started++
+		s.logProgress(started, runnable, c)
 		findings = append(findings, c.run(s)...)
 	}
 	s.logout()
 	return findings
+}
+
+// modeEnabled reports whether checks of mode run on this scan.
+func (s *Scanner) modeEnabled(mode Mode) bool {
+	switch mode {
+	case ModeAggressive:
+		return s.aggressive
+	case ModeFuzz:
+		return s.fuzz
+	default:
+		return true
+	}
+}
+
+// logProgress writes the line announcing the n-th of total checks, when
+// progress is on.
+func (s *Scanner) logProgress(n, total int, c check) {
+	if !s.progress {
+		return
+	}
+	ids := c.ids
+	more := ""
+	if len(ids) > 4 {
+		more = fmt.Sprintf(" and %d more", len(ids)-3)
+		ids = ids[:3]
+	}
+	hint := ""
+	if c.hint != nil {
+		hint = " (" + c.hint(s) + ")"
+	}
+	_, _ = fmt.Fprintf(s.log, "[%d/%d] %s: %s%s%s\n", n, total, c.entry().Category, strings.Join(ids, ", "), more, hint)
 }
 
 // skippedFindings reports a check that was not run: one SKIP finding per ID it

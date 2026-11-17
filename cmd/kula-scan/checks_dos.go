@@ -27,11 +27,16 @@ import (
 
 func dosChecks() []check {
 	return []check{
-		{ids: []string{"DOS-SLOWLORIS"}, run: runSlowlorisCheck},
+		{ids: []string{"DOS-SLOWLORIS"}, run: runSlowlorisCheck, hint: dosWaitHint},
 		{ids: []string{"DOS-HEADERBOMB"}, run: runHeaderBombCheck},
-		{ids: []string{"DOS-CONNFLOOD"}, run: runConnFloodCheck},
+		{ids: []string{"DOS-CONNFLOOD"}, run: runConnFloodCheck, hint: dosWaitHint},
 		{ids: []string{"WS-MSGBOMB"}, run: runWSMsgBombCheck},
 	}
+}
+
+// dosWaitHint tells the progress line that a probe waits out -dos-wait.
+func dosWaitHint(s *Scanner) string {
+	return "waits up to -dos-wait " + s.dosWait.String()
 }
 
 // runSlowlorisCheck opens several connections that send a partial request and
