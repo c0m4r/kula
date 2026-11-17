@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -109,5 +110,64 @@ func TestWSMessageBombWithoutAConnectionIsAnError(t *testing.T) {
 	f, _ := byID(runWSMsgBombCheck(dosScanner(t, refused.URL, 5*time.Second, time.Second)), "WS-MSGBOMB")
 	if f.Status != StatusError || !strings.Contains(f.Evidence, "404") {
 		t.Errorf("WS-MSGBOMB with the upgrade refused = %s %q | %q, want ERROR", f.Status, f.Detail, f.Evidence)
+	}
+}
+
+// ---- DOS-CONNFLOOD / DOS-SLOWLORIS -----------------------------------------------
+
+// TestConnFloodWaitsOnceForAll: a target that never reaps idle connections
+// costs one -dos-wait, not one per connection.
+func TestConnFloodWaitsOnceForAll(t *testing.T) {
+	ts := healthTarget(t, nil)
+	start := time.Now()
+	f, _ := byID(runConnFloodCheck(dosScanner(t, ts.URL, 5*time.Second, 300*time.Millisecond)), "DOS-CONNFLOOD")
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("DOS-CONNFLOOD took %s at a 300ms -dos-wait", elapsed)
+	}
+	if f.Status != StatusWarn || !strings.Contains(f.Detail, "64/64 idle connections were still open") {
+		t.Errorf("DOS-CONNFLOOD against a server that never reaps = %s %q", f.Status, f.Detail)
+	}
+
+	reaping := httptest.NewUnstartedServer(ts.Config.Handler)
+	reaping.Config.ReadTimeout = 300 * time.Millisecond
+	reaping.Start()
+	defer reaping.Close()
+	wantStatus(t, runConnFloodCheck(dosScanner(t, reaping.URL, 5*time.Second, 3*time.Second)), "DOS-CONNFLOOD", StatusPass)
+}
+
+// TestSlowConnectionProbesEndWithTheRun: an interrupt ends the wait for
+// reaping at once, whatever -dos-wait is.
+func TestSlowConnectionProbesEndWithTheRun(t *testing.T) {
+	ts := healthTarget(t, nil)
+	for name, run := range map[string]func(*Scanner) []Finding{
+		"DOS-CONNFLOOD": runConnFloodCheck,
+		"DOS-SLOWLORIS": runSlowlorisCheck,
+	} {
+		s := dosScanner(t, ts.URL, 5*time.Second, time.Minute)
+		ctx, cancel := context.WithCancel(context.Background())
+		s.ctx = ctx
+		timer := time.AfterFunc(300*time.Millisecond, cancel)
+		start := time.Now()
+		run(s)
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Errorf("%s took %s after the interrupt", name, elapsed)
+		}
+		timer.Stop()
+		cancel()
+	}
+}
+
+// TestDoSProbesWithoutAConnectionAreErrors: probes that open no connection
+// report an ERROR that says why, never a PASS.
+func TestDoSProbesWithoutAConnectionAreErrors(t *testing.T) {
+	s := dosScanner(t, "http://"+closedAddress(t), 5*time.Second, time.Second)
+	for name, run := range map[string]func(*Scanner) []Finding{
+		"DOS-SLOWLORIS":  runSlowlorisCheck,
+		"DOS-HEADERBOMB": runHeaderBombCheck,
+		"DOS-CONNFLOOD":  runConnFloodCheck,
+	} {
+		if f, _ := byID(run(s), name); f.Status != StatusError || !strings.Contains(f.Detail, "refused") {
+			t.Errorf("%s against a closed port = %s %q, want an ERROR saying why", name, f.Status, f.Detail)
+		}
 	}
 }

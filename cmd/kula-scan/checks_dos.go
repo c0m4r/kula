@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -56,6 +57,29 @@ func isHangUp(err error) bool {
 		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) || errors.Is(err, syscall.EPIPE)
 }
 
+// awaitReaping waits, against one deadline wait from now, for the target to
+// drop each of conns, and returns how many it dropped. A read that returns
+// data (a 408 before the close) or that ends in anything but the deadline
+// means the target stopped waiting on that connection. An interrupt closes
+// the connections (dialRaw), which ends the wait at once.
+func awaitReaping(conns []net.Conn, wait time.Duration) int {
+	deadline := time.Now().Add(wait)
+	var reaped atomic.Int64
+	var wg sync.WaitGroup
+	for _, c := range conns {
+		wg.Add(1)
+		go func(c net.Conn) {
+			defer wg.Done()
+			_ = c.SetReadDeadline(deadline)
+			if _, err := c.Read(make([]byte, 64)); !isReadTimeout(err) {
+				reaped.Add(1)
+			}
+		}(c)
+	}
+	wg.Wait()
+	return int(reaped.Load())
+}
+
 // runSlowlorisCheck opens several connections that send a partial request and
 // never finish it (a Slowloris). It asserts two things: the server keeps
 // answering legitimate requests while the slow connections are held, and it
@@ -71,23 +95,28 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 		}
 	}()
 
+	var firstErr error
 	for i := 0; i < conns; i++ {
 		c, err := s.dialRaw()
-		if err != nil {
-			continue
+		if err == nil {
+			// Send the request line + Host, then the start of a header WITHOUT
+			// the terminating CRLFCRLF, so the server keeps waiting for the rest.
+			_ = c.SetWriteDeadline(time.Now().Add(s.timeout))
+			if _, err = c.Write([]byte(reqHead + "X-Slowloris: keep-")); err != nil {
+				_ = c.Close()
+			}
 		}
-		// Send the request line + Host, then the start of a header WITHOUT the
-		// terminating CRLFCRLF, so the server keeps waiting for the rest.
-		_ = c.SetWriteDeadline(time.Now().Add(s.timeout))
-		if _, err := c.Write([]byte(reqHead + "X-Slowloris: keep-")); err != nil {
-			_ = c.Close()
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		opened = append(opened, c)
 	}
 	if len(opened) == 0 {
 		return []Finding{finding("DOS-SLOWLORIS", SevInfo, StatusError,
-			"could not open any connections to the target.")}
+			fmt.Sprintf("could not open any connections to the target: %v", firstErr))}
 	}
 
 	// Availability: a fresh, well-formed request must still succeed while the
@@ -95,42 +124,12 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 	health := s.do(http.MethodGet, "/health", nil, "")
 	healthOK := health.err == nil && (health.status == http.StatusOK || health.status == http.StatusNotFound)
 
-	// Wait (in parallel) for the server to drop each stalled connection. A read
-	// that returns before our deadline means the server closed it (ReadTimeout);
-	// a deadline-exceeded means it is still hanging open.
+	// Wait for the server to drop the stalled connections, all against one
+	// deadline: a read that returns before it means the server closed the
+	// connection (ReadTimeout); one that reaches it, that it still hangs open.
 	start := time.Now()
-	var wg sync.WaitGroup
-	reaped := make([]bool, len(opened))
-	for i, c := range opened {
-		wg.Add(1)
-		go func(i int, c net.Conn) {
-			defer wg.Done()
-			_ = c.SetReadDeadline(time.Now().Add(s.dosWait))
-			buf := make([]byte, 64)
-			_, err := c.Read(buf)
-			// Any non-timeout outcome (EOF, reset, or a 408 then close) means the
-			// server stopped waiting for the request — the connection was reaped.
-			if err == nil {
-				reaped[i] = true // server sent something (e.g. 408 Request Timeout) and will close
-				return
-			}
-			var ne net.Error
-			if errors.As(err, &ne) && ne.Timeout() {
-				reaped[i] = false // still hanging open at dosWait
-				return
-			}
-			reaped[i] = true // EOF / connection reset
-		}(i, c)
-	}
-	wg.Wait()
+	reapedN := awaitReaping(opened, s.dosWait)
 	elapsed := time.Since(start).Round(time.Second)
-
-	reapedN := 0
-	for _, r := range reaped {
-		if r {
-			reapedN++
-		}
-	}
 
 	switch {
 	case !healthOK:
@@ -217,16 +216,18 @@ func runConnFloodCheck(s *Scanner) []Finding {
 		}
 	}()
 
+	var dialErr error
 	for i := 0; i < conns; i++ {
 		c, err := s.dialRaw()
 		if err != nil {
+			dialErr = err
 			break
 		}
 		opened = append(opened, c)
 	}
 	if len(opened) == 0 {
 		return []Finding{finding("DOS-CONNFLOOD", SevInfo, StatusError,
-			"could not open any connections to the target.")}
+			fmt.Sprintf("could not open any connections to the target: %v", dialErr))}
 	}
 
 	health := s.do(http.MethodGet, "/health", nil, "")
@@ -239,22 +240,10 @@ func runConnFloodCheck(s *Scanner) []Finding {
 			withRemediation("Front Kula with a reverse proxy that bounds concurrent connections, and keep read/idle timeouts enabled.")}
 	}
 
-	// Confirm the idle connections (no request sent) are reaped within dosWait.
-	reaped := 0
-	for _, c := range opened {
-		_ = c.SetReadDeadline(time.Now().Add(s.dosWait))
-		buf := make([]byte, 1)
-		_, err := c.Read(buf)
-		if err == nil {
-			reaped++
-			continue
-		}
-		var ne net.Error
-		if errors.As(err, &ne) && ne.Timeout() {
-			continue
-		}
-		reaped++
-	}
+	// Confirm the idle connections (no request sent) are reaped within
+	// dosWait, all waited for at once: the check takes about dosWait however
+	// many the target keeps.
+	reaped := awaitReaping(opened, s.dosWait)
 
 	if reaped == len(opened) {
 		return []Finding{finding("DOS-CONNFLOOD", SevLow, StatusPass,
