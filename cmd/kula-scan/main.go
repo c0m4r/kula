@@ -89,6 +89,7 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		failOn     = fs.String("fail-on", "high", "min FAIL severity for non-zero exit: info|low|medium|high|critical")
 		asJSON     = fs.Bool("json", false, "emit findings as JSON (-format json)")
 		format     = fs.String("format", "", "report format: text|json|junit|sarif (default text)")
+		output     = fs.String("o", "", "write the report in -format to `FILE`; stdout then gets the text report")
 		noColor    = fs.Bool("no-color", false, "disable ANSI colors")
 		verbose    = fs.Bool("v", false, "verbose: log each request and its response status to stderr")
 		list       = fs.Bool("list", false, "print every finding ID with its category, mode and title, then exit")
@@ -175,7 +176,18 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	textOut := reportFormat == formatText
+	// With -o the chosen format goes to the file and stdout gets the text
+	// report, so a CI job keeps a readable log and an artifact from one run.
+	stdoutFormat := reportFormat
+	var outFile *os.File
+	if *output != "" {
+		if outFile, err = createReportFile(*output); err != nil {
+			_, _ = fmt.Fprintf(stderr, "error: -o: %v\n", err)
+			return 2
+		}
+		stdoutFormat = formatText
+	}
+	textOut := stdoutFormat == formatText
 
 	useColor := !*noColor && textOut && colorEnabled(stdout)
 	bannerColor := !*noColor && colorEnabled(stderr)
@@ -213,8 +225,19 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	report.Interrupted, report.NotRun = scanner.interrupted, scanner.notRun
 	report.ExitCode = report.exitCode(failSev)
 
-	if err := report.writeFormat(stdout, reportFormat, failSev, !useColor); err != nil {
-		_, _ = fmt.Fprintf(stderr, "error writing the %s report: %v\n", reportFormat, err)
+	// The file first: it is the artifact a CI job keeps.
+	writeFailed := false
+	if outFile != nil {
+		if err := writeReportFile(outFile, report, reportFormat, failSev); err != nil {
+			_, _ = fmt.Fprintf(stderr, "error: -o: %v\n", err)
+			writeFailed = true
+		}
+	}
+	if err := report.writeFormat(stdout, stdoutFormat, failSev, !useColor); err != nil {
+		_, _ = fmt.Fprintf(stderr, "error writing the %s report: %v\n", stdoutFormat, err)
+		writeFailed = true
+	}
+	if writeFailed {
 		return 2
 	}
 
@@ -289,7 +312,7 @@ Examples:
   kula-scan -fuzz -fuzz-iter 500 -username admin http://localhost:27960
   kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960
   kula-scan -json http://localhost:27960 > report.json
-  kula-scan -format junit http://localhost:27960 > kula-scan.xml
+  kula-scan -format sarif -o kula-scan.sarif http://localhost:27960
 
 Flags:
   -target string      target base URL (or pass as positional arg)
@@ -315,6 +338,8 @@ Flags:
                       %s
   -fail-on string     min FAIL severity for non-zero exit: info|low|medium|high|critical (default high)
   -format string      report format: text|json|junit|sarif (default text)
+  -o FILE             write the -format report to FILE (created with mode 0600); stdout
+                      then gets the text report
   -json               emit findings as JSON (the same as -format json)
   -no-color           disable ANSI colors
   -v                  log each request and its response status to stderr

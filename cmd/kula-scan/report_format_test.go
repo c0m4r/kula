@@ -1,7 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -88,5 +94,106 @@ func TestExpectAuthFailsOnceInEachFormat(t *testing.T) {
 	}
 	if code != exitFailing || len(errs) != 1 || errs[0] != "AUTH-000" {
 		t.Errorf("SARIF: exit %d, error results %v", code, errs)
+	}
+}
+
+// TestOutputFileTakesTheFormatAndStdoutTheText: -o writes the chosen format
+// to the file, owner-only, while stdout gets the text report and the
+// banners follow it.
+func TestOutputFileTakesTheFormatAndStdoutTheText(t *testing.T) {
+	ts := httptest.NewServer(secureMock())
+	defer ts.Close()
+	path := filepath.Join(t.TempDir(), "scan.sarif")
+	args := []string{"-fuzz", "-fuzz-iter", "1", "-only", "headers,fuzz-liveness"}
+
+	code, stdout, stderr := runCaptured(t, append(args, "-format", "sarif", "-o", path, ts.URL)...)
+	if code != exitClean {
+		t.Fatalf("exit %d; stderr:\n%s", code, stderr)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("the report file has mode %v, want 0600", info.Mode().Perm())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := parseSARIF(t, string(data))
+	if sarifPath(log, "runs", 0, "invocations", 0, "exitCode") != float64(0) {
+		t.Errorf("the SARIF file: %s", data)
+	}
+	if !strings.Contains(stdout, "HDR-001") || !strings.Contains(stdout, "Summary:") || strings.HasPrefix(stdout, "{") {
+		t.Errorf("stdout does not hold the text report:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "WARNING: FUZZ MODE") {
+		t.Errorf("the fuzz banner is missing with text on stdout:\n%s", stderr)
+	}
+
+	// Without -o, SARIF goes to stdout and the banner stays away.
+	code, stdout, stderr = runCaptured(t, append(args, "-format", "sarif", ts.URL)...)
+	if code != exitClean || strings.Contains(stderr, "FUZZ MODE") {
+		t.Errorf("exit %d; stderr:\n%s", code, stderr)
+	}
+	parseSARIF(t, stdout)
+
+	// -json with -o: JSON in the file, text on stdout.
+	jsonPath := filepath.Join(t.TempDir(), "scan.json")
+	_, stdout, _ = runCaptured(t, "-json", "-o", jsonPath, "-only", "headers", ts.URL)
+	data, _ = os.ReadFile(jsonPath)
+	if report := decodeReport(t, string(data)); len(report.Findings) == 0 || !strings.Contains(stdout, "Summary:") {
+		t.Errorf("-json -o: file %s; stdout:\n%s", data, stdout)
+	}
+}
+
+// TestUnwritableOutputFailsBeforeTheScan: a report file that cannot be
+// written is refused before a request goes out.
+func TestUnwritableOutputFailsBeforeTheScan(t *testing.T) {
+	var requests atomic.Int64
+	mock := secureMock()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		mock.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+	dir := t.TempDir()
+	for _, path := range []string{filepath.Join(dir, "missing", "scan.sarif"), dir} {
+		code, stdout, stderr := runCaptured(t, "-format", "sarif", "-o", path, ts.URL)
+		if code != exitUsage {
+			t.Errorf("-o %s: exit %d, want 2", path, code)
+		}
+		if !strings.Contains(stderr, "-o") || stdout != "" {
+			t.Errorf("-o %s: stdout %q, stderr %q", path, stdout, stderr)
+		}
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("%d requests reached the target before the report file was refused", n)
+	}
+}
+
+// failingWriter refuses every write.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+// TestReportWriteErrorsExit2: a report that cannot be written after the scan,
+// to the -o file or to stdout, is an error and exit status 2, not a clean run.
+func TestReportWriteErrorsExit2(t *testing.T) {
+	ts := httptest.NewServer(secureMock())
+	defer ts.Close()
+
+	if _, err := os.Stat("/dev/full"); err == nil {
+		code, _, stderr := runCaptured(t, "-format", "junit", "-o", "/dev/full", "-only", "headers", ts.URL)
+		if code != exitUsage || !strings.Contains(stderr, "error: -o:") {
+			t.Errorf("-o /dev/full: exit %d; stderr:\n%s", code, stderr)
+		}
+	}
+
+	var stderr bytes.Buffer
+	code := runCLI(context.Background(), []string{"-only", "headers", ts.URL}, failingWriter{}, &stderr)
+	if code != exitUsage || !strings.Contains(stderr.String(), "error writing the text report: disk full") {
+		t.Errorf("a stdout that refuses writes: exit %d; stderr:\n%s", code, stderr.String())
 	}
 }

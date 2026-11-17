@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 )
@@ -48,10 +49,45 @@ func (r *Report) writeFormat(w io.Writer, format string, failOn Severity, noColo
 	case formatSARIF:
 		return r.writeSARIF(w, failOn)
 	default:
-		r.writeText(w, noColor)
+		ew := &errWriter{w: w}
+		r.writeText(ew, noColor)
 		if ids := r.failingIDs(failOn); len(ids) > 0 {
-			_, _ = fmt.Fprintf(w, "\nFAILING safeguards at/above %s: %s\n", failOn, strings.Join(ids, ", "))
+			_, _ = fmt.Fprintf(ew, "\nFAILING safeguards at/above %s: %s\n", failOn, strings.Join(ids, ", "))
 		}
-		return nil
+		return ew.err
 	}
+}
+
+// errWriter keeps the first error a write returns, for code that does not
+// check each write.
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) Write(p []byte) (int, error) {
+	if e.err != nil {
+		return 0, e.err
+	}
+	n, err := e.w.Write(p)
+	e.err = err
+	return n, err
+}
+
+// createReportFile creates or truncates the -o file. The scan opens it before
+// it starts, so a path that cannot be written fails at once instead of after
+// the scan. A new file is readable by its owner alone, as the report maps the
+// target's weak spots; an existing one keeps its mode.
+func createReportFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+}
+
+// writeReportFile writes the report to the -o file in format, never colored,
+// and closes it.
+func writeReportFile(file *os.File, r *Report, format string, failOn Severity) error {
+	err := r.writeFormat(file, format, failOn, true)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
