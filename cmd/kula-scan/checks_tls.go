@@ -128,7 +128,7 @@ func (s *Scanner) probeConfig(minVersion, maxVersion uint16, suites []uint16) *t
 	cfg.MinVersion, cfg.MaxVersion = minVersion, maxVersion
 	cfg.CipherSuites = suites
 	// The probe sends no data and judges no certificate (see above).
-	cfg.InsecureSkipVerify = true // nosemgrep -- a version/suite probe, not a connection that carries data
+	cfg.InsecureSkipVerify = true // nosemgrep: bypass-tls-verification -- a version/suite probe sends no data; the modern handshake and TLS-004 verify the certificate
 	return cfg
 }
 
