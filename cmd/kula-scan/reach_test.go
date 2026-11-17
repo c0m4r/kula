@@ -298,3 +298,48 @@ func TestBadConnectionFlagsAreUsageErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestBasePathIsNormalised(t *testing.T) {
+	for _, c := range []struct{ target, basePath, want string }{
+		{"http://kula.test:27960", "kula", "/kula"},
+		{"http://kula.test:27960", "/kula/", "/kula"},
+		{"http://kula.test:27960", "kula//", "/kula"},
+		{"http://kula.test:27960", "//kula", "/kula"},
+		{"http://kula.test:27960", "monitoring/kula", "/monitoring/kula"},
+		{"http://kula.test:27960", "/", ""},
+		{"http://kula.test:27960", "", ""},
+		{"http://kula.test:27960/kula/", "", "/kula"},
+		{"http://kula.test:27960/", "", ""},
+		{"http://kula.test:27960/other", "kula", "/kula"}, // -base-path wins
+	} {
+		s, err := NewScanner(Options{Target: c.target, BasePath: c.basePath})
+		if err != nil {
+			t.Errorf("%s with -base-path %q: %v", c.target, c.basePath, err)
+			continue
+		}
+		if s.base.Path != c.want || s.urlFor("/api/config") != "http://kula.test:27960"+c.want+"/api/config" {
+			t.Errorf("%s with -base-path %q: base path %q, requests %s; want %q", c.target, c.basePath, s.base.Path, s.urlFor("/api/config"), c.want)
+		}
+	}
+}
+
+func TestBadBasePathsAreUsageErrors(t *testing.T) {
+	for _, args := range [][]string{
+		{"-base-path", "kula?x=1", "http://kula-scan.invalid"},
+		{"-base-path", "/kula#top", "http://kula-scan.invalid"},
+		{"-base-path", "/ku la", "http://kula-scan.invalid"},
+		{"-base-path", "/kula\t", "http://kula-scan.invalid"},
+		{"-base-path", "/kula\r\nX-Injected: 1", "http://kula-scan.invalid"},
+		{"-base-path", "http://kula-scan.invalid/kula", "http://kula-scan.invalid"},
+		{"-base-path", "https:/kula", "http://kula-scan.invalid"},
+		{"http://kula-scan.invalid/ku%20la"},
+	} {
+		code, stdout, stderr := runCaptured(t, args...)
+		if code != exitUsage || stdout != "" {
+			t.Errorf("%q: exit %d, stdout %q; want a usage error", args, code, stdout)
+		}
+		if !strings.Contains(stderr, "base path") && !strings.Contains(stderr, "-base-path") {
+			t.Errorf("%q: the error does not name the base path:\n%s", args, stderr)
+		}
+	}
+}

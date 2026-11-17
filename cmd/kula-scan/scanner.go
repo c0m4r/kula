@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/gorilla/websocket"
 )
@@ -262,11 +263,15 @@ func NewScanner(opt Options) (*Scanner, error) {
 
 	// Fold a path component in the URL into basePath unless one was given
 	// explicitly. This lets `kula-scan http://host:1234/kula` work.
-	bp := strings.TrimRight(opt.BasePath, "/")
-	if bp == "" && u.Path != "" && u.Path != "/" {
-		bp = strings.TrimRight(u.Path, "/")
+	bp, source := opt.BasePath, "-base-path"
+	if bp == "" {
+		bp, source = u.Path, "base path in the target URL"
+	}
+	if bp, err = normalizeBasePath(bp); err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", source, err)
 	}
 	u.Path = bp
+	u.RawPath = ""
 	u.RawQuery = ""
 	u.Fragment = ""
 
@@ -336,6 +341,41 @@ func NewScanner(opt Options) (*Scanner, error) {
 		},
 	}
 	return s, nil
+}
+
+// normalizeBasePath returns the base path p names with one leading slash and
+// no trailing one, or "" for none. Every request path is appended to it, raw
+// requests' too, so it refuses what is not a plain path: a query (?), a
+// fragment (#), whitespace or a control character, or a URL with a scheme.
+func normalizeBasePath(p string) (string, error) {
+	if strings.ContainsFunc(p, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return "", fmt.Errorf("%q contains whitespace or a control character", p)
+	}
+	if strings.ContainsAny(p, "?#") {
+		return "", fmt.Errorf("%q contains a query or fragment (? or #); give the path alone, e.g. /kula", p)
+	}
+	if hasScheme(p) {
+		return "", fmt.Errorf("%q is a URL; give the path alone, e.g. /kula, and the address in the target URL", p)
+	}
+	return strings.TrimRight("/"+strings.TrimLeft(p, "/"), "/"), nil
+}
+
+// hasScheme reports whether p starts with a URL scheme ("http:", "https:"):
+// letters, then letters, digits, "+", "-" or ".", then a colon, all before
+// any slash.
+func hasScheme(p string) bool {
+	scheme, _, found := strings.Cut(p, ":")
+	if !found || scheme == "" || strings.Contains(scheme, "/") {
+		return false
+	}
+	for i, r := range scheme {
+		letter := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+		other := r >= '0' && r <= '9' || r == '+' || r == '-' || r == '.'
+		if !letter && (i == 0 || !other) {
+			return false
+		}
+	}
+	return true
 }
 
 // dialTarget returns where the scanner's connections go: the -unix socket,
