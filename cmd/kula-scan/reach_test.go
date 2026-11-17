@@ -165,7 +165,7 @@ func TestTLSCheckEndsWithTheRun(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Errorf("the TLS check took %s after the interrupt", elapsed)
 	}
-	wantStatus(t, findings, "TLS-001", StatusWarn)
+	wantStatus(t, findings, "TLS-001", StatusError)
 }
 
 // TestUnixSocketTarget: with -unix every probe, the raw-socket and WebSocket

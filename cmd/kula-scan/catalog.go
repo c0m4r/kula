@@ -160,11 +160,13 @@ var catalog = []catalogEntry{
 		"Crafted paths do not produce a redirect whose Location, read as a browser reads it, names a foreign host."},
 
 	{"TLS-001", "tls", ModeDefault, "TLS protocol version",
-		"Over HTTPS, the connection negotiates TLS 1.2 or later."},
+		"Over HTTPS, handshakes capped at TLS 1.1 and at TLS 1.0 are refused."},
 	{"TLS-002", "tls", ModeDefault, "TLS cipher strength",
-		"The negotiated cipher suite is not on Go's insecure list."},
-	{"TLS-003", "tls", ModeDefault, "Certificate validity",
-		"The server certificate is valid for at least 14 more days."},
+		"A TLS 1.2 handshake offering only the cipher suites on Go's insecure list is refused."},
+	{"TLS-003", "tls", ModeDefault, "Certificate validity and strength",
+		"The server certificate is valid now and for at least 14 more days, with no RSA key under 2048 bits and no SHA-1 signature in its chain."},
+	{"TLS-004", "tls", ModeDefault, "Certificate trusted for the host name",
+		"The certificate chain leads to a system root and names the target URL's host; with -insecure the scanner verifies it itself."},
 
 	{"RATE-OLLAMA", "rate", ModeAggressive, "Ollama rate limiting",
 		"A burst of Ollama requests starts answering 429."},
