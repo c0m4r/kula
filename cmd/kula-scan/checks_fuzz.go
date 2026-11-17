@@ -802,7 +802,7 @@ func runFuzzQuery(s *Scanner) []Finding {
 	hdr, ok := s.apiHeaders()
 	if !ok {
 		return []Finding{finding("FUZZ-QUERY", SevInfo, StatusSkip,
-			"auth is enabled and no session is available; supply -username/-password to fuzz the API.")}
+			"auth is enabled and no session is available to fuzz the API: "+s.noSessionReason()+".")}
 	}
 	now := time.Now()
 	t := &fuzzTally{planned: s.fuzzIter}
@@ -964,7 +964,7 @@ func (s *Scanner) chatOpen() (bool, string) {
 	case !s.authEnabled:
 		return true, ""
 	case !s.ensureSession():
-		return false, "auth is enabled and no session is available to reach the AI chat (supply -username/-password)"
+		return false, "auth is enabled and no session is available to reach the AI chat: " + s.noSessionReason()
 	case s.ollama:
 		return true, ""
 	}
