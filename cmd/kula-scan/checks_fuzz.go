@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -968,29 +970,158 @@ func (s *Scanner) chatOpen() (bool, string) {
 	return false, disabled
 }
 
-// runFuzzMethods sends a matrix of HTTP methods at every known route. A 5xx or a
-// dropped connection is a bug; a state-changing verb accepted on a POST-only
-// endpoint is a method-enforcement gap.
-func runFuzzMethods(s *Scanner) []Finding {
-	routes := []string{"/", "/api/current", "/api/config", "/api/history", "/api/i18n?lang=en",
-		"/api/login", "/api/logout", "/health", "/metrics", "/style.css", "/ws"}
-	methods := []string{"PUT", "DELETE", "PATCH", "TRACE", "CONNECT", "PROPFIND", "MKCOL", "BREW", "FOObar"}
-	postOnly := map[string]bool{"/api/login": true, "/api/logout": true, "/api/ollama/chat": true}
+// ---- FUZZ-METHODS -----------------------------------------------------------
 
-	hdr, _ := s.apiHeaders()
-	t := &fuzzTally{planned: len(routes) * len(methods)}
-	for _, route := range routes {
+// routeKind is which methods a route serves, as FUZZ-METHODS judges it.
+type routeKind int
+
+const (
+	// routeOther is outside /api/: the page, static assets, /health and
+	// /status (which Kula serves to any method), /metrics and the WebSocket.
+	routeOther routeKind = iota
+	// routeReadOnly is a GET-only API route: Kula's readOnly answers any
+	// other method 405.
+	routeReadOnly
+	// routePostOnly is login, logout or the AI chat: their handlers answer
+	// any other method 405 before doing anything.
+	routePostOnly
+)
+
+// methodRoutes are the routes FUZZ-METHODS sends its methods to.
+var methodRoutes = []struct {
+	path string
+	kind routeKind
+}{
+	{"/", routeOther},
+	{"/style.css", routeOther},
+	{"/health", routeOther},
+	{"/status", routeOther},
+	{"/metrics", routeOther},
+	{"/ws", routeOther},
+	{"/api/current", routeReadOnly},
+	{"/api/config", routeReadOnly},
+	{"/api/history", routeReadOnly},
+	{"/api/i18n?lang=en", routeReadOnly},
+	{"/api/system-info", routeReadOnly},
+	{"/api/auth/status", routeReadOnly},
+	{"/api/ollama/models", routeReadOnly},
+	{"/api/ollama/context", routeReadOnly},
+	{"/api/login", routePostOnly},
+	{"/api/logout", routePostOnly},
+	{"/api/ollama/chat", routePostOnly},
+}
+
+// unusualMethods are sent to every route, with HEAD and OPTIONS.
+var unusualMethods = []string{
+	http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodTrace, http.MethodConnect,
+	"PROPFIND", "MKCOL", "BREW", "FOObar",
+}
+
+// methodProbe is one request of FUZZ-METHODS' matrix.
+type methodProbe struct {
+	method, path string
+	kind         routeKind
+}
+
+// methodMatrix returns FUZZ-METHODS' requests: the unusual methods, HEAD and
+// OPTIONS on every route, and POST on the GET-only API routes. It sends no
+// POST to a POST-only route, the one method that does something there: POST
+// /api/login spends one of the address's login attempts, POST
+// /api/ollama/chat could start a chat with the model, and POST /api/logout
+// would end the scan's session. Kula's handlers for those answer any other
+// method 405 before doing anything (handleLogin after its 404 with auth off,
+// handleLogout and handleOllamaChat first thing).
+func methodMatrix() []methodProbe {
+	var matrix []methodProbe
+	for _, route := range methodRoutes {
+		methods := append(slices.Clone(unusualMethods), http.MethodHead, http.MethodOptions)
+		if route.kind == routeReadOnly {
+			methods = append(methods, http.MethodPost)
+		}
 		for _, m := range methods {
-			r := s.do(m, route, hdr, "")
-			if t.record(r, reqDesc(m, route, ""), "").outcome == outAnomaly {
-				continue
-			}
-			if postOnly[route] && r.status >= 200 && r.status < 300 {
-				t.hit("state-changing method accepted", reqDesc(m, route, ""))
-			}
+			matrix = append(matrix, methodProbe{m, route.path, route.kind})
 		}
 	}
-	return []Finding{t.verdict("FUZZ-METHODS", s.seed, t.coverage("a handler"), "")}
+	return matrix
+}
+
+// stateChanging reports whether method is one a read-only route must refuse
+// for the judgement: POST, PUT, DELETE or PATCH.
+func stateChanging(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+		return true
+	}
+	return false
+}
+
+// runFuzzMethods sends the method matrix (methodMatrix) past Kula's gates: a
+// same-origin Origin for the CSRF gate and, with a session, its cookie and
+// CSRF token. The logout is sent no session, so a server that ended one on
+// another method would not end the scan's. An unexpected 5xx, a dropped
+// connection or a hang is an anomaly, and so is a method an API route does
+// not serve answered 2xx: POST, PUT, DELETE or PATCH on a read-only route,
+// any method but OPTIONS (a CORS preflight) on a POST-only one. Outside
+// /api/ Kula serves its page, assets, /health and /status to any method,
+// which changes nothing: those 2xx answers are counted as information only.
+func runFuzzMethods(s *Scanner) []Finding {
+	origin := s.base.Scheme + "://" + s.base.Host
+	anonymous := map[string]string{"Origin": origin}
+	session := maps.Clone(anonymous)
+	var notes []string
+	if s.authEnabled {
+		if s.ensureSession() {
+			session["Cookie"] = "kula_session=" + s.session
+			session["X-CSRF-Token"] = s.csrf
+		} else {
+			notes = append(notes, "Without a session the API routes stop at the auth gate: "+s.noSessionReason()+".")
+		}
+	}
+
+	matrix := methodMatrix()
+	t := &fuzzTally{planned: len(matrix)}
+	enforced, other := 0, 0
+	methodHit := false
+	for _, p := range matrix {
+		if t.full() || s.ctx.Err() != nil {
+			break
+		}
+		hdr := session
+		if p.path == "/api/logout" {
+			hdr = anonymous
+		}
+		r := s.do(p.method, p.path, hdr, "")
+		desc := reqDesc(p.method, p.path, "")
+		if t.record(r, desc, "").outcome != outReached {
+			continue
+		}
+		accepted := r.status >= 200 && r.status <= 299
+		switch {
+		case p.kind == routeReadOnly && stateChanging(p.method), p.kind == routePostOnly && p.method != http.MethodOptions:
+			enforced++
+			if accepted {
+				methodHit = true
+				t.hit(fmt.Sprintf("an API route accepted a method it does not serve (HTTP %d)", r.status), desc)
+			}
+		case p.kind == routeOther && accepted && p.method != http.MethodHead && p.method != http.MethodOptions:
+			other++
+		}
+	}
+
+	if !methodHit && enforced > 0 {
+		notes = append(notes, fmt.Sprintf("Method enforcement: %d requests with a method their API route does not serve "+
+			"(POST, PUT, DELETE or PATCH on a read-only route; another than POST on login, logout or the AI chat) reached the handler, and none was accepted.", enforced))
+	}
+	if other > 0 {
+		notes = append(notes, fmt.Sprintf("For information: %d requests outside /api/ with a method other than GET, HEAD or OPTIONS were answered 2xx; "+
+			"Kula serves its page, static assets, /health and /status to any method, which changes nothing.", other))
+	}
+	f := t.verdict("FUZZ-METHODS", s.seed, t.coverage("a handler"), strings.Join(notes, " "))
+	if methodHit {
+		f = f.withRemediation("Answer a method a route does not serve with 405, as Kula's readOnly does for its GET-only API routes; " +
+			"for the other anomalies, return 4xx, never 5xx, a panic or a hang.")
+	}
+	return []Finding{f}
 }
 
 // runFuzzSmuggle sends requests with conflicting/duplicate framing headers. The

@@ -206,7 +206,7 @@ var catalog = []catalogEntry{
 	{"FUZZ-BODY", "fuzz", ModeFuzz, "Malformed JSON body handling",
 		"Malformed JSON bodies sent to login (at most 6, within the login limit) and the AI chat (only bodies its decoder refuses) produce no 5xx, dropped connection or hang."},
 	{"FUZZ-METHODS", "fuzz", ModeFuzz, "HTTP method matrix",
-		"Unusual methods on every route produce no 5xx, and POST-only routes accept no other verb."},
+		"Unusual methods, HEAD and OPTIONS on every route, and POST on the read-only API routes, sent past the auth and CSRF gates, produce no unexpected 5xx, dropped connection or hang; read-only API routes accept no POST, PUT, DELETE or PATCH, and login, logout and the AI chat no other method than POST, which is never sent to them."},
 	{"FUZZ-SMUGGLE", "fuzz", ModeFuzz, "Request smuggling / desync",
 		"Conflicting Content-Length and Transfer-Encoding framing is rejected."},
 	{"FUZZ-WS", "fuzz", ModeFuzz, "WebSocket protocol fuzzing",

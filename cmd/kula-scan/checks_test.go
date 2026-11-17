@@ -52,6 +52,9 @@ func secureMock() http.Handler {
 		_, _ = w.Write([]byte("kula is healthy"))
 	})
 	mux.HandleFunc("/api/auth/status", func(w http.ResponseWriter, r *http.Request) {
+		if !kulaMethodAllowed(w, r) {
+			return
+		}
 		writeJSONResp(w, map[string]any{"auth_required": true, "authenticated": valid(r)})
 	})
 
@@ -75,7 +78,7 @@ func secureMock() http.Handler {
 		writeJSONResp(w, map[string]any{"hello": "hi"})
 	})
 	api.HandleFunc("/api/ollama/", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"error":"ollama is not enabled"}`, http.StatusServiceUnavailable)
+		kmAIError(w, "disabled", "ollama is not enabled", http.StatusServiceUnavailable)
 	})
 	api.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
@@ -83,6 +86,9 @@ func secureMock() http.Handler {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		if !valid(r) {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		if !kulaMethodAllowed(w, r) {
 			return
 		}
 		api.ServeHTTP(w, r)
