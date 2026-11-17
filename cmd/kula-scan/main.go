@@ -14,9 +14,10 @@
 //	kula-scan [flags] <target-url>
 //
 // Exit status is 1 when any safeguard FAILs at or above -fail-on severity
-// (default high), 2 on a usage error or a target that is unreachable or not
-// Kula, and 3 when nothing fails but a probe could not complete, so it can
-// gate CI / releases.
+// (default high) or contradicts -expect, 2 on a usage error, a target that is
+// unreachable or not Kula, or a report that could not be written, 3 when
+// nothing fails but a probe could not complete, and 130 when interrupted, so
+// it can gate CI / releases.
 package main
 
 import (
@@ -62,45 +63,65 @@ func run(args []string) int {
 	return runCLI(context.Background(), args, os.Stdout, os.Stderr)
 }
 
-// runCLI runs the command line and returns the exit status. The report goes
-// to stdout and nothing else does; request logs, progress, banners and errors
-// go to stderr. Cancelling ctx interrupts the scan (exit status 130).
-func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+// cliFlags holds the values of the command line's flags.
+type cliFlags struct {
+	target, username, password, basePath, connect, unix string
+	timeout, dosWait                                    time.Duration
+	insecure, aggressive, fuzz                          bool
+	fuzzIter                                            int
+	seed                                                int64
+	only, skip, ignore, expect, failOn                  string
+	asJSON                                              bool
+	format, output                                      string
+	noColor, verbose, list, version                     bool
+	headers                                             headerFlags
+	metrics                                             string
+}
+
+// newFlagSet returns the command line's flag set, which prints printUsage
+// to stderr, and the values it parses into. printUsage must name every flag
+// it registers (TestUsageNamesEveryFlag).
+func newFlagSet(stderr io.Writer) (*flag.FlagSet, *cliFlags) {
 	fs := flag.NewFlagSet("kula-scan", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { printUsage(fs.Output()) }
 
-	var (
-		target     = fs.String("target", "", "target base URL, e.g. http://localhost:27960 (or pass as positional arg)")
-		username   = fs.String("username", "", "username for authenticated checks (optional)")
-		password   = fs.String("password", "", "password for authenticated checks (optional; prefer the "+passwordEnv+" environment variable)")
-		basePath   = fs.String("base-path", "", "base path if kula is mounted under one, e.g. /kula")
-		connect    = fs.String("connect", "", "connect to this host:port instead of the target URL's address; the URL still gives the Host header, TLS server name and origin")
-		unix       = fs.String("unix", "", "connect over this Unix socket (Kula's web.unix_socket); the URL still gives the Host header and base path")
-		timeout    = fs.Duration("timeout", 10*time.Second, "per-request timeout")
-		dosWait    = fs.Duration("dos-wait", 35*time.Second, "how long DoS probes wait for the server to reap a slow/idle connection (raise if the target uses long read timeouts)")
-		insecure   = fs.Bool("insecure", false, "skip TLS certificate verification")
-		aggressive = fs.Bool("aggressive", false, "enable disruptive checks (login lockout, slow/flood DoS probes, XFF bypass)")
-		fuzz       = fs.Bool("fuzz", false, "enable blind fault-injection fuzzing (malformed/extreme input across the surface)")
-		fuzzIter   = fs.Int("fuzz-iter", 200, "iterations per randomized fuzz probe")
-		seed       = fs.Int64("seed", 0, "PRNG seed for fuzzing (0 = random; the chosen seed is reported so runs are reproducible)")
-		only       = fs.String("only", "", "comma-separated categories and/or finding IDs to run (see -list)")
-		skip       = fs.String("skip", "", "comma-separated categories and/or finding IDs not to run or report")
-		ignore     = fs.String("ignore", "", "comma-separated finding IDs that stay in the report but never affect the exit status")
-		expect     = fs.String("expect", "", "comma-separated posture the target must have, failing the run otherwise: "+strings.Join(expectKeyNames(), ","))
-		failOn     = fs.String("fail-on", "high", "min FAIL severity for non-zero exit: info|low|medium|high|critical")
-		asJSON     = fs.Bool("json", false, "emit findings as JSON (-format json)")
-		format     = fs.String("format", "", "report format: text|json|junit|sarif (default text)")
-		output     = fs.String("o", "", "write the report in -format to `FILE`; stdout then gets the text report")
-		noColor    = fs.Bool("no-color", false, "disable ANSI colors")
-		verbose    = fs.Bool("v", false, "verbose: log each request and its response status to stderr")
-		list       = fs.Bool("list", false, "print every finding ID with its category, mode and title, then exit")
-		version    = fs.Bool("version", false, "print the version and exit")
-		headers    headerFlags
-		metrics    = fs.String("metrics-token", "", "Prometheus bearer token /metrics should accept (optional; prefer the "+metricsTokenEnv+" environment variable)")
-	)
-	fs.Var(&headers, "H", "'Name: value' header sent on every request, e.g. a gateway's access token (repeatable; values are never printed)")
+	f := &cliFlags{}
+	fs.StringVar(&f.target, "target", "", "target base URL, e.g. http://localhost:27960 (or pass as positional arg)")
+	fs.StringVar(&f.username, "username", "", "username for authenticated checks (optional)")
+	fs.StringVar(&f.password, "password", "", "password for authenticated checks (optional; prefer the "+passwordEnv+" environment variable)")
+	fs.StringVar(&f.basePath, "base-path", "", "base path if kula is mounted under one, e.g. /kula")
+	fs.StringVar(&f.connect, "connect", "", "connect to this host:port instead of the target URL's address; the URL still gives the Host header, TLS server name and origin")
+	fs.StringVar(&f.unix, "unix", "", "connect over this Unix socket (Kula's web.unix_socket); the URL still gives the Host header and base path")
+	fs.DurationVar(&f.timeout, "timeout", 10*time.Second, "per-request timeout")
+	fs.DurationVar(&f.dosWait, "dos-wait", 35*time.Second, "how long DoS probes wait for the server to reap a slow/idle connection (raise if the target uses long read timeouts)")
+	fs.BoolVar(&f.insecure, "insecure", false, "skip TLS certificate verification on the scan's connections (TLS-004 still judges the certificate)")
+	fs.BoolVar(&f.aggressive, "aggressive", false, "enable disruptive checks (login lockout, AI rate and body limits, slow/flood DoS probes, a history burst, XFF bypass)")
+	fs.BoolVar(&f.fuzz, "fuzz", false, "enable blind fault-injection fuzzing (malformed/extreme input across the surface)")
+	fs.IntVar(&f.fuzzIter, "fuzz-iter", 200, "iterations per randomized fuzz probe")
+	fs.Int64Var(&f.seed, "seed", 0, "PRNG seed for fuzzing (0 = random; the chosen seed is reported so runs are reproducible)")
+	fs.StringVar(&f.only, "only", "", "comma-separated categories and/or finding IDs to run (see -list)")
+	fs.StringVar(&f.skip, "skip", "", "comma-separated categories and/or finding IDs not to run or report")
+	fs.StringVar(&f.ignore, "ignore", "", "comma-separated finding IDs that stay in the report but never affect the exit status")
+	fs.StringVar(&f.expect, "expect", "", "comma-separated posture the target must have, failing the run otherwise: "+strings.Join(expectKeyNames(), ","))
+	fs.StringVar(&f.failOn, "fail-on", "high", "min FAIL severity for non-zero exit: info|low|medium|high|critical")
+	fs.BoolVar(&f.asJSON, "json", false, "emit findings as JSON (-format json)")
+	fs.StringVar(&f.format, "format", "", "report format: text|json|junit|sarif (default text)")
+	fs.StringVar(&f.output, "o", "", "write the report in -format to `FILE`; stdout then gets the text report")
+	fs.BoolVar(&f.noColor, "no-color", false, "disable ANSI colors")
+	fs.BoolVar(&f.verbose, "v", false, "verbose: log each request and its response status to stderr")
+	fs.BoolVar(&f.list, "list", false, "print every finding ID with its category, mode and title, then exit")
+	fs.BoolVar(&f.version, "version", false, "print the version and exit")
+	fs.StringVar(&f.metrics, "metrics-token", "", "Prometheus bearer token /metrics should accept (optional; prefer the "+metricsTokenEnv+" environment variable)")
+	fs.Var(&f.headers, "H", "'Name: value' header sent on every request, e.g. a gateway's access token (repeatable; values are never printed)")
+	return fs, f
+}
 
+// runCLI runs the command line and returns the exit status. The report goes
+// to stdout and nothing else does; request logs, progress, banners and errors
+// go to stderr. Cancelling ctx interrupts the scan (exit status 130).
+func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs, f := newFlagSet(stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -108,11 +129,11 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	if *version {
+	if f.version {
 		_, _ = fmt.Fprintf(stdout, "kula-scan %s\n", kula.Version)
 		return 0
 	}
-	if *list {
+	if f.list {
 		if err := writeCatalog(stdout); err != nil {
 			_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 			return 2
@@ -120,7 +141,7 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	tgt := *target
+	tgt := f.target
 	if tgt == "" && fs.NArg() > 0 {
 		tgt = fs.Arg(0)
 	}
@@ -130,28 +151,28 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	failSev, ok := parseSeverity(*failOn)
+	failSev, ok := parseSeverity(f.failOn)
 	if !ok {
-		_, _ = fmt.Fprintf(stderr, "error: invalid -fail-on %q (want info|low|medium|high|critical)\n", *failOn)
+		_, _ = fmt.Fprintf(stderr, "error: invalid -fail-on %q (want info|low|medium|high|critical)\n", f.failOn)
 		return 2
 	}
 
-	sel, err := newSelection(*only, *skip)
+	sel, err := newSelection(f.only, f.skip)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
-	ignored, ignoredIDs, err := parseIgnore(*ignore)
+	ignored, ignoredIDs, err := parseIgnore(f.ignore)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
-	expected, err := parseExpect(*expect)
+	expected, err := parseExpect(f.expect)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
-	reportFormat, err := resolveFormat(*format, *asJSON)
+	reportFormat, err := resolveFormat(f.format, f.asJSON)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
@@ -159,27 +180,27 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	scanner, err := NewScanner(Options{
 		Target:     tgt,
-		BasePath:   *basePath,
-		Username:   *username,
-		Password:   resolvePassword(*password),
-		Timeout:    *timeout,
-		DoSWait:    *dosWait,
-		Insecure:   *insecure,
-		Aggressive: *aggressive,
-		Fuzz:       *fuzz,
-		FuzzIter:   *fuzzIter,
-		Seed:       *seed,
-		Verbose:    *verbose,
+		BasePath:   f.basePath,
+		Username:   f.username,
+		Password:   resolvePassword(f.password),
+		Timeout:    f.timeout,
+		DoSWait:    f.dosWait,
+		Insecure:   f.insecure,
+		Aggressive: f.aggressive,
+		Fuzz:       f.fuzz,
+		FuzzIter:   f.fuzzIter,
+		Seed:       f.seed,
+		Verbose:    f.verbose,
 		// Progress lines are for a person watching; a log keeps only the
 		// report and what -v asks for.
-		Progress: *verbose || isTerminal(stderr),
+		Progress: f.verbose || isTerminal(stderr),
 		Log:      stderr,
 		Expect:   expected,
-		Connect:  *connect,
-		Unix:     *unix,
-		Headers:  headers,
+		Connect:  f.connect,
+		Unix:     f.unix,
+		Headers:  f.headers,
 		// The token, like the password, can come from the environment.
-		MetricsToken: resolveMetricsToken(*metrics),
+		MetricsToken: resolveMetricsToken(f.metrics),
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
@@ -190,8 +211,8 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// report, so a CI job keeps a readable log and an artifact from one run.
 	stdoutFormat := reportFormat
 	var outFile *os.File
-	if *output != "" {
-		if outFile, err = createReportFile(*output); err != nil {
+	if f.output != "" {
+		if outFile, err = createReportFile(f.output); err != nil {
 			_, _ = fmt.Fprintf(stderr, "error: -o: %v\n", err)
 			return 2
 		}
@@ -199,15 +220,15 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	textOut := stdoutFormat == formatText
 
-	useColor := !*noColor && textOut && colorEnabled(stdout)
-	bannerColor := !*noColor && colorEnabled(stderr)
+	useColor := !f.noColor && textOut && colorEnabled(stdout)
+	bannerColor := !f.noColor && colorEnabled(stderr)
 
-	if *aggressive && textOut {
+	if f.aggressive && textOut {
 		_, _ = fmt.Fprintln(stderr, banner(bannerColor,
 			"AGGRESSIVE MODE: locks out login from your IP for ~5 min, floods connections, and holds slow requests open "+
-				"(up to -dos-wait="+dosWait.String()+" each). Run against staging, or accept the disruption."))
+				"(up to -dos-wait="+f.dosWait.String()+" each). Run against staging, or accept the disruption."))
 	}
-	if *fuzz && textOut {
+	if f.fuzz && textOut {
 		_, _ = fmt.Fprintln(stderr, banner(bannerColor, fuzzBanner(scanner.seed)))
 	}
 
@@ -219,18 +240,18 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	report.Started = started.UTC().Truncate(time.Second)
 	report.DurationMS = time.Since(started).Milliseconds()
 	report.Options = ReportOptions{
-		Aggressive: *aggressive,
-		Fuzz:       *fuzz,
+		Aggressive: f.aggressive,
+		Fuzz:       f.fuzz,
 		Only:       nonNil(sel.onlyList),
 		Skip:       nonNil(sel.skipList),
 		Ignore:     nonNil(ignoredIDs),
 		Expect:     nonNil(expected),
 		FailOn:     strings.ToLower(failSev.String()),
-		Connect:    *connect,
-		Unix:       *unix,
+		Connect:    f.connect,
+		Unix:       f.unix,
 		Headers:    scanner.extraHeaderNames(),
 	}
-	if *fuzz {
+	if f.fuzz {
 		report.Options.Seed = scanner.seed
 	}
 	report.TargetInfo = scanner.targetInfo()
@@ -383,8 +404,10 @@ Flags:
                       never printed; the JSON report lists the names
   -timeout duration   per-request timeout (default 10s)
   -dos-wait duration  how long DoS probes wait for a slow/idle connection to be reaped (default 35s)
-  -insecure           skip TLS certificate verification
-  -aggressive         enable disruptive checks (login lockout, slow/flood DoS probes, XFF bypass)
+  -insecure           skip TLS certificate verification on the scan's connections, for a
+                      self-signed instance; TLS-004 still judges the certificate
+  -aggressive         enable disruptive checks (login lockout, AI rate and body limits,
+                      slow/flood DoS probes, a history burst, XFF bypass)
   -fuzz               enable blind fault-injection fuzzing (malformed/extreme input)
   -fuzz-iter int      iterations per randomized fuzz probe (default 200)
   -seed int           PRNG seed for fuzzing (0 = random; reported for reproducibility)
@@ -411,7 +434,8 @@ Exit status:
   0    no failing safeguard at/above -fail-on, and every probe completed
   1    one or more safeguards FAIL at/above -fail-on, or contradict -expect
        (ignored findings excepted)
-  2    usage error, or the target is unreachable or not a Kula instance
+  2    usage error, the target is unreachable or not a Kula instance, or the
+       report could not be written
   3    inconclusive: nothing fails, but a probe could not complete (ERROR),
        e.g. the supplied credentials were refused
   130  interrupted (SIGINT/SIGTERM): the scan logs out and prints a partial report;
