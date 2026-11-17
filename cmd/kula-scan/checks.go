@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -614,7 +615,7 @@ func runTraversalChecks(s *Scanner) []Finding {
 
 func metricsChecks() []check {
 	return []check{{
-		ids: []string{"PROM-001", "PROM-002"},
+		ids: []string{"PROM-001", "PROM-002", "PROM-003"},
 		run: runMetricsChecks,
 	}}
 }
@@ -628,8 +629,10 @@ func runMetricsChecks(s *Scanner) []Finding {
 
 	switch r.status {
 	case http.StatusNotFound:
-		return []Finding{finding("PROM-001", SevInfo, StatusSkip,
-			"/metrics is not enabled on this instance.")}
+		return []Finding{
+			finding("PROM-001", SevInfo, StatusSkip, "/metrics is not enabled on this instance."),
+			finding("PROM-003", SevInfo, StatusSkip, "/metrics is not enabled on this instance."),
+		}
 	case http.StatusUnauthorized:
 		out := []Finding{}
 		if strings.Contains(r.header.Get("WWW-Authenticate"), "Bearer") {
@@ -652,17 +655,78 @@ func runMetricsChecks(s *Scanner) []Finding {
 			out = append(out, finding("PROM-002", SevHigh, StatusFail,
 				"an incorrect bearer token was not rejected").withEvidence("status=%d", w.status))
 		}
-		return out
+		return append(out, metricsTokenFinding(s))
 	case http.StatusOK:
-		return []Finding{finding("PROM-001", SevMedium, StatusWarn,
-			"/metrics is served with no authentication; it discloses the hostname and detailed system metrics to anyone who can reach the port.").
-			withEvidence("%d bytes of metrics returned unauthenticated", len(r.body)).
-			withRemediation("Set web.prometheus_metrics.token, or restrict /metrics at the network/proxy layer.").
-			expecting("metrics-token")}
+		return []Finding{
+			finding("PROM-001", SevMedium, StatusWarn,
+				"/metrics is served with no authentication; it discloses the hostname and detailed system metrics to anyone who can reach the port.").
+				withEvidence("%d bytes of metrics returned unauthenticated", len(r.body)).
+				withRemediation("Set web.prometheus_metrics.token, or restrict /metrics at the network/proxy layer.").
+				expecting("metrics-token"),
+			finding("PROM-003", SevInfo, StatusSkip,
+				"/metrics answers without a token, so no token is required."),
+		}
 	default:
-		return []Finding{finding("PROM-001", SevInfo, StatusWarn,
-			"unexpected status from /metrics").withEvidence("status=%d", r.status)}
+		return []Finding{
+			finding("PROM-001", SevInfo, StatusWarn,
+				"unexpected status from /metrics").withEvidence("status=%d", r.status),
+			finding("PROM-003", SevInfo, StatusSkip,
+				fmt.Sprintf("/metrics answered HTTP %d without a token, not 401, so a token was not tried.", r.status)),
+		}
 	}
+}
+
+// metricsTokenFinding is PROM-003, the positive control of PROM-001 and
+// PROM-002: /metrics, which refuses a request without a token, must answer
+// the supplied -metrics-token with the metrics. A refused token leaves the
+// run inconclusive, as refused credentials do. The token is never printed.
+func metricsTokenFinding(s *Scanner) Finding {
+	if s.metricsToken == "" {
+		return finding("PROM-003", SevInfo, StatusSkip,
+			"no -metrics-token (or "+metricsTokenEnv+") supplied; the configured token was not tried.")
+	}
+	r := s.do(http.MethodGet, "/metrics", map[string]string{"Authorization": "Bearer " + s.metricsToken}, "")
+	switch {
+	case r.err != nil:
+		return finding("PROM-003", SevInfo, StatusError,
+			"could not query /metrics with the supplied token: "+r.err.Error())
+	case r.status == http.StatusUnauthorized:
+		return finding("PROM-003", SevInfo, StatusError,
+			"/metrics refused the supplied token (HTTP 401): it is not web.prometheus_metrics.token; check -metrics-token or "+metricsTokenEnv+".")
+	case r.status == http.StatusOK && prometheusExposition(r):
+		return finding("PROM-003", SevMedium, StatusPass,
+			"/metrics answers the supplied token with 200 and a Prometheus exposition body.").
+			withEvidence("%d bytes of %s", len(r.body), r.header.Get("Content-Type"))
+	case r.status == http.StatusOK:
+		return finding("PROM-003", SevLow, StatusWarn,
+			"/metrics answered the supplied token with 200, but not with a Prometheus exposition body; something other than Kula may have answered.").
+			withEvidence("%d bytes of %q", len(r.body), r.header.Get("Content-Type"))
+	default:
+		return finding("PROM-003", SevLow, StatusWarn,
+			fmt.Sprintf("/metrics answered the supplied token with HTTP %d, not 200.", r.status))
+	}
+}
+
+// promSample matches a sample line of the Prometheus text format:
+// name{labels} value.
+var promSample = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*(\{.*\})?[ \t]+\S`)
+
+// prometheusExposition reports whether r carries a Prometheus text
+// exposition: a text/plain (or OpenMetrics) body whose first line that is
+// not blank or a comment is a sample. Kula answers an empty one, typed
+// version=0.0.4, before it has taken a sample.
+func prometheusExposition(r httpResult) bool {
+	contentType := strings.ToLower(r.header.Get("Content-Type"))
+	if !strings.HasPrefix(contentType, "text/plain") && !strings.HasPrefix(contentType, "application/openmetrics-text") {
+		return false
+	}
+	for line := range strings.Lines(r.body) {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			return promSample.MatchString(line)
+		}
+	}
+	return strings.Contains(contentType, "version=")
 }
 
 // ============================== input ========================================

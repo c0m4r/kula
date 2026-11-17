@@ -114,14 +114,14 @@ func TestOnlySelectsFindingIDs(t *testing.T) {
 
 func TestSkipDropsOrFiltersChecks(t *testing.T) {
 	log := &requestLog{paths: map[string]int{}}
-	_, report, _ := scanJSON(t, log.wrap(secureMock()), "-skip", "PROM-001,prom-002,HDR-009,traversal")
+	_, report, _ := scanJSON(t, log.wrap(secureMock()), "-skip", "PROM-001,prom-002,prom-003,HDR-009,traversal")
 	if log.count("/metrics") != 0 {
 		t.Error("the metrics check ran with all of its IDs skipped")
 	}
 	if log.count("/style.css") != 0 {
 		t.Error("the traversal check ran with its category skipped")
 	}
-	for _, id := range []string{"PROM-001", "PROM-002", "HDR-009", "TRAV-001"} {
+	for _, id := range []string{"PROM-001", "PROM-002", "PROM-003", "HDR-009", "TRAV-001"} {
 		if _, ok := byID(report.Findings, id); ok {
 			t.Errorf("-skip reported %s", id)
 		}

@@ -121,6 +121,8 @@ var catalog = []catalogEntry{
 		"/metrics requires a bearer token; warns when it is served without one."},
 	{"PROM-002", "metrics", ModeDefault, "Prometheus rejects wrong token",
 		"/metrics rejects a wrong bearer token with 401."},
+	{"PROM-003", "metrics", ModeDefault, "Prometheus accepts the configured token",
+		"With -metrics-token, /metrics answers the right bearer token with 200 and a Prometheus exposition body."},
 
 	{"WS-000", "ws", ModeDefault, "Same-origin WebSocket allowed",
 		"A same-origin WebSocket upgrade succeeds, so the gates below are selective."},

@@ -97,6 +97,7 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		list       = fs.Bool("list", false, "print every finding ID with its category, mode and title, then exit")
 		version    = fs.Bool("version", false, "print the version and exit")
 		headers    headerFlags
+		metrics    = fs.String("metrics-token", "", "Prometheus bearer token /metrics should accept (optional; prefer the "+metricsTokenEnv+" environment variable)")
 	)
 	fs.Var(&headers, "H", "'Name: value' header sent on every request, e.g. a gateway's access token (repeatable; values are never printed)")
 
@@ -177,6 +178,8 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Connect:  *connect,
 		Unix:     *unix,
 		Headers:  headers,
+		// The token, like the password, can come from the environment.
+		MetricsToken: resolveMetricsToken(*metrics),
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
@@ -279,6 +282,20 @@ func resolvePassword(flagValue string) string {
 	return os.Getenv(passwordEnv)
 }
 
+// metricsTokenEnv names the environment variable that can carry the
+// Prometheus token instead of -metrics-token, for the reasons passwordEnv
+// carries the password.
+const metricsTokenEnv = "KULA_SCAN_METRICS_TOKEN" //nolint:gosec // G101: the variable's name, not a credential
+
+// resolveMetricsToken returns the -metrics-token value, or the
+// metricsTokenEnv variable when the flag is empty.
+func resolveMetricsToken(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return os.Getenv(metricsTokenEnv)
+}
+
 // headerFlags collects the repeatable -H flag. String shows no value: the
 // flag package prints it, and header values are secrets.
 type headerFlags []string
@@ -342,6 +359,9 @@ Flags:
   -username string    username for authenticated checks
   -password string    password for authenticated checks; KULA_SCAN_PASSWORD in the
                       environment keeps it out of the process list and shell history
+  -metrics-token string
+                      Prometheus bearer token /metrics should accept (PROM-003);
+                      KULA_SCAN_METRICS_TOKEN in the environment keeps it out of the process list
   -base-path string   base path if kula is mounted under one (e.g. /kula)
   -connect host:port  connect here instead of the target URL's address; the URL still gives
                       the Host header, TLS server name and origin (scan by IP under the real

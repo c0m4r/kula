@@ -198,6 +198,8 @@ type Scanner struct {
 	username string
 	password string
 
+	metricsToken string // -metrics-token, for PROM-003; never printed
+
 	// Discovered during the discovery phase.
 	reachable   bool // the target answered HTTP
 	kula        bool // and identified as Kula
@@ -253,6 +255,9 @@ type Options struct {
 	// Headers are -H "Name: value" headers sent on every request, for a
 	// gateway in front of Kula. Their values are never printed.
 	Headers []string
+	// MetricsToken is the Prometheus bearer token /metrics should accept
+	// (PROM-003). It is never printed.
+	MetricsToken string
 }
 
 // NewScanner builds a Scanner for opt.Target. opt.BasePath, when non-empty, is
@@ -336,6 +341,7 @@ func NewScanner(opt Options) (*Scanner, error) {
 		password:   opt.Password,
 		https:      u.Scheme == "https",
 	}
+	s.metricsToken = opt.MetricsToken
 	s.client = &http.Client{
 		Timeout: opt.Timeout,
 		Transport: &http.Transport{
