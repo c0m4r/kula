@@ -1,197 +1,463 @@
 # kula-scan
 
-**Active, black-box safeguard scanner for a running Kula instance.**
+**Black-box safeguard scanner for a running Kula instance.**
 
-Where the unit tests, fuzz targets, and in-process runtime tests
-([`internal/web/runtime_security_test.go`](../../internal/web/runtime_security_test.go))
-verify Kula's defenses *in the lab*, `kula-scan` verifies them *in the field*: it
-points at a live Kula URL and probes it over HTTP/WebSocket the way an attacker or a
-browser would, then reports — per check — whether each safeguard actually holds in the
-deployed configuration (behind your proxy, with your TLS, your base path, your config).
+The unit tests, fuzz targets and in-process runtime tests verify Kula's defenses in the lab.
+`kula-scan` verifies them in the field: it points at a live Kula URL, probes it over HTTP,
+raw sockets, TLS and WebSocket the way a browser or an attacker would, and reports per finding
+whether each safeguard holds in that deployment: behind your proxy, with your TLS, your base
+path and your config. It imports nothing from Kula's `internal/` packages; every judgement is
+made from what the target answers.
 
-It imports nothing from Kula's `internal/` packages. Every assertion is made over the
-wire, so it complements the in-tree tests rather than duplicating them.
+This page is the reference for operators. How the scanner is built and extended is in
+[kula-scan (developer notes)](../../docs/dev/13-kula-scan.md).
 
-```
-go build -o kula-scan ./cmd/kula-scan
-./kula-scan http://localhost:27960
-```
+- [Get it](#get-it) · [Quick start](#quick-start) · [Flags](#flags)
+- [Statuses](#statuses) · [Exit status](#exit-status) · [Declaring the posture: `-expect`](#declaring-the-posture--expect)
+- [Selecting and accepting findings](#selecting-and-accepting-findings) · [Reaching the target](#reaching-the-target) · [Reports](#reports)
+- [What it checks](#what-it-checks) · [Fuzzing](#fuzzing--fuzz) · [What a run costs the target](#what-a-run-costs-the-target) · [What it cannot tell](#what-it-cannot-tell)
 
-`kula-scan` is a developer/operator tool. It is **not** built into the release binary or
-Docker image (those build only `./cmd/kula/`), but it lives in the same module, so
-`go vet ./...` and `go test ./...` cover it.
+## Get it
 
-## Usage
+Each release ships the scanner per architecture as `kula-scan-linux-<version>-<arch>.gz`
+(`amd64`, `arm64`, `riscv64`), listed in the release's `CHECKSUMS.sha256.txt`. The packages,
+tarballs and Docker image leave it out. Download and verification:
+[Troubleshooting → Diagnostics checklist](../../docs/user/16-troubleshooting.md#diagnostics-checklist).
+Take the release that matches the target's `kula --version`: a newer scanner judges an older
+Kula against safeguards it does not have yet, and says so in the remediation.
 
-```
-kula-scan [flags] <target-url>
-```
-
-| Flag | Meaning |
-|------|---------|
-| `-target` | Target base URL, as an alternative to the positional `<target-url>` argument. |
-| `-username`, `-password` | Credentials to unlock authenticated checks (login, CSRF token, WebSocket auth). Optional. Without `-password`, the password is read from the `KULA_SCAN_PASSWORD` environment variable, which keeps it out of the process list and your shell history. |
-| `-base-path` | Base path if Kula is mounted under one (e.g. `/kula`). Auto-detected from a path in the target URL. |
-| `-timeout` | Per-request timeout (default `10s`). |
-| `-insecure` | Skip TLS certificate verification (self-signed test instances). |
-| `-aggressive` | Enable disruptive checks (see below). |
-| `-dos-wait` | How long the `dos` probes wait for the server to reap a slow/idle connection (default `35s`). Raise it if the target uses longer read timeouts. |
-| `-fuzz` | Enable blind fault-injection fuzzing (see [Fuzzing](#fuzzing--fault-injection)). |
-| `-fuzz-iter` | Iterations per randomized fuzz probe (default 200). |
-| `-seed` | PRNG seed for fuzzing (0 = random; the chosen seed is reported so any finding is reproducible). |
-| `-only` | Comma-separated categories to run: `auth,csrf,cors,headers,traversal,metrics,ws,input,rate,dos,redirect,tls,bypass,fuzz`. |
-| `-fail-on` | Minimum FAIL severity that forces a non-zero exit: `info\|low\|medium\|high\|critical` (default `high`). |
-| `-json` | Emit findings as JSON. |
-| `-no-color` | Disable ANSI colors (auto-disabled when stdout is not a TTY or `NO_COLOR` is set). |
-| `-v` | Verbose: print each request/response. |
-
-### Examples
+From a checkout (it is part of the same Go module, so `go vet ./...` and `go test ./...` cover
+it):
 
 ```bash
-# Quick non-destructive scan
+go build -o kula-scan ./cmd/kula-scan
+./addons/build.sh            # builds kula, kula-scan and gen-mock-data
+```
+
+## Quick start
+
+```bash
+# Default scan: read-mostly, no credentials
 kula-scan http://localhost:27960
 
-# Full authenticated scan over TLS; read the password without echoing it
+# Authenticated, over TLS; the password from the environment, not the command line
 read -rs KULA_SCAN_PASSWORD && export KULA_SCAN_PASSWORD
 kula-scan -username admin https://mon.example.com
 
-# Only header / traversal / CORS checks
-kula-scan -only headers,traversal,cors http://10.0.0.5:27960
+# A CI gate: the posture this deployment must have, a SARIF artifact, the text report in the log
+kula-scan -expect auth,tls,hsts -username admin -format sarif -o kula-scan.sarif https://mon.example.com
 
-# Include disruptive checks (rate-limit + connection floods)
-kula-scan -aggressive -username admin http://localhost:27960
-
-# Blind fault-injection fuzzing (reproducible with -seed)
-kula-scan -fuzz -fuzz-iter 500 -username admin http://localhost:27960
-kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960   # replay a finding
-
-# Machine-readable output for CI
-kula-scan -json https://mon.example.com > report.json
+# Disruptive probes and fault injection (staging, or accept the side effects below)
+kula-scan -aggressive -fuzz -username admin http://localhost:27960
 ```
 
-### Exit status
+`kula-scan -list` prints every finding ID with its category, mode and title; `kula-scan -h`
+prints the flags, examples and exit statuses.
 
-- `0` — no failing safeguard at or above `-fail-on`.
-- `1` — one or more safeguards FAIL at or above `-fail-on` (the IDs are printed).
-- `2` — usage error (bad flag, unreachable target).
+## Flags
 
-This makes `kula-scan` usable as a release/CI gate: stand up the instance, scan it, fail
-the build if a safeguard regressed.
+`kula-scan [flags] <target-url>`. The target is an `http://` or `https://` URL, optionally with
+the base path Kula is mounted under (`http://10.0.0.5:27960/kula`).
 
-## What each status means
+**Target and connection**
 
-- **PASS** — the safeguard is present and behaves as expected.
-- **FAIL** — the safeguard is missing or bypassable (a real finding).
-- **WARN** — a weak/risky posture that may be an intentional config choice (e.g. auth
-  disabled, `origin_validation` off, `/metrics` without a token, plaintext HTTP).
-- **SKIP** — the check did not apply (feature disabled, no credentials supplied, or an
-  aggressive check without `-aggressive`).
-- **ERROR** — the probe itself could not complete (network/parse error).
+| Flag | Meaning |
+|------|---------|
+| `-target URL` | The target, instead of the positional argument. |
+| `-base-path PATH` | Base path Kula is mounted under (`web.base_path`), e.g. `/kula`. Overrides a path in the URL. |
+| `-connect host:port` | Connect here instead of the URL's address; the URL still gives the `Host` header, the TLS server name and certificate name, the `Origin` values and the base path. |
+| `-unix PATH` | Connect over this Unix socket (`web.unix_socket`); the URL still gives the `Host` header and base path. |
+| `-H 'Name: value'` | A header sent on every request, for a gateway in front of Kula. Repeatable; values are never printed. See [Reaching the target](#reaching-the-target). |
+| `-timeout D` | Per-request timeout (default `10s`). |
+| `-insecure` | Skip TLS certificate verification in the handshake; `TLS-004` then verifies the chain itself. |
 
-## Check categories
+**Credentials**
 
-| Category | What it probes | Maps to |
-|----------|----------------|---------|
-| `headers` | `X-Content-Type-Options`, `X-Frame-Options`, CSP (`default-src 'self'`, nonce, `frame-ancestors`), **per-request nonce freshness**, `Referrer-Policy`, `Permissions-Policy`, HSTS over TLS, banner disclosure | `securityMiddleware` |
-| `auth` | Protected routes return 401 anonymously; forged cookies & bearer tokens rejected; login is POST-only; session cookie `HttpOnly`/`SameSite`/`Secure`; **username-enumeration resistance** *(aggressive)* | `AuthMiddleware`, `ValidateCredentials` |
-| `csrf` | Origin/Referer required on state change; cross-origin POST blocked; CSRF synchronizer token enforced on authenticated sessions | `CSRFMiddleware` |
-| `cors` | An arbitrary Origin is **not** reflected; never `ACAO: *` + credentials; `Vary: Origin` present | `corsMiddleware` |
-| `traversal` | Byte-level path-traversal payloads (encoded, dot-dot, backslash) over a raw socket leak no files; no directory listing | `handleStatic` |
-| `metrics` | `/metrics` bearer token enforced (and wrong token rejected); warns if exposed without a token | `handleMetrics` |
-| `ws` | Unauthenticated upgrade rejected; cross-origin upgrade rejected (CSWSH); same-origin upgrade allowed; per-IP connection cap *(aggressive)*; oversized-message read limit *(aggressive)* | `handleWebSocket`, `CheckOrigin`, `SetReadLimit` |
-| `input` | `/api/history` bad/inverted/out-of-retention over-long ranges → 400, huge `points` capped; `/api/i18n` rejects junk/traversal language codes | `handleHistory`, `handleI18n` |
-| `rate` *(aggressive)* | Login brute-force throttling; Ollama rate limiting | login `RateLimiter`, Ollama limiter |
-| `dos` *(aggressive)* | Slowloris / slow-request reaping; oversized request headers rejected; idle-connection-flood resilience | `ReadTimeout`, `MaxHeaderBytes`, `IdleTimeout` |
-| `redirect` | No open redirect to a foreign host via crafted paths (`//`, `\`, encoded, base-path tricks) | base-path redirect / CWE-601 |
-| `tls` *(https)* | Negotiated TLS version, cipher strength, certificate expiry | reverse-proxy TLS config |
-| `bypass` *(aggressive)* | X-Forwarded-For login rate-limit evasion (trust_proxy misconfig) | `getClientIP` / `trust_proxy` |
-| `fuzz` *(-fuzz)* | Blind fault injection — see below | the whole surface |
+| Flag | Meaning |
+|------|---------|
+| `-username NAME` | Account for the authenticated checks. |
+| `-password PW` | Its password. Without it, the password comes from `KULA_SCAN_PASSWORD`, which keeps it out of the process list and the shell history. |
+| `-metrics-token T` | The bearer token `/metrics` should accept (`PROM-003`); or `KULA_SCAN_METRICS_TOKEN`. Never printed. |
 
-## Safety / `-aggressive`
+**What runs**
 
-The default scan is **non-destructive**: it reads headers and sends a handful of
-single-shot probes. With credentials it logs in once and logs out at the end, and it never
-sends a wrong password for the account you supply. Kula counts every login, successful or
-not, against a limit of five per account and address in five minutes: a sixth authenticated
-scan within five minutes is throttled (`AUTH-005` warns), and so is that account's login from
-the same address until the window passes.
+| Flag | Meaning |
+|------|---------|
+| `-only LIST` | Categories and/or finding IDs to run, comma-separated, case-insensitive. |
+| `-skip LIST` | Categories and/or finding IDs not to run or report. |
+| `-aggressive` | Enable the disruptive checks (see [costs](#what-a-run-costs-the-target)). |
+| `-dos-wait D` | How long the slow-connection probes wait for Kula to drop a stalled connection (default `35s`, for Kula's 30 s `ReadTimeout`). |
+| `-fuzz` | Enable blind fault injection. |
+| `-fuzz-iter N` | Requests per randomized fuzz probe (default 200). |
+| `-seed N` | PRNG seed for fuzzing; 0 picks one and reports it. |
 
-`-aggressive` adds checks that have **real side effects on the live target** and only run
-with the flag (a warning is printed first):
+**Gate**
 
-- **`AUTH-006`** — a wrong password for the supplied username next to one for an unknown
-  name, to confirm the responses match (no username enumeration). It spends one more of that
-  account's five login attempts.
-- **`RATE-LOGIN`** — a burst of failed logins to confirm throttling. This **locks out
-  login from your IP for ~5 minutes**.
-- **`WS-FLOOD`** — opens more than the per-IP WebSocket limit to confirm the cap fires.
-- **`WS-MSGBOMB`** — sends an oversized WebSocket message to confirm the read limit.
-- **`INPUT-AGG`** — an oversized login body to confirm the `MaxBytesReader` cap.
-- **`DOS-SLOWLORIS`** — holds a handful of half-open (slow) requests and verifies the
-  server reaps them (and stays responsive). Waits up to `-dos-wait` for the read timeout.
-- **`DOS-HEADERBOMB`** — sends a 2 MiB header block to confirm `MaxHeaderBytes` rejects it.
-- **`DOS-CONNFLOOD`** — opens many idle connections and verifies the server stays
-  responsive and reaps them.
-- **`BYPASS-XFF`** — rotates spoofed `X-Forwarded-For` headers against the login limiter
-  to detect a `trust_proxy` misconfiguration; consumes login attempts (locks you out).
+| Flag | Meaning |
+|------|---------|
+| `-fail-on SEV` | Lowest FAIL severity that exits 1: `info`, `low`, `medium`, `high` (default), `critical`. |
+| `-expect LIST` | Posture the target must have; see [`-expect`](#declaring-the-posture--expect). |
+| `-ignore LIST` | Finding IDs that stay in the report, marked ignored, but never affect the exit status. |
 
-With auth disabled Kula has no login endpoint (`/api/login` answers 404), so the probes
-that drive it — `AUTH-006`, `RATE-LOGIN`, `BYPASS-XFF`, `INPUT-AGG` and the login half of
-`FUZZ-BODY` — report **SKIP** and send it nothing.
+**Output**
 
-The `dos` probes wait up to `-dos-wait` (default 35s) for the server to drop a stalled or
-idle connection — sized for Kula's default 30s `ReadTimeout`. **Raise `-dos-wait` if the
-target runs longer read timeouts**, or the slow-connection checks will report a false
-failure. Because each slow/idle probe waits out that window, a `-aggressive` run including
-`dos` takes around a minute.
+| Flag | Meaning |
+|------|---------|
+| `-format F` | Report format: `text` (default), `json`, `junit`, `sarif`. |
+| `-json` | The same as `-format json`; conflicts with any other `-format`. |
+| `-o FILE` | Write the `-format` report to `FILE`; stdout then gets the text report. |
+| `-no-color` | No ANSI colors. Colors are also off when stdout is not a terminal or `NO_COLOR` is set. |
+| `-v` | Log each request and its response status to stderr. |
+| `-list` | Print the catalog of finding IDs and exit. |
+| `-version` | Print the version and exit. |
 
-Run `-aggressive` against staging, or accept the temporary lockout/disruption on production.
+The report goes to stdout and nothing else does. Progress lines (`[7/32] traversal: TRAV-000,
+…`), the `-v` request log, the `-aggressive` and `-fuzz` warnings and errors go to stderr;
+progress lines only when stderr is a terminal or with `-v`.
 
-## Fuzzing / fault injection
+An unknown flag, category, finding ID, `-expect` key, `-format` or `-fail-on` value, a malformed
+`-H`, `-connect` or base path, and `-connect` with `-unix` are usage errors (exit 2) before
+anything is sent.
 
-`-fuzz` flips kula-scan from "verify known safeguards" to **blind fault injection**: it
-throws malformed and extreme input at every surface and watches for things that should
-*never* happen. The categories above ask "is defense X present?"; fuzzing asks "what
-breaks that nobody thought to defend?" The **anomaly oracle** (black-box, no source
-needed) flags:
+## Statuses
 
-- **HTTP 5xx** — a handler errored where it should have returned a 4xx.
-- **connection reset / EOF** on a valid request — `net/http` recovered a **handler panic**
-  and dropped the connection.
-- **hang / timeout** — unbounded work or a deadlock.
-- **reflected input** — an injected `<canary>` echoed **unescaped** into an HTML/JS
-  response (a real XSS sink; escaped reflections in JSON or redirect bodies are ignored).
-- **server death** — the final `FUZZ-LIVENESS` probe fails: the instance stopped serving
-  after the barrage.
+| Status | Meaning |
+|--------|---------|
+| `PASS` | The safeguard is present and the target's answer shows it. |
+| `FAIL` | The safeguard is missing or bypassable. Only a FAIL at or above `-fail-on` (or one that contradicts `-expect`) changes the exit status. |
+| `WARN` | An operator choice or a weak posture: auth off, origin validation off, `/metrics` without a token, an HSTS max-age under 180 days. `-expect` turns the ones it names into FAILs. |
+| `SKIP` | Not applicable, with the reason: the feature is off, no credentials, an aggressive or fuzz check without its flag, a limiter already spent. |
+| `ERROR` | The probe could not judge: its requests failed, the credentials were refused, the answers say nothing of the safeguard. An ERROR is never a pass; it makes the run inconclusive (exit 3). |
 
-Probes (`-only fuzz`): `FUZZ-QUERY` (history/i18n params), `FUZZ-PATH` (paths + canary),
-`FUZZ-BODY` (malformed JSON: truncated, type-confused, deeply-nested, JSON-bomb,
-oversized), `FUZZ-METHODS` (verb matrix), `FUZZ-SMUGGLE` (conflicting CL/TE framing),
-`FUZZ-WS` (binary/garbage frames + churn), and `FUZZ-LIVENESS` (runs last).
+A FAIL or WARN carries a severity (`INFO` to `CRITICAL`), shown in brackets in the text report,
+and usually a `fix:` line. An ID that does not apply may be left out rather than skipped, for
+example: `HDR-000` and `TRAV-000` (the controls the other checks rely on) appear only when the
+control fails, `HDR-009` only when a `Server` header is sent, `HDR-004` only when the CSP carries
+a nonce, `CORS-002` only when CORS headers are sent, `PROM-002` only when `/metrics` asks for a
+token; `AUTH-001`–`AUTH-005`, `AUTH-010`, `CSRF-003`, `CSRF-004` and `WS-001` only with auth
+on, and `AUTH-007`–`AUTH-009` only after a login (`AUTH-009` only over HTTPS).
 
-Every probe draws from a **seeded PRNG**. The seed is printed in the report (and the
-warning banner); rerun with `-seed <N>` to reproduce a finding exactly, and `-fuzz-iter`
-to scale coverage. Fuzzing may create junk sessions and log noise on the target; it is
-opt-in via `-fuzz` and independent of `-aggressive` (combine them for the widest sweep).
+## Exit status
 
-## How it works
+| Code | Meaning |
+|------|---------|
+| `0` | Nothing fails at or above `-fail-on`, every `-expect` holds and every probe completed. |
+| `1` | A FAIL at or above `-fail-on`, or a FAIL against a declared `-expect`, whatever `-fail-on` says. |
+| `2` | Usage error; the target is unreachable or not Kula (`DISC-001` is an ERROR); or `-o` or the report could not be written. |
+| `3` | Inconclusive: nothing gates, but a probe ended in ERROR, e.g. refused credentials or a refused `Host` name (`DISC-003`). |
+| `130` | Interrupted by SIGINT or SIGTERM: the scan logs out and prints the partial report. A second signal quits at once. |
 
-- A `Scanner` (see [`scanner.go`](scanner.go)) holds an `http.Client` with **no cookie jar**
-  (cookies are set explicitly per probe) that does **not** follow redirects, so 301/401/403
-  responses are observed directly.
-- Path-traversal payloads are sent over a **raw TCP/TLS socket** with a verbatim request
-  line, bypassing any client-side URL normalization (mirrors the `rawRequest` helper in the
-  runtime tests).
-- WebSocket probes use `github.com/gorilla/websocket` — the same library the server uses.
-- What the target sends is bounded: response headers at 2 MiB, bodies and WebSocket messages
-  at 1 MiB, so a hostile target cannot grow the scanner's memory.
-- The text report shows control characters from the target (in header values, status lines,
-  certificate names) as escapes such as `\x1b`, so a hostile target cannot rewrite earlier
-  result lines or write to your clipboard. `-json` escapes them as `\u001b` and the like, so
-  it still decodes to the text the target sent.
-- Checks live in [`checks.go`](checks.go), [`checks_ws.go`](checks_ws.go),
-  [`checks_aggressive.go`](checks_aggressive.go), [`checks_bypass.go`](checks_bypass.go),
-  [`checks_dos.go`](checks_dos.go), [`checks_fuzz.go`](checks_fuzz.go), and
-  [`checks_tls.go`](checks_tls.go); the report/exit logic is in
-  [`report.go`](report.go). Classification is unit-tested against secure and insecure mock
-  servers in [`checks_test.go`](checks_test.go).
+They are checked in the order 130, 2, 1, 3: a FAIL wins over an ERROR. Ignored findings count for
+nothing, except that a target that could not be scanned at all still exits 2. Any non-zero exit
+ends with one line on stderr that says why, e.g.
+
+```
+kula-scan: exit 3: inconclusive: no failing safeguard, but these probes could not complete: AUTH-005
+```
+
+A FAIL below `-fail-on` is reported but exits 0: at the default `high`, a missing `nosniff`
+(`HDR-001`, medium) does not gate. Use `-fail-on medium` or lower for a stricter gate.
+
+## Declaring the posture: `-expect`
+
+Kula lets an operator turn safeguards off, and the scanner reports that as a WARN, which never
+gates. `-expect` declares what this deployment must have: a WARN tagged with a declared key
+becomes a FAIL that exits 1 whatever `-fail-on` is, and the text report marks it
+`(expected: key)`.
+
+| Key | The target must… | Findings |
+|-----|------------------|----------|
+| `auth` | have `web.auth` enabled | `AUTH-000` |
+| `tls` | be served over HTTPS with a certificate clients trust | `DISC-002`, `TLS-001`, `TLS-004` |
+| `hsts` | be served over HTTPS with `Strict-Transport-Security` | `HDR-008` |
+| `origin-validation` | refuse a state change without an `Origin` or from a foreign one, and a cross-origin WebSocket upgrade | `CSRF-001`, `CSRF-002`, `WS-002` |
+| `frame-protection` | forbid framing (`web.security.frame_protection`) | `HDR-002`, `HDR-007` |
+| `metrics-token` | require a bearer token on `/metrics` | `PROM-001` |
+| `host-check` | refuse `Host` names a public DNS server could answer for | `HOST-001` |
+
+Over plain HTTP, `-expect tls` fails `TLS-001` and `-expect hsts` fails `HDR-008`, which are
+otherwise SKIPs. `-expect hsts` fails a missing, invalid or zero `max-age`; a `max-age` under
+180 days stays a WARN.
+
+## Selecting and accepting findings
+
+- `-only` and `-skip` take categories (`discovery`, `headers`, `auth`, `csrf`, `cors`, `host`,
+  `traversal`, `metrics`, `ws`, `input`, `redirect`, `integrity`, `tls`, `rate`, `dos`,
+  `bypass`, `fuzz`) and finding IDs, mixed. A check runs when any ID it judges is selected and
+  reports only the selected ones, so `-only CSRF-003` still sends the other CSRF probes.
+  `DISC-001`, which says whether the target was scanned at all, is always reported.
+- `-ignore` takes finding IDs. An ignored finding keeps its status, is marked `(ignored)` and
+  counted apart in the summary, and never affects the exit status: use it for an accepted risk
+  you still want to see.
+- `-list` prints the catalog, the authoritative list of IDs.
+
+```bash
+kula-scan -only headers,traversal,cors http://10.0.0.5:27960
+kula-scan -skip HDR-009 -ignore PROM-001 http://10.0.0.5:27960
+```
+
+## Reaching the target
+
+- **Base path.** A path in the URL, or `-base-path`, is prefixed to every request, raw and
+  WebSocket ones included. It is normalised to one leading slash and no trailing one; a query,
+  fragment, whitespace or a whole URL is a usage error.
+- **`-connect host:port`** scans by address under the real name, or a backend behind its proxy:
+  `kula-scan -connect 10.0.0.5:443 https://mon.example.com`. IPv6 literals take brackets, in the
+  URL and in `-connect`: `http://[::1]:27960`, `-connect [::1]:27960`.
+- **`-unix path`** scans Kula's Unix socket: `kula-scan -unix /run/kula/kula.sock http://localhost/`.
+  `HOST-001` is a SKIP there: Kula checks no `Host` name on a socket.
+- **`-H 'Name: value'`** adds a header to every request (HTTP client, raw sockets and WebSocket
+  handshakes), for an access proxy's token or basic auth at a proxy. A probe's own header of the
+  same name wins, except `Cookie`, which carries both, the `-H` cookies first. Refused, because
+  the scanner frames requests itself or the probes send them on purpose: `Host` (use
+  `-connect`), `Content-Length`, `Transfer-Encoding`, `Connection`, `Upgrade`,
+  `Sec-WebSocket-*`, `Origin`, `Referer`, `X-CSRF-Token`, and a `Cookie` that carries
+  `kula_session` (the scanner's session comes from `-username`). Values are never printed: not in
+  the `-v` log, a finding or a report; the JSON report lists the names.
+
+### When Kula refuses the scanner's `Host` name
+
+With auth off, Kula answers only local `Host` names (addresses, `localhost`, single-label names,
+local-only domains, the machine's names and `web.security.allowed_hosts`): its DNS-rebinding
+check. Scanning such an instance by a public name gets that check's 403 on every route but
+`/health` and `/status`. Discovery recognises it and reports `DISC-003` as an ERROR (exit 3).
+Only the checks that still judge something run (headers, auth, TLS, `HOST-001`, `DOS-SLOWLORIS`,
+`DOS-CONNFLOOD`); the rest are SKIPs that say why, since they would read the refusal as their own
+safeguard holding. Rescan by address, or with `-connect <ip:port>` and a URL naming a host Kula
+allows, or add the name to `web.security.allowed_hosts`.
+
+## Reports
+
+**text** (default) groups the findings by category in run order, with detail, `evidence:` and
+`fix:` lines, a summary line, and the IDs that gate the exit status. Anything quoted from the
+target (header values, status lines, certificate names) has its control characters, bidi
+controls and invalid UTF-8 shown as escapes (`\x1b`, `\u202e`), so a hostile target cannot
+rewrite earlier lines or set your clipboard.
+
+**json** carries the run's metadata and the findings:
+
+| Field | Content |
+|-------|---------|
+| `scanner` | `name`, `version` |
+| `target` | The URL scanned, with its base path |
+| `started`, `duration_ms` | UTC start (RFC 3339, whole seconds) and duration |
+| `options` | `aggressive`, `fuzz`, `seed` (with `-fuzz`), `only`, `skip`, `ignore`, `expect`, `fail_on`, and `connect`, `unix`, `headers` (names only) when given |
+| `target_info` | What discovery learnt: `https`, `auth_enabled`, `ollama`, `version` (when `/api/config` discloses it) |
+| `findings[]` | `id`, `category`, `title`, `severity`, `status`, `detail`, `evidence`, `remediation`, `expectation` (the declared key it was judged against), `ignored` |
+| `summary` | Counts: `pass`, `fail`, `warn`, `skip`, `error`, `ignored` (an ignored finding counts only there) |
+| `interrupted`, `not_run`, `exit_code` | Whether a signal cut the run short, how many checks did not run, and the exit status |
+
+Strings escape the same control characters as `\u` escapes, so the JSON decodes to the text the
+target sent and is safe to print.
+
+**junit** has one `<testsuite>` per category and one `<testcase>` per finding (`ID Title`,
+classname `kula-scan.<category>`), and fails exactly when the exit status is not 0: a FAIL that
+gates is a `<failure>` (type = severity), an ERROR an `<error>`, a SKIP or an ignored finding
+`<skipped>`; a PASS, a WARN and a FAIL below `-fail-on` pass. An exit status no finding explains
+(an interrupt, or a `DISC-001` ERROR that `-ignore` names) gets a run-level `Scan completed`
+test case with an `<error>`. The first suite's `<properties>` carry the JSON metadata flattened
+(`options.fail_on`, `target_info.https`, `exit_code`, …); each test case's `<system-out>` keeps
+the whole finding.
+
+**sarif** (2.1.0) has one run whose rules are the whole catalog (ID, title, description,
+category and mode). FAIL and WARN findings are results: level `error` for a FAIL that gates,
+`warning` for a FAIL below `-fail-on`, `note` for a WARN; an ignored one keeps its level and
+carries an `external` suppression. Every result's location is the target URL. PASS and SKIP are
+not results. An ERROR is a tool execution notification on the invocation, whose
+`executionSuccessful` is false for exit statuses 2, 3 and 130 and whose `exitCodeDescription`
+is the closing line. Each result carries `severity`, `status`, `expectation` and a numeric
+`security-severity` (critical 9.5, high 8.0, medium 5.5, low 3.0) in its properties; GitHub
+code scanning reads `security-severity` from the rule, so it may not show it per alert.
+
+**`-o FILE`** writes the `-format` report to the file and the text report to stdout, so a CI job
+keeps a readable log and an artifact from one run. The file is opened before the scan starts (an
+unwritable path fails at once, exit 2) and created with mode 0600, since the report maps the
+target's weak spots; an existing file keeps its mode.
+
+## What it checks
+
+`-list` is the authoritative list. Each category below says what is sent and which answer passes;
+"Kula code" is where the safeguard lives (see the [Security Model](../../docs/dev/08-security.md)).
+Mode: **default** runs on every scan; **aggressive** needs `-aggressive`; **fuzz** needs `-fuzz`.
+
+### discovery
+
+`GET /health` (`kula is healthy`), `/api/auth/status` (`auth_required`) and `/api/config`
+(`ollama_enabled`, `version`; open only with auth off). A target that does not answer, or is not
+Kula, is a `DISC-001` ERROR and the scan stops (exit 2; the detail suggests the base path).
+`DISC-002` warns when auth is on over plain HTTP (`-expect tls`). `DISC-003` is the refused
+`Host` name above.
+
+### Checks by category
+
+| Category | Mode | What is sent, and what passes | Kula code |
+|----------|------|-------------------------------|-----------|
+| `headers` | default | `GET /`, `/style.css` and `/api/auth/status`. `nosniff` on all three (`HDR-001`); `X-Frame-Options: DENY` (`HDR-002`); the CSP judged by directive (below); a different nonce on a second `GET /` (`HDR-004`); `Referrer-Policy`, `Permissions-Policy`; over HTTPS, HSTS with a `max-age` of at least 180 days (`HDR-008`); no `Server` banner (`HDR-009`); `Cache-Control: no-store` on every 2xx of `/`, `/api/auth/status` and, when reachable, `/api/config` (`HDR-010`). | `securityMiddleware`, `contentSecurityPolicy`, `noStore` (`internal/web/server.go`) |
+| `auth` | default | With auth off, only `AUTH-000` (a WARN, `-expect auth`). With auth on: the protected routes without a session answer 401 (`AUTH-001`); five forged session cookies and a bogus bearer token are refused (`AUTH-002`, `AUTH-003`); `GET /api/login` answers 405 (`AUTH-004`); the supplied credentials log in (`AUTH-005`); the session cookie is `HttpOnly`, has `SameSite` and, over HTTPS, `Secure` (`AUTH-007`–`009`); after the run's closing logout the old cookie answers 401 (`AUTH-010`). | `AuthMiddleware` (`auth.go`), `handleLogin`, `handleLogout` |
+| `auth` | aggressive | `AUTH-006`: a wrong password for the supplied username and for an unknown one must answer the same status and body. | `ValidateCredentials` |
+| `csrf` | default | `POST /api/login` without `Origin` or `Referer` (`CSRF-001`); with a foreign `Origin`, and `POST /api/logout` with only a foreign `Referer` (`CSRF-002`): 403, else a WARN (`-expect origin-validation`). With a session, a same-origin `POST /api/logout` without `X-CSRF-Token` (`CSRF-003`) and with a token wrong in its last character (`CSRF-004`): 403. One that is accepted fails and has ended the scan's session, so later checks that need one skip. | `CSRFMiddleware`, `ValidateOrigin` (`auth.go`) |
+| `cors` | default | A preflight `OPTIONS /api/current` from a random foreign origin gets no grant (`CORS-001`): reflecting it, or a wildcard with credentials, is critical; a wildcard without credentials is a FAIL with auth off (any site reads the API) and a WARN with auth on. `Vary: Origin` whenever `Access-Control-Allow-Origin` is sent (`CORS-002`). `null`, trailing-dot, userinfo and look-alike forms of the target's own origin are never reflected, even when it allow-lists itself (`CORS-003`). | `corsMiddleware`, `isAllowedOrigin` (`server.go`) |
+| `host` | default | `HOST-001`: raw `GET /api/config` (auth off) or a token-less `/metrics` (auth on) under a random `*.example.com` name, with a port, a trailing dot, in mixed case and behind a `localhost.` label. Kula's 403 or a proxy's refusal passes; Kula's data under any of them is a WARN (`-expect host-check`). SKIP on a Unix socket, and with auth on when `/metrics` asks for a token or is off. | `hostCheckMiddleware` (`host_check.go`) |
+| `traversal` | default | Over a raw socket, so nothing normalises the path: `/style.css` must answer 200 (`TRAV-000`); eight encoded, dot-dot and backslash payloads must return no file content from outside the static directory (`TRAV-001`); `/js/` and `/fonts/` no directory listing (`TRAV-002`). | `handleStatic` |
+| `metrics` | default | `/metrics` without a token: 401 passes (`PROM-001`), 200 is a WARN (`-expect metrics-token`), 404 a SKIP. A wrong bearer token answers 401 (`PROM-002`). With `-metrics-token`, the right one answers 200 with a Prometheus exposition (`PROM-003`); a refused token is an ERROR. | `handleMetrics` (`prometheus.go`) |
+| `ws` | default | With auth on, an upgrade without a session answers 401 (`WS-001`). An upgrade from a foreign `Origin` (with the session behind auth) answers 403 (`WS-002`); one that succeeds is a FAIL with auth off, and with auth on is judged by the session cookie: `SameSite=Strict` or `Lax` keeps other sites out, a WARN (`-expect origin-validation`); `None` or no attribute is a FAIL. A same-origin upgrade succeeds (`WS-000`, the control). | `handleWebSocket`, `newUpgrader` (`websocket.go`) |
+| `ws` | aggressive | `WS-FLOOD`: 12 upgrades must start answering 429, naming the per-address or global cap that answered. `WS-MSGBOMB`: a 64 KiB message must make Kula drop the connection (its read limit is 4 KiB); still open after `-timeout` is a WARN. | `max_websocket_conns(_per_ip)`, `SetReadLimit` |
+| `input` | default | Needs the API (auth off, or a session). `/api/history` answers 400 to a malformed `from` or `to`, an inverted or over-31-day range, a negative or non-numeric `tier` and an unknown section (`INPUT-001`). `points=999999999` over the last two hours returns at most 5000 samples, counted as they stream (`INPUT-002`). `/api/i18n` with traversal and junk `lang` values reads no file (`INPUT-003`). | `handleHistory`, `validateHistoryRange`, `parseHistorySections`, `handleI18n` |
+| `input` | aggressive | `INPUT-AGG`: an 8 KiB login body is refused (400/413) by the 4 KiB cap; SKIP with auth off. `INPUT-CHAT`: a 320 KiB chat body over a raw socket, its last bytes held back, must be refused before it is complete (Kula reads 32 KiB); an answer only after the whole body is a WARN (no cap, or a proxy that buffers bodies). | `MaxBytesReader` in `handleLogin`, `handleOllamaChat` |
+| `redirect` | default | `REDIR-001`: eleven crafted paths (`//evil.example/`, `/%2f%2f…`, `/%5c%5c…`, `https:/…`, and two around the base path when there is one) must not produce a 3xx whose `Location`, read as a browser reads it (control characters stripped, backslashes as slashes), names another host. | base-path redirect (`mountWithBasePath`) |
+| `integrity` | default | `SRI-001`: every script and `modulepreload` of the UI page is same-origin with a sha256/384/512 `integrity`, and every inline script carries the CSP nonce. `SRI-002`: each such script, fetched and content-decoded as a browser does, hashes to its strongest listed hash; a mismatch names whether the page's hash or the script changed (from Kula's `ETag`). Catches a proxy or CDN that rewrites or injects scripts. SKIP when the UI is off. | `calculateSRIs` (`server.go`) |
+| `tls` | default | HTTPS only; SKIP over HTTP. Handshakes capped at TLS 1.1 and at TLS 1.0 must be refused (`TLS-001`). A TLS 1.2 handshake offering only the suites Go lists as insecure must be refused; each accepted suite is named, RC4 or 3DES a FAIL, the rest a WARN (`TLS-002`). The leaf is valid now and for 14 more days, with no RSA key under 2048 bits and no SHA-1 signature in the chain (`TLS-003`). The chain leads to a system root and names the host (`TLS-004`; with `-insecure` the scanner verifies it itself, a failure is a WARN for `-expect tls`). | the TLS terminator (Kula itself only serves HTTP) |
+| `rate` | aggressive | `RATE-LOGIN`: 8 failed logins for one account must meet a 429; all reaching the credential check is a FAIL. `RATE-OLLAMA`: 70 `GET /api/ollama/models` must meet a 429 (60 a minute). `RATE-CHAT`: up to 14 chat requests whose bodies never decode must meet a 429 (10 a minute). The AI probes use the session behind auth and SKIP when the assistant is off. | `RateLimiter` (`auth.go`), `chatRateLimiter` (`ollama.go`) |
+| `dos` | aggressive | `DOS-SLOWLORIS`: 12 half-open requests; `/health` must keep answering and all must be dropped within `-dos-wait`. `DOS-HEADERBOMB`: a 2 MiB header block must be refused (431, or the connection closed). `DOS-CONNFLOOD`: 64 idle connections; `/health` must answer and all must be dropped within `-dos-wait`. `DOS-HISTORY`: 8 concurrent 31-day, 5000-point history requests must each be answered with data or deferred with 503 and `Retry-After`, none hanging, while `/health` keeps answering. | `ReadTimeout`, `IdleTimeout`, `MaxHeaderBytes`, history slots (`history_response.go`) |
+| `bypass` | aggressive | `BYPASS-XFF`: 12 failed logins, each with a different spoofed `X-Forwarded-For`, must still be throttled (429); 11 or more reaching the credential check means the limiter trusts the header (`trust_proxy` on without a proxy). | `getClientIP` (`server.go`) |
+| `fuzz` | fuzz | Blind fault injection; see [Fuzzing](#fuzzing--fuzz). | the whole surface |
+
+The CSP (`HDR-003`, `HDR-007`, `HDR-011`–`HDR-013`) is parsed by directive, every policy of
+every `Content-Security-Policy` header, and a restriction any enforced policy makes counts:
+
+- `HDR-003` (FAIL): `default-src` is `'self'` or `'none'`, and the effective `script-src` has a
+  nonce and no `'unsafe-inline'`, `'unsafe-eval'`, `*` or bare scheme (`https:`, `data:`).
+- `HDR-007` (WARN, `-expect frame-protection`): `frame-ancestors 'none'`.
+- `HDR-011`, `HDR-012` (WARN): `base-uri` and `form-action` are `'self'` or `'none'`; neither
+  falls back to `default-src`.
+- `HDR-013` (WARN): the effective `object-src` (else `default-src`) is `'none'`.
+
+No `Content-Security-Policy` at all fails `HDR-003` and warns on the other four.
+
+`HDR-002` passes on `X-Frame-Options: DENY`. Without it, it is a WARN for
+`-expect frame-protection` when the other security headers are there (`frame_protection: false`),
+and a FAIL when they are missing too (`web.security.headers: false`).
+
+`AUTH-001` sends, without a session: `GET /api/current`, `/api/history`, `/api/config`,
+`/api/i18n?lang=en`, `/api/system-info`, `/api/ollama/models`, `/api/ollama/context`, a
+same-origin `POST /api/ollama/chat` with no body, and `GET` on a random unknown `/api/` path.
+Every one must answer 401, whatever features are enabled.
+
+`AUTH-010` costs nothing extra: the run logs out at the end anyway, and replays the logged-out
+cookie on `/api/config`. It is a SKIP when the run had no session or was interrupted.
+
+`TLS-002`'s insecure list is `crypto/tls`'s `InsecureCipherSuites()` in the Go toolchain the
+scanner was built with. Under current Go it includes the RSA key-exchange suites
+(`TLS_RSA_WITH_AES_128_GCM_SHA256` and the like), which nginx's default `ssl_ciphers` enables, so
+a stock nginx gets a `TLS-002` WARN. All TLS probes go through `-connect` and `-unix` too.
+
+The slow-connection probes (`DOS-SLOWLORIS`, `DOS-CONNFLOOD`) judge whoever holds the socket.
+When connections outlive `-dos-wait` and the responses carry `Server` or `Via` (Kula sends
+neither), the finding says a reverse proxy likely answers, whose own timeouts apply (nginx waits
+60 s by default), and suggests a longer `-dos-wait` such as `75s`.
+
+## Fuzzing (`-fuzz`)
+
+The categories above ask whether a known defense holds; `-fuzz` throws malformed and extreme
+input at the surface and watches for what must never happen. The **anomaly oracle** flags:
+
+- an unexpected **5xx**: a handler erred where a 4xx belonged;
+- a **dropped connection** (EOF, reset) on a request: typically a recovered handler panic;
+- a **hang**: no answer within `-timeout`;
+- **reflected input**: a `<kx…>` canary echoed unescaped into an HTML or JavaScript response;
+- the target **refusing connections** it took before, and **`FUZZ-LIVENESS`**: `/health` must
+  still answer at the very end of the run.
+
+Not anomalies: 4xx answers; `net/http`'s own refusal of a request it cannot parse (a
+`text/plain` 400, 431 or 505, or 501 for an unknown `Transfer-Encoding`), counted as reaching the
+server; Kula's auth, CSRF and Host gates; 429s; and the 5xx answers Kula gives on purpose, each
+matched by route, JSON error text and `Retry-After`: `/api/current` before the first sample
+(503), `/api/history` past its two concurrent queries (503 with `Retry-After`), login when no
+password-hashing slot is free (503 with `Retry-After`), the AI routes with the assistant disabled
+(503) and `/api/ollama/models` when the AI backend is down (502).
+
+Each probe ends with a coverage line, e.g. `200 planned, 200 sent: 200 reached the history and
+i18n handlers (28 of them refused by the HTTP parser before routing)`, also counting requests
+stopped at a gate, throttled, answered unavailable or not sent. The verdict follows it: an
+anomaly is a FAIL; nothing reaching the code under test is a SKIP when a limiter or a disabled
+feature turned the requests away and an ERROR otherwise; fewer than half the planned requests
+reaching it is a WARN.
+
+| Probe | What it sends |
+|-------|---------------|
+| `FUZZ-QUERY` | `-fuzz-iter` requests to `/api/history` (`from`, `to`, `points`, `tier`, `sections`, valid, nearly valid and hostile) and `/api/i18n` (`lang`); half through the HTTP client, half written raw with bad escapes, control and high bytes and odd separators. Needs the API. |
+| `FUZZ-PATH` | `-fuzz-iter` hostile paths with a reflection canary, half escaped, half raw. |
+| `FUZZ-BODY` | At most 6 malformed JSON bodies to `/api/login` (with auth on) and 6 to the AI chat (when enabled; with the session behind auth), each series stopping at a 429. Every chat body is one the chat's decoder refuses, so no chat starts. |
+| `FUZZ-METHODS` | Unusual methods (`PUT`, `DELETE`, `PATCH`, `TRACE`, `CONNECT`, `PROPFIND`, `MKCOL`, `BREW`, `FOObar`), `HEAD` and `OPTIONS` on 17 routes, and `POST` on the read-only API routes: 195 requests, past the auth and CSRF gates. A read-only API route accepting `POST`, `PUT`, `DELETE` or `PATCH`, or login, logout or the chat accepting anything but `POST` and `OPTIONS`, is an anomaly. `POST` is never sent to those three. Outside `/api/` Kula serves its page, assets, `/health` and `/status` to any method; those 2xx are information only. |
+| `FUZZ-SMUGGLE` | Three ambiguously framed `POST /api/login` over raw sockets: two `Content-Length`s, `Content-Length` with chunked `Transfer-Encoding`, two `Transfer-Encoding`s. Each must be refused, or handled without a 2xx or a 500; the detail says what each was answered. |
+| `FUZZ-WS` | Six same-origin WebSocket connections in turn (with the session behind auth), up to 8 malformed, binary and pause/resume frames on each; then HTTP and a new upgrade must still work. Opening no connection is not a pass. |
+| `FUZZ-LIVENESS` | `GET /health` (up to 3 tries) after everything else, the lockout probes included. |
+
+Every probe draws from one seeded PRNG. The seed is in the `-fuzz` warning, the evidence of the
+randomized probes and the JSON `options.seed`; rerun with `-seed N` and the same `-fuzz-iter`
+and selection to send the same randomized inputs again:
+
+```bash
+kula-scan -fuzz -fuzz-iter 500 -username admin http://localhost:27960
+kula-scan -fuzz -seed 12345 -only fuzz http://localhost:27960
+```
+
+## What a run costs the target
+
+**Default run.** It reads headers and pages and sends single-shot probes. With credentials it
+logs in once and logs out at the end; it never sends a wrong password for the supplied account.
+Kula counts every login against 5 per account and address and 15 per address in five minutes,
+so five authenticated default runs fit in that window. The integrity checks fetch the UI page and
+each script it names (about 40 requests on a stock Kula). With `origin_validation` off,
+`CSRF-001` and `CSRF-002` reach the login handler with a made-up account and spend two of the
+address's attempts.
+
+**`-fuzz`** sends about 600 malformed requests at the default `-fuzz-iter` (two probes send
+`-fuzz-iter` each), and they stay in the target's access log. With auth on it spends up to 6 of
+the address's 15 login attempts in five minutes (7 with origin validation off). It never starts
+a model chat: every chat body it sends fails Kula's decoder.
+
+**`-aggressive`** has real side effects, and the scanner prints a warning first:
+
+- It exhausts the per-address login limit on purpose (`RATE-LOGIN`, `BYPASS-XFF`): for about
+  five minutes no login from the scanner's address succeeds, neither a second scan's (its
+  `AUTH-005` is an ERROR, exit 3) nor that of any user behind the same address or NAT.
+- `AUTH-006` spends one more of the supplied account's attempts.
+- It briefly fills the address's WebSocket slots, spends the address's share of the AI limiters
+  for a minute (without starting a chat), holds 12 slow and 64 idle connections up to
+  `-dos-wait`, sends a 2 MiB header block and loads the store with 8 widest-window history
+  queries at once.
+- A full `-aggressive -fuzz` run takes about a minute, most of it the two `-dos-wait` waits.
+
+Run `-aggressive` against staging, or accept the lockout on production.
+
+### Run order and login budget
+
+Checks run grouped by category, except at the end, which the login budget orders. Every
+`POST /api/login` that passes the CSRF gate counts against the address's 15 attempts in five
+minutes, whatever its body; one whose body decodes also counts against that account's 5. The
+probes that spend attempts run first, so each still reaches the code it tests:
+
+| Attempts | By |
+|---------:|----|
+| 1 | the scan's login, by the first check that needs a session |
+| 2 | `AUTH-006`: a wrong password for the known and an unknown username |
+| 1 | `INPUT-AGG`: an 8 KiB body, refused by the 4 KiB cap |
+| ≤ 6 | `FUZZ-BODY`: malformed bodies, stopping at a 429 |
+| **≤ 10** | of 15 |
+
+Then the two that exhaust the limiter on purpose: `RATE-LOGIN` sends 8 for one account, 5 reach
+the handler and 3 are refused (its PASS); `BYPASS-XFF`'s 12 then all find the address spent (its
+PASS, with `trust_proxy` off). `RATE-CHAT` runs after `FUZZ-BODY`, which sends the chat bodies of
+its own. `FUZZ-LIVENESS` ends the run.
+
+With `origin_validation` off, three more reach the limiter before `RATE-LOGIN`: `CSRF-001`'s and
+`CSRF-002`'s logins, and the one of `FUZZ-SMUGGLE`'s requests that `net/http` does not refuse
+before routing. That is 13 (at most 15) before `RATE-LOGIN`, and every judgement still holds.
+
+## What it cannot tell
+
+- **One server's view.** `FUZZ-SMUGGLE` shows how the answering server reads ambiguous framing.
+  A request-smuggling desync is a disagreement between a proxy and the server behind it, which
+  one server's answers cannot show; scan through the proxy and, with `-connect`, Kula directly.
+- **The front door decides some results.** Behind a reverse proxy, the TLS, slow-connection,
+  header-bomb and body-cap results describe the proxy as much as Kula.
+- **Cipher suites move with Go.** `TLS-002` judges against the insecure list of the toolchain the
+  scanner was built with.
+- **Fuzzing is sampled.** A PASS says the requests it sent found nothing, under that seed.
+
+## Development
+
+Architecture, the catalog and registry, the judging rules a new check must follow, and the tests
+(including the integration test that runs this scanner against the real `kula serve`) are in
+[kula-scan (developer notes)](../../docs/dev/13-kula-scan.md).
