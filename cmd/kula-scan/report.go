@@ -212,10 +212,16 @@ func severityColor(sev Severity) string {
 
 // writeJSON renders the report as indented JSON.
 func (r *Report) writeJSON(w io.Writer) error {
+	return writeTerminalSafeJSON(w, r)
+}
+
+// writeTerminalSafeJSON writes v as indented JSON that is safe to print to a
+// terminal. The JSON and SARIF reports both go through it.
+func writeTerminalSafeJSON(w io.Writer, v any) error {
 	var encoded strings.Builder
 	enc := json.NewEncoder(&encoded)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(r); err != nil {
+	if err := enc.Encode(v); err != nil {
 		return err
 	}
 	// The encoder escapes C0 controls but writes DEL, C1 and bidi controls

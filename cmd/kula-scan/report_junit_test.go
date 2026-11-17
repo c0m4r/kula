@@ -150,6 +150,8 @@ type formatCase struct {
 	interrupted bool
 	wantCode    int
 	junit       map[string]string // outcome by testcase name; the rest pass
+	sarif       map[string]string // result level by rule ID; the rest are no result
+	notes       int               // tool execution notifications
 }
 
 func formatCases() []formatCase {
@@ -165,6 +167,7 @@ func formatCases() []formatCase {
 			failOn:   SevHigh,
 			wantCode: exitClean,
 			junit:    map[string]string{"TLS-001 TLS protocol version": "skipped"},
+			sarif:    map[string]string{"HDR-009": "note"},
 		},
 		{
 			name: "gating FAIL",
@@ -175,6 +178,7 @@ func formatCases() []formatCase {
 			failOn:   SevHigh,
 			wantCode: exitFailing,
 			junit:    map[string]string{"HDR-003 Content-Security-Policy hardened": "failure"},
+			sarif:    map[string]string{"HDR-003": "error"},
 		},
 		{
 			name: "FAIL below the threshold",
@@ -184,6 +188,7 @@ func formatCases() []formatCase {
 			},
 			failOn:   SevHigh,
 			wantCode: exitClean,
+			sarif:    map[string]string{"HDR-009": "warning"},
 		},
 		{
 			name: "unmet expectation",
@@ -194,6 +199,7 @@ func formatCases() []formatCase {
 			failOn:   SevCritical,
 			wantCode: exitFailing,
 			junit:    map[string]string{"AUTH-000 Authentication posture": "failure"},
+			sarif:    map[string]string{"AUTH-000": "error"},
 		},
 		{
 			name: "ERROR only",
@@ -204,6 +210,7 @@ func formatCases() []formatCase {
 			failOn:   SevHigh,
 			wantCode: exitInconclusive,
 			junit:    map[string]string{"AUTH-005 Login with supplied credentials": "error"},
+			notes:    1,
 		},
 		{
 			name: "ignored FAIL",
@@ -215,6 +222,7 @@ func formatCases() []formatCase {
 			failOn:   SevHigh,
 			wantCode: exitClean,
 			junit:    map[string]string{"HDR-003 Content-Security-Policy hardened": "skipped"},
+			sarif:    map[string]string{"HDR-003": "error"}, // suppressed
 		},
 		{
 			name: "interrupted",
@@ -233,6 +241,7 @@ func formatCases() []formatCase {
 			failOn:   SevHigh,
 			wantCode: exitUsage,
 			junit:    map[string]string{"DISC-001 Target fingerprint": "error"},
+			notes:    1,
 		},
 		{
 			name:     "stopped at an ignored discovery",
@@ -241,6 +250,7 @@ func formatCases() []formatCase {
 			failOn:   SevHigh,
 			wantCode: exitUsage,
 			junit:    map[string]string{"DISC-001 Target fingerprint": "skipped", "Scan completed": "error"},
+			notes:    1,
 		},
 	}
 }

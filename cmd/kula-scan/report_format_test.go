@@ -53,6 +53,7 @@ func TestFormatUsageErrors(t *testing.T) {
 		{"", true, formatJSON},
 		{"json", true, formatJSON},
 		{" JUnit ", false, formatJUnit},
+		{"SARIF", false, formatSARIF},
 	} {
 		if got, err := resolveFormat(c.format, c.asJSON); err != nil || got != c.want {
 			t.Errorf("resolveFormat(%q, %v) = %q, %v; want %q", c.format, c.asJSON, got, err, c.want)
@@ -61,7 +62,7 @@ func TestFormatUsageErrors(t *testing.T) {
 }
 
 // TestExpectAuthFailsOnceInEachFormat: a target with auth disabled scanned
-// with -expect auth gives one JUnit failure, and exit 1.
+// with -expect auth gives one JUnit failure and one SARIF error, and exit 1.
 func TestExpectAuthFailsOnceInEachFormat(t *testing.T) {
 	var loginHits, chatHits atomic.Int64
 	ts := httptest.NewServer(authOffMock(false, &loginHits, &chatHits))
@@ -75,5 +76,17 @@ func TestExpectAuthFailsOnceInEachFormat(t *testing.T) {
 	doc := parseJUnit(t, stdout)
 	if doc.Failures != 1 || doc.Errors != 0 || doc.cases()["AUTH-000 Authentication posture"].Failure == nil {
 		t.Errorf("JUnit: %d failures, %d errors:\n%s", doc.Failures, doc.Errors, stdout)
+	}
+
+	code, stdout, _ = runCaptured(t, append(args, "-format", "sarif", ts.URL)...)
+	log := parseSARIF(t, stdout)
+	var errs []string
+	for _, result := range sarifList(log, "runs", 0, "results") {
+		if sarifPath(result, "level") == "error" {
+			errs = append(errs, sarifPath(result, "ruleId").(string))
+		}
+	}
+	if code != exitFailing || len(errs) != 1 || errs[0] != "AUTH-000" {
+		t.Errorf("SARIF: exit %d, error results %v", code, errs)
 	}
 }

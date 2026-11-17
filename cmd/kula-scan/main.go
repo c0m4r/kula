@@ -88,7 +88,7 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		expect     = fs.String("expect", "", "comma-separated posture the target must have, failing the run otherwise: "+strings.Join(expectKeyNames(), ","))
 		failOn     = fs.String("fail-on", "high", "min FAIL severity for non-zero exit: info|low|medium|high|critical")
 		asJSON     = fs.Bool("json", false, "emit findings as JSON (-format json)")
-		format     = fs.String("format", "", "report format: text|json|junit (default text)")
+		format     = fs.String("format", "", "report format: text|json|junit|sarif (default text)")
 		noColor    = fs.Bool("no-color", false, "disable ANSI colors")
 		verbose    = fs.Bool("v", false, "verbose: log each request and its response status to stderr")
 		list       = fs.Bool("list", false, "print every finding ID with its category, mode and title, then exit")
@@ -314,7 +314,7 @@ Flags:
                       exits 1 whatever -fail-on says; the keys are
                       %s
   -fail-on string     min FAIL severity for non-zero exit: info|low|medium|high|critical (default high)
-  -format string      report format: text|json|junit (default text)
+  -format string      report format: text|json|junit|sarif (default text)
   -json               emit findings as JSON (the same as -format json)
   -no-color           disable ANSI colors
   -v                  log each request and its response status to stderr

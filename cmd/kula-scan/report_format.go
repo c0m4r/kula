@@ -12,9 +12,10 @@ const (
 	formatText  = "text"
 	formatJSON  = "json"
 	formatJUnit = "junit"
+	formatSARIF = "sarif"
 )
 
-var reportFormats = []string{formatText, formatJSON, formatJUnit}
+var reportFormats = []string{formatText, formatJSON, formatJUnit, formatSARIF}
 
 // resolveFormat returns the report format -format and -json ask for. An
 // empty -format means text; -json means -format json and conflicts with any
@@ -44,6 +45,8 @@ func (r *Report) writeFormat(w io.Writer, format string, failOn Severity, noColo
 		return r.writeJSON(w)
 	case formatJUnit:
 		return r.writeJUnit(w, failOn)
+	case formatSARIF:
+		return r.writeSARIF(w, failOn)
 	default:
 		r.writeText(w, noColor)
 		if ids := r.failingIDs(failOn); len(ids) > 0 {
