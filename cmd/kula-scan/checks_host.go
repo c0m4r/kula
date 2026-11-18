@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -185,14 +186,16 @@ func describeHostAnswer(r httpResult) string {
 }
 
 // hostRequest sends GET path (below the base path) over a raw connection
-// with host as its Host header, followed by the -H headers. As with rawTCP,
-// an error means the request was not delivered, and a status of 0 without
-// one that the target closed the connection without an answer.
-func (s *Scanner) hostRequest(path, host string) (httpResult, error) {
+// with host as its Host header, followed by the -H headers. An error means
+// the request was not delivered. Otherwise silent is true when the target
+// neither answered nor closed the connection within -timeout: it has not
+// answered at all. A status of 0 that is not silent means the target closed
+// or reset the connection without an answer, which refuses the request.
+func (s *Scanner) hostRequest(path, host string) (r httpResult, silent bool, err error) {
 	conn, err := s.dialRaw()
 	if err != nil {
 		s.logHostRequest(path, host, err.Error())
-		return httpResult{}, err
+		return httpResult{}, false, err
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(s.timeout))
@@ -200,17 +203,28 @@ func (s *Scanner) hostRequest(path, host string) (httpResult, error) {
 	request := fmt.Sprintf("GET %s%s HTTP/1.1\r\nHost: %s\r\n%sConnection: close\r\n\r\n", s.base.Path, path, host, s.rawHeaderLines(nil))
 	if _, err := io.WriteString(conn, request); err != nil {
 		s.logHostRequest(path, host, err.Error())
-		return httpResult{}, err
+		return httpResult{}, false, err
 	}
 	resp, err := readResponse(conn)
 	if err != nil {
-		s.logHostRequest(path, host, "no answer: "+err.Error())
-		return httpResult{}, nil
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			s.logHostRequest(path, host, "no answer within -timeout: "+err.Error())
+			return httpResult{}, true, nil
+		}
+		s.logHostRequest(path, host, "closed without an answer: "+err.Error())
+		return httpResult{}, false, nil
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
 	s.logHostRequest(path, host, fmt.Sprintf("%d (%d bytes)", resp.StatusCode, len(body)))
-	return httpResult{status: resp.StatusCode, header: resp.Header, body: string(body)}, nil
+	return httpResult{status: resp.StatusCode, header: resp.Header, body: string(body)}, false, nil
+}
+
+// silentDetail says that the target neither answered nor closed the
+// connection within -timeout, for the ERROR of a HOST-001 request.
+func (s *Scanner) silentDetail() string {
+	return fmt.Sprintf("the target neither responded nor closed the connection within -timeout (%s)", s.timeout)
 }
 
 // logHostRequest logs a hostRequest and how it ended, with -v.
@@ -236,10 +250,14 @@ func runHostCheck(s *Scanner) []Finding {
 		route, what = "/metrics", "/metrics"
 	}
 
-	own, err := s.hostRequest(route, s.base.Host)
-	if err != nil {
+	own, silent, err := s.hostRequest(route, s.base.Host)
+	switch {
+	case err != nil:
 		return []Finding{finding("HOST-001", SevInfo, StatusError,
 			fmt.Sprintf("could not deliver GET %s under the scanner's own Host name over a raw socket: %v", route, err))}
+	case silent:
+		return []Finding{finding("HOST-001", SevInfo, StatusError,
+			fmt.Sprintf("GET %s under the scanner's own Host name got no answer: %s, so there is no control to compare foreign names with.", route, s.silentDetail()))}
 	}
 	ownAnswer := classifyHost(route, own)
 	if s.authEnabled && ownAnswer == hostOther {
@@ -257,14 +275,18 @@ func runHostCheck(s *Scanner) []Finding {
 	}
 
 	hosts := s.foreignHosts()
-	var served, refused, other, lostHosts []string
+	var served, refused, other, lostHosts, silentHosts []string
 	var lost undelivered
 	for _, h := range hosts {
 		label := fmt.Sprintf("%s (%s)", h.host, h.form)
-		r, err := s.hostRequest(route, h.host)
-		if err != nil {
+		r, silent, err := s.hostRequest(route, h.host)
+		switch {
+		case err != nil:
 			lost.add(err)
 			lostHosts = append(lostHosts, label)
+			continue
+		case silent:
+			silentHosts = append(silentHosts, label)
 			continue
 		}
 		switch classifyHost(route, r) {
@@ -277,9 +299,18 @@ func runHostCheck(s *Scanner) []Finding {
 		}
 	}
 
-	unreached := ""
+	// The requests under foreign names that got no answer: not delivered,
+	// or met with silence.
+	var unanswered []string
 	if lost.n > 0 {
-		unreached = "; " + lost.detail(len(hosts), "requests") + ": " + strings.Join(lostHosts, ", ")
+		unanswered = append(unanswered, lost.detail(len(hosts), "requests under foreign Host names")+": "+strings.Join(lostHosts, ", "))
+	}
+	if len(silentHosts) > 0 {
+		unanswered = append(unanswered, "under "+strings.Join(silentHosts, ", ")+", "+s.silentDetail())
+	}
+	unreached := ""
+	if len(unanswered) > 0 {
+		unreached = "; " + strings.Join(unanswered, "; ")
 	}
 	switch {
 	case len(served) > 0:
@@ -294,10 +325,10 @@ func runHostCheck(s *Scanner) []Finding {
 	case lost.n == len(hosts):
 		return []Finding{finding("HOST-001", SevInfo, StatusError,
 			lost.detail(len(hosts), "requests under foreign Host names")+".")}
-	case lost.n > 0:
+	case len(unanswered) > 0:
 		return []Finding{finding("HOST-001", SevInfo, StatusError,
-			lost.detail(len(hosts), "requests under foreign Host names")+": "+strings.Join(lostHosts, ", ")+
-				fmt.Sprintf("; no answer under the others served %s, which says nothing of them.", what))}
+			strings.Join(unanswered, "; ")+
+				fmt.Sprintf("; no answer under the other names served %s, which says nothing of those.", what))}
 	case ownAnswer == hostOther && len(refused) == 0:
 		return []Finding{finding("HOST-001", SevInfo, StatusSkip,
 			fmt.Sprintf("%s answered %s under the scanner's own Host name, not its data, so there is nothing a foreign name could read (is the UI off?).",

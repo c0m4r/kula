@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -185,6 +186,70 @@ func TestProxyRefusalOfForeignNamesPasses(t *testing.T) {
 	})
 	if f := hostFinding(t, welcome); f.Status != StatusPass || !strings.Contains(f.Detail, "not Kula's answer") {
 		t.Errorf("a proxy's default page: HOST-001 = %s %q, want a PASS", f.Status, f.Detail)
+	}
+}
+
+// holdOpen takes the request and keeps the connection open without an
+// answer until the client gives up and closes it.
+func holdOpen(w http.ResponseWriter) {
+	if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+		_, _ = io.Copy(io.Discard, conn)
+		_ = conn.Close()
+	}
+}
+
+// TestHostCheckTellsSilenceFromRefusal: a target that closes the connection
+// on a foreign Host name without an answer refuses it, but one that stays
+// silent until -timeout has not answered at all, so HOST-001 cannot pass on
+// it; nor can it judge anything when the control under the scanner's own
+// name gets no answer.
+func TestHostCheckTellsSilenceFromRefusal(t *testing.T) {
+	kula := withHostCheck(authOff(), authOffGuard)
+	var configs atomic.Int64
+	for _, c := range []struct {
+		name   string
+		answer func(w http.ResponseWriter, r *http.Request) bool // true when it answered instead of Kula
+		want   Status
+		detail string
+	}{
+		{"closed on a trailing dot", func(w http.ResponseWriter, r *http.Request) bool {
+			if strings.HasSuffix(r.Host, ".") {
+				dropConnection(w)
+				return true
+			}
+			return false
+		}, StatusPass, "the connection closed without an answer"},
+		{"silent on a trailing dot", func(w http.ResponseWriter, r *http.Request) bool {
+			if strings.HasSuffix(r.Host, ".") {
+				holdOpen(w)
+				return true
+			}
+			return false
+		}, StatusError, "neither responded nor closed the connection within -timeout (1s)"},
+		{"silent on its own name", func(w http.ResponseWriter, r *http.Request) bool {
+			// Discovery asks /api/config first; the control is the second.
+			if r.URL.Path == "/api/config" && configs.Add(1) == 2 {
+				holdOpen(w)
+				return true
+			}
+			return false
+		}, StatusError, "neither responded nor closed the connection within -timeout (1s)"},
+	} {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !c.answer(w, r) {
+				kula.ServeHTTP(w, r)
+			}
+		}))
+		s, err := NewScanner(Options{Target: ts.URL, Timeout: time.Second, Seed: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.discover()
+		f, _ := byID(runHostCheck(s), "HOST-001")
+		ts.Close()
+		if f.Status != c.want || !strings.Contains(f.Detail, c.detail) {
+			t.Errorf("%s: HOST-001 = %s %q, want %s saying %q", c.name, f.Status, f.Detail, c.want, c.detail)
+		}
 	}
 }
 
