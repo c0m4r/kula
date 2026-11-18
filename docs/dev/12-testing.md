@@ -386,6 +386,12 @@ three levels:
   KULA_SCAN_SLOW=1 go test -race -run TestScanJudgesTheRealKula ./cmd/kula-scan
   ```
 
+  Two more tests boot `kula serve` on the same harness, and `go test -short` skips them too:
+  `TestScanJudgesAKulaWithoutTheUI` scans `web.ui: false`, where the checks that need the UI or
+  API must skip rather than read its 404 as auth off, and `TestWebSocketChecksFitInOneSlot` runs
+  the WebSocket probes against a Kula that admits one connection per address, directly and
+  through a proxy that lets go of upstream connections late.
+
 - **Showcase.** `./showcase.sh test` ([Feature showcase](#feature-showcase-docker)) ends by
   building the scanner as its own image, `kula-scan:showcase`, and scanning the showcase's Kula
   with `-aggressive -fuzz`, directly under its base path and through Caddy over HTTPS. It keeps

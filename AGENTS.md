@@ -177,8 +177,18 @@ the root `kula` package, for its version).
 - Every finding ID has one entry in `catalog` (`catalog.go`) and is declared by exactly one check
   in `allChecks()`; discovery's come from `discover()`. `TestCatalogCoversEveryEmittedID` and
   `TestRegistryDeclaresEveryCatalogID` fail otherwise. A title never varies; the detail does.
-- A check never passes because its requests failed (that is an ERROR, exit 3) and never FAILs a
-  correct Kula: an operator's choice is a WARN tagged `expecting(key)`, which `-expect` gates.
+- A check passes only when every request it sent was answered: some unanswered, with nothing
+  wrong in the rest, is an ERROR naming them (`unansweredDetail`, exit 3). It never FAILs a
+  correct Kula: an operator's choice is a WARN tagged `expecting(key)`, which `-expect` gates,
+  and that key's `expectKeys` entry lists the ID (`TestExpectKeysNameTheirFindings`).
+- With the auth posture unknown (`web.ui: false`, an unreadable `/api/auth/status`) only the
+  checks `runsWithoutAPI` names run, and under a refused `Host` name only those
+  `runsUnderRefusedHost` names. A new check that still judges something there goes in the list,
+  or it is silently skipped.
+- WebSocket probes upgrade through `wsDialRetry` and end a connection through `closeWS`, which
+  waits for the target to end it and so for Kula to free its per-address place; after a merely
+  dropped one the next upgrade can get a 429 under a limit of one
+  (`TestWebSocketChecksFitInOneSlot`). Only `WS-FLOOD` drops its connections, on purpose.
 - A default run spends one login, through `ensureSession()`, and logs out; it never sends a
   wrong password for the supplied account (`TestDefaultRunLogsInOnceAndOut`).
 - Every probe that posts to `/api/login` runs before `RATE-LOGIN` and `BYPASS-XFF`, which exhaust
