@@ -125,6 +125,10 @@ func TestSARIFVerdictMatchesTheExitStatus(t *testing.T) {
 				sarifPath(props, "security-severity") != securitySeverity(f.Severity) {
 				t.Errorf("%s: %s properties %v", c.name, id, props)
 			}
+			// GitHub code scanning reads the alert's severity from the rule.
+			if got := sarifPath(rules, int(index), "properties", "security-severity"); got != securitySeverity(f.Severity) {
+				t.Errorf("%s: rule %s security-severity %v, want %s", c.name, id, got, securitySeverity(f.Severity))
+			}
 			if f.Expectation != "" && sarifPath(props, "expectation") != f.Expectation {
 				t.Errorf("%s: %s expectation %v, want %s", c.name, id, sarifPath(props, "expectation"), f.Expectation)
 			}

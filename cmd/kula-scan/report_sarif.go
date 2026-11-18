@@ -55,6 +55,11 @@ type sarifRuleProps struct {
 	Category string   `json:"category"`
 	Mode     string   `json:"mode"`
 	Tags     []string `json:"tags"`
+	// SecuritySeverity is the highest of the run's results for the rule,
+	// which GitHub code scanning shows as each alert's severity: it reads
+	// the score from the rule, not the result. A rule without a result has
+	// none, since a finding ID's severity depends on what it found.
+	SecuritySeverity string `json:"security-severity,omitempty"`
 }
 
 type sarifMessage struct {
@@ -207,7 +212,8 @@ func (r *Report) writeSARIF(w io.Writer, failOn Severity) error {
 
 // sarifRules returns a rule per catalog entry, in catalog order, and the
 // index of each rule by ID. A finding missing from the catalog gets a
-// stand-in rule, so every result names a rule.
+// stand-in rule, so every result names a rule. A rule with results carries
+// the highest security-severity among them.
 func sarifRules(findings []Finding) ([]sarifRule, map[string]int) {
 	rules := make([]sarifRule, 0, len(catalog))
 	index := make(map[string]int, len(catalog))
@@ -228,6 +234,7 @@ func sarifRules(findings []Finding) ([]sarifRule, map[string]int) {
 	for _, e := range catalog {
 		add(e)
 	}
+	highest := map[string]Severity{}
 	for _, f := range findings {
 		if _, ok := index[f.ID]; !ok {
 			e := catalogEntryFor(f.ID)
@@ -235,6 +242,13 @@ func sarifRules(findings []Finding) ([]sarifRule, map[string]int) {
 				e.Description = e.Title
 			}
 			add(e)
+		}
+		if f.Status != StatusFail && f.Status != StatusWarn {
+			continue
+		}
+		if sev, seen := highest[f.ID]; !seen || f.Severity > sev {
+			highest[f.ID] = f.Severity
+			rules[index[f.ID]].Properties.SecuritySeverity = securitySeverity(f.Severity)
 		}
 	}
 	return rules, index
