@@ -208,6 +208,65 @@ func TestConnFloodWaitsOnceForAll(t *testing.T) {
 	wantStatus(t, runConnFloodCheck(dosScanner(t, reaping.URL, 5*time.Second, 3*time.Second)), "DOS-CONNFLOOD", StatusPass)
 }
 
+// cappedListener serves the first max connections it accepts and closes
+// every later one at once, as a server that can take no new client.
+type cappedListener struct {
+	net.Listener
+	max      int64
+	accepted atomic.Int64
+}
+
+func (l *cappedListener) Accept() (net.Conn, error) {
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil || l.accepted.Add(1) <= l.max {
+			return conn, err
+		}
+		_ = conn.Close()
+	}
+}
+
+// TestFloodsProbeHealthOnANewConnection: while the flood is held, /health is
+// asked on a connection of its own. A server that keeps serving the
+// scanner's pooled connection but takes no new one is starved, however
+// promptly it reaps the flood afterwards.
+func TestFloodsProbeHealthOnANewConnection(t *testing.T) {
+	for _, c := range []struct {
+		id    string
+		conns int64 // the connections the probe opens
+		run   func(*Scanner) []Finding
+	}{
+		{"DOS-SLOWLORIS", 12, runSlowlorisCheck},
+		{"DOS-CONNFLOOD", 64, runConnFloodCheck},
+	} {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("kula is healthy"))
+		})
+		capped := httptest.NewUnstartedServer(handler)
+		// The scanner's pooled connection and the flood, and no more.
+		capped.Listener = &cappedListener{Listener: capped.Listener, max: 1 + c.conns}
+		capped.Config.ReadTimeout = time.Second // reaps the flood
+		capped.Start()
+
+		s := dosScanner(t, capped.URL, 5*time.Second, 3*time.Second)
+		if r := s.do(http.MethodGet, "/health", nil, ""); r.status != http.StatusOK { // as discovery leaves the pool
+			t.Fatalf("%s: /health before the flood = %d %v", c.id, r.status, r.err)
+		}
+		f, _ := byID(c.run(s), c.id)
+		if f.Status != StatusFail || !strings.Contains(f.Detail, "on a new connection failed") {
+			t.Errorf("%s against a server that takes no new client = %s %q | %q; want FAIL", c.id, f.Status, f.Detail, f.Evidence)
+		}
+		capped.Close()
+
+		// The same server taking new clients passes.
+		open := httptest.NewUnstartedServer(handler)
+		open.Config.ReadTimeout = time.Second
+		open.Start()
+		wantStatus(t, c.run(dosScanner(t, open.URL, 5*time.Second, 3*time.Second)), c.id, StatusPass)
+		open.Close()
+	}
+}
+
 // TestSlowConnectionProbesEndWithTheRun: an interrupt ends the wait for
 // reaping at once, whatever -dos-wait is.
 func TestSlowConnectionProbesEndWithTheRun(t *testing.T) {

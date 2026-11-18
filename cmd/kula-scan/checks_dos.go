@@ -80,6 +80,52 @@ func awaitReaping(conns []net.Conn, wait time.Duration) int {
 	return int(reaped.Load())
 }
 
+// freshHealth asks for /health over a connection of its own, as a client
+// arriving during a flood would, and closes it. The HTTP client's pool may
+// hold a connection opened before the flood, and a server that keeps
+// serving that one has not shown that it still accepts a new one. The
+// request carries the -H headers, -timeout bounds it, and an interrupt ends
+// it (dialRaw).
+func (s *Scanner) freshHealth() httpResult {
+	result := httpResult{method: http.MethodGet, path: "/health"}
+	conn, err := s.dialRaw()
+	if err != nil {
+		result.err, result.unsent = err, true
+		return s.logFreshHealth(result)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(s.timeout))
+	request := fmt.Sprintf("GET %s/health HTTP/1.1\r\nHost: %s\r\n%sConnection: close\r\n\r\n",
+		s.base.Path, s.base.Host, s.rawHeaderLines(nil))
+	if _, err := io.WriteString(conn, request); err != nil {
+		result.err = err
+		return s.logFreshHealth(result)
+	}
+	resp, err := readResponse(conn)
+	if err != nil {
+		result.err = err
+		return s.logFreshHealth(result)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
+	result.status, result.header, result.body = resp.StatusCode, resp.Header, string(body)
+	return s.logFreshHealth(result)
+}
+
+// logFreshHealth logs r, freshHealth's request, with -v as do logs its
+// requests, and returns it.
+func (s *Scanner) logFreshHealth(r httpResult) httpResult {
+	if !s.verbose {
+		return r
+	}
+	if r.err != nil {
+		_, _ = fmt.Fprintf(s.log, "    GET /health (new connection) -> %s\n", printable(r.err.Error()))
+	} else {
+		_, _ = fmt.Fprintf(s.log, "    GET /health (new connection) -> %d (%d bytes)\n", r.status, len(r.body))
+	}
+	return r
+}
+
 // proxyBanner returns the Server and Via headers of the target's response h,
 // as "Name: value". Kula sends neither, so a response that carries one comes
 // from a reverse proxy in front of it, most likely.
@@ -117,8 +163,9 @@ const proxyDoSWait = 75 * time.Second
 
 // runSlowlorisCheck opens several connections that send a partial request and
 // never finish it (a Slowloris). It asserts two things: the server keeps
-// answering legitimate requests while the slow connections are held, and it
-// reaps the stalled connections within dosWait (i.e. ReadTimeout is enforced).
+// answering legitimate requests, on a new connection (freshHealth), while the
+// slow connections are held, and it reaps the stalled connections within
+// dosWait (i.e. ReadTimeout is enforced).
 func runSlowlorisCheck(s *Scanner) []Finding {
 	const conns = 12
 	reqHead := fmt.Sprintf("GET %s/ HTTP/1.1\r\nHost: %s\r\n%s", s.base.Path, s.base.Host, s.rawHeaderLines(nil))
@@ -154,9 +201,9 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 			fmt.Sprintf("could not open any connections to the target: %v", firstErr))}
 	}
 
-	// Availability: a fresh, well-formed request must still succeed while the
-	// slow connections are held open.
-	health := s.do(http.MethodGet, "/health", nil, "")
+	// Availability: a fresh, well-formed request, from a new client, must
+	// still succeed while the slow connections are held open.
+	health := s.freshHealth()
 
 	// Wait for the server to drop the stalled connections, all against one
 	// deadline: a read that returns before it means the server closed the
@@ -179,7 +226,7 @@ func slowlorisFinding(s *Scanner, health httpResult, held, reaped int, elapsed t
 	switch {
 	case !healthOK:
 		return finding("DOS-SLOWLORIS", SevHigh, StatusFail,
-			fmt.Sprintf("while %d slow connections were held open, a normal request to /health failed — the server was starved.", held)).
+			fmt.Sprintf("while %d slow connections were held open, a normal request to /health on a new connection failed — the server was starved.", held)).
 			withEvidence("health status=%d err=%v", health.status, health.err).
 			withRemediation("Set http.Server.ReadTimeout so half-open requests are dropped, and front Kula with a reverse proxy.")
 	case reaped == held:
@@ -320,8 +367,9 @@ func headerBombReadFinding(s *Scanner, err error, written <-chan bool) Finding {
 }
 
 // runConnFloodCheck opens many concurrent idle connections (no request sent) and
-// verifies the server stays responsive to legitimate traffic, then that the idle
-// sockets are reaped within dosWait. Go serves each connection on its own
+// verifies the server stays responsive to legitimate traffic, a request on a
+// new connection (freshHealth), then that the idle sockets are reaped within
+// dosWait. Go serves each connection on its own
 // goroutine, so the real protection against pile-up is the read/idle timeout.
 func runConnFloodCheck(s *Scanner) []Finding {
 	const conns = 64
@@ -346,12 +394,12 @@ func runConnFloodCheck(s *Scanner) []Finding {
 			fmt.Sprintf("could not open any connections to the target: %v", dialErr))}
 	}
 
-	health := s.do(http.MethodGet, "/health", nil, "")
+	health := s.freshHealth()
 	healthOK := health.err == nil && (health.status == http.StatusOK || health.status == http.StatusNotFound)
 
 	if !healthOK {
 		return []Finding{finding("DOS-CONNFLOOD", SevHigh, StatusFail,
-			fmt.Sprintf("a normal request failed while %d idle connections were held open.", len(opened))).
+			fmt.Sprintf("a normal request to /health on a new connection failed while %d idle connections were held open.", len(opened))).
 			withEvidence("opened=%d health status=%d err=%v", len(opened), health.status, health.err).
 			withRemediation("Front Kula with a reverse proxy that bounds concurrent connections, and keep read/idle timeouts enabled.")}
 	}
@@ -364,7 +412,7 @@ func runConnFloodCheck(s *Scanner) []Finding {
 	if reaped == len(opened) {
 		return []Finding{finding("DOS-CONNFLOOD", SevLow, StatusPass,
 			"the server stayed responsive under an idle-connection flood and reaped the idle sockets (timeouts enforced).").
-			withEvidence("%d idle connections opened, all reaped, /health OK", len(opened))}
+			withEvidence("%d idle connections opened, all reaped, /health answered on a new connection", len(opened))}
 	}
 	return []Finding{finding("DOS-CONNFLOOD", SevMedium, StatusWarn,
 		fmt.Sprintf("the server stayed responsive, but %d/%d idle connections were still open after %s.", len(opened)-reaped, len(opened), s.dosWait)+s.proxyHint(health.header)).
