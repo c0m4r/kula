@@ -1202,8 +1202,8 @@ func (s *Scanner) sessionLogin() httpResult {
 	return s.loginContext(context.WithoutCancel(s.ctx), s.username, s.password)
 }
 
-// loginContext is loginRaw under parent instead of the run's context: a
-// same-origin JSON login with username and password.
+// loginContext sends a same-origin JSON login with username and password
+// under parent; loginRaw and sessionLogin send theirs through it.
 func (s *Scanner) loginContext(parent context.Context, username, password string) httpResult {
 	b, err := json.Marshal(map[string]string{"username": username, "password": password})
 	if err != nil {

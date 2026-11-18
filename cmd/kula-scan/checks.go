@@ -881,20 +881,12 @@ func enumerationFinding(s *Scanner) Finding {
 		withRemediation("Equalise the response (status + body + timing) for valid and invalid usernames.")
 }
 
-// loginRaw posts credentials with a same-origin header (so CSRF admits it) and
-// returns the result. ensureSession opens the scan's session with it, and
-// probes that must reach the login handler call it directly.
+// loginRaw posts credentials with a same-origin header (so CSRF admits it)
+// under the run's context and returns the result: the probes that must reach
+// the login handler call it. The run's own session opens through
+// sessionLogin instead, which an interrupt does not cut short.
 func (s *Scanner) loginRaw(username, password string) httpResult {
-	b, err := json.Marshal(map[string]string{"username": username, "password": password})
-	if err != nil {
-		return httpResult{err: err}
-	}
-	body := string(b)
-	headers := map[string]string{
-		"Content-Type": "application/json",
-		"Origin":       s.base.Scheme + "://" + s.base.Host,
-	}
-	return s.do(http.MethodPost, "/api/login", headers, body)
+	return s.loginContext(s.ctx, username, password)
 }
 
 // ============================== csrf =========================================
