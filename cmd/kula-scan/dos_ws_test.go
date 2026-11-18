@@ -155,7 +155,7 @@ func TestWSMessageBombJudgesTheReadLimitAlone(t *testing.T) {
 		{"a server that stopped reading", stalled, StatusWarn, "went unanswered"},
 	}
 	for _, c := range cases {
-		f, _ := byID(runWSMsgBombCheck(dosScanner(t, c.target.URL, time.Second, time.Second)), "WS-MSGBOMB")
+		f, _ := byID(runWSMsgBombCheck(dosScanner(t, c.target.URL, 500*time.Millisecond, time.Second)), "WS-MSGBOMB")
 		if f.Status != c.want || !strings.Contains(f.Detail, c.says) {
 			t.Errorf("%s: WS-MSGBOMB = %s %q | %q; want %s saying %q", c.name, f.Status, f.Detail, f.Evidence, c.want, c.says)
 		}
@@ -245,7 +245,7 @@ func TestFloodsProbeHealthOnANewConnection(t *testing.T) {
 		capped := httptest.NewUnstartedServer(handler)
 		// The scanner's pooled connection and the flood, and no more.
 		capped.Listener = &cappedListener{Listener: capped.Listener, max: 1 + c.conns}
-		capped.Config.ReadTimeout = time.Second // reaps the flood
+		capped.Config.ReadTimeout = 500 * time.Millisecond // reaps the flood
 		capped.Start()
 
 		s := dosScanner(t, capped.URL, 5*time.Second, 3*time.Second)
@@ -260,7 +260,7 @@ func TestFloodsProbeHealthOnANewConnection(t *testing.T) {
 
 		// The same server taking new clients passes.
 		open := httptest.NewUnstartedServer(handler)
-		open.Config.ReadTimeout = time.Second
+		open.Config.ReadTimeout = 500 * time.Millisecond
 		open.Start()
 		wantStatus(t, c.run(dosScanner(t, open.URL, 5*time.Second, 3*time.Second)), c.id, StatusPass)
 		open.Close()

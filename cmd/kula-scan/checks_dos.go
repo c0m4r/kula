@@ -366,11 +366,11 @@ func headerBombReadFinding(s *Scanner, err error, written <-chan bool) Finding {
 	}
 }
 
-// runConnFloodCheck opens many concurrent idle connections (no request sent) and
-// verifies the server stays responsive to legitimate traffic, a request on a
-// new connection (freshHealth), then that the idle sockets are reaped within
-// dosWait. Go serves each connection on its own
-// goroutine, so the real protection against pile-up is the read/idle timeout.
+// runConnFloodCheck opens many concurrent idle connections (no request sent)
+// and verifies the server stays responsive to legitimate traffic, a request on
+// a new connection (freshHealth), then that the idle sockets are reaped within
+// dosWait. Go serves each connection on its own goroutine, so the real
+// protection against pile-up is the read/idle timeout.
 func runConnFloodCheck(s *Scanner) []Finding {
 	const conns = 64
 	var opened []net.Conn
