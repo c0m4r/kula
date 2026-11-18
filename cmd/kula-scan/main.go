@@ -211,6 +211,11 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
+	// An expectation whose findings this run leaves out would pass unjudged.
+	if err := scanner.unjudgedExpectations(sel, ignored); err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return 2
+	}
 
 	// With -o the chosen format goes to the file and stdout gets the text
 	// report, so a CI job keeps a readable log and an artifact from one run.
@@ -441,7 +446,9 @@ Flags:
   -ignore list        finding IDs that stay in the report, marked ignored, but never affect
                       the exit status
   -expect list        posture the target must have; a finding that contradicts it FAILs and
-                      exits 1 whatever -fail-on says; the keys are
+                      exits 1 whatever -fail-on says. A key the run cannot judge, its
+                      findings all left out by -only, -skip, -ignore or a mode not
+                      enabled, is a usage error; the keys are
                       %s
   -fail-on string     min FAIL severity for non-zero exit: info|low|medium|high|critical (default high)
   -format string      report format: text|json|junit|sarif (default text)

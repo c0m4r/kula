@@ -34,9 +34,10 @@ func TestExpectAuthFailsWhateverFailOn(t *testing.T) {
 		t.Errorf("the closing line does not name the expectation:\n%s", stderr)
 	}
 
-	// -ignore still wins.
-	if code, _, _ := scanJSON(t, mock, "-fail-on", "critical", "-expect", "auth", "-ignore", "AUTH-000"); code != exitClean {
-		t.Errorf("-expect auth -ignore AUTH-000: exit %d, want 0", code)
+	// Ignoring the one finding that judges it leaves the expectation
+	// unjudged, which the command line refuses (TestUnjudgedExpectationsAreUsageErrors).
+	if code, _, _ := runCaptured(t, "-expect", "auth", "-ignore", "AUTH-000", "http://kula-scan.invalid"); code != exitUsage {
+		t.Errorf("-expect auth -ignore AUTH-000: exit %d, want %d", code, exitUsage)
 	}
 }
 
