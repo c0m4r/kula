@@ -230,15 +230,20 @@ func TestSlowConnectionProbesEndWithTheRun(t *testing.T) {
 }
 
 // TestSlowConnectionProbesSuggestAProxy: a response naming a server or a
-// proxy explains connections outliving -dos-wait; the status stays.
+// proxy explains connections outliving -dos-wait. DOS-CONNFLOOD stays a
+// WARN; DOS-SLOWLORIS, a FAIL without the proxy, is a WARN while -dos-wait
+// is shorter than the 60s nginx and Caddy hold a half-open request.
 func TestSlowConnectionProbesSuggestAProxy(t *testing.T) {
 	ts := healthTarget(t, http.Header{"Server": {"nginx/1.27.0"}, "Via": {"1.1 edge"}})
 	s := dosScanner(t, ts.URL, 5*time.Second, 300*time.Millisecond)
 
 	flood, _ := byID(runConnFloodCheck(s), "DOS-CONNFLOOD")
 	slow, _ := byID(runSlowlorisCheck(s), "DOS-SLOWLORIS")
-	if flood.Status != StatusWarn || slow.Status != StatusFail {
-		t.Errorf("DOS-CONNFLOOD = %s, DOS-SLOWLORIS = %s; want WARN and FAIL as without the hint", flood.Status, slow.Status)
+	if flood.Status != StatusWarn || slow.Status != StatusWarn || slow.Severity != SevMedium {
+		t.Errorf("DOS-CONNFLOOD = %s, DOS-SLOWLORIS = %s %s; want WARN and a MEDIUM WARN", flood.Status, slow.Status, slow.Severity)
+	}
+	if !strings.Contains(slow.Remediation, "-dos-wait 75s or longer") || !strings.Contains(slow.Remediation, "scan Kula directly") {
+		t.Errorf("DOS-SLOWLORIS behind a proxy does not say how to judge it: %q", slow.Remediation)
 	}
 	for _, f := range []Finding{flood, slow} {
 		for _, want := range []string{"Server: nginx/1.27.0", "Via: 1.1 edge", "reverse proxy", "-dos-wait 75s"} {
@@ -251,6 +256,23 @@ func TestSlowConnectionProbesSuggestAProxy(t *testing.T) {
 	s = dosScanner(t, ts.URL, 5*time.Second, 2*time.Minute)
 	if hint := s.proxyHint(http.Header{"Server": {"nginx"}}); !strings.Contains(hint, "longer -dos-wait") || strings.Contains(hint, "e.g.") {
 		t.Errorf("with -dos-wait past the suggestion, the hint is %q", hint)
+	}
+
+	// Past the proxy's timeout, or with no proxy named, nothing dropped is a
+	// FAIL.
+	proxied := httpResult{status: http.StatusOK, header: http.Header{"Server": {"nginx"}}}
+	for _, c := range []struct {
+		name    string
+		dosWait time.Duration
+		health  httpResult
+	}{
+		{"behind a proxy, at -dos-wait 75s", 75 * time.Second, proxied},
+		{"without a proxy", 300 * time.Millisecond, httpResult{status: http.StatusOK, header: http.Header{}}},
+	} {
+		s := dosScanner(t, ts.URL, 5*time.Second, c.dosWait)
+		if f := slowlorisFinding(s, c.health, 12, 0, c.dosWait); f.Status != StatusFail || f.Severity != SevHigh {
+			t.Errorf("%s: DOS-SLOWLORIS with none dropped = %s %s %q; want a HIGH FAIL", c.name, f.Status, f.Severity, f.Detail)
+		}
 	}
 }
 

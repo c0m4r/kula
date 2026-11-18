@@ -80,22 +80,29 @@ func awaitReaping(conns []net.Conn, wait time.Duration) int {
 	return int(reaped.Load())
 }
 
-// proxyHint is added to the detail of a slow-connection probe whose
-// connections outlived -dos-wait when the target's response h names a server
-// or a proxy. Kula sends neither header, so a reverse proxy likely answers,
-// and its own header and idle timeouts, not Kula's, decide when a stalled
-// connection is dropped.
-func (s *Scanner) proxyHint(h http.Header) string {
+// proxyBanner returns the Server and Via headers of the target's response h,
+// as "Name: value". Kula sends neither, so a response that carries one comes
+// from a reverse proxy in front of it, most likely.
+func proxyBanner(h http.Header) []string {
 	var named []string
 	for _, name := range []string{"Server", "Via"} {
 		if v := h.Get(name); v != "" {
 			named = append(named, name+": "+truncate(v, 60))
 		}
 	}
+	return named
+}
+
+// proxyHint is added to the detail of a slow-connection probe whose
+// connections outlived -dos-wait when the target's response h names a server
+// or a proxy (proxyBanner): its own header and idle timeouts, not Kula's,
+// then decide when a stalled connection is dropped.
+func (s *Scanner) proxyHint(h http.Header) string {
+	named := proxyBanner(h)
 	if len(named) == 0 {
 		return ""
 	}
-	hint := fmt.Sprintf(" The responses carry %s, so a reverse proxy may sit in front of Kula: its own header and idle timeouts then apply (nginx waits 60s by default), and a longer -dos-wait shows whether it drops the connections",
+	hint := fmt.Sprintf(" The responses carry %s, so a reverse proxy may sit in front of Kula: its own header and idle timeouts then apply (nginx and Caddy wait 60s by default), and a longer -dos-wait shows whether it drops the connections",
 		strings.Join(named, " and "))
 	if s.dosWait < proxyDoSWait {
 		hint += fmt.Sprintf(" (e.g. -dos-wait %.0fs)", proxyDoSWait.Seconds())
@@ -103,8 +110,9 @@ func (s *Scanner) proxyHint(h http.Header) string {
 	return hint + "."
 }
 
-// proxyDoSWait is the -dos-wait proxyHint suggests: past nginx's default 60s
-// client_header_timeout.
+// proxyDoSWait is the -dos-wait proxyHint suggests: past the 60s nginx
+// (client_header_timeout) and Caddy (read_header) wait by default for a
+// request's headers.
 const proxyDoSWait = 75 * time.Second
 
 // runSlowlorisCheck opens several connections that send a partial request and
@@ -149,7 +157,6 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 	// Availability: a fresh, well-formed request must still succeed while the
 	// slow connections are held open.
 	health := s.do(http.MethodGet, "/health", nil, "")
-	healthOK := health.err == nil && (health.status == http.StatusOK || health.status == http.StatusNotFound)
 
 	// Wait for the server to drop the stalled connections, all against one
 	// deadline: a read that returns before it means the server closed the
@@ -157,27 +164,43 @@ func runSlowlorisCheck(s *Scanner) []Finding {
 	start := time.Now()
 	reapedN := awaitReaping(opened, s.dosWait)
 	elapsed := time.Since(start).Round(time.Second)
+	return []Finding{slowlorisFinding(s, health, len(opened), reapedN, elapsed)}
+}
 
+// slowlorisFinding judges DOS-SLOWLORIS: held half-open requests, reaped of
+// them dropped within -dos-wait, the last after elapsed, and health the
+// request made while they were held. A target that drops none within a
+// -dos-wait shorter than proxyDoSWait, behind what its responses name as a
+// proxy (proxyBanner), is a WARN, not a FAIL: the proxy holds a half-open
+// request until its own header timeout, 60s for nginx and Caddy, which
+// that -dos-wait does not reach.
+func slowlorisFinding(s *Scanner, health httpResult, held, reaped int, elapsed time.Duration) Finding {
+	healthOK := health.err == nil && (health.status == http.StatusOK || health.status == http.StatusNotFound)
 	switch {
 	case !healthOK:
-		return []Finding{finding("DOS-SLOWLORIS", SevHigh, StatusFail,
-			fmt.Sprintf("while %d slow connections were held open, a normal request to /health failed — the server was starved.", len(opened))).
+		return finding("DOS-SLOWLORIS", SevHigh, StatusFail,
+			fmt.Sprintf("while %d slow connections were held open, a normal request to /health failed — the server was starved.", held)).
 			withEvidence("health status=%d err=%v", health.status, health.err).
-			withRemediation("Set http.Server.ReadTimeout so half-open requests are dropped, and front Kula with a reverse proxy.")}
-	case reapedN == len(opened):
-		return []Finding{finding("DOS-SLOWLORIS", SevMedium, StatusPass,
+			withRemediation("Set http.Server.ReadTimeout so half-open requests are dropped, and front Kula with a reverse proxy.")
+	case reaped == held:
+		return finding("DOS-SLOWLORIS", SevMedium, StatusPass,
 			"the server reaped all stalled half-open requests and stayed responsive (ReadTimeout enforced).").
-			withEvidence("%d/%d slow connections dropped within %s", reapedN, len(opened), elapsed)}
-	case reapedN == 0:
-		return []Finding{finding("DOS-SLOWLORIS", SevHigh, StatusFail,
-			fmt.Sprintf("none of %d half-open requests were dropped within %s; the server holds slow connections indefinitely (Slowloris DoS).", len(opened), s.dosWait)+s.proxyHint(health.header)).
-			withEvidence("0/%d reaped within %s", len(opened), s.dosWait).
-			withRemediation("Set http.Server.ReadTimeout (Kula's default is 30s); ensure it is not disabled.")}
+			withEvidence("%d/%d slow connections dropped within %s", reaped, held, elapsed)
+	case reaped == 0 && len(proxyBanner(health.header)) > 0 && s.dosWait < proxyDoSWait:
+		return finding("DOS-SLOWLORIS", SevMedium, StatusWarn,
+			fmt.Sprintf("none of %d half-open requests were dropped within %s, which is shorter than the 60s a reverse proxy commonly waits for a request's headers.", held, s.dosWait)+s.proxyHint(health.header)).
+			withEvidence("0/%d reaped within %s; %s", held, s.dosWait, strings.Join(proxyBanner(health.header), ", ")).
+			withRemediation(fmt.Sprintf("Run again with -dos-wait %.0fs or longer, past the proxy's own header timeout, or scan Kula directly (-connect to its own address).", proxyDoSWait.Seconds()))
+	case reaped == 0:
+		return finding("DOS-SLOWLORIS", SevHigh, StatusFail,
+			fmt.Sprintf("none of %d half-open requests were dropped within %s; the server holds slow connections indefinitely (Slowloris DoS).", held, s.dosWait)+s.proxyHint(health.header)).
+			withEvidence("0/%d reaped within %s", held, s.dosWait).
+			withRemediation("Set http.Server.ReadTimeout (Kula's default is 30s); ensure it is not disabled.")
 	default:
-		return []Finding{finding("DOS-SLOWLORIS", SevMedium, StatusWarn,
-			fmt.Sprintf("only %d of %d stalled connections were reaped within %s.", reapedN, len(opened), s.dosWait)+s.proxyHint(health.header)).
-			withEvidence("%d/%d reaped", reapedN, len(opened)).
-			withRemediation("Verify http.Server.ReadTimeout covers the whole request read.")}
+		return finding("DOS-SLOWLORIS", SevMedium, StatusWarn,
+			fmt.Sprintf("only %d of %d stalled connections were reaped within %s.", reaped, held, s.dosWait)+s.proxyHint(health.header)).
+			withEvidence("%d/%d reaped", reaped, held).
+			withRemediation("Verify http.Server.ReadTimeout covers the whole request read.")
 	}
 }
 
