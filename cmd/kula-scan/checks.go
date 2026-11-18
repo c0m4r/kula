@@ -383,8 +383,9 @@ func (p cspPolicy) restrictedTo(directive string, fallsBack bool, keywords ...st
 }
 
 // scriptProblems lists what in the effective script policy (script-src, else
-// default-src) admits a script without the nonce; none when scripts run only
-// by nonce. name is the directive that governs scripts.
+// default-src) admits a script without the nonce: 'unsafe-inline',
+// 'unsafe-eval', a wildcard host and a bare scheme. None when scripts run
+// only by nonce. name is the directive that governs scripts.
 func (p cspPolicy) scriptProblems() (name string, problems []string) {
 	name, sources, ok := p.effective("script-src", true)
 	if !ok {
@@ -396,7 +397,7 @@ func (p cspPolicy) scriptProblems() (name string, problems []string) {
 		switch {
 		case strings.HasPrefix(lower, "'nonce-") && len(lower) > len("'nonce-'"):
 			nonce = true
-		case lower == "'unsafe-inline'", lower == "'unsafe-eval'", lower == "*", isSchemeSource(lower):
+		case lower == "'unsafe-inline'", lower == "'unsafe-eval'", isWildcardHostSource(lower), isSchemeSource(lower):
 			problems = append(problems, "allows "+src)
 		}
 	}
@@ -404,6 +405,18 @@ func (p cspPolicy) scriptProblems() (name string, problems []string) {
 		problems = append(problems, "carries no nonce")
 	}
 	return name, problems
+}
+
+// isWildcardHostSource reports whether a CSP source is a host source whose
+// host is a wildcard: * alone, or with a scheme, port or path (https://*,
+// http://*:*), which admits any host, and *.example.com, which admits every
+// name under a domain, whoever serves it.
+func isWildcardHostSource(src string) bool {
+	host := src
+	if _, rest, ok := strings.Cut(src, "://"); ok {
+		host = rest
+	}
+	return host == "*" || strings.HasPrefix(host, "*.") || strings.HasPrefix(host, "*:") || strings.HasPrefix(host, "*/")
 }
 
 // isSchemeSource reports whether a CSP source is a bare scheme, such as

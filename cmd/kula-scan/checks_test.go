@@ -583,6 +583,40 @@ func TestCSPJudgement(t *testing.T) {
 	}
 }
 
+// TestCSPWildcardHostSources: a host wildcard in the sources that govern
+// scripts admits a script from any host, or from any name under a domain,
+// without the nonce, as a bare * does; so does default-src standing in for a
+// missing script-src.
+func TestCSPWildcardHostSources(t *testing.T) {
+	for _, c := range []struct{ csp, problem string }{
+		{"default-src 'self'; script-src 'self' 'nonce-abc' https://* http://*; object-src 'none'", "script-src allows https://*, allows http://*"},
+		{"default-src 'self'; script-src 'nonce-abc' *.example.com 'strict-dynamic'", "script-src allows *.example.com"},
+		{"default-src 'self'; script-src 'nonce-abc' https://*.cloudfront.net", "script-src allows https://*.cloudfront.net"},
+		{"default-src 'self'; script-src 'nonce-abc' http://*:*", "script-src allows http://*:*"},
+		{"default-src 'self'; script-src 'nonce-abc' https://*/js/", "script-src allows https://*/js/"},
+		{"default-src 'self'; script-src 'nonce-abc' *", "script-src allows *"},
+		{"default-src 'self' 'nonce-abc' https://*.example.com", "default-src allows https://*.example.com"},
+	} {
+		f, _ := byID(cspFindings(parseCSP([]string{c.csp}), c.csp), "HDR-003")
+		if f.Status != StatusFail || !strings.Contains(f.Detail, c.problem) {
+			t.Errorf("%s: HDR-003 = %s %q, want a FAIL saying %q", c.csp, f.Status, f.Detail, c.problem)
+		}
+	}
+
+	// A second policy whose default-src stands in for script-src, with a
+	// wildcard, admits every script the first admits by 'self' alone.
+	values := []string{"default-src 'self'", "default-src 'nonce-abc' https://*"}
+	if f, _ := byID(cspFindings(parseCSP(values), strings.Join(values, ", ")), "HDR-003"); f.Status != StatusFail {
+		t.Errorf("%q: HDR-003 = %s %q, want a FAIL", values, f.Status, f.Detail)
+	}
+
+	// A named host, on any port, is not a wildcard.
+	named := "default-src 'self'; script-src 'self' 'nonce-abc' https://cdn.example.com:*"
+	if f, _ := byID(cspFindings(parseCSP([]string{named}), named), "HDR-003"); f.Status != StatusPass {
+		t.Errorf("%s: HDR-003 = %s %q, want a PASS", named, f.Status, f.Detail)
+	}
+}
+
 func TestExpectFrameProtectionWithoutCSP(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/auth/status" {
