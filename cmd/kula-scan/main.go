@@ -88,8 +88,8 @@ func newFlagSet(stderr io.Writer) (*flag.FlagSet, *cliFlags) {
 
 	f := &cliFlags{}
 	fs.StringVar(&f.target, "target", "", "target base URL, e.g. http://localhost:27960 (or pass as positional arg)")
-	fs.StringVar(&f.username, "username", "", "username for authenticated checks (optional)")
-	fs.StringVar(&f.password, "password", "", "password for authenticated checks (optional; prefer the "+passwordEnv+" environment variable)")
+	fs.StringVar(&f.username, "username", "", "username for authenticated checks (optional; needs a password)")
+	fs.StringVar(&f.password, "password", "", "password for authenticated checks, with -username (optional; prefer the "+passwordEnv+" environment variable)")
 	fs.StringVar(&f.basePath, "base-path", "", "base path if kula is mounted under one, e.g. /kula")
 	fs.StringVar(&f.connect, "connect", "", "connect to this host:port instead of the target URL's address; the URL still gives the Host header, TLS server name and origin")
 	fs.StringVar(&f.unix, "unix", "", "connect over this Unix socket (Kula's web.unix_socket); the URL still gives the Host header and base path")
@@ -177,12 +177,17 @@ func runCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 2
 	}
+	password := resolvePassword(f.password)
+	if err := credentialsError(f.username, f.password, password); err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return 2
+	}
 
 	scanner, err := NewScanner(Options{
 		Target:     tgt,
 		BasePath:   f.basePath,
 		Username:   f.username,
-		Password:   resolvePassword(f.password),
+		Password:   password,
 		Timeout:    f.timeout,
 		DoSWait:    f.dosWait,
 		Insecure:   f.insecure,
@@ -302,6 +307,23 @@ func resolvePassword(flagValue string) string {
 	return os.Getenv(passwordEnv)
 }
 
+// credentialsError returns the usage error of half a set of credentials: a
+// -username without a password from -password or passwordEnv, which a
+// missing CI secret produces and which would otherwise run the scan without
+// a session and pass, or a -password without a -username. passwordFlag is
+// the -password value, password the one resolvePassword chose. A password
+// in passwordEnv without a -username is no error: the variable may be set
+// for other scans, and a scan without -username opens no session.
+func credentialsError(username, passwordFlag, password string) error {
+	switch {
+	case username != "" && password == "":
+		return fmt.Errorf("-username has no password: pass it in %s (or -password); %s is empty or unset", passwordEnv, passwordEnv)
+	case username == "" && passwordFlag != "":
+		return errors.New("-password has no -username: pass both to scan with a session, or neither to scan without one")
+	}
+	return nil
+}
+
 // metricsTokenEnv names the environment variable that can carry the
 // Prometheus token instead of -metrics-token, for the reasons passwordEnv
 // carries the password.
@@ -386,9 +408,10 @@ Examples:
 
 Flags:
   -target string      target base URL (or pass as positional arg)
-  -username string    username for authenticated checks
-  -password string    password for authenticated checks; KULA_SCAN_PASSWORD in the
-                      environment keeps it out of the process list and shell history
+  -username string    username for authenticated checks; it needs a password, else
+                      the scan does not start (exit 2)
+  -password string    password for authenticated checks, with -username; KULA_SCAN_PASSWORD
+                      in the environment keeps it out of the process list and shell history
   -metrics-token string
                       Prometheus bearer token /metrics should accept (PROM-003);
                       KULA_SCAN_METRICS_TOKEN in the environment keeps it out of the process list
