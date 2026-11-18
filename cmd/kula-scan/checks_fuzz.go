@@ -1132,9 +1132,11 @@ func runFuzzMethods(s *Scanner) []Finding {
 // 500 (net/http answers two Content-Lengths 400 and two Transfer-Encodings
 // 501 before routing, and reads Content-Length with chunked as chunked).
 // That is all one server shows: a desync is a disagreement between a proxy
-// and the server behind it on where a request ends. The requests carry no
-// Origin, so with origin validation off they reach login's limiter (see
-// allChecks).
+// and the server behind it on where a request ends. A closed connection is a
+// refusal; a request not delivered, or not answered within -timeout, shows
+// nothing, and without an anomaly elsewhere makes the finding an ERROR. The
+// requests carry no Origin, so with origin validation off they reach login's
+// limiter (see allChecks).
 func runFuzzSmuggle(s *Scanner) []Finding {
 	host := s.base.Host
 	bp := s.base.Path
@@ -1158,12 +1160,14 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 	for i, raw := range raws {
 		status, _, err := s.rawExchange(strings.Replace(raw, hostLine, hostLine+extra, 1))
 		if err != nil {
+			// Not delivered, or not answered within -timeout: either way
+			// the target said nothing about this framing.
 			lost.add(err)
 			continue
 		}
 		answer := fmt.Sprintf("HTTP %d", status)
 		if status == 0 {
-			answer = "no answer (the connection closed, or nothing came within -timeout)"
+			answer = "the connection closed without a response"
 		}
 		answers = append(answers, names[i]+": "+answer)
 		switch {
@@ -1175,8 +1179,8 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 			hits = append(hits, fuzzHit{fmt.Sprintf("accepted ambiguous framing (HTTP %d)", status), truncate(strings.ReplaceAll(raw, "\r\n", "\\n"), 90)})
 		}
 	}
-	delivered := len(raws) - lost.n
-	observed := fmt.Sprintf("%d of %d ambiguously framed requests to /api/login delivered", delivered, len(raws))
+	answered := len(raws) - lost.n
+	observed := fmt.Sprintf("%d of %d ambiguously framed requests to /api/login answered or refused", answered, len(raws))
 	if len(answers) > 0 {
 		observed += ": " + strings.Join(answers, "; ")
 	}
@@ -1192,7 +1196,7 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 			observed+". None was accepted with a 2xx or answered HTTP 500. That is how this server reads the framing; "+
 				"a desync is a disagreement between a proxy and the server behind it, which one server's answers cannot show.")}
 	}
-	t := &fuzzTally{planned: len(raws), sent: delivered}
+	t := &fuzzTally{planned: len(raws), sent: answered + lost.silent}
 	note := ""
 	for _, h := range hits {
 		t.hit(h.kind, h.req)

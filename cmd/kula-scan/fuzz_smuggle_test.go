@@ -7,15 +7,14 @@ import (
 )
 
 // TestFuzzSmuggleSaysWhatItObserved: FUZZ-SMUGGLE reports how many of its
-// requests were delivered and what each was answered, and claims nothing
-// about a desync, which one server cannot show. net/http refuses two of
-// them before routing; Kula's CSRF gate refuses the third, which carries no
-// Origin.
+// requests were answered or refused, and how, and claims nothing about a
+// desync, which one server cannot show. net/http refuses two of them before
+// routing; Kula's CSRF gate refuses the third, which carries no Origin.
 func TestFuzzSmuggleSaysWhatItObserved(t *testing.T) {
 	m := newKulaMock(true, false)
 	s, _ := m.serve(t, Options{})
 	f, _ := byID(runFuzzSmuggle(s), "FUZZ-SMUGGLE")
-	want := "3 of 3 ambiguously framed requests to /api/login delivered: two Content-Lengths: HTTP 400; " +
+	want := "3 of 3 ambiguously framed requests to /api/login answered or refused: two Content-Lengths: HTTP 400; " +
 		"Content-Length with chunked Transfer-Encoding: HTTP 403; two Transfer-Encodings: HTTP 501. None was accepted with a 2xx or answered HTTP 500."
 	if f.Status != StatusPass || !strings.HasPrefix(f.Detail, want) {
 		t.Errorf("FUZZ-SMUGGLE = %s: %s; want a PASS starting %q", f.Status, f.Detail, want)

@@ -1133,8 +1133,12 @@ func runTraversalChecks(s *Scanner) []Finding {
 	// Positive control: a real static asset is served, so negatives are meaningful.
 	code, _, err := s.rawTCP("GET " + bp + "/style.css HTTP/1.1")
 	if err != nil {
-		// A raw request reaches nothing, so no probe below can tell a thing.
+		// A raw request reaches nothing, or draws no answer, so no probe
+		// below can tell a thing.
 		detail := "could not deliver a raw-socket request to the target: " + err.Error()
+		if errors.Is(err, errNoAnswer) {
+			detail = "a raw-socket GET /style.css got " + err.Error()
+		}
 		return []Finding{
 			finding("TRAV-000", SevInfo, StatusError, detail),
 			finding("TRAV-001", SevInfo, StatusError, detail+"; no traversal payload was sent."),

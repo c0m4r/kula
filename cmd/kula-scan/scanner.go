@@ -637,11 +637,13 @@ func (c *runConn) Close() error {
 // client-side URL normalisation, followed by the Host line, the -H headers
 // and Connection: close. This is how traversal payloads are delivered.
 //
-// It returns the status code and body. An error means the request was not
-// delivered: the connection or the write failed, and the target has said
-// nothing. A status of 0 without an error means the target took the request
-// and closed the connection without a parsable response: it rejected the
-// request at the protocol layer (an acceptable, safe outcome).
+// It returns the status code and body. An error means the target said
+// nothing to the request: either it was not delivered (the connection or the
+// write failed), or the target took it and, within -timeout, neither
+// answered nor closed the connection (errNoAnswer). A status of 0 without an
+// error means the target took the request and closed or reset the
+// connection without a parsable response: it rejected the request at the
+// protocol layer (an acceptable, safe outcome).
 func (s *Scanner) rawTCP(requestLine string) (int, string, error) {
 	return s.rawExchange(fmt.Sprintf("%s\r\nHost: %s\r\n%sConnection: close\r\n\r\n", requestLine, s.base.Host, s.rawHeaderLines(nil)))
 }
@@ -651,8 +653,9 @@ func (s *Scanner) rawTCP(requestLine string) (int, string, error) {
 // used by the request-smuggling probes that need conflicting/duplicate framing
 // headers the net/http client refuses to send; a caller adds the -H headers
 // with rawHeaderLines. As with rawTCP, an error means the request was not
-// delivered, and a status of 0 without one that the target closed or
-// rejected the connection at the protocol layer.
+// delivered or not answered within -timeout (errNoAnswer), and a status of 0
+// without one that the target closed or rejected the connection at the
+// protocol layer.
 func (s *Scanner) rawExchange(raw string) (int, string, error) {
 	conn, err := s.dialRaw()
 	if err != nil {
@@ -664,43 +667,74 @@ func (s *Scanner) rawExchange(raw string) (int, string, error) {
 	if _, err := io.WriteString(conn, raw); err != nil {
 		return 0, "", err
 	}
-	status, body := readRawResponse(conn)
+	status, body, answered := readRawResponse(conn)
+	if !answered {
+		return 0, "", fmt.Errorf("%w within -timeout (%s): the target neither responded nor closed the connection", errNoAnswer, s.timeout)
+	}
 	return status, body, nil
 }
 
+// errNoAnswer marks a raw request the target took and left unanswered: the
+// read reached the connection's deadline before a response or a close.
+// Silence proves nothing about the request, so a probe that meets it reports
+// an ERROR (see undelivered), never a refusal at the protocol layer.
+var errNoAnswer = errors.New("no answer")
+
 // readRawResponse reads the response to a request written on conn: its
-// status and body, or status 0 when the target closed the connection, or
-// stopped answering, without a parsable response.
-func readRawResponse(conn net.Conn) (int, string) {
+// status and body, or status 0 when the target closed or reset the
+// connection without a parsable response. answered is false when the read
+// reached conn's deadline first: the target neither responded nor closed.
+func readRawResponse(conn net.Conn) (status int, body string, answered bool) {
 	resp, err := readResponse(conn)
-	if err != nil {
-		return 0, ""
+	switch {
+	case err != nil && isReadTimeout(err):
+		return 0, "", false
+	case err != nil:
+		return 0, "", true
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
-	return resp.StatusCode, string(body)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
+	return resp.StatusCode, string(raw), true
 }
 
-// undelivered counts the raw requests of a probe that never reached the
-// target (rawTCP or rawExchange returned an error), keeping the first error.
-// Such a request proves nothing either way: a probe that lost any reports
-// an ERROR rather than a PASS.
+// undelivered counts the raw requests of a probe that drew nothing from the
+// target: rawTCP or rawExchange returned an error because the request was
+// not delivered, or because the target took it and did not answer within
+// -timeout (errNoAnswer). Such a request proves nothing either way: a probe
+// that lost any reports an ERROR rather than a PASS.
 type undelivered struct {
-	n     int
-	first error
+	n      int   // requests that drew nothing
+	first  error // the first one not delivered
+	silent int   // of n, delivered and not answered
+	quiet  error // the first one not answered
 }
 
 func (u *undelivered) add(err error) {
-	if u.n == 0 {
+	u.n++
+	if errors.Is(err, errNoAnswer) {
+		if u.silent == 0 {
+			u.quiet = err
+		}
+		u.silent++
+		return
+	}
+	if u.first == nil {
 		u.first = err
 	}
-	u.n++
 }
 
-// detail says how many of total requests, named by what, were not
-// delivered, and why.
+// detail says how many of total requests, named by what, drew nothing, and
+// why: not delivered, or not answered.
 func (u *undelivered) detail(total int, what string) string {
-	return fmt.Sprintf("%d of %d %s could not be delivered over a raw socket (%v)", u.n, total, what, u.first)
+	switch lost := u.n - u.silent; {
+	case u.silent == 0:
+		return fmt.Sprintf("%d of %d %s could not be delivered over a raw socket (%v)", u.n, total, what, u.first)
+	case lost == 0:
+		return fmt.Sprintf("%d of %d %s got %v", u.n, total, what, u.quiet)
+	default:
+		return fmt.Sprintf("%d of %d %s drew nothing: %d could not be delivered over a raw socket (%v), and %d got %v",
+			u.n, total, what, lost, u.first, u.silent, u.quiet)
+	}
 }
 
 // Bounds on what a target can make the scanner hold. Kula's responses are far
