@@ -1012,8 +1012,13 @@ func (s *Scanner) ensureSession() bool {
 	if s.username == "" || s.password == "" {
 		return false
 	}
+	if err := s.ctx.Err(); err != nil {
+		// Interrupted: a session opened now would only be logged out.
+		s.login, s.loginDetail = loginFailed, "the run was interrupted before the login"
+		return false
+	}
 
-	r := s.loginRaw(s.username, s.password)
+	r := s.sessionLogin()
 	switch {
 	case r.err != nil:
 		s.login, s.loginDetail = loginFailed, "the login request failed: "+r.err.Error()
@@ -1043,6 +1048,30 @@ func (s *Scanner) ensureSession() bool {
 		}
 	}
 	return s.loggedIn
+}
+
+// sessionLogin sends the run's login with the supplied credentials under a
+// context an interrupt does not cancel, bounded by -timeout alone. Kula
+// opens the session whether or not the client is still there to read the
+// cookie; seeing the answer through captures the cookie, so the closing
+// logout can end the session instead of leaving it open on the target until
+// it expires.
+func (s *Scanner) sessionLogin() httpResult {
+	return s.loginContext(context.WithoutCancel(s.ctx), s.username, s.password)
+}
+
+// loginContext is loginRaw under parent instead of the run's context: a
+// same-origin JSON login with username and password.
+func (s *Scanner) loginContext(parent context.Context, username, password string) httpResult {
+	b, err := json.Marshal(map[string]string{"username": username, "password": password})
+	if err != nil {
+		return httpResult{err: err}
+	}
+	headers := map[string]string{
+		"Content-Type": "application/json",
+		"Origin":       s.base.Scheme + "://" + s.base.Host,
+	}
+	return s.doContext(parent, http.MethodPost, "/api/login", headers, string(b))
 }
 
 // allChecks returns the full registry in execution order. Categories run
