@@ -327,6 +327,15 @@ func runHistoryBurstCheck(s *Scanner) []Finding {
 		}
 	}
 
+	return []Finding{judgeHistoryBurst(answers, wait, healthy, probes, unhealthy)}
+}
+
+// judgeHistoryBurst judges DOS-HISTORY from how each burst request ended,
+// each given wait, and from /health during the burst: healthy of probes
+// answered, and unhealthy says how the others failed. A burst passes only
+// when every request was sent: the answers to a partial burst say nothing
+// of a full one.
+func judgeHistoryBurst(answers []burstAnswer, wait time.Duration, healthy, probes int, unhealthy []string) Finding {
 	var hung, broken, odd, undelivered, refused int
 	answered, deferred := 0, 0
 	var slowest time.Duration
@@ -365,11 +374,11 @@ func runHistoryBurstCheck(s *Scanner) []Finding {
 	burst := fmt.Sprintf("%d concurrent 31-day, 5000-point history requests", historyBurst)
 	switch {
 	case undelivered == historyBurst:
-		return []Finding{finding("DOS-HISTORY", SevInfo, StatusError,
-			"could not send any of "+burst+".").withEvidence("%s", evidence)}
+		return finding("DOS-HISTORY", SevInfo, StatusError,
+			"could not send any of "+burst+".").withEvidence("%s", evidence)
 	case refused == historyBurst:
-		return []Finding{finding("DOS-HISTORY", SevInfo, StatusError,
-			"the history requests were refused (HTTP 401/403) with the scanner's session, so the burst reached no query.").withEvidence("%s", evidence)}
+		return finding("DOS-HISTORY", SevInfo, StatusError,
+			"the history requests were refused (HTTP 401/403) with the scanner's session, so the burst reached no query.").withEvidence("%s", evidence)
 	case hung > 0 || len(unhealthy) > 0:
 		var what []string
 		if hung > 0 {
@@ -378,32 +387,32 @@ func runHistoryBurstCheck(s *Scanner) []Finding {
 		if len(unhealthy) > 0 {
 			what = append(what, fmt.Sprintf("/health failed %d of %d times during the burst (%s)", len(unhealthy), probes, unhealthy[0]))
 		}
-		return []Finding{finding("DOS-HISTORY", SevHigh, StatusFail,
+		return finding("DOS-HISTORY", SevHigh, StatusFail,
 			"under a burst of "+burst+", "+strings.Join(what, ", and ")+": history queries can starve the server.").
 			withEvidence("%s", evidence).
-			withRemediation("Upgrade Kula (0.22.0 and later run two history queries at a time and answer the rest 503 with Retry-After), and keep a proxy in front from queuing requests without a timeout.")}
+			withRemediation("Upgrade Kula (0.22.0 and later run two history queries at a time and answer the rest 503 with Retry-After), and keep a proxy in front from queuing requests without a timeout.")
 	case broken > 0:
-		return []Finding{finding("DOS-HISTORY", SevMedium, StatusFail,
+		return finding("DOS-HISTORY", SevMedium, StatusFail,
 			fmt.Sprintf("under a burst of %s, %d answered with a server error or a dropped connection, not data or Kula's 503 with Retry-After.", burst, broken)).
 			withEvidence("%s", evidence).
-			withRemediation("Upgrade Kula (0.22.0 and later defer history requests past two at a time with 503 and Retry-After).")}
+			withRemediation("Upgrade Kula (0.22.0 and later defer history requests past two at a time with 503 and Retry-After).")
 	case odd > 0 || refused > 0:
-		return []Finding{finding("DOS-HISTORY", SevLow, StatusWarn,
+		return finding("DOS-HISTORY", SevLow, StatusWarn,
 			fmt.Sprintf("under a burst of %s, %d answered neither with data nor with Kula's 503 and Retry-After.", burst, odd+refused)).
-			withEvidence("%s", evidence)}
-	}
-	note := ""
-	if undelivered > 0 {
-		note = fmt.Sprintf("; %d could not be sent", undelivered)
+			withEvidence("%s", evidence)
+	case undelivered > 0:
+		return finding("DOS-HISTORY", SevInfo, StatusError,
+			fmt.Sprintf("%d of %s could not be sent, so fewer requests than the burst needs competed for Kula's two query slots; the %d sent were answered with data or deferred with 503 and Retry-After, which says nothing of a full burst.",
+				undelivered, burst, historyBurst-undelivered)).withEvidence("%s", evidence)
 	}
 	probed := "the probe"
 	if probes > 1 {
 		probed = fmt.Sprintf("each of %d probes", probes)
 	}
-	return []Finding{finding("DOS-HISTORY", SevMedium, StatusPass,
-		fmt.Sprintf("a burst of %s was answered: %d with data and %d deferred with 503 and Retry-After, the slowest after %s%s; /health answered %s sent during the burst. A store that answers each query quickly may never show Kula's cap of two queries at a time.",
-			burst, answered, deferred, slowest.Round(time.Millisecond), note, probed)).
-		withEvidence("%s", evidence)}
+	return finding("DOS-HISTORY", SevMedium, StatusPass,
+		fmt.Sprintf("a burst of %s was answered: %d with data and %d deferred with 503 and Retry-After, the slowest after %s; /health answered %s sent during the burst. A store that answers each query quickly may never show Kula's cap of two queries at a time.",
+			burst, answered, deferred, slowest.Round(time.Millisecond), probed)).
+		withEvidence("%s", evidence)
 }
 
 // burstRequest GETs path with headers, given wait in all, and reads its

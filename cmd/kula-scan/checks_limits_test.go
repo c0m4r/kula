@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -334,6 +336,31 @@ func TestHistoryBurstNeedsASession(t *testing.T) {
 	s = limitScanner(t, secureMock(), mockUser, 5*time.Second)
 	if f, _ := byID(runHistoryBurstCheck(s), "DOS-HISTORY"); f.Status != StatusPass {
 		t.Errorf("with a session: DOS-HISTORY = %s %q | %s", f.Status, f.Detail, f.Evidence)
+	}
+}
+
+// TestHistoryBurstNeedsEveryRequestSent: a burst passes only when all of its
+// requests were sent. Seven answered and one never sent is an ERROR, not a
+// PASS: seven requests may not compete for Kula's two slots as eight do.
+func TestHistoryBurstNeedsEveryRequestSent(t *testing.T) {
+	answers := make([]burstAnswer, historyBurst)
+	for i := range answers {
+		answers[i] = burstAnswer{status: http.StatusOK, took: 10 * time.Millisecond}
+	}
+	if f := judgeHistoryBurst(answers, time.Second, 1, 1, nil); f.Status != StatusPass {
+		t.Fatalf("every request answered: DOS-HISTORY = %s %q", f.Status, f.Detail)
+	}
+
+	answers[3] = burstAnswer{err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}}
+	f := judgeHistoryBurst(answers, time.Second, 1, 1, nil)
+	if f.Status != StatusError || !strings.Contains(f.Detail, "1 of 8 concurrent") || !strings.Contains(f.Evidence, "connection refused") {
+		t.Errorf("one request not sent: DOS-HISTORY = %s %q | %s, want an ERROR naming it", f.Status, f.Detail, f.Evidence)
+	}
+
+	// A failure among the requests that were sent is still judged.
+	answers[5] = burstAnswer{status: http.StatusInternalServerError}
+	if f := judgeHistoryBurst(answers, time.Second, 1, 1, nil); f.Status != StatusFail {
+		t.Errorf("one not sent and one 500: DOS-HISTORY = %s %q, want a FAIL", f.Status, f.Detail)
 	}
 }
 
