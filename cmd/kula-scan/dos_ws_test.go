@@ -90,19 +90,83 @@ func streamingWSTarget(t *testing.T, readLimit int64) *httptest.Server {
 	return ts
 }
 
-// TestWSMessageBombTellsATimeoutFromAClose: a server with no read limit that
-// keeps streaming is still open at the deadline, which is no close.
-func TestWSMessageBombTellsATimeoutFromAClose(t *testing.T) {
-	unlimited := streamingWSTarget(t, 0)
-	f, _ := byID(runWSMsgBombCheck(dosScanner(t, unlimited.URL, time.Second, time.Second)), "WS-MSGBOMB")
-	if f.Status != StatusWarn || !strings.Contains(f.Detail, "still open") {
-		t.Errorf("WS-MSGBOMB against a server with no read limit = %s %q | %q, want WARN", f.Status, f.Detail, f.Evidence)
+// readPumpWSTarget serves /ws as Kula's read pump reads it: each message is
+// decoded as a {"action": ...} command, and any message that does not
+// decode ends the connection with a close frame. readLimit bounds a client
+// message as Kula's SetReadLimit(4096) does; 0 sets no limit. It streams
+// nothing, so only its answers to the scanner show it is alive.
+func readPumpWSTarget(t *testing.T, readLimit int64) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		conn.SetReadLimit(readLimit)
+		for {
+			var cmd struct {
+				Action string `json:"action"`
+			}
+			if err := conn.ReadJSON(&cmd); err != nil {
+				_ = conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+		}
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// TestWSMessageBombJudgesTheReadLimitAlone: the oversized message is a
+// command Kula accepts, so a server that reads commands as Kula does but
+// sets no read limit keeps the connection and answers the ping after it,
+// which fails; with the limit it closes. A server that neither closes nor
+// answers is a WARN.
+func TestWSMessageBombJudgesTheReadLimitAlone(t *testing.T) {
+	var cmd struct {
+		Action string `json:"action"`
+	}
+	if bomb := wsBomb(); len(bomb) != 64<<10 || json.Unmarshal(bomb, &cmd) != nil || cmd.Action != "resume" {
+		t.Fatalf("the oversized message is %d bytes and decodes to %+v; want 64 KiB of a resume command", len(bomb), cmd)
 	}
 
-	// gorilla answers a message past the limit with a 1009 close, and the
-	// scanner may still be writing it when the connection goes.
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		time.Sleep(2 * time.Second) // reads nothing
+		_ = conn.Close()
+	}))
+	t.Cleanup(stalled.Close)
+
+	cases := []struct {
+		name   string
+		target *httptest.Server
+		want   Status
+		says   string
+	}{
+		{"Kula's read pump without a read limit", readPumpWSTarget(t, 0), StatusFail, "answered a ping sent after it"},
+		{"Kula's read pump with SetReadLimit(4096)", readPumpWSTarget(t, 4096), StatusPass, "64 KiB JSON command"},
+		{"a stream without a read limit", streamingWSTarget(t, 0), StatusFail, "answered a ping sent after it"},
+		{"a stream with SetReadLimit(4096)", streamingWSTarget(t, 4096), StatusPass, ""},
+		{"a server that stopped reading", stalled, StatusWarn, "went unanswered"},
+	}
+	for _, c := range cases {
+		f, _ := byID(runWSMsgBombCheck(dosScanner(t, c.target.URL, time.Second, time.Second)), "WS-MSGBOMB")
+		if f.Status != c.want || !strings.Contains(f.Detail, c.says) {
+			t.Errorf("%s: WS-MSGBOMB = %s %q | %q; want %s saying %q", c.name, f.Status, f.Detail, f.Evidence, c.want, c.says)
+		}
+	}
+}
+
+// TestWSMessageBombTellsATimeoutFromAClose: gorilla answers a message past
+// the limit with a 1009 close, and the scanner may still be writing it when
+// the connection goes; either is a close.
+func TestWSMessageBombTellsATimeoutFromAClose(t *testing.T) {
 	limited := streamingWSTarget(t, 4096)
-	f, _ = byID(runWSMsgBombCheck(dosScanner(t, limited.URL, 5*time.Second, time.Second)), "WS-MSGBOMB")
+	f, _ := byID(runWSMsgBombCheck(dosScanner(t, limited.URL, 5*time.Second, time.Second)), "WS-MSGBOMB")
 	if f.Status != StatusPass || !strings.Contains(f.Evidence, "1009") && !strings.Contains(f.Evidence, "write:") {
 		t.Errorf("WS-MSGBOMB against SetReadLimit(4096) = %s %q | %q, want PASS on a close", f.Status, f.Detail, f.Evidence)
 	}

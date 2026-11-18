@@ -154,7 +154,7 @@ var catalog = []catalogEntry{
 	{"WS-FLOOD", "ws", ModeAggressive, "WebSocket per-IP connection limit",
 		"Upgrades past the per-IP WebSocket limit are refused with 429."},
 	{"WS-MSGBOMB", "ws", ModeAggressive, "WebSocket message size limit",
-		"The server drops a WebSocket connection that sends a message past its read limit."},
+		"The server drops a WebSocket connection that sends a well-formed 64 KiB JSON command, past its read limit, instead of reading it and answering a ping after it."},
 
 	{"INPUT-001", "input", ModeDefault, "History range validation",
 		"/api/history answers 400 to malformed, inverted and over-long time ranges, a negative or non-numeric tier and an unknown section."},

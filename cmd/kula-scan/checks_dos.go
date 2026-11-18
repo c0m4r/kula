@@ -326,9 +326,31 @@ func runConnFloodCheck(s *Scanner) []Finding {
 		withRemediation("Ensure http.Server.IdleTimeout/ReadTimeout are set so idle sockets cannot accumulate.")}
 }
 
+// WS-MSGBOMB's message and the ping that follows it.
+const (
+	wsBombSize = 64 << 10 // sixteen times Kula's 4 KiB read limit
+	wsBombPing = "kula-scan WS-MSGBOMB"
+	// wsBombGrace is how long a connection that answered the ping is
+	// watched for a close, in case a proxy in front answered the ping
+	// itself; -timeout bounds it too, when shorter.
+	wsBombGrace = time.Second
+)
+
+// wsBomb returns the message WS-MSGBOMB sends: the resume command Kula's
+// read pump understands, which changes nothing on a stream that is not
+// paused, padded with insignificant JSON whitespace to wsBombSize bytes.
+// Kula hangs up on a message it cannot parse, read limit or not; this one
+// parses, so only the read limit can make Kula close the connection.
+func wsBomb() []byte {
+	const head, tail = `{"action":"resume"`, `}`
+	return []byte(head + strings.Repeat(" ", wsBombSize-len(head)-len(tail)) + tail)
+}
+
 // runWSMsgBombCheck opens an authenticated, same-origin WebSocket and sends a
-// message larger than the server's read limit (4096 bytes). The server must
-// drop the connection rather than buffer an unbounded client message.
+// well-formed JSON command larger than the server's read limit (4096 bytes),
+// then a ping. The server must drop the connection rather than read an
+// unbounded client message. A pong proves the opposite: the server read past
+// the whole message, and kept the connection open.
 func runWSMsgBombCheck(s *Scanner) []Finding {
 	var hdr http.Header
 	if s.authEnabled {
@@ -355,29 +377,24 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 	}
 	defer s.closeWS(conn)
 
-	// Send a message well past the 4 KiB server read limit.
-	_ = conn.SetWriteDeadline(time.Now().Add(s.timeout))
-	bomb := make([]byte, 64*1024)
-	for i := range bomb {
-		bomb[i] = 'A'
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, bomb); err != nil {
-		switch {
-		case isHangUp(err):
-			// The server tore the connection down while the message was
-			// still arriving: the limit is enforced.
-			return []Finding{finding("WS-MSGBOMB", SevLow, StatusPass,
-				"the server dropped the connection when an oversized message was sent (read limit enforced).").
-				withEvidence("write: %v", err)}
-		case isReadTimeout(err):
-			return []Finding{finding("WS-MSGBOMB", SevMedium, StatusWarn,
-				fmt.Sprintf("the server stopped reading a 64 KiB client message but kept the connection open for %s; the read limit may not be enforced.", s.timeout)).
-				withEvidence("write: %v", err).
-				withRemediation("Call conn.SetReadLimit on the WebSocket to bound inbound message size.")}
-		default:
-			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
-				"sending the oversized message failed, which says nothing of the read limit: "+err.Error())}
+	// The pong comes back through the read loop below. Once it has, the
+	// connection is watched for wsBombGrace more, for a close.
+	ponged := false
+	conn.SetPongHandler(func(data string) error {
+		if data == wsBombPing && !ponged {
+			ponged = true
+			_ = conn.SetReadDeadline(time.Now().Add(min(wsBombGrace, s.timeout)))
 		}
+		return nil
+	})
+
+	_ = conn.SetWriteDeadline(time.Now().Add(s.timeout))
+	err = conn.WriteMessage(websocket.TextMessage, wsBomb())
+	if err == nil {
+		err = conn.WriteControl(websocket.PingMessage, []byte(wsBombPing), time.Now().Add(s.timeout))
+	}
+	if err != nil {
+		return []Finding{wsBombWriteFinding(s, err)}
 	}
 
 	// The server normally streams metric frames; read past those until it
@@ -395,18 +412,44 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 			// wsDial caps what the scanner reads; Kula's frames are far smaller.
 			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
 				"the server sent a WebSocket message over 1 MiB, which the scanner does not read; this is not Kula's live stream.")}
-		case isReadTimeout(err):
-			return []Finding{finding("WS-MSGBOMB", SevMedium, StatusWarn,
-				fmt.Sprintf("the connection was still open %s after a 64 KiB client message; the read limit may not be enforced.", s.timeout)).
-				withEvidence("%v", err).
-				withRemediation("Call conn.SetReadLimit on the WebSocket to bound inbound message size.")}
 		case errors.As(err, &closeErr), isHangUp(err):
 			return []Finding{finding("WS-MSGBOMB", SevLow, StatusPass,
-				"the server closed the connection after an oversized client message (SetReadLimit enforced).").
+				"the server closed the connection on a well-formed 64 KiB JSON command, sixteen times Kula's 4 KiB read limit (SetReadLimit enforced).").
 				withEvidence("close: %v", err)}
+		case isReadTimeout(err) && ponged:
+			return []Finding{finding("WS-MSGBOMB", SevHigh, StatusFail,
+				"the server read a well-formed 64 KiB JSON command, sixteen times Kula's 4 KiB read limit, and answered a ping sent after it without closing the connection: no read limit bounds a client message, which can be used for memory exhaustion.").
+				withEvidence("pong received; the connection was still open %s later", min(wsBombGrace, s.timeout)).
+				withRemediation("Call conn.SetReadLimit on the WebSocket to bound inbound message size (Kula sets 4096 bytes).")}
+		case isReadTimeout(err):
+			return []Finding{finding("WS-MSGBOMB", SevMedium, StatusWarn,
+				fmt.Sprintf("the connection was still open %s after a 64 KiB JSON command, and a ping sent after it went unanswered: the server neither closed it nor showed that it read the message; the read limit may not be enforced.", s.timeout)).
+				withEvidence("%v", err).
+				withRemediation("Call conn.SetReadLimit on the WebSocket to bound inbound message size.")}
 		default:
 			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
 				"reading from the WebSocket after the oversized message failed, which says nothing of the read limit: "+err.Error())}
 		}
+	}
+}
+
+// wsBombWriteFinding judges WS-MSGBOMB when sending the oversized message,
+// or the ping after it, failed with err.
+func wsBombWriteFinding(s *Scanner, err error) Finding {
+	switch {
+	case isHangUp(err):
+		// The server tore the connection down while the message was
+		// still arriving: the limit is enforced.
+		return finding("WS-MSGBOMB", SevLow, StatusPass,
+			"the server dropped the connection while a well-formed 64 KiB JSON command was being sent (read limit enforced).").
+			withEvidence("write: %v", err)
+	case isReadTimeout(err):
+		return finding("WS-MSGBOMB", SevMedium, StatusWarn,
+			fmt.Sprintf("the server stopped reading a 64 KiB client message but kept the connection open for %s; the read limit may not be enforced.", s.timeout)).
+			withEvidence("write: %v", err).
+			withRemediation("Call conn.SetReadLimit on the WebSocket to bound inbound message size.")
+	default:
+		return finding("WS-MSGBOMB", SevInfo, StatusError,
+			"sending the oversized message failed, which says nothing of the read limit: "+err.Error())
 	}
 }
