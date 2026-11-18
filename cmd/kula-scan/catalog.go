@@ -159,7 +159,7 @@ var catalog = []catalogEntry{
 	{"INPUT-001", "input", ModeDefault, "History range validation",
 		"/api/history answers 400 to malformed, inverted and over-long time ranges, a negative or non-numeric tier and an unknown section."},
 	{"INPUT-002", "input", ModeDefault, "History points cap",
-		"/api/history answers an absurd points value over two hours with no more than 5000 samples."},
+		"/api/history answers an absurd points value over the last two hours with no more than 5000 samples, once those hours hold more than 5000 stored records; a store that holds fewer is skipped (cap not reached)."},
 	{"INPUT-003", "input", ModeDefault, "i18n language validation",
 		"/api/i18n rejects invalid and traversal language codes and reads no other file."},
 	{"INPUT-AGG", "input", ModeAggressive, "Login body size cap",

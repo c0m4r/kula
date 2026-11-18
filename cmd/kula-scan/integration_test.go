@@ -53,6 +53,10 @@ var (
 	// Skipped while /metrics is off, as it is by default; PROM-002 is not
 	// reported.
 	realNoMetrics = []string{"PROM-001", "PROM-003"}
+	// Skipped on the fresh store each instance starts with: the points cap
+	// is judged only once the last two hours hold more records than the
+	// cap (cap not reached).
+	realFreshStore = []string{"INPUT-002"}
 	// Skipped when Kula refuses the scanner's Host name (DISC-003): they would
 	// read the refusal as their own safeguard holding.
 	realRefusedHost = []string{"CSRF-001", "CSRF-002", "CSRF-003", "CSRF-004", "CORS-001", "CORS-002", "CORS-003",
@@ -126,7 +130,7 @@ func realPostures(slow bool) []realPosture {
 				args: func(_ *testing.T, k *realKula) []string { return argv(authOffExpect, k.url) },
 				want: realScanWant{
 					warn:   []string{"AUTH-000"},
-					skip:   idsOf(realTLSOnly, realAggressive, realFuzz, realNoMetrics),
+					skip:   idsOf(realTLSOnly, realFreshStore, realAggressive, realFuzz, realNoMetrics),
 					silent: authOffSilent,
 				},
 			}, {
@@ -159,7 +163,7 @@ func realPostures(slow bool) []realPosture {
 				},
 				want: realScanWant{
 					warn:   []string{"DISC-002"},
-					skip:   idsOf(realTLSOnly, realAggressive, []string{"HOST-001"}),
+					skip:   idsOf(realTLSOnly, realFreshStore, realAggressive, []string{"HOST-001"}),
 					silent: authOnSilent,
 				},
 			}},
@@ -174,7 +178,7 @@ func realPostures(slow bool) []realPosture {
 				},
 				want: realScanWant{
 					warn:   []string{"DISC-002"},
-					skip:   idsOf(realTLSOnly, []string{"HOST-001"}),
+					skip:   idsOf(realTLSOnly, realFreshStore, []string{"HOST-001"}),
 					silent: idsOf(authOnSilent, slowSilent),
 				},
 			}},
@@ -189,7 +193,7 @@ func realPostures(slow bool) []realPosture {
 				},
 				want: realScanWant{
 					warn:   []string{"AUTH-000"},
-					skip:   idsOf(realTLSOnly, realNoMetrics, realLogin),
+					skip:   idsOf(realTLSOnly, realFreshStore, realNoMetrics, realLogin),
 					silent: idsOf(authOffSilent, slowSilent),
 				},
 			}},
@@ -204,7 +208,7 @@ func realPostures(slow bool) []realPosture {
 				},
 				want: realScanWant{
 					warn:   []string{"DISC-002"},
-					skip:   idsOf(realTLSOnly, realAggressive, []string{"HOST-001"}),
+					skip:   idsOf(realTLSOnly, realFreshStore, realAggressive, []string{"HOST-001"}),
 					silent: authOnSilent,
 				},
 			}, {
@@ -229,7 +233,7 @@ func realPostures(slow bool) []realPosture {
 				},
 				want: realScanWant{
 					warn:   []string{"DISC-002"},
-					skip:   idsOf(realTLSOnly, realAggressive, []string{"HOST-001"}),
+					skip:   idsOf(realTLSOnly, realFreshStore, realAggressive, []string{"HOST-001"}),
 					silent: authOnSilent,
 				},
 			}},
@@ -281,7 +285,7 @@ func realPostures(slow bool) []realPosture {
 				args: func(_ *testing.T, k *realKula) []string { return argv(asAdmin, k.url) },
 				want: realScanWant{
 					warn:   []string{"DISC-002", "CSRF-001", "CSRF-002", "WS-002"},
-					skip:   idsOf(realTLSOnly, realAggressive, realFuzz, []string{"HOST-001"}),
+					skip:   idsOf(realTLSOnly, realFreshStore, realAggressive, realFuzz, []string{"HOST-001"}),
 					silent: authOnSilent,
 				},
 			}, {
@@ -294,7 +298,7 @@ func realPostures(slow bool) []realPosture {
 					fail:     []string{"CSRF-001", "CSRF-002", "WS-002"},
 					expected: "origin-validation",
 					warn:     []string{"DISC-002"},
-					skip:     idsOf(realTLSOnly, realAggressive, realFuzz, []string{"HOST-001"}),
+					skip:     idsOf(realTLSOnly, realFreshStore, realAggressive, realFuzz, []string{"HOST-001"}),
 					silent:   authOnSilent,
 				},
 			}},
@@ -307,7 +311,7 @@ func realPostures(slow bool) []realPosture {
 				args: func(_ *testing.T, k *realKula) []string { return []string{k.url} },
 				want: realScanWant{
 					warn:   []string{"AUTH-000", "HOST-001"},
-					skip:   idsOf(realTLSOnly, realAggressive, realFuzz, realNoMetrics),
+					skip:   idsOf(realTLSOnly, realFreshStore, realAggressive, realFuzz, realNoMetrics),
 					silent: authOffSilent,
 				},
 			}, {
@@ -318,7 +322,7 @@ func realPostures(slow bool) []realPosture {
 					fail:     []string{"HOST-001"},
 					expected: "host-check",
 					warn:     []string{"AUTH-000"},
-					skip:     idsOf(realTLSOnly, realAggressive, realFuzz, realNoMetrics),
+					skip:     idsOf(realTLSOnly, realFreshStore, realAggressive, realFuzz, realNoMetrics),
 					silent:   authOffSilent,
 				},
 			}},
@@ -335,7 +339,7 @@ func realPostures(slow bool) []realPosture {
 					exit:   exitFailing,
 					fail:   []string{"HDR-001", "HDR-002", "HDR-003", "HDR-005", "HDR-006"},
 					warn:   []string{"AUTH-000", "HDR-007", "HDR-011", "HDR-012", "HDR-013"},
-					skip:   idsOf(realTLSOnly, realAggressive, realFuzz, realNoMetrics),
+					skip:   idsOf(realTLSOnly, realFreshStore, realAggressive, realFuzz, realNoMetrics),
 					silent: idsOf(authOffSilent, []string{"HDR-004"}),
 				},
 			}},

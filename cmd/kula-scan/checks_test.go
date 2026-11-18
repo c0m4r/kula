@@ -233,8 +233,9 @@ func secureHeaders(h http.Handler) http.Handler {
 	})
 }
 
-// mockHistory validates /api/history as handleHistory does and answers one
-// sample per second of the window, capped at the 5000 points Kula allows.
+// mockHistory validates /api/history as handleHistory does and answers the
+// record it holds for each second of the window, in at most the 5000 points
+// Kula allows.
 var mockHistory = historyHandler(5000)
 
 // historyHandler is mockHistory with a points cap of maxPoints.
@@ -284,10 +285,17 @@ func historyHandler(maxPoints int) http.HandlerFunc {
 				return
 			}
 		}
-		n := min(points, int(to.Sub(from)/time.Second))
+		// The store holds a record a second of the window; each sample
+		// says in sample_count how many of them it stands for.
+		records := int(to.Sub(from) / time.Second)
+		n := min(points, records)
 		samples := make([]map[string]any, n)
 		for i := range samples {
-			samples[i] = map[string]any{"ts": i, "data": map[string]any{"lavg": map[string]any{"load1": 0.1}}}
+			count := records / n
+			if i < records%n {
+				count++
+			}
+			samples[i] = map[string]any{"ts": i, "sample_count": count, "data": map[string]any{"lavg": map[string]any{"load1": 0.1}}}
 		}
 		writeJSONResp(w, map[string]any{"samples": samples, "resolution": "2s", "downsampled": true})
 	}
@@ -1072,6 +1080,60 @@ func TestHistoryPointsCapIsCounted(t *testing.T) {
 	}
 }
 
+// kulaHistory answers /api/history as Kula answers a huge points value over
+// the last two hours when its store holds records records of them: one
+// sample per stored second while they fit under the cap, else one per
+// two-second bucket, each saying in sample_count how many records it stands
+// for. counted false leaves sample_count out, as Kula before 0.20.0 does.
+func kulaHistory(records int, counted bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		per := 1
+		if records > maxHistoryPoints {
+			per = 2
+		}
+		samples := []map[string]any{}
+		for left := records; left > 0; left -= per {
+			sample := map[string]any{"ts": len(samples), "data": map[string]any{"lavg": map[string]any{"load1": 0.1}}}
+			if counted {
+				sample["sample_count"] = min(per, left)
+			}
+			samples = append(samples, sample)
+		}
+		writeJSONResp(w, map[string]any{"samples": samples, "resolution": fmt.Sprintf("%ds", per), "downsampled": per > 1})
+	}
+}
+
+// TestHistoryPointsCapNeedsMoreRecordsThanTheCap: an answer under the cap
+// shows the cap held only when the window held more records than that; a
+// fresh store answers with what little it has, capped or not.
+func TestHistoryPointsCapNeedsMoreRecordsThanTheCap(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		records int
+		counted bool
+		want    Status
+		detail  []string
+	}{
+		{"a fresh store", 3, true, StatusSkip, []string{"cap not reached", "hold 3 stored records", "3 samples"}},
+		{"an empty store", 0, true, StatusSkip, []string{"cap not reached", "hold 0 stored records"}},
+		{"samples without sample_count", 7200, false, StatusSkip, []string{"sample_count", "3600 samples"}},
+		{"a store past the cap", 7200, true, StatusPass, []string{"hold 7200 stored records", "3600 samples", "downsampled to 2s buckets"}},
+	} {
+		ts := httptest.NewServer(withHistory(kulaHistory(c.records, c.counted)))
+		s := scannerFor(t, ts, mockUser, mockPass)
+		f, _ := byID(runInputChecks(s), "INPUT-002")
+		ts.Close()
+		if f.Status != c.want {
+			t.Errorf("%s: INPUT-002 = %s %q, want %s", c.name, f.Status, f.Detail, c.want)
+		}
+		for _, want := range c.detail {
+			if !strings.Contains(f.Detail, want) {
+				t.Errorf("%s: INPUT-002 detail %q does not say %q", c.name, f.Detail, want)
+			}
+		}
+	}
+}
+
 func TestHistoryValidatesTierAndSections(t *testing.T) {
 	// A Kula from before tier and sections were validated.
 	lax := historyHandler(5000)
@@ -1120,6 +1182,28 @@ func TestReadHistoryCount(t *testing.T) {
 	got, _ := readHistoryCount(strings.NewReader(`{"samples":[],"resolution":"2s","downsampled":true}`))
 	if got.resolution != "2s" || !got.downsampled {
 		t.Errorf("resolution %q downsampled %v", got.resolution, got.downsampled)
+	}
+
+	// The records the samples stand for.
+	for _, c := range []struct {
+		body      string
+		records   int64
+		uncounted bool
+	}{
+		{`{"samples":[{"sample_count":2},{"sample_count":1}]}`, 3, false},
+		{`{"samples":[]}`, 0, false},
+		{`{"samples":[{"sample_count":2},{"ts":1}]}`, 2, true},
+		{`{"samples":[{"sample_count":-5}]}`, 0, true},
+		{`{"samples":[{"sample_count":null}]}`, 0, true},
+		{`{"samples":[{"sample_count":9223372036854775807},{"sample_count":9223372036854775807}]}`, 2 * maxSampleCount, false},
+	} {
+		got, err := readHistoryCount(strings.NewReader(c.body))
+		if err != nil || got.records != c.records || got.uncounted != c.uncounted {
+			t.Errorf("%s: records %d uncounted %v err %v; want %d %v", c.body, got.records, got.uncounted, err, c.records, c.uncounted)
+		}
+	}
+	if _, err := readHistoryCount(strings.NewReader(`{"samples":[{"sample_count":"many"}]}`)); err == nil {
+		t.Error("a sample_count that is not a number was read")
 	}
 }
 

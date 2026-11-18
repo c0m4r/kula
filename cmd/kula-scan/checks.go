@@ -1444,14 +1444,29 @@ func historyValidationFinding(s *Scanner, hdr map[string]string) Finding {
 // whatever points value it asks for.
 const maxHistoryPoints = 5000
 
+// pointsCapWindow is the history window INPUT-002 asks an absurd points value
+// for: the last two hours. At Kula's default one-second interval they hold
+// more records than the cap once the store has collected for about 84
+// minutes, and few enough that Kula reads them from its raw tier, so a
+// server without the cap answers every one of them (up to the 7200 points
+// Kula's store allows) where Kula's cap answers 2-second buckets. A longer
+// window cannot tell the two apart: Kula reads it from a coarser tier and
+// answers fewer buckets than the cap either way (31 days: 10-minute buckets,
+// at most 4465), and that tier's records may stay under the cap for weeks.
+const pointsCapWindow = 2 * time.Hour
+
 // pointsCapFinding judges INPUT-002 by counting what an absurd points value
-// gets: the samples of the last two hours, which at one-second resolution are
-// more than the cap, of one section to keep them small.
+// gets over the last two hours, of one section to keep the answer small. An
+// answer within the cap shows the cap only when the window held more records
+// than the cap allows, as the samples' sample_count fields add up to: a store
+// that has not collected that much answers every record, capped or not, and
+// the check is a SKIP until it has.
 func pointsCapFinding(s *Scanner, hdr map[string]string) Finding {
 	to := time.Now().UTC().Truncate(time.Second)
-	from := to.Add(-2 * time.Hour)
+	from := to.Add(-pointsCapWindow)
 	path := fmt.Sprintf("/api/history?from=%s&to=%s&points=999999999&sections=lavg", from.Format(time.RFC3339), to.Format(time.RFC3339))
 	p := s.countHistory(path, hdr)
+	evidence := fmt.Sprintf("samples=%d records=%d resolution=%q downsampled=%v", p.count.samples, p.count.records, p.count.resolution, p.count.downsampled)
 	switch {
 	case p.err != nil:
 		return finding("INPUT-002", SevInfo, StatusError,
@@ -1467,13 +1482,20 @@ func pointsCapFinding(s *Scanner, hdr map[string]string) Finding {
 			fmt.Sprintf("a huge points value was answered with more than %d samples: the points value is not capped, so one request can make the server build an unbounded response.", maxHistoryPoints)).
 			withEvidence("GET %s: over %d samples", path, maxHistoryPoints).
 			withRemediation("Cap the points a history request may ask for; Kula caps it at 5000.")
+	case p.count.uncounted:
+		return finding("INPUT-002", SevInfo, StatusSkip,
+			fmt.Sprintf("points=999999999 over the last two hours was answered with %d samples that do not say in sample_count how many stored records they stand for (Kula 0.20.0 and later do), so whether the window held more than the %d-point cap is not known: an answer within the cap proves nothing without it.", p.count.samples, maxHistoryPoints)).
+			withEvidence("%s", evidence)
+	case p.count.records <= maxHistoryPoints:
+		return finding("INPUT-002", SevInfo, StatusSkip,
+			fmt.Sprintf("cap not reached: the last two hours hold %d stored records, no more than the %d-point cap, so the answer of %d samples is what a server without the cap answers too. At Kula's default one-second interval the window holds more once the store has collected for about 84 minutes.", p.count.records, maxHistoryPoints, p.count.samples)).
+			withEvidence("%s", evidence)
 	default:
-		detail := fmt.Sprintf("points=999999999 over the last two hours was answered with %d samples, no more than Kula's cap of %d", p.count.samples, maxHistoryPoints)
+		detail := fmt.Sprintf("points=999999999 over the last two hours, which hold %d stored records, was answered with %d samples, no more than Kula's cap of %d", p.count.records, p.count.samples, maxHistoryPoints)
 		if p.count.downsampled && p.count.resolution != "" {
 			detail += ", downsampled to " + p.count.resolution + " buckets"
 		}
-		return finding("INPUT-002", SevLow, StatusPass, detail+".").
-			withEvidence("samples=%d resolution=%q downsampled=%v", p.count.samples, p.count.resolution, p.count.downsampled)
+		return finding("INPUT-002", SevLow, StatusPass, detail+".").withEvidence("%s", evidence)
 	}
 }
 
@@ -1515,11 +1537,17 @@ const maxHistoryBody = 64 << 20
 
 // historyCount is what INPUT-002 reads of a history response.
 type historyCount struct {
-	samples     int  // counted up to maxHistoryPoints
-	more        bool // and there were more
+	samples     int   // counted up to maxHistoryPoints
+	more        bool  // and there were more
+	records     int64 // the stored records the samples counted stand for: their sample_count fields added up
+	uncounted   bool  // a sample counted carries no sample_count (Kula before 0.20.0), or a negative one
 	resolution  string
 	downsampled bool
 }
+
+// maxSampleCount bounds the sample_count of one sample that readHistoryCount
+// adds up, so a hostile answer cannot overflow the sum.
+const maxSampleCount = 1 << 40
 
 // historyProbe is how a countHistory request ended: err when the request
 // failed, readErr when a 200's body was not a history response.
@@ -1562,7 +1590,8 @@ func (s *Scanner) countHistory(path string, headers map[string]string) historyPr
 }
 
 // readHistoryCount counts the samples of a history response, stopping once
-// there are more than maxHistoryPoints, and reads its resolution and
+// there are more than maxHistoryPoints, adds up the stored records they
+// stand for (each sample's sample_count), and reads its resolution and
 // downsampled fields when it gets that far.
 func readHistoryCount(r io.Reader) (historyCount, error) {
 	var c historyCount
@@ -1594,11 +1623,18 @@ func readHistoryCount(r io.Reader) (historyCount, error) {
 					c.more = true
 					return c, nil
 				}
-				var sample json.RawMessage
+				var sample struct {
+					SampleCount *int64 `json:"sample_count"`
+				}
 				if err := dec.Decode(&sample); err != nil {
 					return c, err
 				}
 				c.samples++
+				if sample.SampleCount == nil || *sample.SampleCount < 0 {
+					c.uncounted = true
+				} else {
+					c.records += min(*sample.SampleCount, maxSampleCount)
+				}
 			}
 			if _, err := dec.Token(); err != nil {
 				return c, err
