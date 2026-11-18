@@ -1208,8 +1208,8 @@ func runFuzzSmuggle(s *Scanner) []Finding {
 }
 
 // FUZZ-WS opens fuzzWSConns connections one after another, each closed
-// before the next (Kula admits 5 per address by default), and sends up to
-// fuzzWSFrames junk frames on each.
+// (closeWS) before the next (Kula admits 5 per address by default), and
+// sends up to fuzzWSFrames junk frames on each.
 const (
 	fuzzWSConns  = 6
 	fuzzWSFrames = 8
@@ -1252,7 +1252,7 @@ func runFuzzWS(s *Scanner) []Finding {
 	opened, frames, refused, throttled := 0, 0, 0, 0
 	firstRefusal := ""
 	for i := 0; i < fuzzWSConns && s.ctx.Err() == nil; i++ {
-		conn, resp, err := s.wsDial("/ws", hdr)
+		conn, resp, err := s.wsDialRetry("/ws", hdr)
 		if err != nil || conn == nil {
 			refused++
 			if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
@@ -1271,7 +1271,7 @@ func runFuzzWS(s *Scanner) []Finding {
 			}
 			frames++
 		}
-		_ = conn.Close()
+		s.closeWS(conn)
 	}
 	coverage := fmt.Sprintf("%d connections planned, %d opened; %d frames planned on them, %d sent",
 		fuzzWSConns, opened, opened*fuzzWSFrames, frames)
@@ -1290,9 +1290,9 @@ func runFuzzWS(s *Scanner) []Finding {
 	// Survival check: a fresh WebSocket must still upgrade, and HTTP must answer.
 	live := s.do(http.MethodGet, "/health", nil, "")
 	healthOK := live.err == nil && (live.status == http.StatusOK || live.status == http.StatusNotFound)
-	conn, _, err := s.wsDial("/ws", hdr)
+	conn, _, err := s.wsDialRetry("/ws", hdr)
 	if conn != nil {
-		_ = conn.Close()
+		s.closeWS(conn)
 	}
 	wsOK := err == nil
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -427,6 +428,117 @@ func TestOllamaRateJudgesOnlyAnswers(t *testing.T) {
 }
 
 // ---- WS-000 / WS-001 / WS-002 -----------------------------------------------------------
+
+// shortRetryWait shortens the wait before an upgrade refused with 429 is
+// tried again, for the rest of the test.
+func shortRetryWait(t *testing.T) {
+	t.Helper()
+	old := wsRetryWait
+	wsRetryWait = 10 * time.Millisecond
+	t.Cleanup(func() { wsRetryWait = old })
+}
+
+// TestWSUpgradeRefusedWith429IsTriedOnceMore: a 429 may come from a
+// connection the target has not let go of yet, so it gets one more try;
+// another refusal does not.
+func TestWSUpgradeRefusedWith429IsTriedOnceMore(t *testing.T) {
+	shortRetryWait(t)
+	cases := []struct {
+		name     string
+		refusals int64
+		status   int
+		opened   bool
+		requests int64
+	}{
+		{"one 429", 1, http.StatusTooManyRequests, true, 2},
+		{"two 429s", 2, http.StatusTooManyRequests, false, 2},
+		{"403", 1, http.StatusForbidden, false, 1},
+	}
+	for _, c := range cases {
+		var requests atomic.Int64
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if requests.Add(1) <= c.refusals {
+				http.Error(w, `{"error":"refused"}`, c.status)
+				return
+			}
+			conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}))
+		conn, resp, err := dosScanner(t, ts.URL, 5*time.Second, time.Second).wsDialRetry("/ws", nil)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if (conn != nil) != c.opened || requests.Load() != c.requests {
+			t.Errorf("%s: opened %v after %d upgrade requests (%s, %v); want opened %v after %d",
+				c.name, conn != nil, requests.Load(), statusOf(resp), err, c.opened, c.requests)
+		}
+		ts.Close()
+	}
+}
+
+// TestCloseWSWaitsForTheTargetToEndTheConnection: closeWS sends a close
+// frame and returns once the target has ended the connection, which Kula
+// does after it frees the connection's place under its limit; a target that
+// never answers holds it no longer than -timeout.
+func TestCloseWSWaitsForTheTargetToEndTheConnection(t *testing.T) {
+	var released atomic.Bool
+	closeCode := make(chan int, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		_, _, err = conn.ReadMessage() // gorilla answers a close frame with one
+		var closeErr *websocket.CloseError
+		if errors.As(err, &closeErr) {
+			closeCode <- closeErr.Code
+		}
+		time.Sleep(200 * time.Millisecond) // letting go of the connection takes a while
+		released.Store(true)
+		_ = conn.Close()
+	}))
+	defer ts.Close()
+	s := dosScanner(t, ts.URL, 5*time.Second, time.Second)
+	conn, _, err := s.wsDial("/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.closeWS(conn)
+	if !released.Load() {
+		t.Errorf("closeWS returned before the target ended the connection")
+	}
+	select {
+	case code := <-closeCode:
+		if code != websocket.CloseNormalClosure {
+			t.Errorf("closeWS sent close code %d, want %d", code, websocket.CloseNormalClosure)
+		}
+	default:
+		t.Errorf("the target saw no close frame")
+	}
+
+	silent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		time.Sleep(3 * time.Second) // reads nothing, answers nothing
+		_ = conn.Close()
+	}))
+	defer silent.Close()
+	s = dosScanner(t, silent.URL, 300*time.Millisecond, time.Second)
+	conn, _, err = s.wsDial("/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	s.closeWS(conn)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("closeWS waited %s on a target that never answers, at a 300ms -timeout", elapsed)
+	}
+}
 
 // TestWSUpgradesWithoutAnAnswerAreErrors: an upgrade the target never
 // answered is no rejection.

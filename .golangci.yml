@@ -54,10 +54,11 @@ linters:
           - predeclared  # test helpers named min/max predate the Go builtins
           - bodyclose    # gorilla websocket handshake bodies need no close
       # gorilla/websocket documents that the handshake *http.Response body does
-      # not need to be closed; wsDial returns it only for status inspection.
+      # not need to be closed; wsDial (and wsDialRetry, which retries it)
+      # returns it only for status inspection.
       - linters:
           - bodyclose
-        source: wsDial\(
+        source: wsDial(Retry)?\(
 
 formatters:
   # NOTE: gofumpt is intentionally not enabled. The module is named "kula"

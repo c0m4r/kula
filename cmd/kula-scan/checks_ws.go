@@ -1,7 +1,11 @@
 package main
 
 import (
+	"errors"
 	"net/http"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // WebSocket safeguard probes: the /ws upgrade must require authentication (when
@@ -15,6 +19,71 @@ func wsChecks() []check {
 	}}
 }
 
+// wsRetryWait is how long wsDialRetry waits before it tries an upgrade
+// refused with 429 again. It is a var so tests can shorten it.
+var wsRetryWait = 500 * time.Millisecond
+
+// wsCloseWait bounds how long closeWS waits for the target to end a
+// connection; -timeout bounds it too, when shorter. wsCloseMessages bounds
+// how many messages it reads past, those the target sent before it saw the
+// close frame: Kula sends one a second.
+const (
+	wsCloseWait     = 2 * time.Second
+	wsCloseMessages = 16
+)
+
+// wsDialRetry is wsDial with one more try when the target refuses the
+// upgrade with 429, as Kula does past its per-address and global connection
+// limits: the place may still be held by a connection the scanner has just
+// closed, which the target, or a proxy in front of it, has not yet let go
+// of. It waits wsRetryWait before the second try; an interrupt ends the
+// wait, and the first refusal is returned.
+func (s *Scanner) wsDialRetry(path string, headers http.Header) (*websocket.Conn, *http.Response, error) {
+	conn, resp, err := s.wsDial(path, headers)
+	if conn != nil || resp == nil || resp.StatusCode != http.StatusTooManyRequests {
+		return conn, resp, err
+	}
+	timer := time.NewTimer(wsRetryWait)
+	defer timer.Stop()
+	select {
+	case <-s.ctx.Done():
+		return conn, resp, err
+	case <-timer.C:
+	}
+	return s.wsDial(path, headers)
+}
+
+// closeWS ends a WebSocket the scanner is done with as a client should: it
+// sends a close frame, reads until the target has answered with its own and
+// ended the connection, and closes it. Kula frees the connection's place
+// under its per-address limit (web.max_websocket_conns_per_ip) before it
+// ends the connection, so the next upgrade does not find that place taken.
+// A connection that is merely dropped is let go of later, through a proxy
+// noticeably so. The wait is bounded by wsCloseWait, or by -timeout when
+// shorter, and an interrupt ends it. A connection whose reading already
+// failed, past the scanner's message limit for one, is closed at once.
+func (s *Scanner) closeWS(conn *websocket.Conn) {
+	deadline := time.Now().Add(min(wsCloseWait, s.timeout))
+	_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), deadline)
+	_ = conn.SetReadDeadline(deadline)
+	var err error
+	for range wsCloseMessages {
+		if _, _, err = conn.NextReader(); err != nil {
+			break
+		}
+	}
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		// gorilla reads nothing past the target's close frame; the socket
+		// itself shows when the target ends the connection, which comes
+		// next.
+		raw := conn.NetConn()
+		_ = raw.SetReadDeadline(deadline)
+		_, _ = raw.Read(make([]byte, 64))
+	}
+	_ = conn.Close()
+}
+
 // foreignOrigin is the Origin the cross-origin upgrade probe sends.
 const foreignOrigin = "https://evil.example"
 
@@ -24,9 +93,9 @@ func runWSChecks(s *Scanner) []Finding {
 
 	// WS-001: an unauthenticated upgrade is rejected when auth is enabled.
 	if s.authEnabled {
-		conn, resp, err := s.wsDial("/ws", nil)
+		conn, resp, err := s.wsDialRetry("/ws", nil)
 		if conn != nil {
-			_ = conn.Close()
+			s.closeWS(conn)
 		}
 		switch {
 		case err == nil:
@@ -66,9 +135,9 @@ func runWSChecks(s *Scanner) []Finding {
 
 	foreign := cloneHeader(hdr)
 	foreign.Set("Origin", foreignOrigin)
-	conn, resp, err := s.wsDial("/ws", foreign)
+	conn, resp, err := s.wsDialRetry("/ws", foreign)
 	if conn != nil {
-		_ = conn.Close()
+		s.closeWS(conn)
 	}
 	switch {
 	case err == nil:
@@ -88,9 +157,9 @@ func runWSChecks(s *Scanner) []Finding {
 	// proving the gate is selective rather than blanket-rejecting everything.
 	same := cloneHeader(hdr)
 	same.Set("Origin", sameOrigin)
-	cc, resp, err := s.wsDial("/ws", same)
+	cc, resp, err := s.wsDialRetry("/ws", same)
 	if cc != nil {
-		_ = cc.Close()
+		s.closeWS(cc)
 	}
 	switch {
 	case err == nil:

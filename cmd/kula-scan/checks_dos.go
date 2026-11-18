@@ -343,7 +343,7 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 	}
 	hdr.Set("Origin", s.base.Scheme+"://"+s.base.Host)
 
-	conn, resp, err := s.wsDial("/ws", hdr)
+	conn, resp, err := s.wsDialRetry("/ws", hdr)
 	if err != nil || conn == nil {
 		if resp != nil {
 			return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
@@ -353,7 +353,7 @@ func runWSMsgBombCheck(s *Scanner) []Finding {
 		return []Finding{finding("WS-MSGBOMB", SevInfo, StatusError,
 			fmt.Sprintf("could not open a WebSocket connection to test the read limit: %v", err))}
 	}
-	defer func() { _ = conn.Close() }()
+	defer s.closeWS(conn)
 
 	// Send a message well past the 4 KiB server read limit.
 	_ = conn.SetWriteDeadline(time.Now().Add(s.timeout))

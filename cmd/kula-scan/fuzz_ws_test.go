@@ -47,11 +47,14 @@ func TestFuzzWSWithoutASession(t *testing.T) {
 
 // TestFuzzWSThatOpensNothingDoesNotPass: a target that refuses every
 // upgrade gets an ERROR naming the refusal, or a SKIP when its connection
-// limit refused them all; one that refuses most gets a WARN.
+// limit refused them all; one that refuses most gets a WARN. An upgrade
+// refused with 429 is tried once more, so a connection counts as refused
+// by the limit after two refusals.
 func TestFuzzWSThatOpensNothingDoesNotPass(t *testing.T) {
+	shortRetryWait(t)
 	for _, c := range []struct {
 		name    string
-		refuse  int64 // how many upgrades to refuse
+		refuse  int64 // how many upgrade requests to refuse
 		status  int
 		want    Status
 		message string
@@ -60,7 +63,7 @@ func TestFuzzWSThatOpensNothingDoesNotPass(t *testing.T) {
 			"no WebSocket connection could be opened, so no frame was sent: 6 connections planned, 0 opened; 0 frames planned on them, 0 sent; 6 upgrades refused (the first: HTTP 403)"},
 		{"connection limit", 1 << 20, http.StatusTooManyRequests, StatusSkip,
 			"the WebSocket connection limit refused every upgrade (retry once other connections close): 6 connections planned, 0 opened"},
-		{"most refused", 4, http.StatusTooManyRequests, StatusWarn,
+		{"most refused", 8, http.StatusTooManyRequests, StatusWarn,
 			"fewer than half of the planned connections opened: 6 connections planned, 2 opened; 16 frames planned on them, 16 sent; " +
 				"4 upgrades refused (the first: HTTP 429, the WebSocket connection limit)"},
 	} {
