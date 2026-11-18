@@ -108,8 +108,10 @@ func TestJSONReportCarriesItsMetadata(t *testing.T) {
 	if !reflect.DeepEqual(report.Options, want) {
 		t.Errorf("options = %+v, want %+v", report.Options, want)
 	}
-	if report.TargetInfo != (TargetInfo{HTTPS: false, AuthEnabled: true}) {
-		t.Errorf("target_info = %+v", report.TargetInfo)
+	var info map[string]any
+	_ = json.Unmarshal(raw["target_info"], &info)
+	if !reflect.DeepEqual(info, map[string]any{"https": false, "auth_enabled": true, "ollama": false}) {
+		t.Errorf("target_info = %s", raw["target_info"])
 	}
 	if report.ExitCode != code || report.Interrupted || report.DurationMS < 0 {
 		t.Errorf("exit_code %d, interrupted %v, duration_ms %d", report.ExitCode, report.Interrupted, report.DurationMS)

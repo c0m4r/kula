@@ -18,8 +18,8 @@ import (
 // TestExpectKeysNameTheirFindings: each -expect key lists exactly the
 // findings the scanner's source tags with expecting(key), so the startup
 // check that refuses an unjudged expectation knows every finding that could
-// judge it. A tag on a finding whose ID the test cannot read is an error: the
-// tag must sit on a finding("ID", …) expression.
+// judge it. A tag with a literal key on a finding whose ID the test cannot
+// read is an error: the tag must sit on a finding("ID", …) expression.
 func TestExpectKeysNameTheirFindings(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -45,8 +45,13 @@ func TestExpectKeysNameTheirFindings(t *testing.T) {
 				return true
 			}
 			key, ok := stringLiteral(call.Args[0])
+			if !ok {
+				// A key that is no literal comes from expectKeys itself, as
+				// a finding judging a key the run cannot judge does.
+				return true
+			}
 			id := taggedFindingID(sel.X)
-			if !ok || id == "" {
+			if id == "" {
 				t.Errorf("%s: an expecting(…) call whose key or finding ID the test cannot read", fset.Position(call.Pos()))
 				return true
 			}

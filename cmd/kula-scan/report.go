@@ -55,10 +55,13 @@ type ReportOptions struct {
 
 // TargetInfo is what discovery learnt about the target, and behind auth what
 // the run's session read of /api/config: Ollama and Version stay unset when
-// auth hid it and the run opened no session.
+// auth hid it and the run opened no session. AuthEnabled is nil, null in
+// JSON, when the auth posture is unknown: Kula serves no UI or API at the
+// address (web.ui: false), or /api/auth/status could not be read; AUTH-000
+// says which.
 type TargetInfo struct {
 	HTTPS       bool   `json:"https"`
-	AuthEnabled bool   `json:"auth_enabled"`
+	AuthEnabled *bool  `json:"auth_enabled"`
 	Ollama      bool   `json:"ollama"`
 	Version     string `json:"version,omitempty"` // when /api/config discloses it
 }

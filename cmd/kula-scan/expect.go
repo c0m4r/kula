@@ -38,6 +38,18 @@ func expectKeyNames() []string {
 	return names
 }
 
+// expectKeyOf returns the -expect key finding id judges, or "".
+func expectKeyOf(id string) string {
+	for _, k := range expectKeys {
+		for _, kid := range k.ids {
+			if strings.EqualFold(kid, id) {
+				return k.key
+			}
+		}
+	}
+	return ""
+}
+
 // unjudgedExpectations returns the usage error of -expect keys this run
 // cannot judge, or nil. A key is judged only by its findings (expectKey.ids),
 // so one whose findings are all left out of the run would otherwise pass

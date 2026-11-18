@@ -467,7 +467,8 @@ Exit status:
   2    usage error, the target is unreachable or not a Kula instance, or the
        report could not be written
   3    inconclusive: nothing fails, but a probe could not complete (ERROR),
-       e.g. the supplied credentials were refused
+       e.g. the supplied credentials were refused, /api/auth/status could not
+       be read, or an -expect key could not be judged
   130  interrupted (SIGINT/SIGTERM): the scan logs out and prints a partial report;
        a second signal quits at once
 `, strings.Join(categories(), ","), strings.Join(expectKeyNames(), ","))

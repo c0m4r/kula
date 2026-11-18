@@ -153,7 +153,7 @@ func TestRateOllamaRunsBehindAuth(t *testing.T) {
 		t.Errorf("exit %d; stderr:\n%s", code, stderr)
 	}
 	wantStatus(t, report.Findings, "RATE-OLLAMA", StatusPass)
-	if !report.TargetInfo.Ollama || !report.TargetInfo.AuthEnabled {
+	if !report.TargetInfo.Ollama || report.TargetInfo.AuthEnabled == nil || !*report.TargetInfo.AuthEnabled {
 		t.Errorf("target_info = %+v, want auth and ollama", report.TargetInfo)
 	}
 	if n := m.logins(); n != 1 {

@@ -90,7 +90,7 @@ var catalog = []catalogEntry{
 		"The CSP's effective object-src (object-src, else default-src) is 'none'."},
 
 	{"AUTH-000", "auth", ModeDefault, "Authentication posture",
-		"web.auth is enabled; warns when the API is served to anyone who reaches the port."},
+		"web.auth is enabled; warns when the API is served to anyone who reaches the port. Skipped when Kula serves no UI or API at the address (web.ui: false); an ERROR when /api/auth/status cannot be read, which skips every check that needs the UI or API."},
 	{"AUTH-001", "auth", ModeDefault, "Protected API requires auth",
 		"Protected API routes, the Ollama routes and unknown /api/ paths answer 401 without a session."},
 	{"AUTH-002", "auth", ModeDefault, "Forged session cookies rejected",

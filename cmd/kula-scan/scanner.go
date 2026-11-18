@@ -204,10 +204,17 @@ type Scanner struct {
 	metricsToken string // -metrics-token, for PROM-003; never printed
 
 	// Discovered during the discovery phase.
-	reachable   bool // the target answered HTTP
-	kula        bool // and identified as Kula
-	https       bool
+	reachable bool // the target answered HTTP
+	kula      bool // and identified as Kula
+	https     bool
+	// authEnabled is whether web.auth is on, as /api/auth/status says. It
+	// is false, too, while api says the auth posture is unknown.
 	authEnabled bool
+	// api says whether discovery could read the auth posture, or why not;
+	// apiAnswer says what GET /api/auth/status got when it could not. While
+	// it is unknown, only the checks runsWithoutAPI names run.
+	api       apiState
+	apiAnswer string
 	// ollama is whether the AI assistant is enabled, as /api/config says;
 	// checks ask assistantEnabled. ollamaKnown: /api/config was read, by
 	// discovery or, behind auth, with the session; ollamaReadErr says why
@@ -231,6 +238,25 @@ type Scanner struct {
 	loginDetail string       // why it failed, for AUTH-005
 	sessionLost string       // why the session ended before the run did (markSessionLost)
 }
+
+// apiState is what discovery learnt of the UI and API at the scanned address:
+// whether /api/auth/status told the auth posture, and if not, why.
+type apiState int
+
+const (
+	// apiServed: /api/auth/status answered Kula's JSON, or Kula's Host check
+	// refused it, which Kula does only with auth off. authEnabled holds.
+	apiServed apiState = iota
+	// apiAbsent: Kula serves no UI or API at this address. /api/auth/status
+	// answered a 404 that is not Kula's JSON, as Kula with web.ui: false
+	// does for every route but /health, /status and /metrics, or a proxy
+	// that forwards only those.
+	apiAbsent
+	// apiUnreadable: /api/auth/status could not be read. The request failed
+	// or timed out, or the answer was a 5xx or anything else but Kula's
+	// JSON. The run is inconclusive (AUTH-000 is an ERROR).
+	apiUnreadable
+)
 
 // loginOutcome is how ensureSession's login attempt ended.
 type loginOutcome int
@@ -872,24 +898,44 @@ func (s *Scanner) discover() []Finding {
 			withRemediation("Check the target URL and port; if Kula is mounted under a base path, include it in the URL or pass -base-path.")}
 	}
 
-	// A host check refusal leaves authEnabled false, which it is: Kula
-	// guards the API with that check only while auth is off.
-	if hasAuthRequired {
-		_ = json.Unmarshal(authStatus["auth_required"], &s.authEnabled)
+	// The auth posture, or why it is unknown (s.api). A host check refusal
+	// leaves authEnabled false, which it is: Kula guards the API with that
+	// check only while auth is off.
+	switch {
+	case hasAuthRequired:
+		if json.Unmarshal(authStatus["auth_required"], &s.authEnabled) != nil {
+			s.api, s.apiAnswer = apiUnreadable, fmt.Sprintf("answered HTTP %d with an auth_required that is neither true nor false", status.status)
+		}
+	case hostRefused:
+	case status.err != nil:
+		s.api, s.apiAnswer = apiUnreadable, "failed: "+status.err.Error()
+	case status.status == http.StatusNotFound && !kulaJSONError(status.body):
+		s.api, s.apiAnswer = apiAbsent, "answered a plain HTTP 404, not Kula's JSON"
+	default:
+		s.api, s.apiAnswer = apiUnreadable, fmt.Sprintf("answered HTTP %d without Kula's auth_required", status.status)
 	}
 	if cfg.status == http.StatusOK {
 		s.learnConfig(cfg.body)
 	}
 
-	authState := "disabled"
-	if s.authEnabled {
-		authState = "enabled"
+	authState := "authentication disabled"
+	switch {
+	case s.api == apiAbsent:
+		authState = "no UI or API served at this address (web.ui: false?), so authentication is unknown"
+	case s.api == apiUnreadable:
+		authState = "authentication unknown: GET /api/auth/status " + s.apiAnswer
+	case s.authEnabled:
+		authState = "authentication enabled"
 	}
 	assistant := fmt.Sprintf("ollama %v", s.ollama)
-	if s.authEnabled && !s.ollamaKnown {
+	switch {
+	case s.ollamaKnown:
+	case s.authEnabled:
 		assistant = "ollama not visible without a session"
+	case s.api != apiServed:
+		assistant = "ollama unknown"
 	}
-	detail := fmt.Sprintf("reachable at %s (%s); authentication %s; %s",
+	detail := fmt.Sprintf("reachable at %s (%s); %s; %s",
 		s.urlFor(""), s.base.Scheme, authState, assistant)
 	if s.version != "" {
 		detail += "; version " + s.version
@@ -920,9 +966,103 @@ func (s *Scanner) discover() []Finding {
 }
 
 // targetInfo returns what discovery learnt, and behind auth what the run's
-// session read of /api/config (assistantEnabled), for the report.
+// session read of /api/config (assistantEnabled), for the report. Its
+// AuthEnabled is nil while the auth posture is unknown (s.api).
 func (s *Scanner) targetInfo() TargetInfo {
-	return TargetInfo{HTTPS: s.https, AuthEnabled: s.authEnabled, Ollama: s.ollama, Version: s.version}
+	info := TargetInfo{HTTPS: s.https, Ollama: s.ollama, Version: s.version}
+	if s.api == apiServed {
+		info.AuthEnabled = &s.authEnabled
+	}
+	return info
+}
+
+// kulaJSONError reports whether body is Kula's JSON error, {"error": …}.
+func kulaJSONError(body string) bool {
+	_, ok := kulaErrorOf(body)
+	return ok
+}
+
+// apiMissing says why the auth posture is unknown, for a detail: what
+// GET /api/auth/status got, and for apiAbsent that Kula serves no UI or API
+// at the scanned address. It ends without a period.
+func (s *Scanner) apiMissing() string {
+	if s.api == apiAbsent {
+		return "Kula serves no UI or API at this address (web.ui: false, or a proxy that forwards only /health, /status and /metrics): GET /api/auth/status " + s.apiAnswer
+	}
+	return "GET /api/auth/status " + s.apiAnswer + ", so whether web.auth is enabled is unknown"
+}
+
+// runsWithoutAPI reports whether check c still judges something while the
+// auth posture is unknown: Kula serves no UI or API at the scanned address,
+// or /api/auth/status could not be read. These need neither, nor the auth
+// posture: TLS, below HTTP; /metrics, which Kula serves whatever web.ui says
+// and guards with its own bearer token; REDIR-001, whose crafted paths reach
+// the router and the base-path redirect on any route; the slow-request,
+// oversized-header and idle-connection probes, which judge the connection
+// handling with /health as their liveness probe; FUZZ-PATH, which fuzzes
+// whatever routes the server has; and FUZZ-LIVENESS, which asks /health.
+// Every other check reads the UI page, the API, the WebSocket or the static
+// files, or chooses what to probe by the auth posture (HOST-001): run
+// without them, it would judge a 404 or a failed request as Kula's answer.
+func runsWithoutAPI(c check) bool {
+	switch c.entry().Category {
+	case "tls", "metrics":
+		return true
+	}
+	for _, id := range c.ids {
+		switch id {
+		case "REDIR-001", "DOS-SLOWLORIS", "DOS-HEADERBOMB", "DOS-CONNFLOOD", "FUZZ-PATH", "FUZZ-LIVENESS":
+			return true
+		}
+	}
+	return false
+}
+
+// apiSkippedFindings reports check c, not run while the auth posture is
+// unknown (runsWithoutAPI): one finding per ID it would have emitted. Each is
+// a SKIP saying why, but AUTH-000, the auth posture itself (authPosture), and
+// a finding that judges a declared -expect key, which the run cannot judge:
+// an ERROR, never a pass.
+func (s *Scanner) apiSkippedFindings(c check) []Finding {
+	out := make([]Finding, 0, len(c.ids))
+	for _, id := range c.ids {
+		key := expectKeyOf(id)
+		switch {
+		case id == "AUTH-000":
+			out = append(out, s.authPosture())
+		case key != "" && s.expects(key):
+			out = append(out, finding(id, SevInfo, StatusError,
+				fmt.Sprintf("-expect %s cannot be judged: %s.", key, s.apiMissing())).expecting(key))
+		default:
+			see := ""
+			if s.api == apiUnreadable {
+				see = " (see AUTH-000)"
+			}
+			out = append(out, finding(id, SevInfo, StatusSkip,
+				s.apiMissing()+"; this check needs the UI or API, so it did not run"+see+"."))
+		}
+	}
+	return out
+}
+
+// authPosture is AUTH-000 while the auth posture is unknown. Without a UI or
+// API there is no authentication of theirs to judge, so it SKIPs, unless
+// -expect auth asks for one; a posture that could not be read leaves the run
+// inconclusive. Either of those is an ERROR.
+func (s *Scanner) authPosture() Finding {
+	switch {
+	case s.expects("auth"):
+		return finding("AUTH-000", SevInfo, StatusError,
+			fmt.Sprintf("-expect auth cannot be judged: %s.", s.apiMissing())).
+			expecting("auth")
+	case s.api == apiAbsent:
+		return finding("AUTH-000", SevInfo, StatusSkip,
+			s.apiMissing()+", so there is no authentication of the UI or API to judge.")
+	default:
+		return finding("AUTH-000", SevInfo, StatusError,
+			s.apiMissing()+", and the checks that need the UI or API were skipped. "+
+				"Check that the URL reaches Kula's web server, and that a proxy in front forwards /api/.")
+	}
 }
 
 // learnConfig keeps what a body of /api/config, answered 200, says of the
@@ -957,6 +1097,8 @@ func (s *Scanner) learnConfig(body string) bool {
 // read failed. why ends without a period.
 func (s *Scanner) assistantEnabled() (enabled bool, st Status, why string) {
 	switch {
+	case !s.ollamaKnown && s.api != apiServed:
+		return false, StatusSkip, s.apiMissing()
 	case s.ollamaKnown || !s.authEnabled:
 		// With auth off discovery could read it: what it learnt stands.
 		return s.ollama, StatusPass, ""
@@ -1142,6 +1284,11 @@ func allChecks() []check {
 // runsUnderRefusedHost names run; the others are skipped and say why, and
 // DISC-003 is reported when it skipped any of them, unless -skip names it.
 //
+// When discovery could not read the auth posture (s.api), only the checks
+// runsWithoutAPI names run; the others are skipped and say why
+// (apiSkippedFindings). A posture that could not be read is an AUTH-000
+// ERROR, reported when it skipped any check, unless -skip names it.
+//
 // Cancelling ctx interrupts the run: requests in flight abort, no further
 // check starts, the findings of the check that was cut short are dropped,
 // and s.interrupted and s.notRun record it. The session is logged out in
@@ -1175,16 +1322,21 @@ func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 	s.applyExpectations(discovered)
 
 	// Under a refused Host name, the checks that would read the refusal as
-	// their own result do not run.
-	refusedSkips := 0
-	if s.hostRefused {
-		for _, c := range checks {
-			if s.modeEnabled(c.entry().Mode) && !runsUnderRefusedHost(c) {
-				refusedSkips++
-			}
+	// their own result do not run; with the auth posture unknown, neither
+	// do the checks that need the UI or API.
+	refusedSkips, apiSkips := 0, 0
+	postureReported := false // a check that runs, or is skipped, reports AUTH-000
+	for _, c := range checks {
+		postureReported = postureReported || slices.Contains(c.ids, "AUTH-000")
+		switch {
+		case !s.modeEnabled(c.entry().Mode):
+		case s.hostRefused && !runsUnderRefusedHost(c):
+			refusedSkips++
+		case s.api != apiServed && !runsWithoutAPI(c):
+			apiSkips++
 		}
-		runnable -= refusedSkips
 	}
+	runnable -= refusedSkips + apiSkips
 
 	var findings []Finding
 	for _, f := range discovered {
@@ -1195,6 +1347,12 @@ func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 		if keep {
 			findings = append(findings, f)
 		}
+	}
+	// An unreadable auth posture that kept selected checks from running
+	// leaves the run inconclusive, which AUTH-000 says even when not
+	// selected, unless -skip names it.
+	if s.kula && s.api == apiUnreadable && apiSkips > 0 && !postureReported && !explicitlySkipped(sel, "AUTH-000") {
+		findings = append(findings, s.authPosture())
 	}
 
 	// A target that does not answer, or is not Kula, is not probed further.
@@ -1227,6 +1385,9 @@ func (s *Scanner) Run(ctx context.Context, sel *selection) []Finding {
 			continue
 		case s.hostRefused && !runsUnderRefusedHost(c):
 			findings = append(findings, skippedFindings(c, s.refusedHostReason())...)
+			continue
+		case s.api != apiServed && !runsWithoutAPI(c):
+			findings = append(findings, s.apiSkippedFindings(c)...)
 			continue
 		}
 		started++

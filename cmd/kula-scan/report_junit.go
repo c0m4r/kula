@@ -292,11 +292,12 @@ func (r *Report) junitProperties(code int) ([]junitProperty, error) {
 }
 
 // propertyValue renders a decoded JSON value as a property value; a list is
-// comma-separated.
+// comma-separated, and null, an unknown such as target_info.auth_enabled,
+// stays null.
 func propertyValue(v any) string {
 	switch v := v.(type) {
 	case nil:
-		return ""
+		return "null"
 	case string:
 		return v
 	case []any:
