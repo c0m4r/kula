@@ -652,7 +652,8 @@ func TestHSTSJudgement(t *testing.T) {
 		{"max-age=15552000", StatusPass, false},
 		{`max-age="31536000"`, StatusPass, false},
 		{"includeSubDomains; MAX-AGE=63072000; preload", StatusPass, false},
-		{"max-age=86400", StatusWarn, false},
+		{"max-age=86400", StatusWarn, true},
+		{"max-age=15551999", StatusWarn, true},
 		{"max-age=0", StatusWarn, true},
 		{"includeSubDomains", StatusWarn, true},
 		{"max-age=soon", StatusWarn, true},
@@ -681,6 +682,17 @@ func TestHSTSJudgement(t *testing.T) {
 	}
 	if f := hstsFinding(expecting, http.Header{}); f.Status != StatusFail || f.Expectation != "hsts" {
 		t.Errorf("plain HTTP with -expect hsts: %s, expectation %q; want a FAIL against hsts", f.Status, f.Expectation)
+	}
+
+	// A max-age under 180 days is a FAIL once -expect hsts declares HSTS.
+	declared, err := NewScanner(Options{Target: "https://kula-scan.invalid", Expect: []string{"hsts"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings := []Finding{hstsFinding(declared, http.Header{"Strict-Transport-Security": {"max-age=86400"}})}
+	declared.applyExpectations(findings)
+	if f := findings[0]; f.Status != StatusFail || f.Expectation != "hsts" {
+		t.Errorf("a one-day max-age with -expect hsts: %s, expectation %q; want a FAIL against hsts", f.Status, f.Expectation)
 	}
 }
 

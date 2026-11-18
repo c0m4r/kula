@@ -260,7 +260,9 @@ func hasDirective(value, name string) bool {
 const minHSTSMaxAge = 180 * 24 * 60 * 60
 
 // hstsFinding judges HDR-008. HSTS means something only over TLS: over plain
-// HTTP the finding is a SKIP, or a FAIL when -expect hsts declares it.
+// HTTP the finding is a SKIP, or a FAIL when -expect hsts declares it. Over
+// HTTPS a missing, invalid or zero max-age, or one under 180 days, is a WARN
+// that -expect hsts turns into a FAIL.
 func hstsFinding(s *Scanner, h http.Header) Finding {
 	if !s.https {
 		if s.expects("hsts") {
@@ -297,7 +299,8 @@ func hstsFinding(s *Scanner, h http.Header) Finding {
 		return finding("HDR-008", SevLow, StatusWarn,
 			fmt.Sprintf("Strict-Transport-Security max-age is %d seconds (%d days), under 180 days.", maxAge, maxAge/86400)).
 			withEvidence("Strict-Transport-Security: %s", value).
-			withRemediation("Send a max-age of at least 15552000 seconds (180 days); Kula sends one year. A proxy in front may be rewriting the header.")
+			withRemediation("Send a max-age of at least 15552000 seconds (180 days); Kula sends one year. A proxy in front may be rewriting the header.").
+			expecting("hsts")
 	default:
 		return finding("HDR-008", SevLow, StatusPass,
 			fmt.Sprintf("Strict-Transport-Security is set with a max-age of %d days.", maxAge/86400)).
