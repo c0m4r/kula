@@ -194,7 +194,7 @@ var catalog = []catalogEntry{
 	{"DOS-SLOWLORIS", "dos", ModeAggressive, "Slow-request (Slowloris) reaping",
 		"Half-open requests are dropped within -dos-wait while the server keeps answering."},
 	{"DOS-HEADERBOMB", "dos", ModeAggressive, "Oversized request headers rejected",
-		"A 2 MiB request header block is refused."},
+		"A 2 MiB request header block is refused with 431 (400 or 413 from a proxy) or a closed connection; any other answer means it was read."},
 	{"DOS-CONNFLOOD", "dos", ModeAggressive, "Idle-connection flood resilience",
 		"The server keeps answering under a flood of idle connections and drops them within -dos-wait."},
 	{"DOS-HISTORY", "dos", ModeAggressive, "History request burst",

@@ -207,8 +207,10 @@ func slowlorisFinding(s *Scanner, health httpResult, held, reaped int, elapsed t
 // runHeaderBombCheck sends a request with a multi-megabyte header value and
 // expects the server to reject it (Go's MaxHeaderBytes default is 1 MiB → 431)
 // rather than buffering it into memory. A refusal ends the connection or
-// answers it; a server that takes the whole block and says nothing within
-// -timeout, or stops reading it without closing, has refused nothing.
+// answers it with a status that refuses oversized headers
+// (headerBombStatusFinding); a server that takes the whole block and says
+// nothing within -timeout, or stops reading it without closing, has refused
+// nothing.
 func runHeaderBombCheck(s *Scanner) []Finding {
 	conn, err := s.dialRaw()
 	if err != nil {
@@ -239,20 +241,41 @@ func runHeaderBombCheck(s *Scanner) []Finding {
 	if err != nil {
 		return []Finding{headerBombReadFinding(s, err, written)}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	_ = resp.Body.Close()
+	return []Finding{headerBombStatusFinding(resp.StatusCode)}
+}
 
-	switch resp.StatusCode {
-	case http.StatusRequestHeaderFieldsTooLarge, http.StatusBadRequest, http.StatusRequestEntityTooLarge:
-		return []Finding{finding("DOS-HEADERBOMB", SevMedium, StatusPass,
-			"a 2 MiB header block is rejected (MaxHeaderBytes enforced).").withEvidence("status=%d", resp.StatusCode)}
-	case http.StatusOK:
-		return []Finding{finding("DOS-HEADERBOMB", SevHigh, StatusFail,
-			"the server accepted a 2 MiB header block; large headers can be used for memory exhaustion.").
-			withEvidence("status=200").
-			withRemediation("Set http.Server.MaxHeaderBytes (Go defaults to 1 MiB; do not raise it without reason).")}
+// headerBombStatusFinding judges the status a header bomb was answered with.
+// 431 is how Go's net/http refuses a header block past MaxHeaderBytes, and
+// 400 and 413 how nginx, Apache and other servers and proxies refuse
+// oversized headers: those pass. 408, 429 and 503 refuse the request for
+// another reason (too slow, too many, unavailable), which leaves the header
+// cap unknown. Any other answer, a 404 or a redirect as much as a 200, was
+// given to the request after its whole header block was read: the server
+// takes 2 MiB of headers.
+func headerBombStatusFinding(code int) Finding {
+	switch {
+	case code == http.StatusRequestHeaderFieldsTooLarge:
+		return finding("DOS-HEADERBOMB", SevMedium, StatusPass,
+			"a 2 MiB header block is refused with 431 (MaxHeaderBytes enforced).").withEvidence("status=%d", code)
+	case code == http.StatusBadRequest || code == http.StatusRequestEntityTooLarge:
+		return finding("DOS-HEADERBOMB", SevMedium, StatusPass,
+			fmt.Sprintf("a 2 MiB header block is refused with %d, as servers and proxies such as nginx refuse oversized headers.", code)).
+			withEvidence("status=%d", code)
+	case code == http.StatusRequestTimeout || code == http.StatusTooManyRequests || code == http.StatusServiceUnavailable:
+		return finding("DOS-HEADERBOMB", SevInfo, StatusError,
+			fmt.Sprintf("the request with a 2 MiB header block was answered %d, a refusal for another reason than its size, so whether the server caps headers is not known.", code)).
+			withEvidence("status=%d", code)
+	case code >= 200 && code < 300:
+		return finding("DOS-HEADERBOMB", SevHigh, StatusFail,
+			"the server accepted a 2 MiB header block and served the request; large headers can be used for memory exhaustion.").
+			withEvidence("status=%d", code).
+			withRemediation("Set http.Server.MaxHeaderBytes (Go defaults to 1 MiB; do not raise it without reason).")
 	default:
-		return []Finding{finding("DOS-HEADERBOMB", SevMedium, StatusPass,
-			"the oversized header request was not served normally.").withEvidence("status=%d", resp.StatusCode)}
+		return finding("DOS-HEADERBOMB", SevHigh, StatusFail,
+			fmt.Sprintf("the server read a whole 2 MiB header block and answered the request with %d instead of refusing it with 431; large headers can be used for memory exhaustion.", code)).
+			withEvidence("status=%d", code).
+			withRemediation("Set http.Server.MaxHeaderBytes (Go defaults to 1 MiB; do not raise it without reason), and keep a proxy in front from accepting larger header blocks.")
 	}
 }
 

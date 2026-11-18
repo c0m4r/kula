@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -318,6 +319,45 @@ func TestHeaderBombTellsATimeoutFromARefusal(t *testing.T) {
 
 	endless, _ := endlessHeaderTarget(t)
 	wantStatus(t, runHeaderBombCheck(dosScanner(t, endless, 20*time.Second, time.Second)), "DOS-HEADERBOMB", StatusError)
+}
+
+// TestHeaderBombIsJudgedByTheStatus: a server that reads the whole 2 MiB
+// header block and answers the request, whatever the status, takes oversized
+// headers; only the statuses that refuse them pass, and a refusal for
+// another reason judges nothing.
+func TestHeaderBombIsJudgedByTheStatus(t *testing.T) {
+	cases := []struct {
+		status int
+		want   Status
+	}{
+		{http.StatusOK, StatusFail},
+		{http.StatusNotFound, StatusFail},
+		{http.StatusFound, StatusFail},
+		{http.StatusUnauthorized, StatusFail},
+		{http.StatusBadGateway, StatusFail},
+		{http.StatusRequestHeaderFieldsTooLarge, StatusPass},
+		{http.StatusBadRequest, StatusPass},
+		{http.StatusRequestEntityTooLarge, StatusPass},
+		{http.StatusTooManyRequests, StatusError},
+		{http.StatusServiceUnavailable, StatusError},
+	}
+	for _, c := range cases {
+		// A server whose header cap is past the bomb answers it after
+		// reading all of it.
+		ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if len(r.Header.Get("X-Bomb")) != 2<<20 {
+				t.Errorf("the handler read %d bytes of X-Bomb", len(r.Header.Get("X-Bomb")))
+			}
+			w.WriteHeader(c.status)
+		}))
+		ts.Config.MaxHeaderBytes = 8 << 20
+		ts.Start()
+		f, _ := byID(runHeaderBombCheck(dosScanner(t, ts.URL, 5*time.Second, time.Second)), "DOS-HEADERBOMB")
+		if f.Status != c.want || !strings.Contains(f.Evidence, strconv.Itoa(c.status)) {
+			t.Errorf("DOS-HEADERBOMB answered %d after the whole block = %s %q | %q; want %s", c.status, f.Status, f.Detail, f.Evidence, c.want)
+		}
+		ts.Close()
+	}
 }
 
 // TestDoSProbesWithoutAConnectionAreErrors: probes that open no connection
