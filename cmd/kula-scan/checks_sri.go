@@ -833,9 +833,17 @@ func (s *Scanner) scriptsMatchIntegrity(refs []scriptRef) Finding {
 		}
 	}
 
-	notes := ""
+	// The scripts that were not compared, by why.
+	var uncompared []string
 	if len(unfetched) > 0 {
-		notes = "; not fetched: " + strings.Join(unfetched, ", ")
+		uncompared = append(uncompared, "not fetched: "+strings.Join(unfetched, ", "))
+	}
+	if len(unreadable) > 0 {
+		uncompared = append(uncompared, "not read whole: "+strings.Join(unreadable, ", "))
+	}
+	notes := ""
+	if len(uncompared) > 0 {
+		notes = "; " + strings.Join(uncompared, "; ")
 	}
 	switch {
 	case len(mismatched) > 0:
@@ -844,15 +852,20 @@ func (s *Scanner) scriptsMatchIntegrity(refs []scriptRef) Finding {
 				len(mismatched), len(order), strings.Join(mismatched, ", "), notes)).
 			withEvidence("%s", strings.Join(evidence, " | ")).
 			withRemediation("Turn off asset rewriting for Kula in the proxy or CDN in front (minification, script injection, Rocket Loader, re-encoding); Kula minifies its own assets before it hashes them.")
-	case len(unreadable) > 0:
+	case len(uncompared) > 0:
+		compared := "none could be compared"
+		switch {
+		case matched == 1:
+			compared = "the one compared matches, which says nothing of the others"
+		case matched > 1:
+			compared = fmt.Sprintf("the %d compared match, which says nothing of the others", matched)
+		}
 		return finding("SRI-002", SevInfo, StatusError,
-			"these scripts could not be read whole, so their hashes were not compared: "+strings.Join(unreadable, ", ")+notes+".")
-	case matched == 0:
-		return finding("SRI-002", SevInfo, StatusError,
-			"none of the scripts the UI page names could be fetched"+notes+".")
+			fmt.Sprintf("%d of the %d scripts the UI page names were not compared with their integrity hashes (%s); %s.",
+				len(unfetched)+len(unreadable), len(order), strings.Join(uncompared, "; "), compared))
 	}
 	return finding("SRI-002", SevHigh, StatusPass,
-		fmt.Sprintf("the %d scripts the UI page names match their integrity hashes as served, after content decoding%s.", matched, notes))
+		fmt.Sprintf("the %d scripts the UI page names match their integrity hashes as served, after content decoding.", matched))
 }
 
 // mismatchEvidence says how a script's bytes differ from the hash the page

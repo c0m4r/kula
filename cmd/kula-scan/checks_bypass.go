@@ -107,12 +107,11 @@ func runOpenRedirectCheck(s *Scanner) []Finding {
 		payloads = append(payloads, s.base.Path+"//evil.example", "//evil.example"+s.base.Path)
 	}
 
-	var bad []string
-	failed := 0
+	var bad, unanswered []string
 	for _, p := range payloads {
 		r := s.do(http.MethodGet, p, nil, "")
 		if r.err != nil {
-			failed++
+			unanswered = append(unanswered, p)
 			continue
 		}
 		if r.status < 300 || r.status >= 400 {
@@ -130,18 +129,19 @@ func runOpenRedirectCheck(s *Scanner) []Finding {
 	switch {
 	case len(bad) > 0:
 		return []Finding{finding("REDIR-001", SevHigh, StatusFail,
-			"a crafted path made the server emit a redirect to an attacker-controlled host (phishing / token leakage vector).").
+			"a crafted path made the server emit a redirect to an attacker-controlled host (phishing / token leakage vector)"+unreachedNote(unanswered)+".").
 			withEvidence("%s", strings.Join(bad, " | ")).
 			withRemediation("Only ever redirect to validated, same-host, absolute-path targets; reject '//', '\\', and scheme-bearing inputs.")}
-	case failed == len(payloads):
+	case len(unanswered) == len(payloads):
 		return []Finding{finding("REDIR-001", SevInfo, StatusError,
 			"could not send any of the crafted paths.")}
+	case len(unanswered) > 0:
+		return []Finding{finding("REDIR-001", SevInfo, StatusError,
+			unansweredDetail(unanswered, len(payloads), "requests for crafted paths")+
+				"; no answer redirected to a foreign host, which says nothing of them.")}
 	default:
-		detail := "crafted paths do not produce a redirect to a foreign host."
-		if failed > 0 {
-			detail = fmt.Sprintf("the crafted paths that reached the target produce no redirect to a foreign host; %d of %d requests failed.", failed, len(payloads))
-		}
-		return []Finding{finding("REDIR-001", SevMedium, StatusPass, detail)}
+		return []Finding{finding("REDIR-001", SevMedium, StatusPass,
+			"crafted paths do not produce a redirect to a foreign host.")}
 	}
 }
 
@@ -159,8 +159,9 @@ func (s *Scanner) randIP() string {
 // spoofed X-Forwarded-For. If Kula keys its login rate limiter on that header
 // (trust_proxy enabled with no real proxy in front), every request lands on a
 // fresh key and the throttle never fires — a brute-force bypass. The pass
-// needs the throttle seen firing (a 429): attempts that failed, or got another
-// answer, prove nothing either way.
+// needs the throttle seen firing (a 429) and every attempt answered: an
+// attempt that got no answer, like one that got another answer, proves
+// nothing either way.
 func runXFFBypassCheck(s *Scanner) []Finding {
 	if !s.authEnabled {
 		return []Finding{finding("BYPASS-XFF", SevInfo, StatusSkip,
@@ -191,13 +192,17 @@ func runXFFBypassCheck(s *Scanner) []Finding {
 			"rotating a spoofed X-Forwarded-For defeated the login rate limiter — an attacker can brute-force credentials unthrottled.").
 			withEvidence("%d/%d spoofed-IP attempts reached the credential check without throttling: %s", reached, burst, &t).
 			withRemediation("Disable web.trust_proxy unless a trusted reverse proxy actually sets X-Forwarded-For; otherwise the header is attacker-controlled.")}
+	case t.failed > 0:
+		return []Finding{finding("BYPASS-XFF", SevInfo, StatusError,
+			fmt.Sprintf("%d of the %d spoofed-IP login attempts went unanswered, so the burst is inconclusive: %d reached the credential check and %d were throttled with 429, which says nothing of them.", t.failed, t.total, reached, limited)).
+			withEvidence("%s", &t)}
 	case limited > 0 && reached <= 6:
 		return []Finding{finding("BYPASS-XFF", SevHigh, StatusPass,
 			"spoofing X-Forwarded-For did not bypass the login throttle (the limiter keys on the real connection, not the header).").
 			withEvidence("only %d/%d spoofed-IP attempts got through before throttling: %s", reached, burst, &t)}
-	case limited == 0 || t.failed > 0:
+	case limited == 0:
 		return []Finding{finding("BYPASS-XFF", SevInfo, StatusError,
-			fmt.Sprintf("the burst was inconclusive: %d of %d spoofed-IP attempts reached the credential check, and the rest were not all throttled with 429 (some failed or got another answer).", reached, burst)).
+			fmt.Sprintf("the burst was inconclusive: %d of %d spoofed-IP attempts reached the credential check, and the rest were not throttled with 429 but got another answer.", reached, burst)).
 			withEvidence("%s", &t)}
 	default:
 		return []Finding{finding("BYPASS-XFF", SevMedium, StatusWarn,

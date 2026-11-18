@@ -256,15 +256,16 @@ func runHostCheck(s *Scanner) []Finding {
 	}
 
 	hosts := s.foreignHosts()
-	var served, refused, other []string
+	var served, refused, other, lostHosts []string
 	var lost undelivered
 	for _, h := range hosts {
+		label := fmt.Sprintf("%s (%s)", h.host, h.form)
 		r, err := s.hostRequest(route, h.host)
 		if err != nil {
 			lost.add(err)
+			lostHosts = append(lostHosts, label)
 			continue
 		}
-		label := fmt.Sprintf("%s (%s)", h.host, h.form)
 		switch classifyHost(route, r) {
 		case hostServed:
 			served = append(served, label)
@@ -277,7 +278,7 @@ func runHostCheck(s *Scanner) []Finding {
 
 	unreached := ""
 	if lost.n > 0 {
-		unreached = "; " + lost.detail(len(hosts), "requests")
+		unreached = "; " + lost.detail(len(hosts), "requests") + ": " + strings.Join(lostHosts, ", ")
 	}
 	switch {
 	case len(served) > 0:
@@ -292,10 +293,14 @@ func runHostCheck(s *Scanner) []Finding {
 	case lost.n == len(hosts):
 		return []Finding{finding("HOST-001", SevInfo, StatusError,
 			lost.detail(len(hosts), "requests under foreign Host names")+".")}
+	case lost.n > 0:
+		return []Finding{finding("HOST-001", SevInfo, StatusError,
+			lost.detail(len(hosts), "requests under foreign Host names")+": "+strings.Join(lostHosts, ", ")+
+				fmt.Sprintf("; no answer under the others served %s, which says nothing of them.", what))}
 	case ownAnswer == hostOther && len(refused) == 0:
 		return []Finding{finding("HOST-001", SevInfo, StatusSkip,
-			fmt.Sprintf("%s answered %s under the scanner's own Host name, not its data, so there is nothing a foreign name could read (is the UI off?)%s.",
-				route, describeHostAnswer(own), unreached))}
+			fmt.Sprintf("%s answered %s under the scanner's own Host name, not its data, so there is nothing a foreign name could read (is the UI off?).",
+				route, describeHostAnswer(own)))}
 	}
 
 	var by []string
@@ -310,7 +315,7 @@ func runHostCheck(s *Scanner) []Finding {
 		ownNote = fmt.Sprintf("; it refuses the scanner's own name %s too", s.base.Host)
 	}
 	return []Finding{finding("HOST-001", SevHigh, StatusPass,
-		fmt.Sprintf("%s answered none of the Host names a public DNS server could answer for (a random name, with a port, a trailing dot, in mixed case, behind a local label): %s%s%s.",
-			what, strings.Join(by, "; "), ownNote, unreached)).
+		fmt.Sprintf("%s answered none of the Host names a public DNS server could answer for (a random name, with a port, a trailing dot, in mixed case, behind a local label): %s%s.",
+			what, strings.Join(by, "; "), ownNote)).
 		withEvidence("%s", strings.Join(append(refused, other...), " | "))}
 }

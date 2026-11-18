@@ -166,20 +166,31 @@ func nosniffFinding(responses []probed) Finding {
 			"X-Content-Type-Options: nosniff is missing on "+strings.Join(missing, ", ")+unreachedNote(unreached)).
 			withRemediation("Enable web.security.headers in config.yaml; Kula sets nosniff on every response.")
 	case len(unreached) > 0:
-		return finding("HDR-001", SevMedium, StatusPass,
-			"every response fetched carries X-Content-Type-Options: nosniff"+unreachedNote(unreached)+".")
+		return finding("HDR-001", SevInfo, StatusError,
+			unansweredDetail(unreached, len(responses), "requests for the UI page, a static asset and an API response")+
+				"; every answer carries X-Content-Type-Options: nosniff, which says nothing of them.")
 	default:
 		return finding("HDR-001", SevMedium, StatusPass,
 			"the UI page, a static asset and an API response all carry X-Content-Type-Options: nosniff.")
 	}
 }
 
-// unreachedNote names the paths a probe could not fetch, for a detail line.
-func unreachedNote(paths []string) string {
-	if len(paths) == 0 {
+// unreachedNote names the requests of a probe that went unanswered, for the
+// detail of a finding that found something wrong in the others.
+func unreachedNote(requests []string) string {
+	if len(requests) == 0 {
 		return ""
 	}
-	return "; could not fetch " + strings.Join(paths, ", ")
+	return "; no answer to " + strings.Join(requests, ", ")
+}
+
+// unansweredDetail says which of a check's total requests, named by what,
+// went unanswered, for the ERROR of a check that found nothing wrong in the
+// answers it got. Those answers say nothing of the requests that got none,
+// so a check passes only when every request was answered. The caller adds
+// what the answers showed.
+func unansweredDetail(unreached []string, total int, what string) string {
+	return fmt.Sprintf("%d of the %d %s went unanswered: %s", len(unreached), total, what, strings.Join(unreached, ", "))
 }
 
 // noStoreFinding judges HDR-010: every successful response in responses is
@@ -211,17 +222,25 @@ func noStoreFinding(responses []probed) Finding {
 	case len(unreached) == len(responses):
 		return finding("HDR-010", SevInfo, StatusError,
 			"could not fetch any response to inspect Cache-Control.")
-	case len(judged) == 0:
-		return finding("HDR-010", SevInfo, StatusSkip,
-			"no response answered 2xx, so none carries a nonce or live data to protect"+notJudged+unreachedNote(unreached)+".")
 	case len(missing) > 0:
 		return finding("HDR-010", SevMedium, StatusFail,
 			"these responses may be kept by a browser or shared cache, which would serve a CSP nonce twice or session data to another user: "+
 				strings.Join(missing, ", ")+notJudged+unreachedNote(unreached)).
 			withRemediation("Upgrade Kula (0.22.0 and later mark the UI page and API responses no-store), and keep any proxy in front from overriding Cache-Control.")
+	case len(unreached) > 0:
+		answered := "no answer was 2xx"
+		if len(judged) > 0 {
+			answered = "every 2xx answer is Cache-Control: no-store"
+		}
+		return finding("HDR-010", SevInfo, StatusError,
+			unansweredDetail(unreached, len(responses), "requests for responses to inspect Cache-Control")+
+				"; "+answered+", which says nothing of them"+notJudged+".")
+	case len(judged) == 0:
+		return finding("HDR-010", SevInfo, StatusSkip,
+			"no response answered 2xx, so none carries a nonce or live data to protect"+notJudged+".")
 	default:
 		return finding("HDR-010", SevMedium, StatusPass,
-			"Cache-Control: no-store on "+strings.Join(judged, ", ")+notJudged+unreachedNote(unreached)+".")
+			"Cache-Control: no-store on "+strings.Join(judged, ", ")+notJudged+".")
 	}
 }
 
@@ -603,22 +622,24 @@ func runAuthChecks(s *Scanner) []Finding {
 	case len(unreached) == len(routes):
 		out = append(out, finding("AUTH-001", SevInfo, StatusError,
 			"could not send any request to the protected API routes."))
+	case len(unreached) > 0:
+		out = append(out, finding("AUTH-001", SevInfo, StatusError,
+			unansweredDetail(unreached, len(routes), "requests to the protected API")+
+				"; every answer was 401, which says nothing of them."))
 	default:
 		out = append(out, finding("AUTH-001", SevHigh, StatusPass,
-			fmt.Sprintf("all %d protected API requests (data, Ollama, an unknown /api/ path) answer 401 without credentials%s.",
-				len(routes)-len(unreached), unreachedNote(unreached))))
+			fmt.Sprintf("all %d protected API requests (data, Ollama, an unknown /api/ path) answer 401 without credentials.", len(routes))))
 	}
 
 	// AUTH-002: forged session cookies are rejected.
 	forged := []string{"deadbeef", "", strings.Repeat("a", 64), "../../etc/passwd", "' OR '1'='1"}
-	var accepted []string
-	failed := 0
+	var accepted, unanswered []string
 	for _, tok := range forged {
 		hdr := map[string]string{"Cookie": "kula_session=" + tok}
 		r := s.do(http.MethodGet, "/api/i18n?lang=en", hdr, "")
 		switch {
 		case r.err != nil:
-			failed++
+			unanswered = append(unanswered, fmt.Sprintf("%q", tok))
 		case r.status == http.StatusOK:
 			accepted = append(accepted, tok)
 		}
@@ -626,17 +647,18 @@ func runAuthChecks(s *Scanner) []Finding {
 	switch {
 	case len(accepted) > 0:
 		out = append(out, finding("AUTH-002", SevCritical, StatusFail,
-			"a forged session value authenticated successfully").withEvidence("accepted: %q", accepted).
+			"a forged session value authenticated successfully"+unreachedNote(unanswered)).withEvidence("accepted: %q", accepted).
 			withRemediation("Session validation must hash-and-lookup the token; never accept attacker-supplied values."))
-	case failed == len(forged):
+	case len(unanswered) == len(forged):
 		out = append(out, finding("AUTH-002", SevInfo, StatusError,
 			"could not send any request with a forged session cookie."))
+	case len(unanswered) > 0:
+		out = append(out, finding("AUTH-002", SevInfo, StatusError,
+			unansweredDetail(unanswered, len(forged), "requests with a forged session cookie")+
+				"; no answer accepted the cookie, which says nothing of them."))
 	default:
-		detail := "garbage, empty, traversal, and SQLi-style session values are all rejected."
-		if failed > 0 {
-			detail = fmt.Sprintf("the forged session values that reached the target were rejected; %d of %d requests failed.", failed, len(forged))
-		}
-		out = append(out, finding("AUTH-002", SevHigh, StatusPass, detail))
+		out = append(out, finding("AUTH-002", SevHigh, StatusPass,
+			"garbage, empty, traversal, and SQLi-style session values are all rejected."))
 	}
 
 	// AUTH-003: garbage bearer token is rejected.
@@ -938,9 +960,13 @@ func foreignOriginFinding(s *Scanner) Finding {
 	case len(unreached) == len(probes):
 		return finding("CSRF-002", SevInfo, StatusError,
 			"could not send a POST from a foreign Origin or Referer.")
+	case len(unreached) > 0:
+		return finding("CSRF-002", SevInfo, StatusError,
+			unansweredDetail(unreached, len(probes), "POSTs from a foreign site")+
+				"; every answer was 403, which says nothing of them.")
 	default:
 		return finding("CSRF-002", SevHigh, StatusPass,
-			"a POST from a foreign Origin, or with no Origin and a foreign Referer, is rejected with 403"+unreachedNote(unreached)+".")
+			"a POST from a foreign Origin, or with no Origin and a foreign Referer, is rejected with 403.")
 	}
 }
 
@@ -1111,9 +1137,13 @@ func corsEdgeCaseFinding(s *Scanner) Finding {
 	case len(unreached) == len(edge):
 		return finding("CORS-003", SevInfo, StatusError,
 			"could not send any request with an edge-case Origin.")
+	case len(unreached) > 0:
+		return finding("CORS-003", SevInfo, StatusError,
+			unansweredDetail(unreached, len(edge), "requests with an edge-case Origin")+
+				"; no answer reflected its Origin, which says nothing of them.")
 	default:
 		return finding("CORS-003", SevMedium, StatusPass,
-			"null, trailing-dot, userinfo and look-alike origins are not reflected"+unreachedNote(unreached)+".")
+			"null, trailing-dot, userinfo and look-alike origins are not reflected.")
 	}
 }
 
@@ -1400,9 +1430,13 @@ func historyValidationFinding(s *Scanner, hdr map[string]string) Finding {
 	case len(unreached) == len(cases):
 		return finding("INPUT-001", SevInfo, StatusError,
 			"could not send any request to /api/history.")
+	case len(unreached) > 0:
+		return finding("INPUT-001", SevInfo, StatusError,
+			unansweredDetail(unreached, len(cases), "invalid /api/history requests")+
+				"; every answer was 400, which says nothing of them.")
 	default:
 		return finding("INPUT-001", SevLow, StatusPass,
-			"malformed, inverted and over-long time ranges, a negative or non-numeric tier and an unknown section are all rejected with 400"+unreachedNote(unreached)+".")
+			"malformed, inverted and over-long time ranges, a negative or non-numeric tier and an unknown section are all rejected with 400.")
 	}
 }
 
@@ -1447,13 +1481,12 @@ func pointsCapFinding(s *Scanner, hdr map[string]string) Finding {
 // no file.
 func languageFinding(s *Scanner, hdr map[string]string) Finding {
 	langs := []string{"../../etc/passwd", "..%2f..%2fconfig.yaml", "zz", "<script>", "%00en"}
-	var leaked []string
-	failed := 0
+	var leaked, unanswered []string
 	for _, lang := range langs {
 		r := s.do(http.MethodGet, "/api/i18n?lang="+lang, hdr, "")
 		switch {
 		case r.err != nil:
-			failed++
+			unanswered = append(unanswered, "lang="+lang)
 		case r.status == http.StatusOK && (strings.Contains(r.body, "root:x:") || strings.Contains(r.body, "password_hash") || strings.Contains(r.body, "module kula")):
 			leaked = append(leaked, lang)
 		}
@@ -1461,17 +1494,18 @@ func languageFinding(s *Scanner, hdr map[string]string) Finding {
 	switch {
 	case len(leaked) > 0:
 		return finding("INPUT-003", SevCritical, StatusFail,
-			"a crafted lang parameter leaked file content: "+strings.Join(leaked, ", ")).
+			"a crafted lang parameter leaked file content: "+strings.Join(leaked, ", ")+unreachedNote(unanswered)).
 			withRemediation("Validate lang against the fixed supported-language allow-list.")
-	case failed == len(langs):
+	case len(unanswered) == len(langs):
 		return finding("INPUT-003", SevInfo, StatusError,
 			"could not send any request to /api/i18n.")
+	case len(unanswered) > 0:
+		return finding("INPUT-003", SevInfo, StatusError,
+			unansweredDetail(unanswered, len(langs), "requests to /api/i18n with a crafted language")+
+				"; no answer read a file, which says nothing of them.")
 	default:
-		detail := "invalid / traversal language codes are rejected and never read arbitrary files."
-		if failed > 0 {
-			detail = fmt.Sprintf("the invalid / traversal language codes that reached the target read no file; %d of %d requests failed.", failed, len(langs))
-		}
-		return finding("INPUT-003", SevMedium, StatusPass, detail)
+		return finding("INPUT-003", SevMedium, StatusPass,
+			"invalid / traversal language codes are rejected and never read arbitrary files.")
 	}
 }
 
