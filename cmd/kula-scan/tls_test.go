@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -12,7 +14,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -287,6 +292,120 @@ func TestTLSProbesThatGetNoAnswerAreErrors(t *testing.T) {
 	s = tlsScanner(t, "https://"+hangUpListener(t, 0), Options{})
 	if h := s.tryHandshake(s.tlsConfig()); h.err == nil || !h.refused {
 		t.Errorf("a handshake the target hung up on: err %v, refused %v; want a refusal", h.err, h.refused)
+	}
+}
+
+// countingListener accepts connections, reads what each sends for up to a
+// second, then answers it with answer (nothing when empty) and holds it open
+// a little longer: it never refuses a handshake. received counts the bytes
+// read.
+func countingListener(t *testing.T, answer string) (string, *atomic.Int64) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	received := &atomic.Int64{}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				_ = conn.SetDeadline(time.Now().Add(time.Second))
+				n, _ := conn.Read(make([]byte, 4096))
+				received.Add(int64(n))
+				if answer != "" {
+					_, _ = conn.Write([]byte(answer))
+				}
+				time.Sleep(time.Second)
+			}()
+		}
+	}()
+	return listener.Addr().String(), received
+}
+
+// TestTLSProbesTheClientCannotMakeAreNotRefusals: only an alert from the
+// target, or a close or reset after the ClientHello, is a refusal. A probe
+// the scanner's own client gives up on before sending anything was never
+// put to the target; an answer that is not TLS refuses nothing either.
+func TestTLSProbesTheClientCannotMakeAreNotRefusals(t *testing.T) {
+	address, received := countingListener(t, "")
+	s := tlsScanner(t, "https://"+address, Options{Timeout: 500 * time.Millisecond})
+	// No version is both at least TLS 1.2 and at most TLS 1.1: the client
+	// fails before it sends anything, as in FIPS 140 mode for TLS 1.0.
+	h := s.tryHandshake(s.probeConfig(tls.VersionTLS12, tls.VersionTLS11, nil))
+	time.Sleep(100 * time.Millisecond)
+	if h.err == nil || h.refused || !h.local || received.Load() != 0 {
+		t.Errorf("a handshake the client could not build: err %v, refused %v, local %v, %d bytes sent; want a local failure, no refusal, nothing sent",
+			h.err, h.refused, h.local, received.Load())
+	}
+
+	plain, _ := countingListener(t, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+	s = tlsScanner(t, "https://"+plain, Options{Timeout: 500 * time.Millisecond})
+	if h := s.tryHandshake(s.probeConfig(tls.VersionTLS10, tls.VersionTLS10, nil)); h.err == nil || h.refused || h.local {
+		t.Errorf("a ClientHello answered in plain HTTP: err %v, refused %v, local %v; want neither a refusal nor a local failure", h.err, h.refused, h.local)
+	}
+
+	// TLS-001 with a version the client cannot offer is an ERROR that says
+	// the probe could not be made, not a pass.
+	modern := tlsTarget(t, nil)
+	saved := legacyVersions
+	legacyVersions = []uint16{0x0300} // SSL 3.0, which Go's client never offers
+	t.Cleanup(func() { legacyVersions = saved })
+	f, _ := byID(tlsFindings(t, modern), "TLS-001")
+	if f.Status != StatusError || !strings.Contains(f.Detail, "could not be made") || !strings.Contains(f.Evidence, "not sent") {
+		t.Errorf("TLS-001 with a probe the client cannot make = %s %q | %q; want an ERROR", f.Status, f.Detail, f.Evidence)
+	}
+}
+
+// TestClientOfferReadsTheClientHello: clientOffer reports the suites the
+// scanner's client puts in its ClientHello, and the client's own failure.
+func TestClientOfferReadsTheClientHello(t *testing.T) {
+	s := tlsScanner(t, "https://kula-scan.invalid", Options{})
+	insecure := suiteIDs(tls.InsecureCipherSuites())
+	offered, err := clientOffer(s.probeConfig(tls.VersionTLS12, tls.VersionTLS12, insecure))
+	if err != nil || !fips140.Enabled() && len(offered) != len(insecure) {
+		t.Errorf("the insecure suites offered: %v (%v); want all %d", suiteNames(offered), err, len(insecure))
+	}
+	if _, err := clientOffer(s.probeConfig(tls.VersionTLS12, tls.VersionTLS11, nil)); err == nil {
+		t.Errorf("a ClientHello the client cannot build was read")
+	}
+}
+
+// fipsChildEnv marks the run of the test binary that
+// TestTLSProbesInFIPSModeAreErrors starts in FIPS 140 mode.
+const fipsChildEnv = "KULA_SCAN_TEST_FIPS_CHILD"
+
+// TestTLSProbesInFIPSModeAreErrors runs the TLS checks in FIPS 140 mode, in
+// a run of the test binary of its own: Go's client then builds no handshake
+// below TLS 1.2 and offers only the approved insecure suites, so TLS-001 and
+// TLS-002 cannot be judged, which is an ERROR, not a pass.
+func TestTLSProbesInFIPSModeAreErrors(t *testing.T) {
+	if os.Getenv(fipsChildEnv) == "1" {
+		if !fips140.Enabled() {
+			t.Skip("FIPS 140 mode is not available")
+		}
+		findings := tlsFindings(t, tlsTarget(t, nil))
+		for _, id := range []string{"TLS-001", "TLS-002"} {
+			if f, _ := byID(findings, id); f.Status != StatusError || !strings.Contains(f.Detail, "FIPS 140 mode") {
+				t.Errorf("%s in FIPS 140 mode = %s %q | %q; want an ERROR that names the mode", id, f.Status, f.Detail, f.Evidence)
+			}
+		}
+		wantStatus(t, findings, "TLS-003", StatusPass)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestTLSProbesInFIPSModeAreErrors$", "-test.v")
+	cmd.Env = append(os.Environ(), fipsChildEnv+"=1", "GODEBUG=fips140=on")
+	out, err := cmd.CombinedOutput()
+	switch {
+	case err != nil:
+		t.Errorf("the TLS checks in FIPS 140 mode: %v\n%s", err, out)
+	case bytes.Contains(out, []byte("--- SKIP")):
+		t.Skipf("FIPS 140 mode is not available:\n%s", out)
 	}
 }
 

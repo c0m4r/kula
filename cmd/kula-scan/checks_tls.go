@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/fips140"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,9 +21,12 @@ import (
 // the negotiated version and suite and the certificate; the checks then probe
 // what must not work: handshakes capped at TLS 1.1 and at TLS 1.0, and a TLS
 // 1.2 handshake offering only the suites Go lists as insecure, must all be
-// refused. Every probe goes through dial, so -connect, -unix and the run
-// context apply, and closes its connection once the handshake is done. They
-// are read-only and non-aggressive.
+// refused. A refusal is the target's: an alert, or a close or reset after the
+// ClientHello was sent. A probe the scanner's own client cannot make, as in
+// FIPS 140 mode, asks the target nothing, which leaves the check an ERROR.
+// Every probe goes through dial, so -connect, -unix and the run context
+// apply, and closes its connection once the handshake is done. They are
+// read-only and non-aggressive.
 
 func tlsChecks() []check {
 	return []check{{ids: []string{"TLS-001", "TLS-002", "TLS-003", "TLS-004"}, run: runTLSChecks}}
@@ -90,11 +96,35 @@ func runTLSChecks(s *Scanner) []Finding {
 type handshake struct {
 	state tls.ConnectionState // when it completed
 	err   error               // nil when it completed
-	// refused: the connection was made and the target ended the handshake
-	// (an alert, a close, a reset) instead of completing it. A handshake
-	// that is not refused and did not complete taught nothing: the dial
-	// failed, or the target did not answer in time.
+	// refused: the client sent its ClientHello and the target ended the
+	// handshake, with an alert or by closing or resetting the connection.
 	refused bool
+	// local: the scanner's own TLS client failed before it sent anything,
+	// so the target was never asked. In FIPS 140 mode, for one, Go's client
+	// builds no handshake below TLS 1.2.
+	local bool
+	// A handshake that is none of these taught nothing: the dial failed,
+	// the target did not answer in time, or it answered with something the
+	// client could not take, which is no refusal.
+}
+
+// sentConn notes whether the TLS client wrote to the connection, which it
+// first does to send its ClientHello.
+type sentConn struct {
+	net.Conn
+	sent atomic.Bool
+}
+
+func (c *sentConn) Write(p []byte) (int, error) {
+	c.sent.Store(true)
+	return c.Conn.Write(p)
+}
+
+// remoteAlert reports whether err is a TLS alert the target sent: Go's
+// client reports one as a *net.OpError whose Op is "remote error".
+func remoteAlert(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "remote error"
 }
 
 // tryHandshake connects through dial and attempts a TLS handshake under cfg,
@@ -103,18 +133,75 @@ type handshake struct {
 func (s *Scanner) tryHandshake(cfg *tls.Config) handshake {
 	ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
 	defer cancel()
-	conn, err := s.dial(ctx)
+	raw, err := s.dial(ctx)
 	if err != nil {
 		return handshake{err: err}
 	}
+	conn := &sentConn{Conn: raw}
 	tlsConn := tls.Client(conn, cfg)
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		_ = conn.Close()
-		return handshake{err: err, refused: ctx.Err() == nil && !isReadTimeout(err)}
+		h := handshake{err: err}
+		switch {
+		case ctx.Err() != nil || isReadTimeout(err):
+			// no answer in time, or the run ended
+		case !conn.sent.Load():
+			h.local = true
+		default:
+			h.refused = remoteAlert(err) || isHangUp(err)
+		}
+		return h
 	}
 	state := tlsConn.ConnectionState()
 	_ = tlsConn.Close()
 	return handshake{state: state}
+}
+
+// errHelloRead ends the in-process handshake clientOffer reads a ClientHello
+// with.
+var errHelloRead = errors.New("ClientHello read")
+
+// clientOffer returns the cipher suites a ClientHello built under cfg
+// offers. Go's client leaves out, without an error, each configured suite it
+// will not offer, as in FIPS 140 mode it does every suite that is not
+// approved. The scanner's own TLS client builds the hello and sends it over
+// a pipe to an in-process server that reads it and ends the handshake, so
+// nothing reaches the target. err is the client's failure to build a hello.
+func clientOffer(cfg *tls.Config) ([]uint16, error) {
+	client, server := net.Pipe()
+	deadline := time.Now().Add(5 * time.Second)
+	_ = client.SetDeadline(deadline)
+	_ = server.SetDeadline(deadline)
+	offered := make(chan []uint16, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() { _ = server.Close() }()
+		_ = tls.Server(server, &tls.Config{
+			GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+				offered <- slices.Clone(hello.CipherSuites)
+				return nil, errHelloRead
+			},
+		}).Handshake()
+	}()
+	err := tls.Client(client, cfg).Handshake()
+	_ = client.Close() // a client that sent nothing leaves the server waiting
+	<-done
+	select {
+	case suites := <-offered:
+		return suites, nil
+	default:
+		return nil, err
+	}
+}
+
+// clientLimits explains, after a probe the scanner's TLS client could not
+// make, why it may not have: FIPS 140 mode restricts it.
+func clientLimits() string {
+	if fips140.Enabled() {
+		return " The scanner runs in FIPS 140 mode (GODEBUG=fips140), whose TLS client offers no version below TLS 1.2 and only approved cipher suites; run it without that mode to make these probes."
+	}
+	return ""
 }
 
 // probeConfig returns a clone of the scanner's TLS configuration, with its
@@ -147,12 +234,13 @@ var legacyVersions = []uint16{tls.VersionTLS11, tls.VersionTLS10}
 
 // legacyVersionFinding is TLS-001: handshakes capped at TLS 1.1 and at TLS
 // 1.0, each offering every suite Go implements, must be refused. Accepted is
-// the finding; refused, the pass; a probe that could not be made leaves the
-// check an ERROR. modern is the modern client's handshake, for the evidence.
+// the finding; refused, the pass; a probe that could not be made, by the
+// scanner's own client or for want of an answer, leaves the check an ERROR.
+// modern is the modern client's handshake, for the evidence.
 func legacyVersionFinding(s *Scanner, modern tls.ConnectionState) Finding {
 	everySuite := append(suiteIDs(tls.CipherSuites()), suiteIDs(tls.InsecureCipherSuites())...)
 	evidence := []string{"a modern client negotiates " + tlsVersionName(modern.Version)}
-	var accepted, unknown []string
+	var accepted, unmade, unknown []string
 	for _, version := range legacyVersions {
 		name := tlsVersionName(version)
 		h := s.tryHandshake(s.probeConfig(version, version, everySuite))
@@ -162,6 +250,9 @@ func legacyVersionFinding(s *Scanner, modern tls.ConnectionState) Finding {
 			evidence = append(evidence, fmt.Sprintf("%s accepted with %s", name, tls.CipherSuiteName(h.state.CipherSuite)))
 		case h.refused:
 			evidence = append(evidence, fmt.Sprintf("%s refused (%v)", name, h.err))
+		case h.local:
+			unmade = append(unmade, name)
+			evidence = append(evidence, fmt.Sprintf("%s not sent (%v)", name, h.err))
 		default:
 			unknown = append(unknown, name)
 			evidence = append(evidence, fmt.Sprintf("%s not learnt (%v)", name, h.err))
@@ -173,9 +264,13 @@ func legacyVersionFinding(s *Scanner, modern tls.ConnectionState) Finding {
 			"the server completes handshakes at deprecated protocol versions: "+strings.Join(accepted, " and ")+".").
 			withEvidence("%s", strings.Join(evidence, "; ")).
 			withRemediation("Terminate TLS with a proxy configured for TLS 1.2+ only (nginx: ssl_protocols TLSv1.2 TLSv1.3).")
+	case len(unmade) > 0:
+		return finding("TLS-001", SevInfo, StatusError,
+			"the probe for "+strings.Join(unmade, " and ")+" could not be made: the scanner's own TLS client failed before it sent anything, so the server was not asked."+clientLimits()).
+			withEvidence("%s", strings.Join(evidence, "; "))
 	case len(unknown) > 0:
 		return finding("TLS-001", SevInfo, StatusError,
-			"could not learn whether the server accepts "+strings.Join(unknown, " or ")+": the probing handshake failed without an answer from it.").
+			"could not learn whether the server accepts "+strings.Join(unknown, " or ")+": the probing handshake ended without the server refusing or completing it.").
 			withEvidence("%s", strings.Join(evidence, "; "))
 	default:
 		return finding("TLS-001", SevMedium, StatusPass,
@@ -191,17 +286,45 @@ func brokenSuite(id uint16) bool {
 	return strings.Contains(name, "_RC4_") || strings.Contains(name, "_3DES_")
 }
 
+// suiteNames returns the names of the suites ids.
+func suiteNames(ids []uint16) []string {
+	names := make([]string, 0, len(ids))
+	for _, id := range ids {
+		names = append(names, tls.CipherSuiteName(id))
+	}
+	return names
+}
+
 // weakSuiteFinding is TLS-002: a TLS 1.2 handshake offering only the suites
 // Go lists as insecure must be refused. Each one the server accepts is taken
 // off the offer and the handshake tried again, so the finding names every
 // such suite the server enables. A server that speaks only TLS 1.3 refuses
-// the handshake, which is a pass.
+// the handshake, which is a pass. The scanner's client may leave some of the
+// suites out of its offer (clientOffer); the server's answer then says
+// nothing of those, and no pass is given without them.
 func weakSuiteFinding(s *Scanner, modern tls.ConnectionState) Finding {
-	offer := suiteIDs(tls.InsecureCipherSuites())
-	total := len(offer)
+	insecure := suiteIDs(tls.InsecureCipherSuites())
+	total := len(insecure)
 	evidence := "a modern client negotiates " + tls.CipherSuiteName(modern.CipherSuite)
+	offered, err := clientOffer(s.probeConfig(tls.VersionTLS12, tls.VersionTLS12, insecure))
+	if err != nil {
+		return finding("TLS-002", SevInfo, StatusError,
+			"the probe for insecure cipher suites could not be made: the scanner's own TLS client could not build a TLS 1.2 handshake offering them, so the server was not asked."+clientLimits()).
+			withEvidence("%s; %v", evidence, err)
+	}
+	offer := slices.DeleteFunc(slices.Clone(insecure), func(id uint16) bool { return !slices.Contains(offered, id) })
+	unoffered := slices.DeleteFunc(slices.Clone(insecure), func(id uint16) bool { return slices.Contains(offered, id) })
+	if len(unoffered) > 0 {
+		evidence += "; not offered by the scanner's TLS client: " + strings.Join(suiteNames(unoffered), ", ")
+	}
+	if len(offer) == 0 {
+		return finding("TLS-002", SevInfo, StatusError,
+			fmt.Sprintf("the probe for insecure cipher suites could not be made: the scanner's own TLS client offers none of the %d suites Go lists as insecure, so the server was not asked.", total)+clientLimits()).
+			withEvidence("%s", evidence)
+	}
+
 	var accepted []uint16
-	var failed error // a probe that ended without an answer
+	var failed error // a probe that taught nothing
 	for len(offer) > 0 {
 		h := s.tryHandshake(s.probeConfig(tls.VersionTLS12, tls.VersionTLS12, offer))
 		if h.err != nil {
@@ -218,12 +341,8 @@ func weakSuiteFinding(s *Scanner, modern tls.ConnectionState) Finding {
 		offer = slices.DeleteFunc(offer, func(id uint16) bool { return id == suite })
 	}
 
-	var names []string
-	broken := false
-	for _, id := range accepted {
-		names = append(names, tls.CipherSuiteName(id))
-		broken = broken || brokenSuite(id)
-	}
+	names := suiteNames(accepted)
+	broken := slices.ContainsFunc(accepted, brokenSuite)
 	switch {
 	case broken:
 		return finding("TLS-002", SevHigh, StatusFail,
@@ -237,8 +356,13 @@ func weakSuiteFinding(s *Scanner, modern tls.ConnectionState) Finding {
 			withRemediation("Restrict the proxy to AEAD cipher suites with forward secrecy (ECDHE with AES-GCM or ChaCha20-Poly1305), or serve TLS 1.3 only.")
 	case failed != nil:
 		return finding("TLS-002", SevInfo, StatusError,
-			"could not learn whether the server accepts an insecure cipher suite: the probing handshake failed without an answer from it.").
+			"could not learn whether the server accepts an insecure cipher suite: the probing handshake ended without the server refusing or completing it.").
 			withEvidence("%s; %v", evidence, failed)
+	case len(unoffered) > 0:
+		return finding("TLS-002", SevInfo, StatusError,
+			fmt.Sprintf("the server refuses the %d of the %d insecure cipher suites the scanner's TLS client offers, but the client does not offer the other %d, so whether the server accepts those is not known.",
+				total-len(unoffered), total, len(unoffered))+clientLimits()).
+			withEvidence("%s", evidence)
 	default:
 		return finding("TLS-002", SevInfo, StatusPass,
 			fmt.Sprintf("the server refuses a TLS 1.2 handshake that offers only the %d cipher suites Go lists as insecure.", total)).
