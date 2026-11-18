@@ -159,10 +159,15 @@ func keptAttribute(name string) bool {
 // either way or not at all, and names are matched in any case. It builds no
 // tree, so the contents of svg and math are read as HTML. Its work is linear
 // in the page's length, and it keeps at most limit tags: more is true when
-// the page has more, and the tags after them are not read.
-func scanPageTags(page string, limit int) (tags []pageTag, more bool) {
+// the page has more, and the tags after them are not read. The page is
+// hostile input, so it stops, with ctx's error, as soon as ctx is done: an
+// interrupt ends the read of a large page at once.
+func scanPageTags(ctx context.Context, page string, limit int) (tags []pageTag, more bool, err error) {
 	n := len(page)
 	for i := 0; i < n; {
+		if err := ctx.Err(); err != nil {
+			return tags, false, err
+		}
 		lt := strings.IndexByte(page[i:], '<')
 		if lt < 0 {
 			break
@@ -186,7 +191,7 @@ func scanPageTags(page string, limit int) (tags []pageTag, more bool) {
 		case len(rest) > 1 && isASCIIAlpha(rest[1]):
 			name, attrs, next, complete := readTag(page, i+1, true)
 			if !complete {
-				return tags, false // the page ends inside the tag, which a browser drops
+				return tags, false, nil // the page ends inside the tag, which a browser drops
 			}
 			tag := pageTag{name: name, attrs: attrs}
 			i = next
@@ -202,7 +207,7 @@ func scanPageTags(page string, limit int) (tags []pageTag, more bool) {
 			}
 			if keptTag(name) {
 				if len(tags) == limit {
-					return tags, true
+					return tags, true, nil
 				}
 				tags = append(tags, tag)
 			}
@@ -210,7 +215,7 @@ func scanPageTags(page string, limit int) (tags []pageTag, more bool) {
 			i++ // a '<' that starts no tag is text
 		}
 	}
-	return tags, false
+	return tags, false, nil
 }
 
 // readTag reads a tag from i, the first character of its name, to just after
@@ -283,9 +288,10 @@ func readTag(page string, i int, keep bool) (name string, attrs map[string]strin
 	}
 }
 
-// commentEnd returns where a comment whose text starts at i ends: after
-// "-->" or "--!>", at once for "<!-->" and "<!--->", or at the end of the
-// page.
+// commentEnd returns where a comment whose text starts at i ends: after the
+// first "-->" or "--!>", at once for "<!-->" and "<!--->", or at the end of
+// the page. It reads no further than that end, so a page of many comments
+// costs time linear in its length.
 func commentEnd(page string, i int) int {
 	rest := page[i:]
 	switch {
@@ -294,14 +300,20 @@ func commentEnd(page string, i int) int {
 	case strings.HasPrefix(rest, "->"):
 		return i + 2
 	}
-	window, end := rest, len(page)
-	if j := strings.Index(rest, "-->"); j >= 0 {
-		window, end = rest[:j], i+j+3
+	for {
+		j := strings.Index(page[i:], "--")
+		if j < 0 {
+			return len(page)
+		}
+		i += j
+		switch after := page[i+2:]; {
+		case strings.HasPrefix(after, ">"):
+			return i + 3
+		case strings.HasPrefix(after, "!>"):
+			return i + 4
+		}
+		i++ // "---" may still end as "-->"
 	}
-	if j := strings.Index(window, "--!>"); j >= 0 {
-		end = i + j + 4
-	}
-	return end
 }
 
 // bogusCommentEnd returns where a doctype, a processing instruction or
@@ -695,8 +707,11 @@ func runIntegrityChecks(s *Scanner) []Finding {
 		return both(StatusSkip, fmt.Sprintf("/ is not an HTML page (Content-Type %q), so it loads no scripts.", contentType))
 	}
 
-	tags, more := scanPageTags(string(page.body), maxPageTags)
-	if more {
+	tags, more, err := scanPageTags(s.ctx, string(page.body), maxPageTags)
+	switch {
+	case err != nil:
+		return both(StatusError, "the UI page was not read to its end: "+err.Error())
+	case more:
 		return both(StatusError, fmt.Sprintf("the UI page has more than %d script, link and base tags; it was not judged.", maxPageTags))
 	}
 	pageURL, err := url.Parse(s.urlFor("/"))

@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -73,19 +75,19 @@ func TestScanPageTags(t *testing.T) {
 		{"base and other links", `<base href="/kula/"><link rel=stylesheet href=style.css><link rel="preload modulepreload" href=m.js>`,
 			"base href=/kula/ | link href=style.css rel=stylesheet | link href=m.js rel=preload modulepreload"},
 	} {
-		tags, more := scanPageTags(c.page, 64)
+		tags, more, _ := scanPageTags(context.Background(), c.page, 64)
 		if got := describe(tags); got != c.want || more {
 			t.Errorf("%s:\n got %q (more %v)\nwant %q", c.name, got, more, c.want)
 		}
 	}
 
 	// An inline script keeps its text, bounded.
-	tags, _ := scanPageTags(`<script nonce=n>`+strings.Repeat("x", 10000)+`</script>`, 64)
+	tags, _, _ := scanPageTags(context.Background(), `<script nonce=n>`+strings.Repeat("x", 10000)+`</script>`, 64)
 	if len(tags) != 1 || len(tags[0].text) != maxScriptText {
 		t.Errorf("inline text kept: %d bytes", len(tags[0].text))
 	}
 	// More tags than the limit.
-	if tags, more := scanPageTags(strings.Repeat("<script src=a.js></script>", 10), 4); len(tags) != 4 || !more {
+	if tags, more, _ := scanPageTags(context.Background(), strings.Repeat("<script src=a.js></script>", 10), 4); len(tags) != 4 || !more {
 		t.Errorf("past the limit: %d tags, more %v", len(tags), more)
 	}
 }
@@ -99,12 +101,14 @@ func TestScanPageTagsOnLargePages(t *testing.T) {
 		"one long attribute":                  `<div title="` + strings.Repeat("a", size) + `"></div><script src=end.js></script>`,
 		"one long unquoted name":              `<div ` + strings.Repeat("a", size) + `></div><script src=end.js></script>`,
 		"many comments":                       strings.Repeat(`<!-- c -->`, size/10) + `<script src=end.js></script>`,
+		"many comments that end in --!>":      strings.Repeat(`<!-- c --!>`, size/11) + `<script src=end.js></script>`,
+		"many dashes in many comments":        strings.Repeat(`<!-- --- ---!>`, size/14) + `<script src=end.js></script>`,
 		"many end-tag lookalikes in a script": `<script>` + strings.Repeat(`</scrip`, size/7) + `</script><script src=end.js></script>`,
 		"an escaped script":                   `<script><!--` + strings.Repeat(`<script>-</script>`, size/18) + `--></script><script src=end.js></script>`,
 		"many < in a textarea":                `<textarea>` + strings.Repeat(`</textare`, size/9) + `</textarea><script src=end.js></script>`,
 	} {
 		start := time.Now()
-		tags, _ := scanPageTags(page, maxPageTags)
+		tags, _, _ := scanPageTags(context.Background(), page, maxPageTags)
 		if elapsed := time.Since(start); elapsed > 5*time.Second {
 			t.Errorf("%s: %s for a %d-byte page", name, elapsed, len(page))
 		}
@@ -115,7 +119,101 @@ func TestScanPageTagsOnLargePages(t *testing.T) {
 	// Unterminated: no tag, and no panic.
 	for _, page := range []string{"<!--" + strings.Repeat("-", size), `<script src="` + strings.Repeat("x", size),
 		"<script>" + strings.Repeat("<!--<script>", size/12), strings.Repeat("<", size), strings.Repeat("</", size/2)} {
-		_, _ = scanPageTags(page, maxPageTags)
+		_, _, _ = scanPageTags(context.Background(), page, maxPageTags)
+	}
+}
+
+// expiringContext is a context that is done once its Err has been asked
+// left times.
+type expiringContext struct {
+	context.Context
+	left int
+}
+
+func (c *expiringContext) Err() error {
+	if c.left--; c.left < 0 {
+		return context.Canceled
+	}
+	return nil
+}
+
+// TestScanPageTagsStopsWithItsContext: an interrupt ends the read of a page
+// where it is, with the context's error, not at the page's end.
+func TestScanPageTagsStopsWithItsContext(t *testing.T) {
+	page := strings.Repeat("<script src=a.js></script>", 100)
+	tags, more, err := scanPageTags(&expiringContext{Context: context.Background(), left: 10}, page, maxPageTags)
+	if !errors.Is(err, context.Canceled) || more || len(tags) == 0 || len(tags) >= 100 {
+		t.Errorf("cancelled during the read: %d tags, more %v, error %v; want some of the 100 and context.Canceled", len(tags), more, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if tags, _, err := scanPageTags(ctx, page, maxPageTags); !errors.Is(err, context.Canceled) || len(tags) != 0 {
+		t.Errorf("cancelled before the read: %d tags, error %v", len(tags), err)
+	}
+}
+
+// TestCommentEnd: where a comment ends, as the tokenizer's comment states
+// find it.
+func TestCommentEnd(t *testing.T) {
+	for _, c := range []struct {
+		page string // from the comment's text, after "<!--"
+		end  int    // -1: the end of the page
+	}{
+		{">x", 1},
+		{"->x", 2},
+		{"-->x", 3},
+		{"a-->x", 4},
+		{"a--!>x", 5},
+		{"a--->x", 5},
+		{"a---!>x", 6},
+		{"a--!-->x", 7},
+		{"a-- >-->x", 8},
+		{"a--!x--!>", 9},
+		{"-!>x", -1},
+		{"a->x", -1},
+		{"a--", -1},
+		{"a--!", -1},
+		{"", -1},
+	} {
+		want := c.end
+		if want < 0 {
+			want = len(c.page)
+		}
+		if got := commentEnd(c.page, 0); got != want {
+			t.Errorf("commentEnd(%q) = %d, want %d", c.page, got, want)
+		}
+	}
+}
+
+// TestHostileCommentsCostLinearTime: a UI page of the largest size the check
+// reads, made of comments that end in "--!>", once cost minutes of CPU, as
+// each comment searched the rest of the page for "-->". The bound is far
+// above what linear work takes, even under -race on a loaded machine, and
+// far below what the quadratic search took (81 s).
+func TestHostileCommentsCostLinearTime(t *testing.T) {
+	page := strings.Repeat("<!----!>", maxPageBytes/8)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(page))
+	}))
+	defer ts.Close()
+	s := dosScanner(t, ts.URL, 10*time.Second, time.Second)
+
+	done := make(chan []Finding, 1)
+	start := time.Now()
+	go func() { done <- runIntegrityChecks(s) }()
+	select {
+	case findings := <-done:
+		if f, _ := byID(findings, "SRI-001"); f.Status != StatusSkip || !strings.Contains(f.Detail, "no scripts") {
+			t.Errorf("SRI-001 = %s %q, want a SKIP: the page loads no scripts", f.Status, f.Detail)
+		}
+		t.Logf("%d bytes of comments read in %s", len(page), time.Since(start))
+	case <-time.After(20 * time.Second):
+		t.Fatalf("reading %d bytes of comments took more than 20 s", len(page))
 	}
 }
 
