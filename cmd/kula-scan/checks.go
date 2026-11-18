@@ -1571,9 +1571,10 @@ type historyProbe struct {
 	readErr error
 }
 
-// countHistory requests a history path and counts the samples of a 200
-// answer as they stream in, up to one past maxHistoryPoints: an answer at
-// the cap is larger than do reads.
+// countHistory requests a history path, with headers and the -H headers (see
+// addExtraHeaders), and counts the samples of a 200 answer as they stream
+// in, up to one past maxHistoryPoints: an answer at the cap is larger than do
+// reads.
 func (s *Scanner) countHistory(path string, headers map[string]string) historyProbe {
 	ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
 	defer cancel()
@@ -1584,6 +1585,7 @@ func (s *Scanner) countHistory(path string, headers map[string]string) historyPr
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	s.addExtraHeaders(req.Header)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		if s.verbose {

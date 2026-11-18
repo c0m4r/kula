@@ -1168,6 +1168,32 @@ func TestHistoryPointsCapNeedsMoreRecordsThanTheCap(t *testing.T) {
 	}
 }
 
+// TestInputChecksSendTheExtraHeaders: every request of the input checks,
+// INPUT-002's streamed history request included, carries the -H headers a
+// gateway in front of Kula asks for.
+func TestInputChecksSendTheExtraHeaders(t *testing.T) {
+	var without atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Gate") != "let-me-in" {
+			without.Add(1)
+			t.Logf("a request without the -H header: %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		authOff().ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+	s, err := NewScanner(Options{Target: ts.URL, Timeout: 5 * time.Second, Seed: 1, Headers: []string{"X-Gate: let-me-in"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.discover()
+	_ = runInputChecks(s)
+	if n := without.Load(); n != 0 {
+		t.Errorf("%d requests went out without the -H header", n)
+	}
+}
+
 func TestHistoryValidatesTierAndSections(t *testing.T) {
 	// A Kula from before tier and sections were validated.
 	lax := historyHandler(5000)
