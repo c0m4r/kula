@@ -58,7 +58,7 @@ var catalog = []catalogEntry{
 	{"DISC-002", "discovery", ModeDefault, "Credentials over plaintext HTTP",
 		"With auth enabled, the target is reached over HTTPS, so credentials and session cookies do not cross the wire in the clear."},
 	{"DISC-003", "discovery", ModeDefault, "Scanner's Host name answered",
-		"Kula's DNS-rebinding check answers the Host name the scanner sends; when it refuses it, the checks that would read that refusal as their own result are skipped and the run is inconclusive."},
+		"Kula's DNS-rebinding check answers the Host name the scanner sends. With auth off it refuses a public name on every route but /health, /status and a /metrics that asks for a bearer token; then the checks that would read that refusal as their own result are skipped and the run is inconclusive."},
 
 	{"HDR-000", "headers", ModeDefault, "Fetch UI page for header inspection",
 		"GET / answers, so the security headers can be inspected."},

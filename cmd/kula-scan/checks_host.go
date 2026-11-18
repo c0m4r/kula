@@ -34,7 +34,7 @@ func hostChecks() []check {
 func (s *Scanner) hostRefusedFinding(path string, r httpResult) Finding {
 	how := fmt.Sprintf("Rescan by IP address, or with -connect <ip:port> and a URL naming a host Kula allows (localhost, an address), or add %s to web.security.allowed_hosts.", s.base.Hostname())
 	return finding("DISC-003", SevInfo, StatusError,
-		fmt.Sprintf("Kula's DNS-rebinding check refuses the Host name the scanner sends (%s): with auth off, Kula answers only local names (addresses, localhost, single-label names, local-only domains such as .lan or .internal) and web.security.allowed_hosts, and every route but /health and /status answers this refusal. "+
+		fmt.Sprintf("Kula's DNS-rebinding check refuses the Host name the scanner sends (%s): with auth off, Kula answers only local names (addresses, localhost, single-label names, local-only domains such as .lan or .internal, the machine's own names) and the names in web.security.allowed_hosts and allowed_origins, and answers this refusal on every route but /health, /status and a /metrics that asks for a bearer token. "+
 			"The checks that read the API, the UI page or the WebSocket would take it for their own safeguard holding, so they are skipped: Kula's safeguards behind them were not judged. %s",
 			s.base.Host, how)).
 		withEvidence("GET %s: HTTP %d %s", path, r.status, truncate(strings.TrimSpace(r.body), 120)).
@@ -50,8 +50,9 @@ func (s *Scanner) refusedHostReason() string {
 
 // runsUnderRefusedHost reports whether check c still judges something when
 // Kula refuses the scanner's Host name. Kula refuses it only with auth off,
-// and then on every route but /health and /status (host_check.go), after its
-// security headers are set and before any other handler runs. So these
+// and then on every route but /health, /status and a /metrics that asks for
+// a bearer token (host_check.go), after its security headers are set and
+// before any other handler runs. So these
 // remain meaningful: the header checks, which read headers the refusal
 // carries too; the auth check, since a refused /api/auth/status itself shows
 // auth is off; TLS, below HTTP; HOST-001, which sends foreign names anyway;

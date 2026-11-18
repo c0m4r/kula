@@ -46,7 +46,8 @@ func withHostCheck(next http.Handler, guarded func(path string) bool) http.Handl
 	})
 }
 
-// authOffGuard is what Kula guards with auth off: every route but the probes.
+// authOffGuard is what Kula guards with auth off and no /metrics token:
+// every route but the probes. With a token, /metrics is not guarded either.
 func authOffGuard(path string) bool { return path != "/health" && path != "/status" }
 
 // metricsGuard is what Kula guards with auth on and /metrics served without
@@ -274,6 +275,24 @@ func scanUnderForeignName(t *testing.T, handler http.Handler, args ...string) (i
 	all := append([]string{"-json", "-connect", address}, args...)
 	code, stdout, stderr := runCaptured(t, append(all, "http://kula.example.com:"+port+"/")...)
 	return code, decodeReport(t, stdout), stderr
+}
+
+// TestHostRefusalSaysWhatStaysOpen: with auth off, Kula's host check refuses
+// a public name on every route but /health, /status and a /metrics that asks
+// for a bearer token (guards in internal/web/host_check.go); DISC-003 and its
+// catalog line say so.
+func TestHostRefusalSaysWhatStaysOpen(t *testing.T) {
+	s, err := NewScanner(Options{Target: "http://kula.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := s.hostRefusedFinding("/api/auth/status", httpResult{status: http.StatusForbidden, body: `{"error":"host not allowed"}`})
+	if want := "every route but /health, /status and a /metrics that asks for a bearer token"; !strings.Contains(f.Detail, want) {
+		t.Errorf("DISC-003 detail %q does not say %q", f.Detail, want)
+	}
+	if want := "a /metrics that asks for a bearer token"; !strings.Contains(catalogEntryFor("DISC-003").Description, want) {
+		t.Errorf("DISC-003 catalog line %q does not say %q", catalogEntryFor("DISC-003").Description, want)
+	}
 }
 
 func TestScannersOwnHostRefused(t *testing.T) {
