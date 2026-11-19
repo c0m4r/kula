@@ -177,6 +177,9 @@ func clientOffer(cfg *tls.Config) ([]uint16, error) {
 	go func() {
 		defer close(done)
 		defer func() { _ = server.Close() }()
+		// The hook ends the handshake before a version is negotiated, and the
+		// hello it reads may offer TLS 1.0: a MinVersion here is never read.
+		// nosemgrep: missing-ssl-minversion
 		_ = tls.Server(server, &tls.Config{
 			GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 				offered <- slices.Clone(hello.CipherSuites)
