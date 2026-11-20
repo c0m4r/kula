@@ -282,7 +282,7 @@ func TestTLSChecksWithoutAHandshakeAreErrors(t *testing.T) {
 // learns nothing, so it is not counted as refused.
 func TestTLSProbesThatGetNoAnswerAreErrors(t *testing.T) {
 	s := tlsScanner(t, "https://"+silentListener(t).Addr().String(), Options{Timeout: 200 * time.Millisecond})
-	if h := s.tryHandshake(s.probeConfig(tls.VersionTLS10, tls.VersionTLS10, nil)); h.err == nil || h.refused {
+	if h := s.tryHandshake(s.insecureProbeConfig(tls.VersionTLS10, tls.VersionTLS10, nil)); h.err == nil || h.refused {
 		t.Errorf("a handshake the target never answered: err %v, refused %v; want an error, not a refusal", h.err, h.refused)
 	}
 	s = tlsScanner(t, "https://"+closedAddress(t), Options{})
@@ -337,7 +337,7 @@ func TestTLSProbesTheClientCannotMakeAreNotRefusals(t *testing.T) {
 	s := tlsScanner(t, "https://"+address, Options{Timeout: 500 * time.Millisecond})
 	// No version is both at least TLS 1.2 and at most TLS 1.1: the client
 	// fails before it sends anything, as in FIPS 140 mode for TLS 1.0.
-	h := s.tryHandshake(s.probeConfig(tls.VersionTLS12, tls.VersionTLS11, nil))
+	h := s.tryHandshake(s.insecureProbeConfig(tls.VersionTLS12, tls.VersionTLS11, nil))
 	time.Sleep(100 * time.Millisecond)
 	if h.err == nil || h.refused || !h.local || received.Load() != 0 {
 		t.Errorf("a handshake the client could not build: err %v, refused %v, local %v, %d bytes sent; want a local failure, no refusal, nothing sent",
@@ -346,7 +346,7 @@ func TestTLSProbesTheClientCannotMakeAreNotRefusals(t *testing.T) {
 
 	plain, _ := countingListener(t, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
 	s = tlsScanner(t, "https://"+plain, Options{Timeout: 500 * time.Millisecond})
-	if h := s.tryHandshake(s.probeConfig(tls.VersionTLS10, tls.VersionTLS10, nil)); h.err == nil || h.refused || h.local {
+	if h := s.tryHandshake(s.insecureProbeConfig(tls.VersionTLS10, tls.VersionTLS10, nil)); h.err == nil || h.refused || h.local {
 		t.Errorf("a ClientHello answered in plain HTTP: err %v, refused %v, local %v; want neither a refusal nor a local failure", h.err, h.refused, h.local)
 	}
 
@@ -367,11 +367,11 @@ func TestTLSProbesTheClientCannotMakeAreNotRefusals(t *testing.T) {
 func TestClientOfferReadsTheClientHello(t *testing.T) {
 	s := tlsScanner(t, "https://kula-scan.invalid", Options{})
 	insecure := suiteIDs(tls.InsecureCipherSuites())
-	offered, err := clientOffer(s.probeConfig(tls.VersionTLS12, tls.VersionTLS12, insecure))
+	offered, err := clientOffer(s.insecureProbeConfig(tls.VersionTLS12, tls.VersionTLS12, insecure))
 	if err != nil || !fips140.Enabled() && len(offered) != len(insecure) {
 		t.Errorf("the insecure suites offered: %v (%v); want all %d", suiteNames(offered), err, len(insecure))
 	}
-	if _, err := clientOffer(s.probeConfig(tls.VersionTLS12, tls.VersionTLS11, nil)); err == nil {
+	if _, err := clientOffer(s.insecureProbeConfig(tls.VersionTLS12, tls.VersionTLS11, nil)); err == nil {
 		t.Errorf("a ClientHello the client cannot build was read")
 	}
 }

@@ -207,13 +207,18 @@ func clientLimits() string {
 	return ""
 }
 
-// probeConfig returns a clone of the scanner's TLS configuration, with its
-// server name, that offers only versions minVersion to maxVersion and the
-// given cipher suites. It does not verify the certificate: a probe asks
-// whether the target agrees to these terms, which it has done once it
+// insecureProbeConfig returns a clone of the scanner's TLS configuration,
+// with its server name, that offers only versions minVersion to maxVersion
+// and the given cipher suites. It does not verify the certificate: a probe
+// asks whether the target agrees to these terms, which it has done once it
 // presents a certificate under them; the modern handshake and TLS-004 judge
 // the certificate. A probe sends nothing over the connection.
-func (s *Scanner) probeConfig(minVersion, maxVersion uint16, suites []uint16) *tls.Config {
+//
+// The legacy versions, insecure suites and skipped verification are the
+// point of the probe, and the name says so: CodeQL's
+// go/disabled-certificate-check and go/insecure-tls pass over a function
+// whose name documents the insecurity.
+func (s *Scanner) insecureProbeConfig(minVersion, maxVersion uint16, suites []uint16) *tls.Config {
 	cfg := s.tlsConfig().Clone()
 	cfg.MinVersion, cfg.MaxVersion = minVersion, maxVersion
 	cfg.CipherSuites = suites
@@ -246,7 +251,7 @@ func legacyVersionFinding(s *Scanner, modern tls.ConnectionState) Finding {
 	var accepted, unmade, unknown []string
 	for _, version := range legacyVersions {
 		name := tlsVersionName(version)
-		h := s.tryHandshake(s.probeConfig(version, version, everySuite))
+		h := s.tryHandshake(s.insecureProbeConfig(version, version, everySuite))
 		switch {
 		case h.err == nil:
 			accepted = append(accepted, name)
@@ -309,7 +314,7 @@ func weakSuiteFinding(s *Scanner, modern tls.ConnectionState) Finding {
 	insecure := suiteIDs(tls.InsecureCipherSuites())
 	total := len(insecure)
 	evidence := "a modern client negotiates " + tls.CipherSuiteName(modern.CipherSuite)
-	offered, err := clientOffer(s.probeConfig(tls.VersionTLS12, tls.VersionTLS12, insecure))
+	offered, err := clientOffer(s.insecureProbeConfig(tls.VersionTLS12, tls.VersionTLS12, insecure))
 	if err != nil {
 		return finding("TLS-002", SevInfo, StatusError,
 			"the probe for insecure cipher suites could not be made: the scanner's own TLS client could not build a TLS 1.2 handshake offering them, so the server was not asked."+clientLimits()).
@@ -329,7 +334,7 @@ func weakSuiteFinding(s *Scanner, modern tls.ConnectionState) Finding {
 	var accepted []uint16
 	var failed error // a probe that taught nothing
 	for len(offer) > 0 {
-		h := s.tryHandshake(s.probeConfig(tls.VersionTLS12, tls.VersionTLS12, offer))
+		h := s.tryHandshake(s.insecureProbeConfig(tls.VersionTLS12, tls.VersionTLS12, offer))
 		if h.err != nil {
 			if !h.refused {
 				failed = h.err
